@@ -13,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, note_topl, Deaf_hero } from './display.js';
+import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -137,7 +137,7 @@ export async function com_pager_legacy() {
     }
     // C ref: questpgr.c com_pager_core() — the `synopsis` bypasses delivery and
     // goes to putmsghistory() so ^P can recall it.
-    note_topl(qt_convert_line(QUEST_SYNOPSIS.common.legacy));
+    putmsghistory(qt_convert_line(QUEST_SYNOPSIS.common.legacy), false);
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -2878,7 +2878,7 @@ async function com_pager_core(section, msgid) {
     if (output === 0 || output === 1) await deliver_by_pline(lines);
     else await deliver_by_window(lines);
     // C: the synopsis bypasses message delivery but is available for ^P recall.
-    if (synopsis) note_topl(qt_convert_line(synopsis));
+    if (synopsis) putmsghistory(qt_convert_line(synopsis), false);
     return true;
 }
 

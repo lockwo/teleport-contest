@@ -24,7 +24,8 @@ import { GameMap } from './game.js';
 import { monster_by_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
-         impossible, stairway_at, display_nhwindow_message, Hallucination_u } from './display.js';
+         impossible, stairway_at, display_nhwindow_message, Hallucination_u,
+         note_topl, putmsghistory } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello } from './role.js';
@@ -33,6 +34,7 @@ import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
 import { check_special_room } from './shkroom.js';
+import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { encumber_msg, xname, useup, uwep_unweapon } from './invent.js';
 import { read_engr_at } from './engrave.js';
 import { run_object_timers, place_object, next_ident, newoextra, newomonst,
@@ -226,16 +228,18 @@ async function ask_about_keeping_savefile() {
 
 // C ref: allmain.c moveloop_preamble(resuming=TRUE) tail — the steps the
 // `if (resuming)` / unconditional arms run after the moon-phase report.
-// fix_shop_damage() has no port yet (it only matters for a hero who damaged shop
-// walls before saving), so it is the one omission here.
+// fix_shop_damage() (shk.c) repairs any shop wall/door damage the hero left behind
+// when saving; it runs right after read_engr_at(), before encumber_msg().
 async function resume_preamble_tail() {
     const u = game.u || (game.u = {});
     game.disp = game.disp || {};
     game.disp.botlx = true;
     await read_engr_at(u.ux, u.uy); /* subset of pickup() */
+    await (await import('./shk.js')).fix_shop_damage();
     await encumber_msg();
-    // gd.defer_see_monsters is set by restgamestate so the restore itself does
-    // not paint monsters too early; moveloop_preamble releases it.
+    // gd.defer_see_monsters was set by restgamestate so the restore itself did
+    // not paint monsters too early; moveloop_preamble releases it (allmain.c).
+    game.defer_see_monsters = false;
     see_monsters();
     u.uz0 = u.uz0 || {};
     u.uz0.dlevel = u.uz?.dlevel;
@@ -286,6 +290,13 @@ export async function dorestore() {
     const storage = game.storage;
     const blob = storage.getItem(key);
     if (blob == null) return false;
+
+    /* C ref: sys/unix/unixmain.c — `if (ge.early_raw_messages) raw_print(...)
+       else pline("Restoring save file...")`.  The line is gone from the
+       screen by the first docrt(), but it stays in gt.toplines and so lands in
+       the ^P history behind the restored messages (tty_putmsghistory). */
+    if (!game.early_raw_messages)
+        note_topl('Restoring save file...');
 
     const saved = deserializeGameState(blob);
 
@@ -343,6 +354,12 @@ export async function dorestore() {
         game.ubirthday = time_from_yyyymmddhhmmss(saved.ubirthday_stamp);
         delete game.ubirthday_stamp;
     }
+    /* C ref: restore.c restgamestate() -> restore_msghistory(): the saved ^P
+       ring is replayed through putmsghistory(), behind the messages this
+       process has already issued.  The ring itself (game._msghist) is not in
+       the blob (save.js SAVE_SKIP_KEYS); the restoring process keeps its own. */
+    restore_msghistory(nhfile_reader(saved.msghistory));
+    delete game.msghistory;
     // C ref: decl.c go.oldcap is likewise never saved (zero-initialized in the
     // restoring process), so encumber_msg() after a restore reports the hero's
     // current burden as a change from "unencumbered".
@@ -353,6 +370,16 @@ export async function dorestore() {
     // always announced.
     delete game.far_noise;
     delete game.noisetime;
+    // C ref: restore.c restgamestate() — "hero_seq isn't saved and restored
+    // because it can be recalculated": gh.hero_seq = svm.moves << 3, so the
+    // moves-this-turn counter n of `moves*8 + n` starts from 0 again.
+    game.hero_seq = (game.moves | 0) << 3;
+    // C ref: eat.c maybe_cannibal() `static long ate_brains` (and makemon.c
+    // align_shift()'s `static long oldmoves`) are file statics, not saved: a
+    // fresh process starts them at 0.  This port keeps them on `game`.
+    delete game._ate_brains;
+    delete game._align_shift_moves;
+    delete game._align_shift_lev;
     // C ref: decl.c gm.multi / gc.command_count / gc.cmd_key are process
     // globals that savegamestate() never writes, so a restored process starts
     // with no pending count: "3S" saved with gm.multi == 2 must not make the
@@ -376,6 +403,10 @@ export async function dorestore() {
     clear_no_charge_on_getlev(game.level);
     for (const ent of Object.values(game._level_store || {}))
         clear_no_charge_on_getlev(ent?.level);
+    /* getlev() recomputes gd.doorindex from the last room (restore.c:1133); stored
+       levels get the same when goto_level() reloads them (do.js getlev_restore) */
+    restore_doorindex(game.level);
+    reverse_trap_chain(game.level); /* getlev(): ftrap rebuilt by prepending */
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
@@ -421,6 +452,10 @@ export async function dorestore() {
     if (!is_wizard() && !is_discover()) delete_savefile();
 
     // C ref: restore.c — "recompute vision (not saved)"; then docrt() repaints.
+    /* C ref: restore.c restgamestate() — `gd.defer_see_monsters = TRUE` ("there are
+       some things after this that can have unintended display side-effects too
+       early in the game"); released by resume_preamble_tail(). */
+    game.defer_see_monsters = true;
     init_vision_globals();
     vision_reset();
     game.vision_full_recalc = 0;
@@ -436,7 +471,8 @@ export async function dorestore() {
     // clear_nhwindow(WIN_MESSAGE) + docrt() (dorecover tail).
     game._pending_message = '';
     game._toplin = 0;
-    game._toplines = '';
+    /* clear_nhwindow(WIN_MESSAGE) leaves gt.toplines alone (only
+       remember_topl() blanks it), so nothing is dropped here. */
     await cls();
     await docrt();
     await flush_screen(1);
@@ -665,17 +701,6 @@ const GRAPPLING_HOOK_RST = 260;
    the uid out as 0, so the check passes on a save this port wrote. */
 const SYSOPT_CHECK_SAVE_UID = true;
 function getuid_rst() { return (game.sysopt?.uid ?? game.uid ?? 0) | 0; }
-
-/* C ref: hacklib.c time_from_yyyymmddhhmmss() / getnow() (coverage N/A). */
-function time_from_yyyymmddhhmmss_rst(buf) {
-    const s = String(buf ?? '');
-    if (s.length < 14) return 0;
-    const n = (a, b) => Number(s.slice(a, b));
-    return Date.UTC(n(0, 4), n(4, 6) - 1, n(6, 8), n(8, 10), n(10, 12), n(12, 14)) / 1000;
-}
-function getnow_rst() {
-    return Math.floor((game.datetime?.getTime?.() ?? Date.now()) / 1000);
-}
 
 /* C ref: files.c create_levelfile() (coverage N/A).  This port has NO level
    files at all — js/save.js's create_levelfile_sv() is the same stub — so this
@@ -1237,15 +1262,19 @@ export async function restgamestate(nhfp) {
         game.u.uhp = 0;
     }
 
+    /* C ref: restore.c restgamestate() ubirthday / urealtime.start_timing,
+       parsed and stamped through calendar.c time_from_yyyymmddhhmmss() and
+       getnow() (the recorder's fixed datetime), never the host clock. */
+    const { time_from_yyyymmddhhmmss, getnow } = await import('./calendar.js');
     timebuf = Sfi(nhfp, 'gamestate-ubirthday', '');
-    game.ubirthday = time_from_yyyymmddhhmmss_rst(timebuf);
+    game.ubirthday = time_from_yyyymmddhhmmss(timebuf);
     if (!game.urealtime) game.urealtime = {};
     game.urealtime.realtime = Sfi(nhfp, 'gamestate-realtime', 0);
     timebuf = Sfi(nhfp, 'gamestate-start_timing', '');
-    game.urealtime.start_timing = time_from_yyyymmddhhmmss_rst(timebuf);
+    game.urealtime.start_timing = time_from_yyyymmddhhmmss(timebuf);
 
     /* current time is the time to use for next urealtime.realtime update */
-    game.urealtime.start_timing = getnow_rst();
+    game.urealtime.start_timing = getnow();
 
     {
         const { set_uasmon } = await import('./polyself.js');
@@ -1563,7 +1592,7 @@ export async function dorecover(nhfp) {
     /* clear_nhwindow(WIN_MESSAGE) */
     game._pending_message = '';
     game._toplin = 0;
-    game._toplines = '';
+    /* clear_nhwindow(WIN_MESSAGE) leaves gt.toplines alone */
 
     /* Success! */
     /* welcome(FALSE) — allmain.c; welcome_back_message() above is this port's
@@ -2071,17 +2100,11 @@ export function restore_msghistory(nhfp) {
             break;
         }
         msg = String(rec?.msg ?? '').slice(0, msgsize);
-        /* putmsghistory(msg, TRUE) — wintty.c; js/invent.js:1252 keeps a
-           module-private no-op stub of it, so the ring js/save.js's
-           save_msghistory() walks (game._msghistory, C's gt.msgs) is written
-           directly here. */
-        if (!game._msghistory) game._msghistory = [];
-        game._msghistory.push(msg);
+        putmsghistory(msg, true);
         ++msgcount;
     }
-    if (msgcount) {
-        /* putmsghistory((char *) 0, TRUE) — the "done" marker */
-    }
+    if (msgcount)
+        putmsghistory(null, true);
     /* debugpline1("Read %d messages from savefile.", msgcount) */
 }
 

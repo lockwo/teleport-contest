@@ -661,11 +661,15 @@ function config_error_nextline(line) {
 
 // C ref: cfgfiles.c config_erradd().  The period is added to the MESSAGE, not
 // to buf[], and only when buf doesn't already end in one of ".!?".
+// Outside config-file reading (`!program_state.config_error_ready`) C pline()s the
+// message: an interactive 'O' handler that reads a value installs `inGameErrors` to
+// collect everything string_for_opt()/the optfn setters report, in order.
+let inGameErrors = null;
 function config_error_add(buf) {
     const ced = config_error_data;
     if (!buf) buf = 'Unknown error';
     const punct = '.!?'.includes(buf[buf.length - 1]) ? '' : '.';
-    if (!ced) return;
+    if (!ced) { if (inGameErrors) inGameErrors.push(buf); return; }
     ced.num_errors++;
     if (!ced.origline_shown) {
         raw_print('\n' + ced.origline);
@@ -1492,6 +1496,13 @@ function set_boolean(name, value, result) {
     // C: iflags.altmeta (cmd.c readchar_core()'s ESC+char -> M-char combining
     // gate), not a flags.* field.
     case 'altmeta': result.iflags.altmeta = value; break;
+    // C: optlist.h NHOPTB bp column — &iflags.autodescribe, &iflags.pricequotes,
+    // &iflags.query_menu, &a11y.mon_movement; getpos.js/objnam.js/cmd.js/monmove.js
+    // read those, not game.flags[<option name>].
+    case 'autodescribe': result.iflags.autodescribe = value; break;
+    case 'price_quotes': result.iflags.pricequotes = value; break;
+    case 'query_menu': result.iflags.query_menu = value; break;
+    case 'mon_movement': (result.a11y = result.a11y || {}).mon_movement = value; break;
     // The five wizard-mode-only (setwhere==set_wizonly) booleans: C's addr is
     // an iflags.* field, most under a name that differs from the option name
     // (optlist.h NHOPTB bp column).  Falling through to the `default:` arm
@@ -2056,19 +2067,30 @@ const PARANOIA = [
     [0x0008, 'bones', 1, null, 0],
     [0x0010, 'attack', 1, 'hit', 1],
     [0x0080, 'wand-break', 2, 'break-wand', 2],
-    [0x0100, 'eat', 1, 'continue', 4],
-    [0x0200, 'Were-change', 2, null, 0],
-    [0x0400, 'pray', 1, null, 0],
+    [0x0200, 'eat', 1, 'continue', 4],
+    [0x0100, 'Were-change', 2, null, 0],
+    [0x0020, 'pray', 1, null, 0],
     [0x0800, 'trap', 1, 'move-trap', 1],
     [0x1000, 'Autoall', 2, 'autoselect-all', 2],
-    [0x2000, 'swim', 1, null, 0],
+    [0x0400, 'swim', 1, null, 0],
     [0x0040, 'Remove', 1, 'Takeoff', 1],
     [0, 'none', 4, null, 0],
     [~0, 'all', 3, null, 0],
 ];
+// C ref: options.c optfn_paranoid_confirmation() get_val: the argnames of the set bits in paranoia[]
+// order, space separated ("none" when empty); 'bones' is hidden outside wizard mode.
+export function paranoid_confirmation_val(bits, wizard) {
+    const names = [];
+    for (const [mask, argname] of PARANOIA) {
+        if (mask === 0) break; /* C: loop ends at the "none" row, never reaching "all" */
+        if ((bits & mask) !== 0 && (mask !== PARANOID_BONES || wizard)) names.push(argname);
+    }
+    return names.length ? names.join(' ') : 'none';
+}
 function optfn_paranoid_confirmation(o, opt_negated, opts, op, result) {
     let plus_or_minus = false;
-    let bits = result.flags.paranoia_bits | 0;
+    /* C initoptions_init(): flags.paranoia_bits = PARANOID_PRAY | PARANOID_SWIM | PARANOID_TRAP */
+    let bits = result.flags.paranoia_bits ?? 0x0c20;
 
     if (strncmpi_eq(opts, 'prayconfirm', 4)) {
         if (op !== '') {
@@ -2476,15 +2498,21 @@ function optfn_statuslines(o, negated, opts, op, result, error = config_error_ad
     return retval;
 }
 
-// C ref: options.c doset_simple_menu():8672-8679 feeds the getlin response
-// through the same optfn_statuslines() setter used by the config parser.
+// C ref: options.c doset_simple_menu():8672-8679 / doset():8944-8953 feed the
+// getlin response through the same optfn_statuslines() setter used by the
+// config parser.  Returns null when the prompt was ESCaped (the caller then
+// skips preference_update), else whether the value was accepted.
 export async function handler_statuslines() {
     const answer = await getlin('Set statuslines to what?');
-    if (answer[0] === '\x1b') return false;
+    if (answer[0] === '\x1b') return null;
     const result = { flags: {}, iflags: {} };
     const errors = [];
-    const status = optfn_statuslines({ name: 'statuslines' }, false,
-        `statuslines:${answer}`, answer, result, message => errors.push(message));
+    inGameErrors = errors;
+    let status;
+    try {
+        status = optfn_statuslines({ name: 'statuslines' }, false,
+            `statuslines:${answer}`, answer, result, message => errors.push(message));
+    } finally { inGameErrors = null; }
     for (const message of errors) await OPT_MENU_DRIVER.error(message);
     if (status !== OPTN_OK) return false;
     game.iflags = game.iflags || {};
@@ -2602,12 +2630,13 @@ function optfn_whatis_coord(o, negated, opts, op, result) {
 
 // C ref: options.c optfn_whatis_filter().
 function optfn_whatis_filter(o, negated, opts, op, result) {
-    if (negated) { result.iflags.getloc_filter = 'n'; return OPTN_OK; }
+    if (negated) { result.iflags.getloc_filter = 0; /* GFILTER_NONE */ return OPTN_OK; }
     op = string_for_env_opt(o.name, opts, false);
     if (op === '') return OPTN_ERR;
     switch (lowc(op[0])) {
     case 'n': case 'v': case 'a':
-        result.iflags.getloc_filter = lowc(op[0]);
+        /* GFILTER_NONE/VIEW/AREA */
+        result.iflags.getloc_filter = { n: 0, v: 1, a: 2 }[lowc(op[0])];
         keep(o, op, result);
         return OPTN_OK;
     default:
@@ -2912,7 +2941,7 @@ const COLORNAMES = [
 ];
 // C ref: include/color.h ATR_*, coloratt.c attrnames[].
 const ATR_NONE = 0, ATR_BOLD = 1, ATR_DIM = 2, ATR_ITALIC = 3, ATR_ULINE = 4,
-      ATR_BLINK = 5, ATR_INVERSE = 6;
+      ATR_BLINK = 5, ATR_INVERSE = 7; // wintype.h:134 (this was 6, disagreeing with coloratt.js/botl.js)
 const ATTRNAMES = [
     ['none', ATR_NONE], ['bold', ATR_BOLD], ['dim', ATR_DIM],
     ['italic', ATR_ITALIC], ['underline', ATR_ULINE], ['blink', ATR_BLINK],
@@ -7191,7 +7220,7 @@ export function initoptions_init() {
     flags.end_top = 3;
     flags.end_around = 2;
     /* PARANOID_PRAY | PARANOID_SWIM | PARANOID_TRAP */
-    flags.paranoia_bits = 0x0400 | 0x2000 | 0x0800;
+    flags.paranoia_bits = 0x0020 | 0x0400 | 0x0800;
     flags.versinfo = have_branch ? 4 : 1;
     flags.pile_limit = PILE_LIMIT_DFLT;  /* 5 */
     flags.runmode = 'run';               /* RUN_LEAP; port stores the name */

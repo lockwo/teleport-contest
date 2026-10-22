@@ -14,9 +14,9 @@ import {
 } from './const.js';
 import { acurr_eff } from './attrib.js';
 import { fmonOrder } from './mon.js';
-import { m_at, newsym, update_topl } from './display.js';
+import { m_at, newsym, update_topl, You_hear, You_feel } from './display.js';
 import { cansee, Blind } from './vision.js';
-import { Is_stronghold, In_sokoban } from './const.js';
+import { Is_stronghold, In_sokoban, SHOPBASE, STRAT_WAITMASK } from './const.js';
 import {
     mindless, humanoid, is_flyer_flag, is_mercenary_flag, mflags1_of,
     M1_CLING, M1_CONCEAL,
@@ -42,7 +42,6 @@ const MAGIC_TOOL = new Set([MAGIC_FLUTE, FROST_HORN, FIRE_HORN,
 const ECMD_OK = 0x00, ECMD_TIME = 0x01;
 const TOOL_CLASS = 6;
 const S_SNAKE = 45, S_NYMPH = 14, S_PIERCER = 16; // defsym.h MONSYM indices
-const STRAT_WAITMASK = 0x03000000;
 const TT_PIT = 2, TT_BURIEDBALL = 7;
 const PM_ARCHEOLOGIST = 0;
 
@@ -262,7 +261,7 @@ async function do_pit(x, y, tu_pit) {
             mtmp.mtrapped = 1;
             if (!m_already_trapped) {
                 if (cansee(x, y)) await update_topl(`${Monnam(mtmp)} falls into a chasm!`);
-                else if (humanoid(p)) await update_topl('You hear a scream!');
+                else if (humanoid(p)) await You_hear('a scream!');
             }
             {
                 const { mselftouch } = await import('./trap.js');
@@ -347,7 +346,7 @@ async function do_earthquake(force) {
                         if (cansee(x, y))
                             await update_topl(`${upstart(x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false))} is shaken loose from the ceiling!`);
                         else if (!is_flyer(mdata(mtmp)))
-                            await update_topl('You hear a thump.');
+                            await You_hear('a thump.');
                     }
                 }
             }
@@ -406,6 +405,11 @@ async function do_earthquake(force) {
                 loc.doormask = 0;
                 newsym(x, y);
                 if (cansee(x, y)) await update_topl('The door collapses.');
+                {
+                    const { in_rooms } = await import('./shkroom.js');
+                    if (in_rooms(x, y, SHOPBASE)[0])
+                        await (await import('./shk.js')).add_damage(x, y, 0);
+                }
                 break;
             default:
                 break;
@@ -484,12 +488,12 @@ async function do_improvisation(instr) {
         await update_topl(`You start playing your ${xname(instr)}.`);
         break;
     case PLAY_STUNNED:
-        await update_topl(!Deaf() ? 'You radiate an obnoxious droning sound.'
-                                  : 'You feel a monotonous vibration.');
+        await (!Deaf() ? update_topl('You radiate an obnoxious droning sound.')
+                : You_feel('a monotonous vibration.'));
         break;
     case PLAY_CONFUSED:
-        await update_topl(!Deaf() ? 'You generate a raucous noise.'
-                                  : 'You feel a jarring vibration.');
+        await (!Deaf() ? update_topl('You generate a raucous noise.')
+                : You_feel('a jarring vibration.'));
         break;
     case PLAY_HALLU:
         await update_topl('You disseminate a kaleidoscopic display of floating butterflies.');
@@ -503,7 +507,7 @@ async function do_improvisation(instr) {
 
     switch (itmp_otyp) {
     case MAGIC_FLUTE:                                /* put monsters to sleep */
-        consume_obj_charge(instr, true);
+        await consume_obj_charge(instr, true);
         await update_topl(`You ${!Deaf() ? '' : 'seem to '}produce ${
             Hallucination() ? 'piped' : 'soft'}${same_old_song ? ', familiar' : ''} music.`);
         await put_monsters_to_sleep((u.ulevel | 0) * 5);
@@ -515,13 +519,13 @@ async function do_improvisation(instr) {
             await update_topl(`${Tobjnam(instr, do_spec ? 'trill' : 'toot')}${
                 same_old_song ? ' a familiar tune' : ''}.`);
         else
-            await update_topl(`You feel ${yname(instr)} ${do_spec ? 'trill' : 'toot'}.`);
+            await You_feel(`${yname(instr)} ${do_spec ? 'trill' : 'toot'}.`);
         if (do_spec) await charm_snakes((u.ulevel | 0) * 3);
         exercise(A_DEX, true);
         break;
     case FIRE_HORN:                                  /* wand of fire */
     case FROST_HORN: {                               /* wand of cold */
-        consume_obj_charge(instr, true);
+        await consume_obj_charge(instr, true);
         const { getdir } = await import('./cmd.js');
         const got = await getdir(null);
         if (!got) {
@@ -565,12 +569,12 @@ async function do_improvisation(instr) {
         exercise(A_WIS, false);
         break;
     case MAGIC_HARP:                                 /* charm monsters */
-        consume_obj_charge(instr, true);
+        await consume_obj_charge(instr, true);
         if (!Deaf())
             await update_topl(`${Tobjnam(instr, 'produce')} very attractive${
                 same_old_song ? ' and familiar' : ''} music.`);
         else
-            await update_topl('You feel very soothing vibrations.');
+            await You_feel('very soothing vibrations.');
         await charm_monsters(Math.trunc(((u.ulevel | 0) - 1) / 3) + 1);
         exercise(A_DEX, true);
         break;
@@ -582,12 +586,12 @@ async function do_improvisation(instr) {
                 : do_spec ? 'produces a lilting melody'
                 : same_old_song ? 'twangs a familiar tune' : 'twangs'}.`);
         else
-            await update_topl('You feel soothing vibrations.');
+            await You_feel('soothing vibrations.');
         if (do_spec) await calm_nymphs((u.ulevel | 0) * 3);
         exercise(A_DEX, true);
         break;
     case DRUM_OF_EARTHQUAKE:                         /* create several pits */
-        consume_obj_charge(instr, true);
+        await consume_obj_charge(instr, true);
         await update_topl('You produce a heavy, thunderous rolling!');
         await update_topl(`The entire ${generic_lvl_desc()} is shaking around you!`);
         await do_earthquake(Math.trunc(((u.ulevel | 0) - 1) / 3) + 1);
@@ -612,6 +616,9 @@ async function do_improvisation(instr) {
         await awaken_monsters((u.ulevel | 0) * (mundane ? 5 : 40));
         game.disp = game.disp || {};
         game.disp.botl = true;
+        /* disp.botl = TRUE (music.c:722): any later pline's flush_screen() now runs
+           bot(), so only a --More-- raised inside awaken_monsters() shows the old status */
+        delete game._deafPending;
         break;
     default:
         return 0;                                    /* impossible() */
@@ -678,6 +685,8 @@ export async function do_play_instrument(instr) {
                     if (found) {
                         u.uevent = u.uevent || {};
                         u.uevent.uheard_tune = 2;
+                        /* C ref: music.c:825 record_achievement(ACH_TUNE) */
+                        (await import('./insight.js')).record_achievement(31 /* ACH_TUNE */);
                         const loc = game.level?.at?.(found.x ?? x, found.y ?? y);
                         if (loc && loc.typ === DRAWBRIDGE_DOWN)
                             await close_drawbridge(found.x ?? x, found.y ?? y);
@@ -715,14 +724,16 @@ export async function do_play_instrument(instr) {
                 }
                 if (tumblers) {
                     if (gears)
-                        await update_topl(`You hear ${tumblers} tumbler${tumblers === 1 ? '' : 's'
+                        await You_hear(`${tumblers} tumbler${tumblers === 1 ? '' : 's'
                             } click and ${gears} gear${gears === 1 ? '' : 's'} turn.`);
                     else
-                        await update_topl(`You hear ${tumblers} tumbler${tumblers === 1 ? '' : 's'} click.`);
+                        await You_hear(`${tumblers} tumbler${tumblers === 1 ? '' : 's'} click.`);
                 } else if (gears) {
-                    await update_topl(`You hear ${gears} gear${gears === 1 ? '' : 's'} turn.`);
+                    await You_hear(`${gears} gear${gears === 1 ? '' : 's'} turn.`);
                     if (gears === 5) {
                         u.uevent.uheard_tune = 2;
+                        /* C ref: music.c:888 record_achievement(ACH_TUNE) */
+                        (await import('./insight.js')).record_achievement(31 /* ACH_TUNE */);
                     }
                 }
             }

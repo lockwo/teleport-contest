@@ -3,13 +3,15 @@
 // num_spells, the cast command entry (docast / getspell + dospellmenu) and
 // spelleffects for the healing-on-self case exercised by the gameplay sessions.
 
+import { defended } from './artifact.js';
 import { nomul } from './hack.js';
 import { MENU_TRADITIONAL } from './const.js';
+import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
 import { game } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
-         tmp_at, zapdir_to_glyph } from './display.js';
+         tmp_at, zapdir_to_glyph, status_hold, You_hear, You_feel, stairway_at } from './display.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { objects, mksobj, weight, set_bknown, SPE_BLANK_PAPER, SPE_NOVEL } from './mkobj.js';
 import { SPELL_META } from './u_init.js';
@@ -18,10 +20,9 @@ import { A_WIS, A_INT, A_STR, P_UNSKILLED, P_EXPERT, P_SKILLED, P_BASIC,
          isok, u_at, IS_STWALL, IS_DOOR, IS_TREE, ZAP_POS, SPACE_POS,
          D_ISOPEN, D_CLOSED, D_LOCKED, POOL, MOAT, DRAWBRIDGE_UP, LAVAPOOL,
          CLOUD, N_DIRS, xdir, ydir, SPINE, NO_MINVENT, ACH_INVK, ACH_NOVL,
-         Is_waterlevel, NO_KILLER_PREFIX, EXPL_FIERY, EXPL_FROSTY, HEAD,
-         SICK_ALL } from './const.js';
+         Is_waterlevel, NO_KILLER_PREFIX, EXPL_FIERY, EXPL_FROSTY, HEAD } from './const.js';
 import { p_skill_of, use_skill } from './enhance.js';
-import { monster_by_pmidx, makemon, set_malign, name_to_pmidx } from './makemon.js';
+import { monster_by_pmidx, makemon, makemon_appears_msg, set_malign, name_to_pmidx } from './makemon.js';
 import { mflags2_of, M2_UNDEAD,
          is_animal } from './monflags_data.js';
 import { discover_object, observe_object } from './o_init.js';
@@ -33,6 +34,7 @@ import { find_ac } from './u_init.js';
 import { DEADMONSTER } from './mon.js';
 import { resists_elec, can_chant } from './mondata.js';
 import { has_innate } from './exper.js';
+import { invocation_pos } from './trap.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
 const MAT_IRON = 11, MAT_MITHRIL = 17;
@@ -448,7 +450,7 @@ async function spelleffects_check(spell) {
     // Carrying the Amulet drains energy on every cast attempt (rnd(2*energy)),
     // and the attempt costs a turn even when the drain leaves too little Pw.
     if (u.uhave?.amulet && u.uen >= energy) {
-        await pline('You feel the amulet draining your energy away.');
+        await You_feel('the amulet draining your energy away.');
         u.uen -= rnd(2 * energy);
         if (u.uen < 0) u.uen = 0;
         game.botl = true;
@@ -489,7 +491,7 @@ async function spelleffects_check(spell) {
 export async function spelleffects_ext(spell_otyp) {
     return await spelleffects(spell_otyp, false, false);
 }
-async function spelleffects(spell_otyp, atme, force) {
+export async function spelleffects(spell_otyp, atme, force) {
     const spell = force ? spell_otyp : spell_idx(spell_otyp);
     let energy = 0;
     if (!force) {
@@ -510,6 +512,11 @@ async function spelleffects(spell_otyp, atme, force) {
         energy = chk.energy;
     }
 
+    /* C sets disp.botl here but only bot()s at the next flush_screen(), so a
+       menu or prompt raised by the spell's own effect (identify's "What would
+       you like to identify first?", getdir, jumping's getpos) still shows the
+       Pw the last bot() published */
+    if (!game.botl && !game.botlx) status_hold('uen', game.u.uen);
     game.u.uen -= energy;
     game.botl = true;
     exercise(A_WIS, true);
@@ -727,13 +734,13 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
     /* end of potion-like spells */
 
     case SPE_CURE_BLINDNESS:
-        await healup(0, 0, false, true);
+        await (await import('./potion.js')).healup(0, 0, false, true);
         break;
     case SPE_CURE_SICKNESS: {
         const was_sick = !!(u?.uprops?.Sick), was_slimed = !!(u?.uprops?.Slimed);
 
         /* cure conditions (which updates status) before feedback */
-        await healup(0, 0, true, false);
+        await (await import('./potion.js')).healup(0, 0, true, false);
         /*
          *  Sick + !Slimed -- You are no longer ill.
          * !Sick + !Slimed -- You are not ill.
@@ -794,41 +801,6 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
     return ECMD_TIME;
 }
 
-// C ref: potion.c healup(nhp, nxtra, curesick, cureblind).  Heal the hero (or
-// the polymorphed form), then cure blindness and deafness, then vomiting and
-// sickness, and mark the status line dirty.  Shared by the cure spells here
-// and by zap.c zapyourself()'s healing arm.
-export async function healup(nhp, nxtra, curesick, cureblind) {
-    const u = game.u;
-    if (nhp) {
-        if (u.Upolyd) {
-            u.mh = (u.mh | 0) + nhp;
-            if (u.mh > (u.mhmax | 0)) u.mh = (u.mhmax = (u.mhmax | 0) + nxtra);
-        } else {
-            u.uhp = (u.uhp | 0) + nhp;
-            if (u.uhp > u.uhpmax) {
-                u.uhp = (u.uhpmax = (u.uhpmax | 0) + nxtra);
-                if (u.uhpmax > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
-            }
-        }
-    }
-    if (cureblind) {
-        /* 3.6.1: it's debatable whether healing magic should clean off
-           mundane 'dirt', but if it doesn't, blindness isn't cured */
-        u.ucreamed = 0;
-        const { make_blinded_hero, make_deaf } = await import('./potion.js');
-        await make_blinded_hero(0, true);
-        /* heal deafness too */
-        await make_deaf(0, true);
-    }
-    if (curesick) {
-        const { make_vomiting, make_sick } = await import('./potion.js');
-        await make_vomiting(0, true);
-        await make_sick(0, null, true, SICK_ALL);
-    }
-    game.botl = true;
-}
-
 // C ref: include/objects.h SPELL(...,delay,...) — objects[otyp].oc_delay, the
 // per-spellbook study delay (parallel to SPELL_META's oc_level).  The JS objects
 // table doesn't carry oc_delay, so it lives here keyed by otyp (SPE_*).
@@ -856,13 +828,13 @@ async function cursed_book(bp) {
     const lev = spell_level_of(bp.otyp); // objects[bp->otyp].oc_level
     switch (rn2(lev)) {
     case 0: {
-        await update_topl('You feel a wrenching sensation.');
+        await You_feel('a wrenching sensation.');
         const { scrolltele } = await import('./read.js');
         await scrolltele(null); // C tele(void)
         break;
     }
     case 1: {
-        await update_topl('You feel threatened.');
+        await You_feel('threatened.');
         const { aggravate } = await import('./monmove.js');
         aggravate();
         break;
@@ -1197,8 +1169,9 @@ export async function learn_step() {
     exercise(A_WIS, true);                    /* you're studying */
     let booktype = book.otyp;
     if (booktype === SPE_BOOK_OF_THE_DEAD) {
-        // deadbook() is the Book of the Dead ritual; not reachable here.
-        sb.book = 0; sb.o_id = 0;
+        // C ref: spell.c learn(): `deadbook(book); return 0;` -- spbook.book is
+        // deliberately left set (the end-of-learn clearing below is not reached).
+        await deadbook(book);
         return 0;
     }
 
@@ -1345,9 +1318,6 @@ async function select_menu_inner(win, how) {
 // sp_ so they cannot claim display.c coverage they do not deliver — the same
 // convention js/apply.js:1636 uses for its jump-hilite loop.
 const DISP_BEAM = -1, DISP_CHANGE = -6, DISP_END = -7; // include/display.h
-const S_goodpos = 0;                                   // include/defsym.h cmap
-function sp_tmp_at(_x, _y) {}
-function sp_cmap_to_glyph(_cmap) { return 0; }
 function sp_zapdir_to_glyph(_dx, _dy, _beam_type) { return 0; }
 function sp_nh_delay_output() { nh_delay_output_tick(); }
 
@@ -1407,17 +1377,8 @@ function sp_pm(name) {
     if (!_sp_pmcache.has(name)) _sp_pmcache.set(name, name_to_pmidx(name));
     return _sp_pmcache.get(name);
 }
-// C ref: dungeon.c invocation_pos(x, y) / stairs.c On_stairs(x, y).  js/apply.js
-// and js/artifact.js each keep the same two-line pair; kept local for the same
-// reason (neither is exported anywhere).
-function sp_invocation_pos(x, y) {
-    const inv = game.level?.invocation_pos;
-    return !!inv && inv.x === x && inv.y === y;
-}
-function sp_On_stairs(x, y) {
-    const st = game.level?.stairs || [];
-    return st.some((s) => s && s.sx === x && s.sy === y);
-}
+// C ref: stairs.c On_stairs(x, y); invocation_pos() is shared from trap.js.
+function sp_On_stairs(x, y) { return stairway_at(x, y) != null; }
 // C ref: youprop.h Confusion.
 function sp_Confusion() {
     const u = game.u;
@@ -1479,11 +1440,17 @@ export async function deadbook(book2) {
         let mtmp = null;
         await pline('You raised the dead!');
         /* first maybe place a dangerous adversary */
-        if (!rn2(3)
-            && ((mtmp = makemon(monster_by_pmidx(sp_pm('master lich')),
-                                u.ux, u.uy, NO_MINVENT)) != null
-                || (mtmp = makemon(monster_by_pmidx(sp_pm('nalfeshnee')),
-                                   u.ux, u.uy, NO_MINVENT)) != null)) {
+        if (!rn2(3)) {
+            mtmp = makemon(monster_by_pmidx(sp_pm('master lich')),
+                           u.ux, u.uy, NO_MINVENT);
+            if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, NO_MINVENT);
+            else {
+                mtmp = makemon(monster_by_pmidx(sp_pm('nalfeshnee')),
+                               u.ux, u.uy, NO_MINVENT);
+                if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, NO_MINVENT);
+            }
+        }
+        if (mtmp) {
             mtmp.mpeaceful = 0;
             set_malign(mtmp);
         }
@@ -1512,7 +1479,7 @@ export async function deadbook(book2) {
     observe_object(book2); /* in case blind now and hasn't been seen yet */
     /* KMH -- Need ->known to avoid "_a_ Book of the Dead" */
     book2.known = 1;
-    if (sp_invocation_pos(u.ux, u.uy) && !sp_On_stairs(u.ux, u.uy)) {
+    if (invocation_pos(u.ux, u.uy) && !sp_On_stairs(u.ux, u.uy)) {
         let arti1_primed = false, arti2_primed = false, arti_cursed = false;
 
         if (book2.cursed) {
@@ -1527,7 +1494,7 @@ export async function deadbook(book2) {
             if (!u.uhave?.bell) {
                 // C: Soundeffect(se_faint_chime, 30); You_hear("a faint
                 // chime...") — You_hear is suppressed while Deaf.
-                await pline('You hear a faint chime...');
+                await You_hear('a faint chime...');
             }
             if (!u.uhave?.menorah)
                 await pline("Vlad's doppelganger is amused.");
@@ -1767,7 +1734,7 @@ export async function propagate_chain_lightning(clq, zap_in) {
     // When hitting a monster that isn't electricity-resistant, a particular
     // zap regains all its power; upon hitting a shock-resistant monster it
     // can't continue, but we let it hit the monster to show the shield effect.
-    if (mon && !resists_elec(mon) && !sp_defended_elec(mon))
+    if (mon && !resists_elec(mon) && !defended(mon, AD_ELEC))
         zap.strength = 3;
     else if (mon)
         zap.strength = 0;
@@ -1912,14 +1879,6 @@ async function sp_wakeup(mon, via_attack) {
     const { wakeup } = await import('./zap.js');
     await wakeup(mon, via_attack);
 }
-function sp_defended_elec(_mon) {
-    // js/artifact.js:617, js/mhitm_ad.js:142 and js/zap.js each keep a private
-    // defended(); propagate_chain_lightning() is sync in C so it cannot await a
-    // dynamic import.  FALSE is right for every monster without a shock-
-    // resisting artifact or dragon-scale armor; the fix is to EXPORT one of the
-    // three originals and call it here, not to write a fourth copy.
-    return false;
-}
 function sp_exclam(force) { return force < 0 ? '?' : (force <= 4 ? '.' : '!'); }
 async function sp_mon_nam(mon) {
     const { mon_nam } = await import('./do_name.js');
@@ -1953,14 +1912,14 @@ export function can_center_spell_location(x, y) {
 }
 
 // C ref: spell.c:1626 display_spell_target_positions(on_off) — hilite every
-// square a spell can be centred on.  Display-only (see sp_tmp_at); RNG-free.
+// square a spell can be centred on.  The getpos_hilitefunc; RNG-free.
 export function display_spell_target_positions(on_off) {
     let x, y, dx, dy;
     const dist = 10;
 
     if (on_off) {
         /* on */
-        sp_tmp_at(DISP_BEAM, sp_cmap_to_glyph(S_goodpos));
+        goodpos_tmp_at_begin();
         for (dx = -dist; dx <= dist; dx++)
             for (dy = -dist; dy <= dist; dy++) {
                 x = (game.u?.ux ?? 0) + dx;
@@ -1970,11 +1929,11 @@ export function display_spell_target_positions(on_off) {
                 if (u_at(x, y))
                     continue;
                 if (can_center_spell_location(x, y))
-                    sp_tmp_at(x, y);
+                    goodpos_tmp_at(x, y);
             }
     } else {
         /* off */
-        sp_tmp_at(DISP_END, 0);
+        goodpos_tmp_at_end();
     }
 }
 
@@ -1997,12 +1956,14 @@ export async function throwspell() {
     const cc = { x: u.ux, y: u.uy };
     // C: getpos_sethilite(display_spell_target_positions,
     //                     can_center_spell_location) — js/hack.js's getpos()
-    // takes the validator as an argument instead of through the two globals,
-    // and paints no beam overlay (see sp_tmp_at).
+    // takes the validator and the painter as arguments instead of through the
+    // two globals.
     const { getpos } = await import('./hack.js');
     const pos = await getpos('the desired position', cc.x, cc.y,
                              (x, y) => can_center_spell_location(x, y),
-                             /*force=*/true);
+                             /*force=*/true,
+                             /*verbose=*/game.flags?.verbose !== false,
+                             false, false, display_spell_target_positions);
     if (!pos)
         return 0; /* user pressed ESC */
     cc.x = pos.x;

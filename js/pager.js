@@ -22,6 +22,7 @@ import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines } from './options.js';
 import { NO_COLOR, ATR_INVERSE, CLR_WHITE } from './terminal.js';
+import { menuHeadAttr } from './menuattr.js';
 import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
@@ -75,6 +76,8 @@ export function tty_putstr_text(out, ln) {
     const isStr = typeof ln === 'string';
     const mk = (t) => (isStr ? t : { ...ln, text: t });
     let str = compress_str(String(isStr ? ln : (ln?.text ?? '')));
+    // n0 = strlen(str) + 1 is what raises cw->maxcol, BEFORE the line is broken.
+    const n0 = str.length + 1;
     for (;;) {
         if (str.length + 1 > COLS) {
             let i = COLS - 1;
@@ -88,6 +91,7 @@ export function tty_putstr_text(out, ln) {
         out.push(mk(str));
         break;
     }
+    return n0;
 }
 
 // `lines` may be plain strings (ATR_NONE) or {text, attr} objects.
@@ -380,6 +384,12 @@ function buildKeymap() {
         [metaKey('2'), 'twoweapon'], [metaKey('N'), 'name'],
     ];
     for (const [k, t] of overrides) { const e = byTxt(t); if (e) map.set(k, e); }
+    /* nethackrc BIND= lines (cmd.c bind_key()) replace or remove a key's command */
+    for (const [ch, txt] of Object.entries(game.keybind || {})) {
+        const code = ch.charCodeAt(0);
+        const e = txt === 'nothing' ? null : byTxt(txt);
+        if (e) map.set(code, e); else map.delete(code);
+    }
     // Movement rebind (MOVEMENTCMD) overwrites the movement keys; which keys
     // those are follows Cmd.dirchars, and with number_pad only the walk digit
     // and its Meta form are claimed (digits have no Shift/Ctrl form).
@@ -628,7 +638,7 @@ export async function dohelp() {
     // The prompt/title carries iflags.menu_headings (default "no-color&inverse")
     // via tty_menu_promptstyle, so it renders ATR_INVERSE; the rest are plain.
     const lines = [];
-    lines.push({ text: 'Select one item:', attr: ATR_INVERSE });
+    lines.push({ text: 'Select one item:', attr: menuHeadAttr() });
     lines.push({ text: '', attr: 0 });
     for (const it of items) lines.push({ text: `${it.accel} - ${it.text}`, attr: 0 });
 
@@ -924,7 +934,7 @@ export async function whatis_menu_pick(render) {
 // site to be wired one at a time.  js/hack.js already carries call-site
 // specialised derivatives of several of these under different names
 // (self_lookat, terrain_description, look_at_object_here,
-// look_at_monster_desc, mon_hidden_suffix, do_look_all, do_look_engrs,
+// do_look_all, do_look_engrs,
 // count_seen_traps, do_look_full, do_farlook, checkfile); those remain the
 // live code.  The versions here are the general C shape.
 //
@@ -955,7 +965,7 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          MHID_PREFIX, MHID_ARTICLE, MHID_ALTMON, MHID_REGION,
          M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
          GPCOORDS_NONE, GPCOORDS_MAP, GPCOORDS_SCREEN, GPCOORDS_COMPASS,
-         GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel,
+         GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel, Is_rogue_level,
          Is_airlevel, Is_astralevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
          AM_MASK, AM_SANCTUM, Amask2align, A_CHAOTIC,
          A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED } from './const.js';
@@ -967,7 +977,7 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
          S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs,
          S_upstair, S_dnstair, S_upladder, S_dnladder,
-         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder }
+         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder, S_vodoor, S_hodoor, def_r_oc_syms }
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          update_topl, Hallucination_u, impossible as pg_impossible_async,
@@ -984,6 +994,7 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          mksobj, mkobj } from './mkobj.js';
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
+import { costly_spot } from './shk.js';
 import { rndmonnam as rndmonnam_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
@@ -1075,6 +1086,20 @@ function showsym(idx, fallback) {
             || (useDECgraphics() && !useDECgraphics('S_pool')
                 && CURSES_REMAPPED.has(idx - SYM_OFF_P))))
         return '\u0001';
+    /* C ref: do.c goto_level() assign_graphics(ROGUESET): on the Rogue level
+       gs.showsyms[] holds symbols.c init_rogue_symbols() -- doorways '+', stairs
+       '%' and drawing.c def_r_oc_syms (armor ']', amulet ',', food ':') -- so
+       farlook symbol-sharing lists differ there.  (init_symbols() is not run by
+       this port, so the table is rebuilt from those definitions.) */
+    if (Is_rogue_level(game.u?.uz)) {
+        if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS) {
+            const c = idx - SYM_OFF_P;
+            if (c === S_vodoor || c === S_hodoor || c === S_ndoor) return '+';
+            if (c === S_upstair || c === S_dnstair) return '%';
+        } else if (idx >= SYM_OFF_O && idx < SYM_OFF_O + MAXOCLASSES && def_r_oc_syms[idx - SYM_OFF_O]) {
+            return def_r_oc_syms[idx - SYM_OFF_O];
+        }
+    }
     const v = gs?.showsyms?.[idx];
     return (v && v !== 0) ? v : fallback;
 }
@@ -1095,6 +1120,9 @@ export function pg_glyph_at(x, y) {
     if (loc.invisMon && sym === DEF_INVISIBLE) return { kind: 'invisible', sym, x, y };
     if (pg_u_at(x, y) && canspotself())
         return { kind: 'monster', mon: null, isyou: true, sym, x, y };
+    /* a hallucinated statue is displayed as a (random) monster glyph; with no
+       monster on the square lookat() names it via rndmonnam() */
+    if (loc.disp_hstatue && !m_at(x, y)) return { kind: 'monster', mon: null, sym, x, y };
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
@@ -1105,6 +1133,17 @@ export function pg_glyph_at(x, y) {
     }
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym, x, y };
+    // C ref: pager.c lookat()/object_from_map() — glyph_at() holds the RANDOM
+    // object glyph the last newsym drew while Hallucination (hallucotyp), so the
+    // object is named from that otyp (a fabricated mksobj() stand-in), not from
+    // the real floor object whose class letter happens to match.
+    {
+        const hrem = loc.remembered_glyph;
+        if (Hallucination_u() && hrem?.hallucotyp != null && hrem.ch === sym
+            && !loc.disp_hstatue && vobj_at(x, y) && !covers_objects(loc))
+            return { kind: 'object', obj: null, otyp: hrem.hallucotyp,
+                     corpsenm: hrem.corpsenm, sym, x, y };
+    }
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
@@ -1136,6 +1175,10 @@ export function pg_glyph_at(x, y) {
     // cmap glyph (S_engroom/S_engrcorr) above the bare terrain.
     if (is_cmap_engraving_at(x, y) && sym === engraving_glyph(loc).ch)
         return { kind: 'cmap', sym, cmap: loc.typ === CORR ? S_engrcorr : S_engroom, x, y };
+    // A remembered base-element glyph (mkmaze.js setup_waterlevel()/movebubbles())
+    // is the cmap glyph C's glyph_at() returns, whatever the terrain is now.
+    if (remembered?.cmap != null && remembered.ch === sym)
+        return { kind: 'cmap', sym, cmap: remembered.cmap, dec: !!remembered.decgfx, x, y };
     // The remembered glyph is a wall even if the terrain was since dug out.
     if (remembered?.wall && remembered.ch === sym)
         return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
@@ -1562,9 +1605,6 @@ export function object_from_map(glyph, x, y) {
 // o_init.c observe_object(): dknown AND the type's oc_encountered flag (what
 // #discoveries lists), not just the per-object dknown bit.
 function observe_object_pg(obj) { observe_object(obj); }
-/* shk.c costly_spot(x, y) — inside a shop the hero has not paid in. */
-function costly_spot(_x, _y) { return false; }
-
 // C ref: pager.c:379 look_at_object(buf, x, y, glyph) — the object's name plus
 // the terrain suffix that says where it is stuck.
 export function look_at_object(x, y, glyph) {
@@ -1618,7 +1658,8 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
         if (game.u.uswallow || pg_iflags().save_uswallow)
             buf += pg_digests(data) ? ', swallowing you' : ', engulfing you';
         else
-            buf += ', holding you';
+            buf += (game.u?.Upolyd && pg_sticks(monster_by_pmidx(game.u.umonnum)))
+                ? ', being held' : ', holding you';
     }
     /* "if mtmp isn't able to move ... say so" */
     if (mtmp.mfrozen) buf += ", can't move (paralyzed or sleeping or busy)";
@@ -1682,6 +1723,14 @@ function rndmonnam() {
 /* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
 function pg_digests(ptr) {
     return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */ && a.adtyp === 26 /* AD_DGST */);
+}
+/* mondata.c sticks(ptr): AD_STCK, or AD_WRAP without AT_ENGL, or AT_HUGS */
+function pg_sticks(ptr) {
+    const m = ptr?.mattk || [];
+    const dmg = (d) => m.some((a) => a && a.adtyp === d);
+    return dmg(19 /* AD_STCK */)
+        || (dmg(28 /* AD_WRAP */) && !m.some((a) => a && a.aatyp === 11 /* AT_ENGL */))
+        || m.some((a) => a && a.aatyp === 7 /* AT_HUGS */);
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
@@ -1906,7 +1955,8 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
     const u = pg_u();
     let glyph = null, prefix, found = 0, skipped_venom = 0;
     let need_to_look = false;
-    const submerged = false;      /* Underwater is not modelled by this port */
+    /* C: Underwater && !Is_waterlevel(&u.uz); Underwater == u.uinwater */
+    const submerged = !!u.uinwater && !Is_waterlevel(u.uz);
     const hallucinate = Hallucination_u();
     const hit_trap = { v: false };
     let x_str = null;

@@ -287,3 +287,33 @@ export function rest_rooms(nhfp, subrooms = []) {
     subrooms[cursor.value].hx = -1;
     return { nroom: nroom.value, nsubroom: cursor.value };
 }
+
+// C ref: restore.c getlev():1133-1141 — doorindex is not saved, so every level
+// load (a revisit through goto_level() or a restored game's current level)
+// recomputes it from the LAST room alone:
+//     gd.doorindex = svr.rooms[svn.nroom - 1].fdoor + svr.rooms[svn.nroom - 1].doorct
+// (0 with no rooms).  That equals the generation-time count only when the
+// last room holds the final doors[] entries; otherwise doors[doorindex..] fall
+// outside the detect.c trap_detect()/display_trap_map() door loops until the
+// level is regenerated.
+export function restore_doorindex(level) {
+    if (level.nroom) {
+        const lastr = level.rooms[level.nroom - 1];
+        level.doorindex = (lastr?.fdoor | 0) + (lastr?.doorct | 0);
+    } else {
+        level.doorindex = 0;
+    }
+}
+
+// C ref: restore.c getlev():1146-1161 — the trap chain is rebuilt by reading
+// records and PREPENDING each (`trap->ntrap = gf.ftrap; gf.ftrap = trap`), while
+// save.c savetrapchn() wrote it head first.  So every save+load of a level
+// reverses gf.ftrap: a level revisited through goto_level(), the current level
+// of a restored game, and each other level once more for the getlev()+savelev()
+// copy dosave0() makes.  level.traps is the chain read tail-first (maketrap()
+// pushes, C prepends), so the same reversal is an in-place Array.reverse().
+// Order is observable only where a pass over the chain draws RNG per trap, e.g.
+// detect.c trap_detect() -> sense_trap() while hallucinating.
+export function reverse_trap_chain(level) {
+    level?.traps?.reverse();
+}

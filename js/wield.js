@@ -304,6 +304,7 @@ export async function dotwoweapon() {
 import { setuqwep, addinv_nomerge, is_pole, Tobjnam, is_weptool as inv_is_weptool,
          setuwep_slot } from './invent.js';
 import { is_art, artifact_light, ART_OGRESMASHER, ART_SNICKERSNEE } from './artifact.js';
+import { flush_hallucination_transitions } from './potion.js';
 import { GEM_CLASS } from './mkobj.js';
 
 // C ref: obj.h is_launcher/is_ammo/is_missile — oc_skill range tests, the same
@@ -354,6 +355,9 @@ export async function setuwep(obj, deps = {}) {
     if (obj === game.uwep)
         return;                 /* necessary to not set gu.unweapon */
     (deps.setworn || setuwep_slot)(obj);        /* setworn(obj, W_WEP) */
+    /* worn.c setworn() -> set_artifact_intrinsic() -> make_hallucinated():
+       Grayswandir's redraw/message runs before the Ogresmasher/Sunsword lines */
+    await flush_hallucination_transitions();
     /* handle Ogresmasher before Sunsword; even though they can't be happening
        at the same time, botl flag update should come before pline message */
     if (game.uwep === obj
@@ -416,6 +420,7 @@ export async function uwepgone(deps = {}) {
                 await pline(`${Tobjnam(game.uwep, 'stop')} shining.`);
         }
         setuwep_slot(null);             /* setworn(0, W_WEP) */
+        await flush_hallucination_transitions();
         game.unweapon = true;
         update_inventory();
     }

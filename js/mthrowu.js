@@ -13,7 +13,7 @@ import { objects, WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, ROCK_CLASS,
 import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
 import { acurr_eff } from './attrib.js';
-import { Hallucination_u, Deaf_hero } from './display.js';
+import { Hallucination_u, Deaf_hero, You_hear } from './display.js';
 
 // C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ), i.e. adtyp - 1.
 const BREATHWEP = [
@@ -52,17 +52,12 @@ export function breathwep_name(typ) {
     return BREATHWEP[(typ | 0) - 1] ?? 'strange breath';
 }
 
-// C ref: mthrowu.c:1154 m_useupall(mon, obj) — pull the whole stack out of the
-// monster's inventory and free it.
-export function m_useupall(mon, obj) {
+// C ref: mthrowu.c:1154 m_useupall(mon, obj) — extract_from_minvent(mon, obj,
+// TRUE, FALSE) (a worn/wielded item is unworn first) and free the object.
+export async function m_useupall(mon, obj) {
     if (!mon || !obj) return;
-    const inv = mon.minvent;
-    if (Array.isArray(inv)) {
-        const i = inv.indexOf(obj);
-        if (i >= 0) inv.splice(i, 1);
-    }
-    obj.where = OBJ_FREE;
-    obj.ocarry = null;
+    const { extract_from_minvent } = await import('./worn.js');
+    await extract_from_minvent(mon, obj, true, false);
 }
 
 // C ref: objclass.h:37 enum obj_armor_types.
@@ -239,7 +234,7 @@ export function return_from_mtoss(magr, otmp, _tethered_weapon) {
 
 import { isok, IS_OBSTRUCTED, IS_SINK, IRONBARS, BOLT_LIM,
          W_NONDIGGABLE, BRK_BY_HERO, BRK_MELEE, PET_MISSILE_RANGE2,
-         M_ATTK_MISS, M_ATTK_HIT, NEED_WEAPON, NEED_RANGED_WEAPON, OBJ_FREE } from './const.js';
+         M_ATTK_MISS, M_ATTK_HIT, NEED_WEAPON, NEED_RANGED_WEAPON } from './const.js';
 import { distmin, dist2 } from './hacklib.js';
 import { COIN_CLASS, VENOM_CLASS, POTION_CLASS, GEM_CLASS, EGG,
          clear_dknown } from './mkobj.js';
@@ -301,7 +296,7 @@ export async function drop_throw(obj, ohit, x, y, deps = {}) {
                 const { stackobj } = await import('./invent.js');
                 place_object(obj, x, y);
                 if (!mtmp && u_at(x, y))
-                    mtmp = game.youmonst;
+                    mtmp = game.youmonst || game.u;
                 if (mtmp && ohit)
                     await deps.passive_obj?.(mtmp, obj, null);
                 stackobj(obj);
@@ -478,7 +473,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
                 break;
             default: {
                 const { dmgval } = await import('./weapon.js');
-                let dam = dmgval(singleobj, game.youmonst);
+                let dam = dmgval(singleobj, game.u);
                 let hitv = 3 - distmin(game.u.ux, game.u.uy, mon.mx, mon.my);
                 if (hitv < -4)
                     hitv = -4;
@@ -797,8 +792,8 @@ export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) 
                 if (cansee(bx, by) && !nodissolve)
                     await pline('The iron bars are dissolved!');
                 else if (!game.u?.Deaf)
-                    await pline(Hallucination_u() ? 'You hear angry snakes!'
-                                                  : 'You hear a hissing noise.');
+                    await You_hear(Hallucination_u() ? 'angry snakes!'
+                                                  : 'a hissing noise.');
             },
         });
     }
@@ -830,7 +825,7 @@ export async function spitmm(mtmp, mattk, mtarg, deps = {}) {
             if (canspotmon(mtmp))
                 await pline(`A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
             else
-                await pline('You hear a dry rattle nearby.');
+                await You_hear('a dry rattle nearby.');
         }
         return M_ATTK_MISS;
     }
@@ -869,7 +864,7 @@ export async function breamm(mtmp, mattk, mtarg, deps = {}) {
         if (mtmp.mcan) {
             if (!game.u?.Deaf) {
                 if (deps.canseemon?.(mtmp)) await pline(`${Monnam(mtmp)} coughs.`);
-                else await pline('You hear a cough.');
+                else await You_hear('a cough.');
             }
             return M_ATTK_MISS;
         }

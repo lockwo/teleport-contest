@@ -31,3 +31,8 @@ heldout-mirror44/
 heldout-mirrorx/
 heldout-mirrorx-clean*/
 tmp/
+
+# Local-only private corpora and scratch (one policy: swarm/lib/guard-paths.mjs). None are tracked.
+/heldout-*/
+/tmp*
+/.hc_sd

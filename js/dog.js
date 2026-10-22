@@ -5,7 +5,7 @@ import { game, hooks } from './gstate.js';
 import { roomAt } from './roomat.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { mon_has_amulet } from './monspecial.js';
 import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
@@ -259,6 +259,9 @@ function makedog_mon(pettype, x, y) {
             // (seed n2 nz26 step 798, moves 1621).
             hungrytime: (game.moves | 0) + 1000,
             mhpmax_penalty: 0,
+            // C ref: dog.c initedog() — abuse, revivals and killed_by_u start at 0.
+            // wary_dog() tests `edog.abuse >= 0 && < 10` before drawing rn2(abuse+1).
+            abuse: 0, revivals: 0, killed_by_u: 0,
         },
     };
     // C ref: makemon.c:1251 `mtmp->m_id = next_ident()` — the shared
@@ -311,6 +314,7 @@ function put_saddle_on_mon(saddle, mtmp) {
     // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
     if (!mtmp.minvent) mtmp.minvent = [];
     saddle.where = OBJ_MINVENT;
+    saddle.ocarry = mtmp;
     mtmp.minvent.unshift(saddle);
     // misc_worn_check |= W_SADDLE; saddle->owornmask = W_SADDLE; ...
     mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) | W_SADDLE;
@@ -420,7 +424,6 @@ export const Wiz_arrive = -1;  // resurrect(wizard.c)
 // C ref: include/monst.h:59-67 mstate bits.
 const MON_MIGRATING = 0x04;
 const MON_LIMBO = 0x08;
-const MON_STILL_ARRIVING = 0x100;
 // C ref: include/monst.h STRAT_ARRIVE / STRAT_WAITFORU (js/const.js:1316-1317;
 // re-declared locally so this section adds no top-level import and therefore
 // cannot reorder ESM evaluation — see [[_mktrap_victim TDZ is real]]).
@@ -1190,10 +1193,11 @@ export function keep_mon_accessible(mon) {
 
 // C ref: dog.c:788 keepdogs(pets_only) — called when the hero moves to another
 // level.  RNG: mintrap() for a trapped follower, and nothing else.
-// (do.js:418 keepdogs_capture() is the live REDUCED copy: it has no pets_only
-// arm, no stay_behind messages, no mon_leave()/worm handling and no
-// keep_mon_accessible() branch.  A wiring pass must REPLACE it, not add a
-// second caller.)
+// (do.js keepdogs_capture() is goto_level()'s copy: same walk order, stay_behind
+// messages, mon_leave() and keep_mon_accessible() arms, but no pets_only arm,
+// and it skips relmon()'s mon_leaving_level() because goto_level() must newsym
+// the vacated squares only after the departing screen is captured.  A wiring
+// pass must REPLACE it, not add a second caller.)
 export async function keepdogs(pets_only) {
     const u = game.u;
     const { DEADMONSTER } = await import('./mon.js');

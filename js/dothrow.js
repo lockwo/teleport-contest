@@ -16,8 +16,9 @@ import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_cell,
-         canseemon_shared, Deaf_hero } from './display.js';
+         canseemon_shared, Deaf_hero, You_feel, You_hear } from './display.js';
 import { cansee, Blind } from './vision.js';
+import { TELEDS_ALLOW_DRAG, NO_KILLER_PREFIX, M_AP_TYPE, Is_airlevel, Is_waterlevel } from './const.js';
 import { BRK_FROM_INV, BRK_KNOWN_OUTCOME, BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK } from './const.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT, IS_STWALL, W_NONPASSWALL,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
@@ -40,7 +41,9 @@ import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
          is_covetous, add_to_minv } from './makemon.js';
 import * as I from './invent.js';
 import { ghitm } from './dokick.js';
-import { goodpos } from './teleport.js';
+import { goodpos, enexto_gpflags, teleds } from './teleport.js';
+import { Protection_from_shape_changers, sensemon } from './mon.js';
+import { poly_when_stoned } from './mondata.js';
 import { is_pool, is_lava } from './dbridge.js';
 
 // C ref: hack.h ECMD_* result codes.
@@ -97,17 +100,12 @@ function Doname2(obj) {
 }
 // C ref: objnam.c an(s) / the(s).
 import { an } from './hacklib.js';
+import { helm_simple_name } from './do_wear.js';
 function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: objnam.c Tobjnam(obj, verb) — "The food ration stops".
 function Tobjnam(obj, verb) {
     const nm = the_str(I.xname(obj));
     return `${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${I.otense(obj, verb)}`;
-}
-// C ref: objnam.c helm_simple_name(helmet) — "helm" for a hard hat, else "hat".
-function helm_simple_name(o) {
-    const mat = objects[o?.otyp]?.material | 0;
-    const hard = (mat >= 11 /* IRON */ && mat <= 17 /* MITHRIL */) || mat === GLASS;
-    return hard ? 'helm' : 'hat';
 }
 // C ref: mondata.h bigmonst(ptr) — msize >= MZ_LARGE (3).
 function bigmonst(ptr) { return (ptr?.msize ?? 2 /* MZ_MEDIUM */) >= 3; }
@@ -125,6 +123,7 @@ function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
 function Glib() { return (game.u?.uprops?.Glib || 0) > 0; }
 // C ref: role.c Role_if(PM_ARCHEOLOGIST) — role 0 in u_init.c's ordering.
 const PM_ARCHEOLOGIST = 0;
+const PM_STONE_GOLEM = name_to_pmidx('stone golem');
 // C ref: svl.level.objects[x][y] — the top of the floor pile at (x,y).
 function top_floor_obj(x, y) { return I.objects_at(x, y)[0] || null; }
 // C ref: apply.c use_whip()'s dead-horse test — a horse, warhorse or pony corpse.
@@ -318,7 +317,7 @@ export async function breakmsg(obj, in_view) {
 }
 async function shatter_msg(obj, in_view, to_pieces) {
     if (!in_view) {
-        await update_topl('You hear something shatter!');
+        await You_hear('something shatter!');
     } else {
         await update_topl(`${Doname2(obj)} shatter${
             (obj.quan || 1) === 1 ? 's' : ''}${to_pieces}!`);
@@ -929,6 +928,7 @@ export async function use_whip(obj, getDir) {
         /* Sometimes you hit your steed by mistake */
         if (u.usteed && !rn2(proficient + 2)) {
             await update_topl(`You whip ${U.mon_nam(u.usteed)}!`);
+            await (await import('./steed.js')).kick_steed();
             return ECMD_TIME;
         }
         if (is_pool_or_lava_at(u.ux, u.uy) || IS_WATERWALL(rtyp)
@@ -958,7 +958,9 @@ export async function use_whip(obj, getDir) {
         let dam = rnd(2) + I.dbon() + (obj.spe | 0);
         if (dam <= 0) dam = 1;
         await update_topl(`You hit your ${I.body_part(FOOT)} with your bullwhip.`);
-        await I.losehp_throw(dam);
+        await I.losehp_throw((await import('./zap.js')).Maybe_Half_Phys(dam),
+            `killed ${game.flags?.female ? 'her' : 'him'}self with ${
+                game.flags?.female ? 'her' : 'his'} bullwhip`, NO_KILLER_PREFIX);
         return ECMD_TIME;
 
     } else if ((Fumbling() || Glib()) && !rn2(5)) {
@@ -979,10 +981,16 @@ export async function use_whip(obj, getDir) {
         if (whipattack_it)
             return await whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap);
         if (wrapped_what) {
+            let cc = { x: rx, y: ry };
             await update_topl(`You wrap your bullwhip around ${wrapped_what}.`);
             if (proficient && rn2(proficient + 2)) {
-                await update_topl('You yank yourself out of the pit!');
-                await reset_utrap(true);
+                if (!mtmp || (cc = enexto_gpflags(rx, ry, I.youmonst_data(), 0))) {
+                    await update_topl('You yank yourself out of the pit!');
+                    await reset_utrap(true); /* before teleds() in case it has no
+                                                alternative but another trap */
+                    await teleds(cc.x, cc.y, TELEDS_ALLOW_DRAG);
+                    game.vision_full_recalc = 1;
+                }
             } else {
                 await update_topl(msg_slipsfree);
             }
@@ -994,6 +1002,10 @@ export async function use_whip(obj, getDir) {
     } else if (mtmp) {
         return await whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap);
 
+    } else if (Is_airlevel() || Is_waterlevel()) {
+        /* it must be air -- water checked above */
+        await update_topl('You snap your whip through thin air.');
+
     } else {
         await update_topl(msg_snap);
     }
@@ -1004,26 +1016,52 @@ export async function use_whip(obj, getDir) {
 // disarm it, else attack it.
 async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
     const U = await import('./uhitm.js');
-    let otmp = null;
+    const { Amonnam } = await import('./do_name.js');
+    let otmp = null; /* if monster is unseen, can't attempt to disarm it */
 
     if (!U.canspotmon(mtmp)) {
         mtmp.mundetected = 0; /* bring a non-mimic hider out of hiding */
+        /* check visibility again after mundetected=0 in case being brought
+           out of hiding has exposed it */
         const spotitnow = U.canspotmon(mtmp);
-        await update_topl(`${!spotitnow ? 'A monster' : U.Monnam(mtmp)} is there that you ${
-            !Blind() ? "couldn't see" : "hadn't noticed"}.`);
-        if (spotitnow) newsym(rx, ry);
+        if (spotitnow || !U.glyph_is_invisible(rx, ry)) {
+            await update_topl(`${!spotitnow ? 'A monster' : Amonnam(mtmp)} is there that you ${
+                !Blind() ? "couldn't see" : "hadn't noticed"}.`);
+            if (!spotitnow) map_invisible(rx, ry);
+            else newsym(rx, ry);
+        }
     } else {
-        /* known target: try to disarm rather than attack */
+        /* monster is known so if it is wielding something, try to disarm it
+           rather than make a direct attack */
         otmp = mtmp.mw || null;
     }
 
     if (otmp) {
-        const gotit = proficient && (!Fumbling() || !rn2(10));
-        await update_topl(`You wrap your bullwhip around ${I.yname(otmp)}.`);
+        const { cxname, the } = await import('./objnam.js');
+        const { mwelded, mbodypart } = await import('./monmove.js');
+        const { mhis } = await import('./do_name.js');
+        const { set_bknown } = await import('./mkobj.js');
+        let gotit = proficient && (!Fumbling() || !rn2(10));
+        const onambuf = cxname(otmp);
+        let mon_hand = null;
         if (gotit) {
+            mon_hand = mbodypart(mtmp, HAND);
+            if (I.bimanual(otmp)) mon_hand = makeplural(mon_hand);
+        }
+
+        await update_topl(`You wrap your bullwhip around ${I.yname(otmp)}.`);
+        if (gotit && mwelded(otmp)) {
+            await update_topl(`${(otmp.quan | 0) === 1 ? 'It is' : 'They are'} welded to ${
+                mhis(mtmp)} ${mon_hand}${!otmp.bknown ? '!' : '.'}`);
+            set_bknown(otmp, 1);
+            gotit = false; /* can't pull it free */
+        }
+        if (gotit) {
+            const W = await import('./weapon.js');
             I.obj_extract_self(otmp);
-            mtmp.mw = null;
-            mtmp.weapon_check = 1 /* NEED_WEAPON */;
+            await W.possibly_unwield(mtmp, false);
+            await W.setmnotwielded(mtmp, otmp);
+
             switch (rn2(proficient + 1)) {
             case 2: /* to floor near you */
                 await update_topl(`You yank ${I.yname(otmp)} to the ${
@@ -1032,13 +1070,30 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
                 otmp.where = OBJ_FLOOR;
                 I.stackobj(otmp);
                 break;
-            case 3: /* right into your inventory */
+            case 3: { /* right into your inventory */
                 await update_topl(`You snatch ${I.yname(otmp)}!`);
+                const P = await import('./polyself.js');
+                if (otmp.otyp === CORPSE && I.touch_petrifies(otmp.corpsenm)
+                    && !game.uarmg && !P.Stone_resistance_u()
+                    && !(poly_when_stoned(I.youmonst_data())
+                         && await P.polymon(PM_STONE_GOLEM))) {
+                    const kbuf = (otmp.quan | 0) === 1 ? an(onambuf) : onambuf;
+                    await update_topl(`Snatching ${kbuf} is a fatal mistake.`);
+                    /* corpse is OBJ_FREE; put it on the floor (but don't
+                       stack) so end of game cleanup and bones find it */
+                    place_object(otmp, game.u.ux, game.u.uy);
+                    otmp.where = OBJ_FLOOR;
+                    await P.instapetrify(kbuf);
+                    /* life-saved; free the corpse again */
+                    I.obj_extract_self(otmp);
+                }
                 await I.hold_another_object(otmp, 'You drop %s!', I.doname_invent(otmp), null);
                 break;
+            }
             default: /* to floor beneath mon */
-                await update_topl(`You yank ${the_str(I.cxname_singular(otmp))} from ${
-                    s_suffix(U.mon_nam(mtmp))} ${await mon_hand_noun(mtmp, otmp)}!`);
+                await update_topl(`You yank ${the(onambuf)} from ${
+                    s_suffix(U.mon_nam(mtmp))} ${mon_hand}!`);
+                await (await import('./do.js')).obj_no_longer_held(otmp);
                 place_object(otmp, mtmp.mx, mtmp.my);
                 otmp.where = OBJ_FLOOR;
                 I.stackobj(otmp);
@@ -1048,9 +1103,16 @@ async function whipattack(mtmp, rx, ry, proficient, msg_slipsfree, msg_snap) {
             await update_topl(msg_slipsfree);
         }
     } else { /* mtmp isn't wielding a weapon; attack it */
-        await update_topl(`You flick your bullwhip towards ${U.mon_nam(mtmp)}.`);
+        let do_snap = true;
+
+        if (M_AP_TYPE(mtmp) && !Protection_from_shape_changers() && !sensemon(mtmp)) {
+            await U.stumble_onto_mimic(mtmp);
+            do_snap = false;
+        } else {
+            await update_topl(`You flick your bullwhip towards ${U.mon_nam(mtmp)}.`);
+        }
         if (proficient && (await force_attack(mtmp, false))) return ECMD_TIME;
-        await update_topl(msg_snap);
+        if (do_snap) await update_topl(msg_snap);
     }
     /* regardless of mtmp's weapon or hero's proficiency */
     await U.wakeupAttack(mtmp, true);
@@ -1360,7 +1422,7 @@ export async function hurtle_step(arg, x, y) {
     const { in_out_region } = await import('./region.js');
 
     if (!isok(x, y)) {
-        await update_topl('You feel the spirits holding you back.');
+        await You_feel('the spirits holding you back.');
         return false;
     } else if (!in_out_region(x, y)) {
         return false;
@@ -1666,7 +1728,7 @@ export async function hurtle(dx, dy, range, verbose) {
      * there is no slack, give the player a message and return.
      */
     if (Punished_hurtle() && !I.carried(uball_of())) {
-        await update_topl('You feel a tug from the iron ball.');
+        await You_feel('a tug from the iron ball.');
         await nomul_hurtle(0);
         return;
     } else if (u.utrap) {
@@ -1834,14 +1896,12 @@ export async function throwit_mon_hit(obj, mon) {
 // ── shims for dothrow.c callees whose faithful port exists elsewhere but is
 //    module-private.  Each names the original; the fix is to export THAT one,
 //    not to grow these.  All are RNG-free.
-// C ref: mon.c wakeup(mon, via_attack) — js/zap.js:1826 (unexported).
+// C ref: mon.c wakeup(mon, via_attack) — the full port is uhitm.js wakeupAttack()
+// (wake_msg, growl, setmangry, finish_meating).
 async function wakeup_hurtle(mon, via_attack) {
     if (!mon) return;
-    mon.msleeping = 0;
-    if (via_attack) {
-        const { setmangry } = await import('./uhitm.js');
-        await setmangry(mon, true);
-    }
+    const { wakeupAttack } = await import('./uhitm.js');
+    await wakeupAttack(mon, via_attack);
 }
 // C ref: hack.h Maybe_Half_Phys(dmg) — js/zap.js:226 (unexported).
 function Maybe_Half_Phys_hurtle(dmg) {

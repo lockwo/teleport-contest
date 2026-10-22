@@ -9,7 +9,7 @@
 // item choices.
 import { game } from './gstate.js';
 import { newsym, canseemon_shared as canseemon_wn } from './display.js';
-import { objects } from './mkobj.js';
+import { objects, is_flimsy } from './mkobj.js';
 import {
     mflags1_of, humanoid,
     M1_NOHANDS, M1_MINDLESS, M1_ANIMAL, M1_SLITHY,
@@ -17,7 +17,7 @@ import {
 import {
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, W_AMUL, W_ART,
     W_ARMOR, W_ARTI, W_RINGL, W_RINGR, W_WEP, W_SWAPWEP, W_QUIVER, W_TOOL,
-    W_SADDLE, W_BALL, W_CHAIN, I_SPECIAL,
+    W_SADDLE, W_BALL, W_CHAIN, I_SPECIAL, DISMOUNT_FELL,
 } from './const.js';
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
@@ -233,12 +233,6 @@ function WrappingAllowed(p) {
 const HORNED = new Set(['horned devil', 'minotaur', 'Asmodeus', 'balrog',
     'white unicorn', 'gray unicorn', 'black unicorn', 'ki-rin']);
 const has_horns = (p) => HORNED.has(p?.name);
-// C ref: obj.h is_flimsy(otmp) = oc_material <= LEATHER || otyp == RUBBER_HOSE.
-const LEATHER_MATERIAL = 7, RUBBER_HOSE = 78;
-function is_flimsy(o) {
-    return (objects[o?.otyp]?.material ?? 99) <= LEATHER_MATERIAL
-        || o?.otyp === RUBBER_HOSE;
-}
 // C ref: obj.h is_elven_armor(otmp).
 const ELVEN_ARMOR = new Set([89 /*helm*/, 127 /*mithril-coat*/, 139 /*cloak*/,
     153 /*shield*/, 169 /*boots*/]);
@@ -833,8 +827,17 @@ export async function extract_from_minvent(mon, obj, do_extrinsics, silently) {
     obj_extract_self(obj);
     obj.owornmask = 0;
     if (unwornmask) {
-        if (!DEADMONSTER(mon) && do_extrinsics)
+        if (!DEADMONSTER(mon) && do_extrinsics) {
             update_mon_extrinsics(mon, obj, false, silently);
+            /* C ref: worn.c update_mon_extrinsics() tail — `if (!on && mon ==
+               u.usteed && obj->otyp == SADDLE) dismount_steed(DISMOUNT_FELL)`.
+               The JS function is sync (m_dowear creation callers), so the only
+               caller that can take a saddle off, this one, runs it. */
+            if (mon === game.u?.usteed && obj.otyp === SADDLE_OTYP) {
+                const { dismount_steed } = await import('./steed.js');
+                await dismount_steed(DISMOUNT_FELL);
+            }
+        }
         mon.misc_worn_check = (mon.misc_worn_check | 0) & ~unwornmask;
         /* give monster a chance to wear other equipment on its next move */
         const { check_gear_next_turn } = await import('./mon.js');

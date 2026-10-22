@@ -541,7 +541,7 @@ export async function erase_menu_or_text(window, cw, clear) {
             // the bot() BL_RESET that follows repaints every status field over
             // the map glyphs sharing its row
             game._statusDocrt = false;
-            flush_screen(1);
+            await flush_screen(1);
         }
     } else {
         docorner(cw.offx, cw.maxrow + 1, 0);

@@ -9,7 +9,7 @@
 //
 // For browser play, see nethack.js (uses NethackGame directly).
 
-import { game, resetGame } from './gstate.js';
+import { game, resetGame, reset_process_statics } from './gstate.js';
 import { recorder_ubirthday } from './calendar.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
@@ -266,6 +266,9 @@ export class NethackGame {
 
     async start() {
         const g = resetGame();
+        /* C: a new process starts every file-scope static/global at its
+           compiled-in value; the judge reuses these modules across segments. */
+        reset_process_statics();
 
         // C ref: sys/unix/unixmain.c main():66 — early_init(argc, argv) is
         // the very first thing a real C process does, before rc parsing or
@@ -327,6 +330,7 @@ export class NethackGame {
         // C initializes cmdassist enabled; an explicit !cmdassist in the rc
         // is applied below through opts.iflags.
         g.iflags = { cmdassist: true, use_color: true, ...opts.iflags };
+        if (opts.a11y) g.a11y = { ...g.a11y, ...opts.a11y };
         // C ref: cmd.c parsebindings()/reset_commands() — custom key bindings
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
@@ -1578,7 +1582,10 @@ export async function runSegment(input) {
     // (the process is blocked in a startup prompt) has nothing left to drive:
     // another moveloop_core() would only capture one more boundary the C
     // recording never had, shifting every later segment of the flat session.
-    const maxIter = startup_exhausted ? 0 : Math.max(moves.length * 8, 1024);
+    // A counted command (`99s`, a long rest or search) spends one moveloop_core() per
+    // game turn, so a handful of keys can legitimately need thousands of iterations;
+    // the cap only exists to stop a loop that never asks for input.
+    const maxIter = startup_exhausted ? 0 : Math.max(moves.length * 400, 4096);
     for (let iter = 0; iter < maxIter; iter++) {
         try {
             await moveloop_core();

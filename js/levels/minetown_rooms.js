@@ -124,7 +124,11 @@ function mt_monster_class(A, classChar, croom, peaceful) {
     const klass = MT_CLASS_CHAR[classChar] ?? 0;
     A.oracle_induced_align();                        // amask computed first
     const data = A.mk_mines_race_suppress(mkclass(klass, G_NOGEN));
-    return A.mt4_place_monster(data, croom, peaceful);
+    const mtmp = A.mt4_place_monster(data, croom, peaceful);
+    // C ref: sp_lev.c:2125 create_monster() ends with `mtmp->female = m->female`, and a
+    // one-letter des.monster("n") keeps tmpmons.female = 0: a class-made nymph is male.
+    if (mtmp) mtmp.female = 0;
+    return mtmp;
 }
 
 // C ref: sp_lev.c lspo_room() for a fully random TOP-LEVEL room.

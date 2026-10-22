@@ -5,10 +5,11 @@
 import { game } from './gstate.js';
 import { ok_to_quest } from './questok.js';
 import { s_suffix } from './hacklib.js';
+import { hard_helmet } from './do_wear.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object, shieldeff,
-         impossible, display_nhwindow_message, useDECgraphics, You_hear, Deaf_hero,
+         impossible, display_nhwindow_message, useDECgraphics, You_hear, You_feel, Deaf_hero,
          Hallucination_u as Hallucination } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, splitobj, delobj_core, obfree,
@@ -87,12 +88,12 @@ import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
          restore_cham, unstuck } from './mon.js';
 import { MON_WEP, is_vampshifter, monflee } from './monmove.js';
 import { killed, canspotmon, mon_nam, Monnam, x_monnam,
-         mon_pmname, disguised_as_mon } from './uhitm.js';
+         mon_pmname, disguised_as_mon, disguised_as_non_mon } from './uhitm.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { rnd_hallublast } from './mthrowu.js';
 import { Teleport_control_fu } from './trap.js';
 // C ref: makemon.c monhp_per_lvl(mon) — golem / level>49 / dragon / level-0 arms.
-import { monhp_per_lvl, defends as arti_defends, defends_when_carried as arti_defends_carried } from './artifact.js';
+import { monhp_per_lvl, defends as arti_defends, defends_when_carried as arti_defends_carried, defended } from './artifact.js';
 
 // Object-type numbers for the directional wands/spells that zapyourself() gives
 // a special self-inflicted effect.  C ref: include/objects.h (WAN_DEATH),
@@ -347,7 +348,7 @@ export async function zapnodir(obj) {
 // opens, rather than being silently wiped by the menu's clearScreen() (pline()
 // alone only pages a message that word-wraps onto a second row).
 export async function do_enlightenment_effect() {
-    await update_topl('You feel self-knowledgeable...');
+    await You_feel('self-knowledgeable...');
     await display_nhwindow_message();
     const { show_attributes_disclosure } = await import('./insight.js');
     // C ref: mode is MAGICENLIGHTENMENT alone (no BASICENLIGHTENMENT bit), so
@@ -385,7 +386,7 @@ async function create_critters(cnt, mptr, neverask) {
 
 // C ref: zap.c lightdamage — pseudo-damage used for blindness duration.  The
 // rnd() rolls only happen when the hero is polymorphed into a gremlin.
-async function lightdamage(obj, ordinary, amt) {
+export async function lightdamage(obj, ordinary, amt) {
     let dmg = amt;
     // u.umonnum names a monster form only while Upolyd in this port.
     if (dmg && game.u?.Upolyd && game.u?.umonnum === PM_GREMLIN) {
@@ -756,6 +757,8 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
         ox = obj.ox; oy = obj.oy;
         delobj(obj); /* obj_resists(obj,0,0) rn2(100) + newsym() */
         place_object(otmp, ox, oy);
+        /* C replace_object(): otmp takes obj's place in fobj, not the head */
+        if (obj.fobj_seq != null) otmp.fobj_seq = obj.fobj_seq;
         if (floorIndex >= 0) {
             floorObjects.pop();
             floorObjects.splice(floorIndex, 0, otmp);
@@ -1142,7 +1145,7 @@ export async function break_statue(obj) {
     const { CORPSTAT_HISTORIC } = await import('./const.js');
     if (!game.context?.mon_moving && game.urole?.mnum === 0 /* Archeologist */
         && (obj.spe & CORPSTAT_HISTORIC)) {
-        await pline('You feel guilty about damaging such a historic statue.');
+        await You_feel('guilty about damaging such a historic statue.');
         const { adjalign } = await import('./attrib.js');
         adjalign(-1);
     }
@@ -1960,7 +1963,7 @@ function canseemon_z(mon) { return canseemon_shared(mon); }
 // C ref: zap.c zapwrapup — after an IMMEDIATE zap, announce system shock once.
 export async function zapwrapup() {
     if (game.obj_zapped)
-        await pline('You feel shuddering vibrations.');
+        await You_feel('shuddering vibrations.');
     game.obj_zapped = false;
 }
 
@@ -1980,7 +1983,7 @@ export async function cancel_monst(mdef, obj, youattack, allow_cancel_kill, self
         if (u.Upolyd) {
             if (u.umonnum === PM_CLAY_GOLEM) {
                 if (!Blind()) await pline('Some writing vanishes from your head!');
-                else await pline(`You feel ${Hallucination() ? 'dark' : 'light'} headed.`);
+                else await You_feel(`${Hallucination() ? 'dark' : 'light'} headed.`);
                 u.mh = 0;
             }
             if (Unchanging() && u.mh > 0) {
@@ -2479,19 +2482,6 @@ function del_engr_z(x, y) {
     game.level.engravings = arr.filter(ep => ep.engr_x !== x || ep.engr_y !== y);
 }
 
-// C ref: do_wear.c hard_helmet(o) = is_helmet(o) && (is_metallic(o) ||
-// is_crackable(o)) — a metal or glass helm halves the falling-rock die.
-// is_helmet tests oc_armcat == ARM_HELM, which the JS objects table doesn't
-// carry; objects.h's HELM() block is the contiguous run 89..100 (elven leather
-// helm .. helm of telepathy), verified name-by-name against mkobj.js.
-// A name regex here would answer FALSE for the dented pot (IRON).
-const FIRST_HELM = 89, LAST_HELM = 100;
-function hard_helmet(otmp) {
-    if (!otmp || otmp.otyp < FIRST_HELM || otmp.otyp > LAST_HELM) return false;
-    const mat = objects[otmp.otyp]?.material | 0;
-    return (mat >= MAT_IRON && mat <= MAT_MITHRIL) || mat === MAT_GLASS;
-}
-
 // C ref: include/hack.h BZ_OFS_WAN(otyp) = abs(otyp - WAN_MAGIC_MISSILE) % 10.
 // Wand order in objects.h: MAGIC_MISSILE(0) FIRE(1) COLD(2) SLEEP(3) DEATH(4)
 // LIGHTNING(5); the resulting offset is the abstract zap type (ZT_FIRE etc.).
@@ -2664,7 +2654,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                         if (canseemon_shared(mon))
                             await update_topl(`${s_suffix(Monnam(mon))} ${
                                 distant_name_pub(otmp, xname)} is disintegrated!`);
-                        m_useup(mon, otmp);
+                        await m_useup(mon, otmp);
                     }
                     if (mon_could_move && !mon.mcanmove) /* ZT_SLEEP */
                         await slept_monst(mon);
@@ -3129,7 +3119,7 @@ export async function zap_over_floor(x, y, type, shopdamage = null,
             } else if (see_it) {
                 await update_topl(exploding_wand_typ ? 'The door remains intact.'
                     : `The door absorbs ${yourzap ? 'your' : 'the'} ${zapverb}!`);
-            } else await update_topl('You feel vibrations.');
+            } else await You_feel('vibrations.');
         }
     }
     if (pile_at(x, y).length && damgtype === ZT_FIRE) {
@@ -3353,9 +3343,6 @@ function resists_blnd_mon(mon) {
         return true;
     return false;
 }
-// C ref: uhitm.c defended(mon, ad) — worn artifact/item granting `ad` defense.
-// No covered zap target wears such gear.
-function defended(_mon, _ad) { return false; }
 // C ref: mondata.c is_demon(ptr) — mlet == S_DEMON (defsym.h index 56).
 function is_demon_mdat(mdat) { return !!mdat && mdat.mcls === 56; }
 // C ref: mondata.h nonliving(ptr) — undead/golem/vortex/elemental "destroyed"
@@ -3374,8 +3361,8 @@ export function resist(mtmp, oclass, damage, _tell) {
     let alev;
     switch (oclass) {
     case WAND_CLASS: alev = 12; break;
-    case TOOL_CLASS: alev = 10; break; // instrument (WEAPON_CLASS artifact
-                                        // case is also alev 10, never reached here)
+    case TOOL_CLASS: alev = 10; break; // instrument
+    case 2 /* WEAPON_CLASS */: alev = 10; break; // artifact (Magicbane scare)
     case SCROLL_CLASS: alev = 9; break;
     case POTION_CLASS: alev = 6; break;
     case RING_CLASS: alev = 5; break;
@@ -3441,9 +3428,6 @@ export async function miss(str, mon) {
     const named = (cansee(bp.x, bp.y) || cansee(mon?.mx, mon?.my) || canspotmon(mon)) && game.flags?.verbose !== false;
     await update_topl(`${The(str)} ${vtense(str, 'miss')} ${named ? mon_nam(mon) : 'it'}.`);
 }
-// C ref: mondata.c disguised_as_non_mon — a hiding mimic/mimicking object.  No
-// covered zap target is a mimic.
-function disguised_as_non_mon(_mon) { return false; }
 // C ref: mon.c wakeup(mon, via_attack).  uhitm.js's wakeupAttack() is the full
 // port (seemimic, finish_meating() ending a pet's meal, setmangry(), the
 // temple-priest / shopkeeper tails); this is the zap.c-facing entry to it.
@@ -3621,10 +3605,16 @@ async function zhitu(type, nd, fltxt, sx, sy) {
     case ZT_DEATH:
         // Death and disintegration enter done(DIED) without HP damage.
         if (abstyp === 20 + ZT_DEATH) {
-            // inventory_resistance_check(AD_DISN) (trap.c) is a constant false here.
+            // C ref: zap.c:4466 — disn_prot is rolled BEFORE the Disint_resistance
+            // test (inventory_resistance_check(AD_DISN): rn2(100) < 99 when worn
+            // or wielded gear grants disintegration resistance).
+            const disn_prot_pct = u_adtyp_resistance_obj(AD_DISN);
+            const disn_prot = disn_prot_pct ? rn2(100) < disn_prot_pct : false;
             if (Disint_resistance()) {
                 await update_topl('You are not disintegrated.');
                 monstseesu(M_SEEN_DISINT);
+                break;
+            } else if (disn_prot) {
                 break;
             }
             monstunseesu(M_SEEN_DISINT);
@@ -3830,16 +3820,16 @@ export async function zhitm(mon, type, nd) {
                 const { m_useup } = await import('./muse.js');
                 otmp = which_armor(mon, W_ARM);
                 const otmp2 = which_armor(mon, W_ARMC);
-                if (otmp2) m_useup(mon, otmp2);
+                if (otmp2) await m_useup(mon, otmp2);
             } else {
                 /* no suit, victim dies; destroy cloak
                    and shirt now in case target gets life-saved */
                 const { m_useup } = await import('./muse.js');
                 tmp = MAGIC_COOKIE;
                 let otmp2 = which_armor(mon, W_ARMC);
-                if (otmp2) m_useup(mon, otmp2);
+                if (otmp2) await m_useup(mon, otmp2);
                 otmp2 = which_armor(mon, W_ARMU);
-                if (otmp2) m_useup(mon, otmp2);
+                if (otmp2) await m_useup(mon, otmp2);
             }
             type = -1; /* no saving throw wanted */
             break;     /* not ordinary damage */
@@ -4242,7 +4232,7 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
         if (u_carry) useup(obj);
         else {
             const { m_useup } = await import('./muse.js');
-            m_useup(carrier, obj);
+            await m_useup(carrier, obj);
         }
         if (last) {
             if (obj.timed) {
@@ -4334,6 +4324,14 @@ export async function catch_lit(obj) {
             Blind() ? 'warm.' : 'light!'}`);
     }
     if (obj.otyp === POT_OIL) makeknown(obj.otyp);
+    const shk = await import('./shk.js');
+    if (obj.where === OBJ_INVENT && obj.unpaid && shk.costly_spot(game.u.ux, game.u.uy)) {
+        /* if it catches while you have it, then it's your tough luck */
+        await shk.check_unpaid(obj);
+        await update_topl(`"That's in addition to the cost of ${yname(obj)} ${
+            (obj.quan || 1) === 1 ? 'itself' : 'themselves'}, of course."`);
+        await shk.bill_dummy_object(obj);
+    }
     const { begin_burn } = await import('./timeout.js');
     await begin_burn(obj, false);
     return true;
@@ -4430,7 +4428,7 @@ export async function zapyourself(obj, ordinary) {
         orig_dmg = d(12, 6);
         if (Fire_resistance()) {
             await shieldeff(u.ux, u.uy);
-            await update_topl('You feel rather warm.');
+            await You_feel('rather warm.');
             monstseesu(M_SEEN_FIRE);
         } else {
             await update_topl("You've set yourself afire!");
@@ -4450,7 +4448,7 @@ export async function zapyourself(obj, ordinary) {
         orig_dmg = d(12, 6);
         if (Cold_resistance()) {
             await shieldeff(u.ux, u.uy);
-            await update_topl('You feel a little chill.');
+            await You_feel('a little chill.');
             monstseesu(M_SEEN_COLD);
         } else {
             await update_topl('You imitate a popsicle!');
@@ -4522,7 +4520,7 @@ export async function zapyourself(obj, ordinary) {
         if ((u.uprops.BInvis || u.BInvis) && game.uarmc
             && game.uarmc.otyp === MUMMY_WRAPPING_Z) {
             /* A mummy wrapping absorbs it and protects you */
-            await pline(`You feel rather itchy under ${yname(game.uarmc)}.`);
+            await You_feel(`rather itchy under ${yname(game.uarmc)}.`);
             break;
         }
         u.uprops.HInvis = (u.uprops.HInvis | 0) + rn1(15, 31);
@@ -4634,9 +4632,9 @@ export async function zapyourself(obj, ordinary) {
     case SPE_EXTRA_HEALING: {
         learn_it = true; /* (no effect for spells...) */
         const extra = (obj.otyp === SPE_EXTRA_HEALING);
-        const { healup } = await import('./spell.js');
+        const { healup } = await import('./potion.js');
         await healup(d(6, extra ? 8 : 4), 0, false, !!obj.blessed || extra);
-        await update_topl(`You feel ${extra ? 'much ' : ''}better.`);
+        await You_feel(`${extra ? 'much ' : ''}better.`);
         break;
     }
 
@@ -4767,7 +4765,7 @@ export async function unturn_you() {
     await unturn_dead(u); /* hit carried corpses and eggs */
 
     if (is_undead_flag(await youmonst_data_z())) {
-        await pline(`You feel frightened and ${Stunned() ? 'even more ' : ''}stunned.`);
+        await You_feel(`frightened and ${Stunned() ? 'even more ' : ''}stunned.`);
         const { make_stunned_u } = await import('./mhitu.js');
         await make_stunned_u((u.uprops?.Stun | 0) + rnd(30), false);
     } else {
@@ -4776,18 +4774,29 @@ export async function unturn_you() {
 }
 
 // C ref: zap.c flashburn(duration, via_lightning) — blind the hero unless
-// blindness is resisted.  resists_blnd(&youmonst) for the hero is
-// (Blind || Unaware); the Sunsword arm needs artifact state this port lacks.
+// resists_blnd(&youmonst) (Blind, Unaware, a blinding-resistant form, or
+// Sunsword wielded/carried).  Resisting through the artifact gives a sparkle
+// (not for lightning) and still counts as the flash having an effect.
 // make_blinded() draws no RNG but toggle_blindness() recalculates vision and
 // redraws the map, so a seen monster must vanish from the display at once.
-export async function flashburn(duration, _via_lightning) {
+export async function flashburn(duration, via_lightning) {
     const u = game.u;
-    if (Blind() || u?.uprops?.Unaware || u?.usleep) return false;
-    await pline('You are blinded by the flash!');
-    const { make_blinded_hero } = await import('./potion.js');
-    await make_blinded_hero(duration, false);
-    if (!Blind()) await pline('Your vision clears.');
-    return true;
+    const { resists_blnd_u } = await import('./mhitu.js');
+    if (!resists_blnd_u()) {
+        await pline('You are blinded by the flash!');
+        const { make_blinded_hero } = await import('./potion.js');
+        await make_blinded_hero(duration, false);
+        if (!Blind()) await pline('Your vision clears.');
+        return true;
+    }
+    if (!via_lightning) {
+        const { resists_blnd_by_arti } = await import('./mondata.js');
+        if (resists_blnd_by_arti(u)) {
+            await shieldeff(u.ux, u.uy);
+            return true;
+        }
+    }
+    return false;
 }
 
 // C ref: youprop.h hero property predicates.  This port stores intrinsics under
@@ -5291,7 +5300,7 @@ export async function release_hold() {
             if (!Blind())
                 await pline(`${Monnam(mtmp)} opens its mouth!`);
             else
-                await pline('You feel a sudden rush of air!');
+                await You_feel('a sudden rush of air!');
         }
         /* gives "you get regurgitated" or "you get expelled from <mon>" */
         const { expels } = await import('./mhitu.js');
@@ -5464,9 +5473,26 @@ export async function ustatusline() {
         } /* note: "goop" == "glop"; variation is intentional */
     }
     if (Stunned()) info += ', stunned';
-    if (up.Glib) info += ', slippery fingers';
+    {
+        const ewl = (up.EWounded_legs | 0) || (u.EWounded_legs | 0);
+        if (((u.HWounded_legs | 0) || (up.HWounded_legs | 0) || ewl) && !u.usteed) {
+            /* when it's just one leg, ^X reports which, left or right;
+               ustatusline() doesn't, in order to keep the output a bit shorter */
+            const { BOTH_SIDES, LEG } = await import('./const.js');
+            const what = body_part(LEG);
+            info += `, injured ${(ewl & BOTH_SIDES) === BOTH_SIDES ? makeplural(what) : what}`;
+        }
+    }
+    if (up.Glib) {
+        const { fingers_or_gloves } = await import('./do_wear.js');
+        info += `, slippery ${fingers_or_gloves(true)}`;
+    }
     if (u.utrap) info += ', trapped';
-    if (up.Fast || up.HFast) info += up.Very_fast ? ', very fast' : ', fast';
+    {
+        const { youHaveFast, youHaveVeryFast } = await import('./allmain.js');
+        const vf = !!youHaveVeryFast();
+        if (youHaveFast() || vf) info += vf ? ', very fast' : ', fast';
+    }
     if (u.uundetected) info += ', concealed';
     else if (M_AP_TYPE(u) !== M_AP_NOTHING) info += ', disguised';
     if (Invis()) info += ', invisible';
@@ -5962,7 +5988,7 @@ export async function revive(corpse, by_hero) {
         break;
     case OBJ_MINVENT: {
         const { m_useup } = await import('./muse.js');
-        m_useup(corpse.ocarry, corpse);
+        await m_useup(corpse.ocarry, corpse);
         break;
     }
     case OBJ_CONTAINED:

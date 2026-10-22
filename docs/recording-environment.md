@@ -49,3 +49,36 @@ tty input modes), the recordings reflect the Darwin libc.
 
 If a screen seems to depend on something not listed here, open an
 issue. Confirmed additions go on this page.
+
+## Targeted read billing recordings
+
+With the optional local `swarm/` tooling installed, preload
+`scripts/read-billing-scenarios.mjs` to register faithful C recorder recipes.
+Run from a worktree so the later comparison uses that worktree's JS:
+
+```sh
+NODE_OPTIONS="--import=$PWD/scripts/read-billing-scenarios.mjs" \
+  node swarm/bin/gen.mjs --kind=scen --count=6 --name=read-billing \
+  --roles=Wizard --conc=1 \
+  --recipes=read-billing-armor-enchant,read-billing-armor-proof,read-billing-destroy-proof,read-billing-weapon-proof,read-billing-water-uncurse,read-billing-water-confused
+node swarm/bin/ci.mjs --corpus=heldout-read-billing --out=/tmp/read-billing-results.json
+```
+
+`gen.mjs` allocates the seeds and records through the faithful recorder. Check
+the generator log before treating a session as proof. A recipe can stop early
+when it cannot find a suitable shop or item. The confused-water recipe searches
+for naturally stocked water because shops refuse to buy plain water.
+
+These scenarios cover `read.c` billing at mutation boundaries:
+
+- Armor enchantment raises the unpaid item's bill after the enchantment.
+  Disenchantment bills a copy of the original item before changing it.
+- Removing erosion-proofing through confused enchant armor, destroy armor, or
+  enchant weapon restores the original proofing flag while billing, then
+  applies the new flag.
+- Remove curse bills unpaid unholy water before uncursing it. A confused read
+  reprices unpaid water after blessing or cursing it.
+
+The `potion.c H2Opotion_dip` path has a different ordering in the pinned C
+source. Its price adjustment precedes the blessing or curse mutation.
+Preserve that ordering rather than making it match the confused scroll path.

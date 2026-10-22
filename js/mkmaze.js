@@ -13,16 +13,18 @@ import {
     Is_firelevel, Is_waterlevel, Is_airlevel,
 } from './const.js';
 import { maketrap, t_at, Invocation_lev } from './trap.js';
-import { m_at, newsym, pline, terrain_glyph, update_topl, Deaf_hero } from './display.js';
+import { m_at, newsym, pline, terrain_glyph, update_topl, Deaf_hero, stairway_find_dir } from './display.js';
 import {
     block_point, recalc_block_point, unblock_point, vision_recalc,
 } from './vision.js';
 import { obj_extract_self, objects_at, stackobj } from './invent.js';
 import { place_object } from './mkobj.js';
 import { enexto_spawn } from './makemon.js';
+import { rndmonnum } from './mkobj.js';
 import { goodpos, rloc_to, RLOC_NOMSG } from './teleport.js';
 import { placebc, unplacebc } from './ball.js';
 import { create_gas_cloud } from './region.js';
+import { S_air, S_cloud, S_water } from './symbols.js';
 
 // C ref: decl.c g_init_x/g_init_y — x_maze_max = (COLNO-1) & ~1 = 78,
 // y_maze_max = (ROWNO-1) & ~1 = 20.  create_maze() temporarily shrinks these
@@ -339,13 +341,20 @@ function set_bubble_bg(loc, glyph, typ, lit) {
     loc.roomno = 0;
     loc.edge = false;
     loc.invisMon = false;
-    loc.remembered_glyph = { ch: glyph.ch, color: glyph.color, decgfx: glyph.dec };
+    loc.remembered_glyph = { ch: glyph.ch, color: glyph.color, decgfx: glyph.dec, cmap: glyph.cmap };
 }
 
 // C ref: display.h cmap_to_glyph(S_water/S_air/S_cloud) — the base element's
 // map-memory glyph.  Routed through back_to_glyph()'s own table so the DEC /
 // ASCII symset choice stays in one place.
-function element_glyph(typ) { return terrain_glyph({ typ }, 0, 0); }
+// The cmap index rides along because C's levl[x][y].glyph IS that cmap glyph:
+// a square the hero cannot currently see keeps being described by it (pager.c
+// lookat() on a remembered S_water over an AIR square says "water", not
+// "limitless water") however the terrain under it has since changed.
+function element_glyph(typ) {
+    return { ...terrain_glyph({ typ }, 0, 0),
+             cmap: typ === WATER ? S_water : typ === CLOUD ? S_cloud : S_air };
+}
 
 // C ref: mkmaze.c:1811 setup_waterlevel() — called from fixup_special() BEFORE
 // place_lregions(), because the portal's levregion has to land on a square the
@@ -372,7 +381,7 @@ export async function setup_waterlevel() {
         for (let y = 0; y <= ROWNO - 1; y++) {
             const loc = g.level?.at(x, y);
             if (!loc) continue;
-            loc.remembered_glyph = { ch: glyph.ch, color: glyph.color, decgfx: glyph.dec };
+            loc.remembered_glyph = { ch: glyph.ch, color: glyph.color, decgfx: glyph.dec, cmap: glyph.cmap };
             if (loc.typ === STONE) loc.typ = typ;
         }
 
@@ -710,7 +719,8 @@ export async function water_friction() {
     let x, y, dx, dy;
     let eff = false;
 
-    if (u.uprops?.Swimming && rn2(4))
+    // C ref: youprop.h Swimming includes the polyform's FROMFORM bit (u.formprops).
+    if ((await import('./dbridge.js')).Swimming() && rn2(4))
         return; /* natural swimmers have advantage */
 
     if (u.dx && !rn2(!u.dy ? 3 : 6)) { /* 1/3 chance or half that */
@@ -1195,7 +1205,7 @@ export async function fixup_special() {
                            || mm_pm_resistance(mm_monster_by_pm(otmp.corpsenm),
                                                MM_MR_STONE))) {
                     /* set_corpsenm() handles weight too */
-                    mm_set_corpsenm(otmp, mm_rndmonnum());
+                    mm_set_corpsenm(otmp, rndmonnum());
                 }
             }
         }
@@ -1215,7 +1225,7 @@ export async function fixup_special() {
                                         MM_MR_STONE)
                        || mm_poly_when_stoned(mm_monster_by_pm(otmp.corpsenm)))) {
                 /* set_corpsenm() handles weight too */
-                mm_set_corpsenm(otmp, mm_rndmonnum());
+                mm_set_corpsenm(otmp, rndmonnum());
             }
         }
     } else if (mm_Role_if(MM_PM_CLERIC) && In_quest(g.u?.uz)) {
@@ -1279,15 +1289,6 @@ function mm_poly_when_stoned(ptr) {
         && (ptr?.name === 'flesh golem' || ptr?.name === 'clay golem');
 }
 
-// C ref: makemon.c rndmonnum() — js/mkobj.js:1279 and js/mklev.js:276 both
-// carry a private copy.  Deliberately NOT re-derived here: a wrong reservoir
-// walk would emit the wrong number of rn2() draws.  Callers above are inert.
-function mm_rndmonnum() {
-    // UNPORTED (as an export): makemon.c rndmonnum().  Returning 0 keeps the
-    // Medusa loops finite; they are unreachable until this is exported.
-    return 0;
-}
-
 // C ref: mkmaze.c:1042 pick_vibrasquare_location() — choose where the stairs
 // down to Moloch's Sanctum will be cut, on the Invocation level.  The position
 // has to leave room for mkinvokearea()'s 2-cell-slop area, must not share a
@@ -1328,11 +1329,7 @@ export function pick_vibrasquare_location() {
 
 // C ref: stairs.c stairway_find_dir(up) — js/do.js:2127 has the real one
 // (module-private).
-function mm_stairway_find_dir(up) {
-    for (const s of (game.level?.stairs || []))
-        if (!s.isladder && !!s.up === !!up) return s;
-    return null;
-}
+function mm_stairway_find_dir(up) { return stairway_find_dir(up); }
 
 // C ref: mkmaze.c:1097 populate_maze() — "add objects and monsters to random
 // maze".  Every count is drawn first, then one mazexy() per item; a maze

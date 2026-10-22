@@ -17,6 +17,7 @@ import { races } from './roles.js';
 import { Goodbye } from './role.js';
 import { acurr_eff } from './attrib.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
+import { You_feel } from './display.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
 // RoleAdvance = {infix, inrnd, lofix, lornd, hifix, hirnd}; xlev is the
@@ -349,7 +350,7 @@ export function update_rank() {
 export async function pluslvl(incr, emitMsg) {
     const u = game.u;
     if (!incr && emitMsg)
-        await emitMsg('You feel more experienced.');
+        await You_feel('more experienced.');
 
     // increase hit points (when polymorphed, do monster form first
     // in order to retain normal human/whatever increase for later)
@@ -616,12 +617,12 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
                 if (ulvl > 1) game.u?.lost_innate?.delete(prop);
                 changed = true;
                 if (!alsoFrom(other, prop, newlevel)
-                    && gainstr && emitMsg) await emitMsg(`You feel ${gainstr}!`);
+                    && gainstr && emitMsg) await You_feel(`${gainstr}!`);
             } else if (oldlevel >= ulvl && newlevel < ulvl) {
                 changed = true;
                 if (!alsoFrom(other, prop, newlevel)) {
-                    if (losestr && emitMsg) await emitMsg(`You feel ${losestr}!`);
-                    else if (gainstr && emitMsg) await emitMsg(`You feel less ${gainstr}!`);
+                    if (losestr && emitMsg) await You_feel(`${losestr}!`);
+                    else if (gainstr && emitMsg) await You_feel(`less ${gainstr}!`);
                 }
             }
             // C ref: attrib.c:1063 `if (prevabil != *ability) postadjabil()` —

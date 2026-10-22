@@ -21,6 +21,7 @@ import {
     LADDER, MAGIC_TRAP,
     MM_NOCOUNTBIRTH, MM_NOMSG, NO_TRAP, OROOM, ROCKTRAP, ROOM, ROWNO, RUST_TRAP, SQKY_BOARD,
     STAIRS, TRAPNUM, is_hole, isok,
+    CORPSTAT_HISTORIC, CORPSTAT_MALE,
 } from '../const.js';
 import { Is_special } from '../dungeon.js';
 import { game } from '../gstate.js';
@@ -46,9 +47,6 @@ import {
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
 
-// C ref: obj.h — a statue's spe carries the CORPSTAT_* bits lspo_object builds
-// from the historic/male/female table keys before create_object() writes it.
-const CORPSTAT_MALE = 1, CORPSTAT_HISTORIC = 4;
 // C ref: objects[] indices (mkobj.js exports no constant for these two).
 const SCIMITAR = 50, SHIELD_OF_REFLECTION = 158;
 // C ref: mklev.h MKTRAP_MAZEFLAG — create_trap() always passes this one, and

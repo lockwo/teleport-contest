@@ -5,27 +5,27 @@
 // u.ushops feeds shk_move()'s `avoid` decision (monmove.js), so this is RNG
 // state, not just display: without it a shopkeeper picks a different square.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { roomAt } from './roomat.js';
 import { s_suffix } from './hacklib.js';
 import { pline, update_topl, Hallucination_u } from './display.js';
 import { SHKNAME_POOL } from './shknam.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
-import { noit_mon_nam } from './do_name.js';
+import { noit_mon_nam, noit_mhe, noit_mhis } from './do_name.js';
 import { rn2, rnd } from './rng.js';
 import { newomid } from './mkobj.js';
 import { get_cost, get_pricing_units, contained_cost, contained_gold,
          bill_box_content, costly_gold, picked_container, is_unpaid, inhishop,
          inside_shop, rile_shk, rouse_shk, hot_pursuit, rob_shop, call_kops,
-         pacify_shk, muteshk, Deaf, verbalize } from './shk.js';
+         pacify_shk, muteshk, Deaf, verbalize, Shknam, deserted_shop } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
 import { depth as depth_of_level, isok } from './hacklib.js';
 import {
     ROOMOFFSET, NO_ROOM, SHARED, SHARED_PLUS, SHOPBASE, COLNO, ROWNO,
-    TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
+    EYE, TEMPLE, MORGUE, OROOM, MAXNROFROOMS, G_GONE,
     THRONE, ZOO, SWAMP, COURT, LEPREHALL, BEEHIVE, COCKNEST, ANTHOLE,
     BARRACKS, DELPHI, STEALTH, OBJ_FLOOR } from './const.js';
 import { midnight } from './calendar.js';
@@ -196,9 +196,17 @@ export async function u_left_shop(leavestring, _newlev) {
     if (!shkp || !inhishop(shkp)) return;
     const eshk = shkp.eshk;
     if (!eshk.billct && !eshk.debit) return; /* bill is settled */
-    if (!leavestring.length) {
-        await pline(`"${game.plname}!  ${eshk.surcharge
-            ? "Don't you leave without paying!" : 'Please pay before leaving.'}"`);
+    if (!leavestring.length && !muteshk(shkp)) {
+        // C ref: shk.c u_left_shop(): stepped onto the shop boundary; a mute
+        // shk falls through to rob_shop/call_kops instead of warning.
+        const not_upset = !eshk.surcharge;
+        if (!Deaf() && !muteshk(shkp)) {
+            await verbalize(`${game.plname}!  ${not_upset
+                ? 'Please pay before leaving.' : "Don't you leave without paying!"}`);
+        } else {
+            await pline(`${Shknam(shkp)} ${not_upset ? 'points out' : 'makes it clear'
+                } that you need to pay before leaving${not_upset ? '.' : '!'}`);
+        }
         return;
     }
     // C ref: shk.c u_left_shop() tail — walking out with an unsettled bill is a
@@ -234,13 +242,30 @@ export function choose_stairs(dir) {
 
 
 // C ref: shk.c u_entered_shop(enterstring).
+// C ref: shk.c u_entered_shop's `static char empty_shops[5]`: the shop rooms
+// the hero was in when the last deserted-shop check ran.
+let empty_shops = [];
+register_process_static(() => { empty_shops = []; });
+
 async function u_entered_shop(enterstring) {
     if (!enterstring.length) return;
     const u = game.u;
     const shkp = shop_keeper(enterstring[0]);
-    if (!shkp || !inhishop(shkp)) {
-        // deserted_shop(): the "This shop is untended." flavour needs a shop
-        // whose keeper has left it, which no recorded level produces.
+    if (!shkp) {
+        // C compares in_rooms()'s returned pointers into one static buffer, so
+        // the test is whether the two calls found a different NUMBER of shops.
+        if (!empty_shops.includes(enterstring[0])
+            && in_rooms(u.ux, u.uy, SHOPBASE).length
+               !== in_rooms(u.ux0, u.uy0, SHOPBASE).length)
+            await deserted_shop(enterstring[0]);
+        empty_shops = [...(u.ushops || [])];
+        u.ushops = [];
+        return;
+    }
+    if (!inhishop(shkp)) {
+        if (!empty_shops.includes(enterstring[0]))
+            await deserted_shop(enterstring[0]);
+        empty_shops = [...(u.ushops || [])];
         u.ushops = [];
         return;
     }
@@ -260,7 +285,18 @@ async function u_entered_shop(enterstring) {
         // C ref: shk.c:794 pacify_shk(shkp, TRUE), including bill surcharge.
         pacify_shk(shkp, true);
     }
-    if (eshk.following) return; /* no dialog */
+    if (muteshk(shkp) || eshk.following) return; /* no dialog */
+
+    const { Invis } = await import('./monmove.js');
+    if (Invis()) {
+        await update_topl(`${Shknam(shkp)} senses your presence.`);
+        if (!Deaf() && !muteshk(shkp))
+            await verbalize('Invisible customers are not welcome!');
+        else
+            await update_topl(`${Shknam(shkp)} stands firm as if ${
+                noit_mhe(shkp)} knows you are there.`);
+        return;
+    }
 
     const rt = rtypeOf(enterstring[0]);
     const shopname = shtypes[rt - SHOPBASE]?.name || 'store';
@@ -271,17 +307,23 @@ async function u_entered_shop(enterstring) {
         } else {
             const angrytexts = ['quite upset', 'ticked off', 'furious'];
             const state = angrytexts[rn2(angrytexts.length)];
-            await update_topl(`${shkname(shkp)} seems ${state} over your return to ${
-                s_suffix(shkname(shkp))} ${shopname}!`);
+            await update_topl(`${Shknam(shkp)} seems ${state} over your return to ${
+                noit_mhis(shkp)} ${shopname}!`);
         }
     } else if (eshk.surcharge) {
-        if (!Deaf() && !muteshk(shkp))
-            await verbalize(`Back again, ${game.plname}?  I've got my eye on you.`);
-        else
+        if (!Deaf() && !muteshk(shkp)) {
+            const { mbodypart } = await import('./monmove.js');
+            await verbalize(`Back again, ${game.plname}?  I've got my ${
+                mbodypart(shkp, EYE)} on you.`);
+        } else
             await update_topl(`The atmosphere at ${s_suffix(shkname(shkp))} ${
                 shopname} seems unwelcoming.`);
     } else if (eshk.robbed) {
-        await update_topl(`${shkname(shkp)} mutters imprecations against shoplifters.`);
+        if (!Deaf())
+            await update_topl(`${Shknam(shkp)} mutters imprecations against shoplifters.`);
+        else
+            await update_topl(`${Shknam(shkp)} is combing through ${
+                noit_mhis(shkp)} inventory list.`);
     } else if (!Deaf() && !muteshk(shkp)) {
         await verbalize(`${Hello(game.urole?.mnum, shkp)}, ${game.plname}!  Welcome${
             eshk.visitct++ ? ' again' : ''} to ${s_suffix(shkname(shkp))} ${shopname}!`);

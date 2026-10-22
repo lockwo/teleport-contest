@@ -216,7 +216,7 @@ import { christen_monst, lookup_novel } from './do_name.js';
 import { in_rooms } from './shkroom.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
-export const gx = { xstart: 1, xsize: COLNO - 1, x_maze_max: COLNO - 1 };
+export const gx = { xstart: 1, xsize: COLNO - 1, x_maze_max: (COLNO - 1) & ~1 };
 export const gy = { ystart: 0, ysize: ROWNO, y_maze_max: ROWNO - 1 };
 
 export function reset_xystart_size() {
@@ -2212,11 +2212,7 @@ export function q_absy(my) { return my + gy.ystart; }
 // lit bit so the map load can preserve it.
 export function quest_level_init_solidfill() {
     const lit = rn2(2);                  // sp_lev.c:2992
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 0; x < COLNO; x++) {
-            const loc = game.level?.at(x, y);
-            if (loc) { loc.typ = STONE; loc.lit = !!lit; loc.roomno = NO_ROOM; }
-        }
+    lvlfill_solid(STONE, lit);
     return lit;
 }
 
@@ -3081,12 +3077,7 @@ export function bigrm_load_map(mapstr, lit) {
 // fg=" " (STONE) with no explicit lit -> BOOL_RANDOM -> one rn2(2).
 export function bigrm_level_init_solidfill() {
     const lit = rn2(2);                  // sp_lev.c:2992
-    const fill = STONE;                  // fg = " "
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 0; x < COLNO; x++) {
-            const loc = game.level?.at(x, y);
-            if (loc) { loc.typ = fill; loc.lit = !!lit; loc.roomno = NO_ROOM; }
-        }
+    lvlfill_solid(STONE, lit);           // fg = " "
 }
 
 // C ref: mklev.c wallification() — wall_cleanup + fix_wall_spines, run at level
@@ -3352,6 +3343,8 @@ export function flip_level(flp) {
         for (let x = minx; x <= maxx; x++)
             for (let y = miny; y < (miny + Math.floor((maxy - miny + 1) / 2)); y++) {
                 const ny = FlipY(y);
+                flip_dbridge_vertical(map.locations[x][y]);
+                flip_dbridge_vertical(map.locations[x][ny]);
                 const tmp = map.locations[x][y];
                 map.locations[x][y] = map.locations[x][ny];
                 map.locations[x][ny] = tmp;
@@ -3361,6 +3354,8 @@ export function flip_level(flp) {
         for (let x = minx; x < (minx + Math.floor((maxx - minx + 1) / 2)); x++)
             for (let y = miny; y <= maxy; y++) {
                 const nx = FlipX(x);
+                flip_dbridge_horizontal(map.locations[x][y]);
+                flip_dbridge_horizontal(map.locations[nx][y]);
                 const tmp = map.locations[x][y];
                 map.locations[x][y] = map.locations[nx][y];
                 map.locations[nx][y] = tmp;

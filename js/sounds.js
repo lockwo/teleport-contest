@@ -6,14 +6,14 @@
 // matching the C order exactly; the first probe that "fires" returns.
 
 import { game } from './gstate.js';
-import { p_coaligned } from './priest.js';
+import { p_coaligned, inhistemple } from './priest.js';
 import { roomAt } from './roomat.js';
 import { rn2 } from './rng.js';
 import { phase_of_the_moon, night, FULL_MOON } from './calendar.js';
 import { VAULT, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
          TEMPLE as TEMPLE_SND, Is_astralevel, MON_FLOOR } from './const.js';
 import { GOLD_PIECE, objects, WEAPON_CLASS } from './mkobj.js';
-import { DEADMONSTER, fmonOrder, wake_nearto_core, genus } from './mon.js';
+import { DEADMONSTER, fmonOrder, wake_nearto_core, genus, is_vampshifter } from './mon.js';
 import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { findgd } from './vault.js';
@@ -125,8 +125,10 @@ export async function dosounds() {
                     for (let vy = sroom.ly; vy <= sroom.hy; vy++)
                         if (gold_at(vx, vy)) { gold_in_vault = true; break; }
                 if (vault_occupied() !== (game.level.rooms.indexOf(sroom) + ROOMOFFSET)) {
-                    await You_hear(gold_in_vault ? 'someone counting gold coins.'
-                                            : 'someone searching.');
+                    await You_hear(gold_in_vault
+                                   ? (!hallu ? 'someone counting gold coins.'
+                                             : 'the quarterback calling the play.')
+                                   : 'someone searching.');
                     break;
                 }
                 // FALLTHROUGH — the hero is standing in the vault.
@@ -809,13 +811,6 @@ const haseyes = (ptr) => (mflags1_of(ptr) & M1_NOEYES) === 0;
 const perceives = (ptr) => (mflags1_of(ptr) & M1_SEE_INVIS) !== 0;
 // C ref: mondata.h:62 is_silent(ptr) = msound == MS_SILENT.
 const is_silent = (ptr) => (msound_of(ptr) ?? MS_SILENT) === MS_SILENT;
-// C ref: monst.h:217 is_vampshifter(mon) — cham is one of the three vampire
-// forms.  Compared by name because there is no PM_ table in this port.
-function is_vampshifter(mon) {
-    const nm = monster_by_pmidx(mon?.cham ?? -1)?.name;
-    return nm === 'vampire' || nm === 'vampire leader'
-        || nm === 'Vlad the Impaler';
-}
 // C ref: you.h:316 uhis() = genders[flags.female].his.
 const uhis = () => (game.flags?.female ? 'her' : 'his');
 // C ref: hack.h:1493 ROLL_FROM(array) = array[rn2(SIZE(array))].
@@ -847,40 +842,6 @@ import { vtense } from './plural.js';
 // numeric class index in `mcls` (`mlet` there is the display CHARACTER), so
 // every C `ptr->mlet == S_FOO` test reads `ptr.mcls` here.
 const S_ANT_MCLS = 1, S_EEL_MCLS = 57;
-// C ref: priest.c histemple_at(priest, x, y) —
-//   EPRI(priest)->shroom == *in_rooms(x, y, TEMPLE)
-//   && on_level(&EPRI(priest)->shrlevel, &u.uz)
-// Going through in_rooms() (rather than indexing level.roomno directly) is
-// what makes a temple SUBroom, or a square shared with a neighboring room
-// (SHARED/SHARED_PLUS), resolve — js/monmove.js keeps the same in_rooms()
-// call for its own copy of this function.
-function histemple_at(priest, x, y) {
-    const epri = priest?.epri;
-    if (!epri) return false;
-    const hits = in_rooms(x, y, TEMPLE_SND);
-    const shroom = hits.length ? hits[0] : 0;
-    if (epri.shroom !== shroom) return false;
-    const sl = epri.shrlevel, uz = game.u?.uz;
-    return !!(sl && uz && sl.dnum === uz.dnum && sl.dlevel === uz.dlevel);
-}
-// C ref: priest.c has_shrine(priest) — the altar square still carries AM_SHRINE
-// and its alignment still matches the priest's.
-const AM_SHRINE_SND = 0x08, AM_MASK_SND = 0x07, ALTAR_TYP_SND = 32;
-function has_shrine(priest) {
-    const sp = priest?.epri?.shrpos;
-    const loc = sp ? game.level?.at?.(sp.x, sp.y) : null;
-    if (!loc || loc.typ !== ALTAR_TYP_SND) return false;
-    if (!(loc.altarmask & AM_SHRINE_SND)) return false;
-    // C ref: align.h Amask2align(mask) — A_NONE for the unaligned mask.
-    const m = loc.altarmask & AM_MASK_SND;
-    const al = (m === 0) ? A_NONE : ((m & 4) ? 1 : (m & 2) ? 0 : -1);
-    return al === priest.epri.shralign;
-}
-function inhistemple(priest) {
-    if (!priest || !priest.ispriest) return false;
-    if (!histemple_at(priest, priest.mx, priest.my)) return false;
-    return has_shrine(priest);
-}
 // C ref: pray.c halu_gname(alignment) — js/role.js (a random god on the DISPLAY
 // rng while hallucinating, otherwise align_gname()).
 async function halu_gname(alignment) {

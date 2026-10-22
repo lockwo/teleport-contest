@@ -16,7 +16,7 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { newsym, object_glyph } from './display.js';
+import { newsym, object_glyph, You_feel } from './display.js';
 import { Blind } from './vision.js';
 import { place_object } from './mkobj.js';
 import { t_at } from './trap.js';
@@ -395,7 +395,7 @@ export async function drag_ball(x, y, allow_drag = true) {
         // C ref: ball.c — a levitating hero is not yanked: it only feels a tug
         // (and the pit becomes seen), then FALLS THROUGH to the drag code below.
         if (game.u?.uprops?.Levitation) {
-            await update_topl('You feel a tug from the iron ball.');
+            await You_feel('a tug from the iron ball.');
             if (chainTrap) chainTrap.tseen = 1;
         } else {
             await update_topl('You are jerked back by the iron ball!');

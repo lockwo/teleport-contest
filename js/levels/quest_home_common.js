@@ -11,6 +11,7 @@ import { COLNO, CROSSWALL, DRAWBRIDGE_UP, HWALL, IRONBARS, IS_AIR, IS_FURNITURE,
 import { game } from '../gstate.js';
 import { makemon, mkclass, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { rn2, rnd } from '../rng.js';
+import { W_RANDOM } from '../selvar.js';
 import { maketrap, t_at } from '../trap.js';
 import {
     LOC_ANY, LOC_DRY, SET_LIT_NOCHANGE, bigrm_wallification, flip_level, gx, gy,
@@ -30,7 +31,8 @@ export const DART_TRAP = 2, ARROW_TRAP = 1, PIT = 11, SPIKED_PIT = 12,
 
 // C ref: rm.h W_* wall directions, as selection_do_grow()/random_wdir() use them.
 export const W_NORTH = 1, W_SOUTH = 2, W_EAST = 4, W_WEST = 8,
-             W_ANY = (W_NORTH | W_SOUTH | W_EAST | W_WEST), W_RANDOM = -2;
+             W_ANY = (W_NORTH | W_SOUTH | W_EAST | W_WEST);
+export { W_RANDOM };
 
 // C ref: load_special() loads nhlib.lua first, whose top level runs
 // shuffle(align) over a 3-element table: rn2(3) then rn2(2).

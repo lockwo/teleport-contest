@@ -13,7 +13,7 @@ import { nh_delay_output_tick } from './nomux_capture.js';
 import { P_NONE, P_MARTIAL_ARTS } from './const.js';
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
-import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash } from './display.js';
+import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash, You_hear, You_see } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import {
@@ -39,9 +39,9 @@ import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
          place_object, add_to_migration,
          mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight, base_oc_cost } from './mkobj.js';
-import { makemon, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
-import { in_rooms, shop_keeper } from './shkroom.js';
-import { water_damage, set_wounded_legs, t_at, chest_trap, Levitation_fu } from './trap.js';
+import { makemon, makemon_appears_msg, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
+import { in_rooms, shop_keeper, shkname } from './shkroom.js';
+import { water_damage, set_wounded_legs, t_at, chest_trap, Levitation_fu, fall_through } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, objects_at, obj_extract_self, stackobj, splitobj, xname, otense,
          obfree, remove_worn_item,
          obj_doname, thitmonst } from './invent.js';
@@ -68,7 +68,6 @@ import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
 import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
 import { wipe_engr_at, u_wipe_engr } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
-import { goto_level } from './do.js';
 import { is_pool, is_lava, is_pool_or_lava, is_ice } from './dbridge.js';
 import { scatter } from './explode.js';
 import { hero_breaks, breaktest } from './dothrow.js';
@@ -76,11 +75,11 @@ import { is_art, ART_MJOLLNIR } from './artifact.js';
 import { canseemon_shared } from './display.js';
 import { finish_meating } from './dogmove.js';
 import { hidden_gold, money_cnt_invent, make_happy_shk, is_unpaid,
-         costly_spot, addtobill } from './shk.js';
+         costly_spot, costly_adjacent, addtobill, find_objowner, inside_shop,
+         stolen_value, make_angry_shk } from './shk.js';
 import { currency, youmonst_data_pub as youmonst_data } from './invent.js';
 import { set_voice } from './sounds.js';
-import { corpse_xname } from './objnam.js';
-import { You_hear } from './display.js';
+import { corpse_xname, killer_xname } from './objnam.js';
 
 // C ref: hacklib.c upstart(s) — capitalise the first letter in place
 // (pickup.js/invent.js each keep the same one-liner).
@@ -92,7 +91,6 @@ const S_LIZARD = 58;      // defsym.h S_LIZARD, as numbered in permonst.mcls
 const GLASS = 19;         // objects[].oc_material GLASS (mkobj.js's private copy)
 const MIRROR = 230;       // objects[] MIRROR
 const S_LRING = 4;        // rm.h S_LRING (sink `looted` bit)
-const STRAT_WAITMASK = 0x00ff0000;
 
 // C ref: attrib.c acurr(chridx) — effective attribute; attrib.js owns it.
 function ACURR(i) { return acurr_eff(i); }
@@ -204,7 +202,8 @@ export async function disturb_grave(x, y) {
     if (!lev || lev.disturbed) return;
     await pline('You disturb the undead!');
     lev.disturbed = 1;
-    makemon(monster_by_pmidx(name_to_pmidx('ghoul')), x, y, 0);
+    const ghoul = makemon(monster_by_pmidx(name_to_pmidx('ghoul')), x, y, 0);
+    if (ghoul) await makemon_appears_msg(ghoul, ghoul.mx, ghoul.my, 0); // makemon.c:1474
     exercise(A_WIS, false);
 }
 
@@ -232,11 +231,9 @@ export async function altar_wrath(x, y) {
         // the old inline string had neither.
         const { godvoice } = await import('./pray.js');
         await godvoice(altaralign, 'How darest thou desecrate my altar!');
-        // adjattrib(A_WIS, -1, FALSE): no RNG, lowers the attribute.
-        const a = u?.acurr?.a;
-        if (a && a[A_WIS] > 3) a[A_WIS] -= 1;
+        const { adjattrib } = await import('./attrib.js');
+        await adjattrib(A_WIS, -1, 0);   /* C FALSE: "You feel foolish!" */
         if (u?.ualign) u.ualign.record--;
-        game.botl = true;
     } else {
         // C ref: pray.c altar_wrath() — the whisper names the altar's god, and
         // goes Deaf-aware ("Despite your deafness, you seem to hear <god> say").
@@ -475,20 +472,6 @@ export async function kick_door(x, y, avrg_attrib) {
     game._toplin = 1;
 }
 
-// C ref: trap.c fall_through(FALSE, 0) as reached from kick_nondoor()'s throne
-// arm — the floor under the throne gives way.  The hero is known to be
-// non-levitating (the throne arm returns early otherwise) and the dungeon's
-// bottom level was checked by the caller, so what remains of C's guard chain is
-// u.ustuck / Flying / pet-adjacency, none of which hold for a hero standing on
-// a throne kicking it.  C finishes with schedule_goto(), which the moveloop
-// turns into goto_level() on its next pass; do.js's other falling call sites
-// call goto_level() directly, so this does too.  No RNG of its own.
-async function fall_through_throne() {
-    const u = game.u;
-    await pline(`The ${surface(u.ux, u.uy)} opens up under you!`);
-    await goto_level({ dnum: u.uz.dnum, dlevel: u.uz.dlevel + 1 }, false, true, false);
-}
-
 // C ref: potion.c sink_backs_up(x, y) — potion.js keeps the dosink() copy; this
 // is the dokick.c caller's.  mkobj_at() draws when the ring appears.
 async function sink_backs_up(x, y) {
@@ -498,7 +481,7 @@ async function sink_backs_up(x, y) {
                     : 'Flupp!  You hear a sloshing sound.')
         : `Something splashes you in the ${body_part(FACE)}.`);
     if ((((loc?.looted) | 0) & S_LRING) === 0) {
-        if (!Blind()) await pline('You see a ring shining in its midst.');
+        if (!Blind()) await You_see('a ring shining in its midst.');
         mkobj_at(RING_CLASS, x, y, true);
         newsym(x, y);
         exercise(A_DEX, true);
@@ -581,7 +564,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
         } else if (!rn2(4)) {
             const uz = game.u.uz;
             if (uz.dlevel < dunlevs_in_dungeon(uz)) {
-                await fall_through_throne();
+                await fall_through(false, 0);
                 return ECMD_TIME;
             }
             await kick_ouch(x, y, '', maploc);
@@ -664,7 +647,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
         /* nothing, fruit or trouble? 75:23.5:1.5% */
         if (rn2(3)) {
             if (!rn2(6) && !species_gone('killer bee'))
-                await pline('You hear a low buzzing.'); /* a warning */
+                await You_hear('a low buzzing.'); /* a warning */
             await kick_ouch(x, y, '', maploc);
             return ECMD_TIME;
         }
@@ -735,7 +718,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
         } else if (!(maploc.looted & S_LPUDDING) && !rn2(3)
                    && !species_gone('black pudding')) {
             if (Blind()) {
-                if (!Deaf()) await pline('You hear a gushing sound.');
+                if (!Deaf()) await You_hear('a gushing sound.');
             } else {
                 await pline('A black ooze gushes up from the drain!');
             }
@@ -1084,18 +1067,6 @@ function closed_door(x, y) {
 // C ref: trap.h is_pit(ttyp).
 function is_pit_ttyp(ttyp) { return ttyp === PIT || ttyp === SPIKED_PIT; }
 
-// C ref: shk.c find_objowner(obj, x, y) — the shopkeeper whose bill the object
-// belongs on.  onshopbill() needs the per-shk bill, which shkroom.js keeps
-// private, so this is C's `deflt_shkp` fallback: the first shk of the rooms
-// covering (x, y).  No RNG either way.
-function find_objowner(obj, x, y) {
-    for (const rno of in_rooms(x, y, SHOPBASE)) {
-        const shkp = shop_keeper(rno);
-        if (shkp) return shkp;
-    }
-    return null;
-}
-
 // C ref: do.c flooreffects(obj, x, y, verb) — what happens to an object as it
 // lands.  Only the water arm has a ported body (trap.js water_damage); the
 // boulder-fills-a-pit, lava, hole/ship_object, globby-merge and hot-Gehennom-
@@ -1195,18 +1166,13 @@ async function kick_object(x, y, kickobjnam) {
     gk_kickedobj = objects_at(x, y)[0] || null;
     let res = 0;
     if (gk_kickedobj) {
-        kickobjnam.name = killer_xname_k(gk_kickedobj);
+        kickobjnam.name = killer_xname(gk_kickedobj);
         res = await really_kick_object(x, y);
         gk_kickedobj = game.gk_kickedobj = null;
     }
     return res;
 }
 
-// C ref: objnam.c killer_xname(obj) — xname() with the BUC/erosion/charge
-// details kept but no article.  js/invent.js's killer_xname is module-private;
-// its body is `simple_obj_name(obj, { article: false })`, which xname() differs
-// from only in also dropping the BUC prefix.
-function killer_xname_k(obj) { return xname(obj); }
 
 // C ref: dokick.c really_kick_object(x, y) — the guts of kicking a floor
 // object.  Returns 1 when the kick "worked" (the caller spends the turn) and 0
@@ -1252,7 +1218,7 @@ async function really_kick_object(x, y) {
         await update_topl(`You kick ${corpse_xname(gk_kickedobj, null, 4 /* CXN_PFX_THE */)} with your bare ${
             makeplural(body_part(FOOT))}.`);
         const { instapetrify } = await import('./polyself.js');
-        await instapetrify(`kicking ${killer_xname_k(gk_kickedobj)} barefoot`);
+        await instapetrify(`kicking ${killer_xname(gk_kickedobj)} barefoot`);
     }
 
     const isgold = gk_kickedobj.oclass === COIN_CLASS;
@@ -1295,7 +1261,7 @@ async function really_kick_object(x, y) {
 
     shkp = find_objowner(gk_kickedobj, x, y);
     let costly = !!(shkp && (costly_spot(x, y)
-                             || (costly_adjacent_k(shkp, x, y) && gk_kickedobj.unpaid)));
+                             || (costly_adjacent(shkp, x, y) && gk_kickedobj.unpaid)));
 
     await Norep_kick(`You kick ${
         !isgold ? singular_k(gk_kickedobj, obj_doname) : obj_doname(gk_kickedobj)}.`);
@@ -1445,12 +1411,6 @@ async function really_kick_object(x, y) {
     newsym(gk_kickedobj.ox, gk_kickedobj.oy);
     return 1;
 }
-
-// C ref: shk.c costly_adjacent(shkp, x, y) — an unpaid item just outside the
-// shop door still belongs to the shk.  eshk->shd (the door) is not modelled
-// here; the covered kicks are all inside or outside a shop, never in its
-// doorway.  No RNG.
-function costly_adjacent_k(_shkp, _x, _y) { return false; }
 
 // C ref: dokick.c ghitm() — only greedy monsters and gold-handling NPCs catch.
 export async function ghitm(mtmp, gold) {
@@ -2135,9 +2095,14 @@ export async function container_impact_dmg(obj, x, y) {
     if (!obj || !Array.isArray(obj.cobj) || !obj.cobj.length) return;
     if (obj.otyp === BAG_OF_HOLDING || obj.otyp === BAG_OF_TRICKS) return;
 
-    // costly/insider/frominv drive stolen_value() billing, which invent.js
-    // stubs out; the loop's RNG and destruction are what matter here.
-    void shop_keeper(in_rooms(x, y, SHOPBASE)[0]);
+    const shkp = shop_keeper(in_rooms(x, y, SHOPBASE)[0]);
+    const costly = !!(shkp && costly_spot(x, y));
+    const ushops = game.u?.ushops;
+    const insider = !!(ushops?.length && inside_shop(game.u.ux, game.u.uy)
+                       && in_rooms(x, y, SHOPBASE)[0] === ushops[0]);
+    /* if dropped or thrown, shop ownership flags are set on this obj */
+    const frominv = (obj !== gk_kickedobj);
+    let loss = 0;
     let wchange = false;
 
     for (const otmp of [...obj.cobj]) {
@@ -2155,6 +2120,10 @@ export async function container_impact_dmg(obj, x, y) {
             if (otmp.otyp === EGG && otmp.spe && otmp.corpsenm >= 0)
                 change_luck(-1);
             await You_hear(`a muffled ${result}.`);
+            if (costly) {
+                if (frominv && !otmp.unpaid) otmp.no_charge = 1;
+                loss += await stolen_value(otmp, x, y, !!shkp.mpeaceful, true);
+            }
             if (otmp.quan > 1) {
                 useup(otmp);
             } else {
@@ -2166,6 +2135,14 @@ export async function container_impact_dmg(obj, x, y) {
         }
     }
     if (wchange) obj.owt = weight(obj);
+    if (costly && loss) {
+        if (!insider) {
+            await pline(`You caused ${loss} ${currency(loss)} worth of damage!`);
+            await make_angry_shk(shkp, x, y);
+        } else {
+            await pline(`You owe ${shkname(shkp)} ${loss} ${currency(loss)} for objects destroyed.`);
+        }
+    }
 }
 
 // C ref: dokick.c:1769 obj_delivery(near_hero) — goto_level() (and the wizkit

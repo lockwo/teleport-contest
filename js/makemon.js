@@ -1354,8 +1354,9 @@ export function mongets_pub(mtmp, otyp) { return mongets(mtmp, otyp); }
 // an isminion follower.
 function is_lminion_mon(mtmp) {
     if (!mtmp?.data || !(mflags2_of(mtmp.data) & M2_MINION)) return false;
-    const algn = mtmp.ispriest ? mtmp.epri?.shralign
-               : mtmp.isminion ? mtmp.emin?.min_align
+    // minion.js newemin() keeps the record on mextra, makemon.js on the flat slot
+    const algn = mtmp.ispriest ? (mtmp.mextra?.epri ?? mtmp.epri)?.shralign
+               : mtmp.isminion ? (mtmp.mextra?.emin ?? mtmp.emin)?.min_align
                                : mtmp.data.maligntyp;
     return algn !== A_NONE && algn > 0;
 }
@@ -1630,12 +1631,10 @@ function m_initweap_angel(mtmp, ptr) {
     // A non-minion angel uses ptr->maligntyp (we do not model EMIN min_align).
     // C ref: do_name.c oname(): skip if that artifact already exists, else
     // name it and artifact_exists() marks it created (nartifact_exist()
-    // then raises every later random-artifact roll).  No RNG.
-    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL  // makemon.c:338
-        && !otmp.oartifact && !hooks.exist_artifact?.(otmp.otyp, nam)) {
-        otmp.oname = nam;
-        hooks.artifact_exists?.(otmp, nam, true, 0x0080 /* ONAME_RANDOM */);
-    }
+    // then raises every later random-artifact roll).  The weapon is fresh, so
+    // oname_assign() is all of oname().  No RNG.
+    if ((!rn2(20) || is_lord) && Math.sign(ptr.maligntyp ?? 0) === A_LAWFUL)  // makemon.c:338
+        hooks.oname_assign?.(otmp, nam, 0x0080 /* ONAME_RANDOM */);
     bless(otmp);
     otmp.oerodeproof = true;
     // long sword ends up +0..+3, silver mace +3..+6 to offset being much weaker
@@ -2840,8 +2839,9 @@ export function set_malign(mtmp) {
     if (!ptr) return;
     let mal = ptr.maligntyp ?? 0;
     if (mtmp.ispriest || mtmp.isminion) {
-        if (mtmp.ispriest && mtmp.epri) mal = mtmp.epri.shralign ?? mal;
-        else if (mtmp.isminion && mtmp.emin) mal = mtmp.emin.min_align ?? mal;
+        const epri = mtmp.mextra?.epri ?? mtmp.epri, emin = mtmp.mextra?.emin ?? mtmp.emin;
+        if (mtmp.ispriest && epri) mal = epri.shralign ?? mal;
+        else if (mtmp.isminion && emin) mal = emin.min_align ?? mal;
         if (mal !== A_NONE) mal *= 5;
     }
     const coaligned = sgn(mal) === sgn(game.u?.ualign?.type ?? 0);
@@ -3515,6 +3515,12 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
         }
         break;
     }
+    // C ref: makemon.c:1348 `if ((ct = emits_light(mtmp->data)) > 0) new_light_source(...)`.
+    // This port reconciles the LS_MONSTER entries inside vision_recalc() (light.js
+    // sync_monster_light_sources), so the creation only has to do what
+    // new_light_source() does to the display: ask for a full vision recalc, so a
+    // light made mid-turn lights its surroundings before the next screen capture.
+    if (hooks.emits_light?.(ptr)) game.vision_full_recalc = 1;
 }
 
 // C ref: mondata.h is_bat(). Keep this by species name so generated monster
@@ -4519,12 +4525,9 @@ async function makemon_appears_line(mtmp, x, y, mmflags = 0) {
     // C ref: pline.c Norep() — vpline() with PLINE_NOREPEAT, suppressed when the
     // text equals gp.prevmsg (the last INDIVIDUAL message, game._prevmsg here).
     if (game._prevmsg === msg) return;
-    // C's set_msg_xy(mtmp->mx, mtmp->my) ahead of this Norep() is deliberately
-    // NOT mirrored, same as js/zap.js's and js/dokick.js's Norep ports: the
-    // a11y location is consumed AND reset by pline() (this port's other vpline
-    // stand-in), never by update_topl(), and accessiblemsg is only switched on
-    // inside #lookaround.  Setting it here is therefore inert for this message
-    // but survives to prefix its coordinates onto #lookaround's next pline().
+    // C: set_msg_xy(mtmp->mx, mtmp->my) ahead of Norep(); the accessiblemsg
+    // prefix is applied (and the location reset) by update_topl().
+    (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my);
     await D.update_topl(msg);
 }
 
@@ -4877,7 +4880,7 @@ export async function bagotricks(bag, tipping, seencount) {
         let creatcnt = 1, seecount = 0;
 
         const { consume_obj_charge } = await import('./invent.js');
-        consume_obj_charge(bag, !tipping);
+        await consume_obj_charge(bag, !tipping);
 
         if (!rn2(23))
             creatcnt += rnd(7);

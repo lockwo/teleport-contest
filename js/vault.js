@@ -33,7 +33,7 @@ import {
     EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT, MELT_ICE_AWAY } from './const.js';
 import { ATR_INVERSE } from './terminal.js';
 import {
-    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible,
+    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible, You_hear,
 } from './display.js';
 import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind } from './vision.js';
 import { Monnam, mon_nam, canspotmon, setmangry, relobj } from './uhitm.js';
@@ -53,6 +53,7 @@ import { stop_occupation, nomul } from './hack.js';
 import { adjalign } from './attrib.js';
 import { dist2 } from './hacklib.js';
 import { msound_of } from './monflags_data.js';
+import { yelp } from './sounds.js';
 import { attacktype, dmgtype, AT_HUGS, AD_STCK, AD_WRAP } from './monattk_data.js';
 import { unfaint } from './eat.js';
 
@@ -66,9 +67,8 @@ const GEM_CLASS = 9;
 // C ref: hack.h MM_EGD (:1154) and MM_NOMSG (:1164).
 const MM_EGD = 0x00000080;
 const MM_NOMSG = 0x00020000;
-// C ref: monflag.h MS_SILENT / the msound values yelp() switches on.
-const MS_SILENT = 0, MS_BARK = 1, MS_MEW = 2, MS_ROAR = 3, MS_GROWL = 5,
-    MS_SQEEK = 6, MS_SQAWK = 7, MS_WAIL = 14;
+// C ref: monflag.h MS_SILENT.
+const MS_SILENT = 0;
 
 /* ------------------------------------------------------------------ *
  * house-local helpers (the shape the rest of js/ uses)
@@ -86,7 +86,6 @@ const Strangled = () => (game.u?.uprops?.Strangled || 0) > 0;
 const verbalize = (line) => update_topl(`"${line}"`);
 const You = (s) => update_topl(`You ${s}`);
 const Your = (s) => update_topl(`Your ${s}`);
-const You_hear = (s) => update_topl(`You hear ${s}`);
 const pline_The = (s) => update_topl(`The ${s}`);
 // C ref: hacklib.c an() / upstart() / mungspaces().
 import { an } from './hacklib.js';
@@ -95,8 +94,7 @@ const mungspaces = (s) => String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g,
 // C ref: do_name.c noit_Monnam / noit_mon_nam — SUPPRESS_IT, i.e. a guard is
 // named even when the hero cannot spot it.  The shim used to be mon_nam(),
 // which was indistinguishable only while x_monnam() ignored canspotmon().
-const mhe = (m) => (m?.female ? 'she' : 'he');
-import { noit_mhis } from './do_name.js';
+import { noit_mhis, mhe } from './do_name.js';
 // C ref: hack.h um_dist(x,y,n) — further than n from the hero on EITHER axis.
 const um_dist = (x, y, n) => Math.abs(x - (game.u?.ux ?? 0)) > n
     || Math.abs(y - (game.u?.uy ?? 0)) > n;
@@ -223,31 +221,6 @@ function mpickgold(mtmp) {
     obj_extract_self(gold);
     add_to_minv(mtmp, gold);
     if (cansee(mtmp.mx, mtmp.my)) newsym(mtmp.mx, mtmp.my);
-}
-
-// C ref: sounds.c yelp(mtmp) — a tame monster shoved aside by the guard yelps.
-// wake_nearto() only clears msleeping; the hallucinatory ROLL_FROM(h_sounds)
-// needs pline.c's hallucination sound table, which js/ has not ported.
-async function yelp(mtmp) {
-    if (mon_helpless(mtmp) || !mtmp.data?.msound) return;
-    const deaf = Deaf();
-    let verb = null;
-    switch (mtmp.data.msound) {
-    case MS_MEW: verb = !deaf ? 'yowl' : 'arch'; break;
-    case MS_BARK:
-    case MS_GROWL: verb = !deaf ? 'yelp' : 'recoil'; break;
-    case MS_ROAR: verb = !deaf ? 'snarl' : 'bluff'; break;
-    case MS_SQEEK: verb = !deaf ? 'squeal' : 'quiver'; break;
-    case MS_SQAWK: verb = !deaf ? 'screak' : 'thrash'; break;
-    case MS_WAIL: verb = !deaf ? 'wail' : 'cringe'; break;
-    default: verb = null; break;
-    }
-    if (!verb) return;
-    await update_topl(`${Monnam(mtmp)} ${verb}s!`);
-    if (game.context?.run) nomul(0);
-    const range = (mtmp.data.mlevel || 0) * 12;
-    for (const m of (game.level?.monsters || []))   /* wake_nearto */
-        if (dist2(m.mx, m.my, mtmp.mx, mtmp.my) < range * range) m.msleeping = 0;
 }
 
 // C ref: zap.c fracture_rock(obj) — a boulder in the guard's way becomes a

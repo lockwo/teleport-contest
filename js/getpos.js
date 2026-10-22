@@ -35,16 +35,18 @@ import {
     TLCORNER, TRCORNER, BLCORNER, BRCORNER, CROSSWALL,
     TUWALL, TDWALL, TLWALL, TRWALL,
     D_BROKEN, D_ISOPEN,
-    GFILTER_AREA, GFILTER_VIEW, GLOC_EXPLORE,
+    GFILTER_AREA, GLOC_EXPLORE,
     GPCOORDS_NONE, GPCOORDS_MAP, GPCOORDS_COMPASS, GPCOORDS_COMFULL,
     GPCOORDS_SCREEN,
-    VIBRATING_SQUARE, HI_ZAP, LA_DOWN, MAXTCHARS, NHW_MENU, PICK_ONE,
+    VIBRATING_SQUARE, HI_ZAP, LA_DOWN, MAXTCHARS,
     DB_UNDER, DB_MOAT, DB_LAVA, DB_ICE, DB_FLOOR,
     IS_DOOR,
 } from './const.js';
 import { NO_COLOR } from './terminal.js';
 import { selection_new, selection_setpoint, selection_getpoint } from './selvar.js';
-import { newsym } from './display.js';
+import { newsym, wall_angle, show_glyph_cell } from './display.js';
+import { cansee } from './vision.js';
+import { invocation_pos } from './trap.js';
 
 // ---------------------------------------------------------------------------
 // sym.h enum cmap_symbols — the indices getpos.c's is_cmap_*() macros bracket.
@@ -108,7 +110,7 @@ export function getpos_sethilite(gp_hilitef, gp_getvalidf) {
     const old_map_frame_color = wsettings_().map_frame_color;
     const sel = selection_new();
 
-    defaultHiliteState = iflags_().bgcolors ? HiliteBackground : HiliteNormalMap;
+    defaultHiliteState = bgcolors_on() ? HiliteBackground : HiliteNormalMap;
     if (gp_getvalidf !== old_getvalid) getpos_hilite_state = defaultHiliteState;
 
     getpos_getvalids_selection(sel, getpos_getvalid);
@@ -117,6 +119,10 @@ export function getpos_sethilite(gp_hilitef, gp_getvalidf) {
     getpos_getvalids_selection(sel, getpos_getvalid);
     wsettings_().map_frame_color = (getpos_hilite_state === HiliteBackground)
                                   ? HI_ZAP : NO_COLOR;
+    /* display.js framed_attr() reads this: valid spots drawn with a frame
+       (background) colour lose their pet/pile/detect inverse attribute */
+    game._getposFrameValid = (wsettings_().map_frame_color !== NO_COLOR)
+                             ? getpos_getvalid : null;
 
     if (getpos_getvalid !== old_getvalid
         || wsettings_().map_frame_color !== old_map_frame_color)
@@ -129,15 +135,15 @@ export function getpos_sethilite(gp_hilitef, gp_getvalidf) {
 // 'bgcolors' On there are 3 and the background-colour state is the default.
 // The tmp_at(DISP_END) teardown fires BEFORE the state advances, and the
 // tmp_at(DISP_BEGIN) setup AFTER the sethilite() re-arm.
-export function getpos_toggle_hilite_state() {
+export async function getpos_toggle_hilite_state() {
     /* getpos_hilitefunc isn't Null */
     if (getpos_hilite_state === HiliteGoodposSymbol) {
         /* currently on, finish */
-        getpos_hilitefunc(false);      /* tmp_at(DISP_END) */
+        await getpos_hilitefunc(false);      /* tmp_at(DISP_END) */
     }
 
     getpos_hilite_state = (getpos_hilite_state + 1)
-                          % (iflags_().bgcolors ? 3 : 2);
+                          % (bgcolors_on() ? 3 : 2);
     /* resetting the callbacks to their current values draws valid-spots with
        background colour if that is the new state and turns it off if it was
        the previous state */
@@ -145,9 +151,38 @@ export function getpos_toggle_hilite_state() {
 
     if (getpos_hilite_state === HiliteGoodposSymbol) {
         /* now on, begin */
-        getpos_hilitefunc(true);       /* tmp_at(DISP_BEGIN) */
+        await getpos_hilitefunc(true);       /* tmp_at(DISP_BEGIN) */
     }
 }
+
+// The getpos_hilitefunc painters (apply.c display_jump/polearm/grapple_positions,
+// read.c display_stinking_cloud_positions, spell.c display_spell_target_
+// positions) all call tmp_at(DISP_BEAM, cmap_to_glyph(S_goodpos)), tmp_at(x, y)
+// per valid spot and tmp_at(DISP_END, 0).  display.js tmp_at() stores numeric
+// glyphs that the live renderer never reads, so this is the live-path form
+// (show_glyph_cell, like zap.js show_beam_cell): DISP_BEAM only draws spots the
+// hero can see, and DISP_END newsym()s every one it drew.
+const TMP_AT_MAX_GLYPHS = COLNO * 2;
+let goodpos_saved = null;
+export function goodpos_tmp_at_begin() { goodpos_saved = []; }
+export function goodpos_tmp_at(x, y) {
+    if (!goodpos_saved) return;
+    if (!isok(x, y) || !cansee(x, y)) return;
+    if (goodpos_saved.length >= TMP_AT_MAX_GLYPHS) return;
+    goodpos_saved.push([x, y]);
+    show_glyph_cell(x, y, '$', HI_ZAP);
+}
+export function goodpos_shown(x, y) {
+    return !!goodpos_saved && goodpos_saved.some(([sx, sy]) => sx === x && sy === y);
+}
+export function goodpos_tmp_at_end() {
+    for (const [x, y] of goodpos_saved || []) newsym(x, y);
+    goodpos_saved = null;
+}
+
+// C ref: getpos.c `if (getpos_hilitefunc)` — the gate for the '$' key and the
+// help line "Use '$' to toggle marking of valid locations."
+export function getpos_has_hilitefunc() { return !!getpos_hilitefunc; }
 
 // C ref: getpos.c:93 mapxy_valid(x, y) — the public read of the file-scope
 // validity callback.  FALSE when no caller installed one.
@@ -304,6 +339,11 @@ export function gloc_filter_init() {
     }
 }
 
+// C ref: getpos.c:337 GLOC_SAME_AREA(x, y).
+export function gloc_same_area(x, y) {
+    return isok(x, y) && !!selection_getpoint(x, y, gloc_filter_map);
+}
+
 // C ref: getpos.c:411 gloc_filter_done().
 export function gloc_filter_done() {
     if (gloc_filter_map) {
@@ -317,7 +357,7 @@ export function gloc_filter_done() {
 // elsewhere on the level (which could reach normal play through a bones file)
 // answers FALSE because invocation_pos() gates it.
 export function known_vibrating_square_at(x, y) {
-    if (invocation_pos_(x, y)) {
+    if (invocation_pos(x, y)) {
         const ttmp = t_at_(x, y);
 
         return !!ttmp && ttmp.ttyp === VIBRATING_SQUARE && !!ttmp.tseen;
@@ -439,63 +479,6 @@ export async function auto_describe(cx, cy) {
     }
 }
 
-// C ref: getpos.c:664 getpos_menu(ccp, gloc) — the 'm'/'o'/'d'/'x' menu form
-// (iflags.getloc_usemenu, toggled by '!').  gather_locs() runs FIRST, so its
-// gloc_filter_init()/done() side effects happen even when the count is too low
-// and the "You cannot see/detect ..." line is printed instead.
-//
-// gcount always includes the hero (gather_locs() forces u's own spot in), which
-// is why the "nothing to pick" test is `< 2` and why the item loop starts at 1.
-// The menu's a_int is `i + 1`, and the pick is read back as
-// garr[picks->item.a_int - 1] — an off-by-one that cancels; do not "fix" it.
-//
-// gather_locs() is hack.js's exported one (it RETURNS the sorted array
-// instead of filling out-params).
-export async function getpos_menu(ccp, gloc) {
-    const H = await import('./hack.js');
-    const garr = H.gather_locs(gloc, getpos_getvalid);
-    const gcount = garr.length;
-    let i, pick_cnt;
-    let tmpbuf = '';
-
-    if (gcount < 2) { /* gcount always includes the hero */
-        await custompline_(`You cannot `
-            + `${(iflags_().getloc_filter === GFILTER_VIEW) ? 'see' : 'detect'} `
-            + `${gloc_descr[gloc][0]}.`);
-        return false;
-    }
-
-    const tmpwin = create_nhwindow_(NHW_MENU);
-    start_menu_(tmpwin);
-
-    /* gather_locs returns array[0] == you.  skip it. */
-    for (i = 1; i < gcount; i++) {
-        const tmpcc = { x: garr[i].x, y: garr[i].y };
-        const sym = 0;
-        const any_a_int = i + 1;
-        const dsd = await do_screen_description_(tmpcc, true, sym, tmpbuf);
-        if (dsd) {
-            tmpbuf = coord_desc(garr[i].x, garr[i].y, tmpbuf,
-                                iflags_().getpos_coords);
-            const fullbuf = `${dsd.firstmatch}${tmpbuf ? ' ' : ''}${tmpbuf}`;
-            add_menu_(tmpwin, any_a_int, fullbuf);
-        }
-    }
-
-    tmpbuf = `Pick ${an_(gloc_descr[gloc][1])}`
-           + `${gloc_filtertxt[iflags_().getloc_filter | 0]}`
-           + `${iflags_().getloc_travelmode ? ' for travel destination' : ''}`;
-    end_menu_(tmpwin, tmpbuf);
-    const picks = await select_menu_(tmpwin, PICK_ONE);
-    destroy_nhwindow_(tmpwin);
-    pick_cnt = picks ? picks.length : 0;
-    if (pick_cnt > 0) {
-        ccp.x = garr[picks[0] - 1].x;
-        ccp.y = garr[picks[0] - 1].y;
-    }
-    return (pick_cnt > 0);
-}
-
 // C ref: getpos.c:752 getpos_refresh() — the ^R response inside getpos().  The
 // temporary S_goodpos overlay must be torn down BEFORE docrt() (otherwise
 // docrt repaints over live tmp_at glyphs and the teardown then erases real map
@@ -504,7 +487,7 @@ export async function getpos_menu(ccp, gloc) {
 // defaultHiliteState by the teardown, so ^R also cancels a '$' toggle.
 export async function getpos_refresh() {
     if (getpos_hilitefunc && getpos_hilite_state === HiliteGoodposSymbol) {
-        getpos_hilitefunc(false);              /* tmp_at(DISP_END) */
+        await getpos_hilitefunc(false);        /* tmp_at(DISP_END) */
         getpos_hilite_state = defaultHiliteState;
     }
 
@@ -652,7 +635,7 @@ function back_to_glyph_cmapidx(x, y) {
     case HWALL: case VWALL:
     case TLCORNER: case TRCORNER: case BLCORNER: case BRCORNER:
     case CROSSWALL: case TUWALL: case TDWALL: case TLWALL: case TRWALL:
-        idx = ptr.seenv ? wall_angle_(ptr) : S_stone;
+        idx = ptr.seenv ? wall_angle(ptr) : S_stone;
         break;
     case DOOR:
         if (ptr.doormask) {
@@ -716,23 +699,6 @@ function back_to_glyph_cmapidx(x, y) {
     }
     return idx;
 }
-// C ref: display.c wall_angle(lev) — UNPORTED (see back_to_glyph_cmapidx).
-function wall_angle_(ptr) {
-    switch (ptr.typ) {
-    case VWALL: return S_vwall;
-    case HWALL: return S_hwall;
-    case TLCORNER: return S_tlcorn;
-    case TRCORNER: return S_trcorn;
-    case BLCORNER: return S_blcorn;
-    case BRCORNER: return S_brcorn;
-    case CROSSWALL: return S_crwall;
-    case TUWALL: return S_tuwall;
-    case TDWALL: return S_tdwall;
-    case TLWALL: return S_tlwall;
-    case TRWALL: return S_trwall;
-    default: return S_stone;
-    }
-}
 // C ref: stairs.c stairway_at(x, y) / known_branch_stairs(sway) —
 // js/display.js:732/759 export both; kept local so this file's static import
 // list stays at newsym().
@@ -756,12 +722,6 @@ function t_at_(x, y) {
     for (const t of (game.level?.traps || [])) if (t.tx === x && t.ty === y) return t;
     return null;
 }
-// C ref: dungeon.c invocation_pos(x, y) — js/hack.js:3773 (private) reads the
-// same field.
-function invocation_pos_(x, y) {
-    const inv = game.level?.invocation_pos;
-    return !!inv && inv.x === x && inv.y === y;
-}
 
 // C ref: decl.c iflags / gw.wsettings.  getloc_filter/getloc_usemenu/
 // getloc_moveskip/getloc_travelmode/autodescribe/bgcolors/getpos_coords all
@@ -774,6 +734,9 @@ function iflags_() {
     if (ifl.getpos_coords === undefined) ifl.getpos_coords = GPCOORDS_NONE;
     return ifl;
 }
+// C ref: optlist.h bgcolors default On; options.js leaves iflags.bgcolors
+// undefined until the player sets it.
+function bgcolors_on() { return iflags_().bgcolors !== false; }
 function wsettings_() {
     return (game.wsettings = game.wsettings || { map_frame_color: NO_COLOR });
 }
@@ -800,15 +763,5 @@ function pad0_(n, w) { return String(n).padStart(w, '0'); }
 function strsubst_(bp, orig, replacement) {
     return String(bp).replace(orig, replacement);
 }
-// C ref: objnam.c an(str) — js/hack.js:2633 / js/objnam.js copies are private.
-import { an as an_ } from './hacklib.js';
-// C ref: window.c putstr / create_nhwindow / start_menu / add_menu / end_menu /
-// select_menu / destroy_nhwindow.  js/end.js:1375 and js/invent.js:1238 have
-// private no-op stubs of the same shape.
+// C ref: window.c putstr.
 function putstr_(win, _attr, str) { if (win?.lines) win.lines.push(str); }
-function create_nhwindow_(type) { return { type, lines: [], items: [] }; }
-function start_menu_(_win) { }
-function add_menu_(win, a_int, text) { win.items.push({ a_int, text }); }
-function end_menu_(_win, _query) { }
-async function select_menu_(_win, _how) { return null; }
-function destroy_nhwindow_(_win) { }

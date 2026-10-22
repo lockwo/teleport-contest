@@ -23,11 +23,13 @@
 
 import { game } from './gstate.js';
 import { nhgetch } from './input.js';
-import { update_topl, topl_more, render_map_to_grid, docrt, rogue_symset } from './display.js';
+import { update_topl, topl_more, render_map_to_grid, docrt, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
 import { NO_COLOR, ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE } from './terminal.js';
+import { menuHeadAttr } from './menuattr.js';
+import { color_attr_to_str } from './coloratt.js';
 import { OPT_MENU_DRIVER, handler_number_pad,
          handler_autounlock, autounlock_val, handler_autopickup_exception,
-         handler_menu_colors, handler_statuslines } from './options.js';
+         handler_menu_colors, handler_statuslines, paranoid_confirmation_val } from './options.js';
 import { count_status_hilites, count_cond } from './botl.js';
 
 // C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
@@ -70,7 +72,7 @@ async function runSymbolSetHandler(rogue = false) {
     const name = (rogue ? game.roguesymset : game.symset) || '';
     const width = Math.max('Default Symbols'.length, ...sets.map(set => set.name.length)) + 2;
     const entries = [
-        { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, attr: ATR_INVERSE },
+        { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, attr: menuHeadAttr() },
         { text: '' },
         { text: 'Default Symbols', item: { value: '', selected: !name } },
         ...sets.map(set => ({
@@ -241,6 +243,10 @@ function rawBoolValue(name) {
     case 'fixinv':     return game.flags.invlet_constant;
     case 'cmdassist':  return game.iflags?.cmdassist;
     case 'altmeta':    return game.iflags?.altmeta;
+    case 'autodescribe': return game.iflags?.autodescribe;
+    case 'price_quotes': return game.iflags?.pricequotes;
+    case 'query_menu': return game.iflags?.query_menu;
+    case 'mon_movement': return game.a11y?.mon_movement;
     default:           return game.flags[name];
     }
 }
@@ -534,11 +540,19 @@ const OPT_VALUE = {
     },
     statuslines: () => ((game.iflags?.wc2_statuslines | 0) < 3 ? '2' : '3'),
     pile_limit: () => String(game.flags?.pile_limit ?? 5),
+    // optfn_menu_headings()/optfn_menu_objsyms() get_val: color_attr_to_str(&iflags.menu_headings) / objsymvals[iflags.menuobjsyms].nam.
+    menu_headings: () => color_attr_to_str(game.iflags?.menu_headings || { attr: 7, color: 8 }).replace(/ /g, '-'),
+    menu_objsyms: () => ['none', 'headers', 'entries', 'both', 'conditional', 'one-or-other'][game.iflags?.menuobjsyms ?? 4],
+    // optfn_paranoid_confirmation() get_val: flags.paranoia_bits (default PRAY|SWIM|TRAP).
+    paranoid_confirmation: () => paranoid_confirmation_val(game.flags?.paranoia_bits ?? 0x0c20,
+                                                            !!(game.flags?.debug || game.wizard)),
+    // optfn_hilite_status() get_val.
+    hilite_status: () => (count_status_hilites() ? '(see "status highlight rules" below)' : '(none)'),
     menuinvertmode: () => String(game.iflags?.menuinvertmode ?? 1),
     // optfn_whatis_coord()/optfn_whatis_filter() get_val.
     whatis_coord: () => ({ m: 'map', c: 'compass', f: 'full compass', s: 'screen' }
         [game.iflags?.getpos_coords] || 'none'),
-    whatis_filter: () => ({ v: 'view', a: 'area' }[game.iflags?.getloc_filter] || 'none'),
+    whatis_filter: () => ({ 1: 'view', 2: 'area' }[game.iflags?.getloc_filter] || 'none'),
     // optfn_disclose() get_val: each flags.end_disclose[] setting followed by
     // its disclosure_options[] letter, space separated.
     disclose: () => {
@@ -716,14 +730,15 @@ function renderOptionsPage(entries, page, npages, selected) {
             if (text) {
                 const lead = text.match(/^ */)[0].length;
                 d.putstr(0, r, text.slice(0, lead), NO_COLOR, 0);
-                d.putstr(lead, r, text.slice(lead), NO_COLOR, e.inv ? ATR_INVERSE : 0);
+                d.putstr(lead, r, text.slice(lead), NO_COLOR, e.inv ? menuHeadAttr() : 0);
             }
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
             // at col 1).  '?' help item is never selectable-marked here.
             const mark = selected.has(i) ? '+' : '-';
             const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
-            d.putstr(0, r, ` ${e.a} ${mark} ${body}`, NO_COLOR, 0);
+            /* wintty.c process_menu_window(): ++curx < cols stops before the last column */
+            d.putstr(0, r, ` ${e.a} ${mark} ${body}`.slice(0, 79), NO_COLOR, 0);
         }
     }
     // Page footer (morestr): "(N of M)" with no trailing space when paged,
@@ -786,16 +801,11 @@ function renderPickupMenu(selected, preselected, searchBlankTop, blankStatus) {
     if (blankStatus) d.clearScreen();
     else for (let r = 0; r < 22; r++) clearRow(d, 0, r);
     render_map_to_grid();
-    if (blankStatus) {
-        for (let c = 0; c < COLS; c++) {
-            d.setCell(c, 22, ' ', NO_COLOR, 0);
-            d.setCell(c, 23, ' ', NO_COLOR, 0);
-        }
-    }
+    if (blankStatus) blank_status_rows(d);
     for (let r = 0; r < lines.length; r++) {
         clearRow(d, offx, r);
         const l = lines[r];
-        if (l.text) d.putstr(offx + 1, r, l.text, NO_COLOR, l.inv ? ATR_INVERSE : 0);
+        if (l.text) d.putstr(offx + 1, r, l.text, NO_COLOR, l.inv ? menuHeadAttr() : 0);
     }
     if (searchBlankTop) clearRow(d, 0, 0);
     const footRow = lines.length;
@@ -906,10 +916,7 @@ async function runFruitHandler() {
         render_map_to_grid();
         // The getlin-over-menu redraw restores the map only; the status window
         // is left blank (see step-237 capture: rows 22-23 are empty).
-        for (let c = 0; c < COLS; c++) {
-            d.setCell(c, 22, ' ', NO_COLOR, 0);
-            d.setCell(c, 23, ' ', NO_COLOR, 0);
-        }
+        blank_status_rows(d);
     }
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const ans = await hooked_tty_getlin('Set fruit to what?', null);
@@ -948,10 +955,10 @@ export async function runOptionsHandler(handler) {
             blankStatus = false;
         }
         const entries = [
-            ...(win.query ? [{ text: win.query, attr: ATR_INVERSE }, { text: '' }] : []),
+            ...(win.query ? [{ text: win.query, attr: menuHeadAttr() }, { text: '' }] : []),
             ...win.items.map((it) => ({
                 text: it.str,
-                attr: it.heading ? ATR_INVERSE
+                attr: it.heading ? menuHeadAttr()
                     : it.attr === 1 ? ATR_BOLD : it.attr === 4 ? ATR_UNDERLINE
                         : it.attr === 7 ? ATR_INVERSE : undefined,
                 bodyStyle: it.selectable ? (() => {
@@ -984,27 +991,38 @@ export async function runOptionsHandler(handler) {
         return picks;
     };
     OPT_MENU_DRIVER.getlin = (prompt) => {
-        if (blankStatus) {
-            for (let x = 0; x < COLS; x++) {
-                disp().setCell(x, 22, ' ', NO_COLOR, 0);
-                disp().setCell(x, 23, ' ', NO_COLOR, 0);
-            }
-        }
+        if (blankStatus) blank_status_rows(disp());
         return hooked_tty_getlin(prompt, null);
     };
+    // C ref: cfgfiles.c config_erradd(): pline(msg); wait_synch().  tty_wait_synch() never
+    // forces a --More--: a second error's pline pages the first (tty update_topl), and the
+    // last one is paged when the options menu is next displayed (the check after handler()).
     OPT_MENU_DRIVER.error = async (message) => {
         const punct = '.!?'.includes(message.at(-1)) ? '' : '.';
         await update_topl(message + punct);
-        await topl_more();
         blankStatus = false; // pline() republished the status window.
     };
     try {
-        return await handler();
+        const res = await handler();
+        if (game._toplin) await topl_more();
+        return res;
     } finally {
         OPT_MENU_DRIVER.select = savedSelect;
         OPT_MENU_DRIVER.getlin = savedGetlin;
         OPT_MENU_DRIVER.error = savedError;
     }
+}
+
+// C ref: options.c doset_simple_menu():8685-8688 and doset():8956-8958 — after
+// a compound option's value is parsed, preference_update(name) tells the
+// window port (tty_preference_update: new_status_window() + newclipping()),
+// unless the getlin was ESCaped; optfn_statuslines() only asks for a redraw
+// (opt_need_redraw) when the value was accepted.
+async function runStatuslinesHandler() {
+    const accepted = await runOptionsHandler(handler_statuslines);
+    if (accepted === null) return;
+    tty_preference_update('statuslines');
+    if (accepted) await docrt();
 }
 
 // --- doset_simple() "Options" menu rendering ---------------------------------
@@ -1106,7 +1124,7 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
         if (it.type === 'title') {
             // "Options" title: no leading space, inverse, at col 1.
             d.putstr(0, r, ' ', NO_COLOR, 0);
-            d.putstr(1, r, it.name, NO_COLOR, ATR_INVERSE);
+            d.putstr(1, r, it.name, NO_COLOR, menuHeadAttr());
         } else if (it.type === 'heading') {
             // Section heading: C only paints " <name>" inverse (ESC[7m General
             // ESC[24C ESC[0m — the 24-column pad to the 32-wide field is a
@@ -1115,11 +1133,11 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             // col 0 is the plain menu leading space.
             const head = ' ' + it.name;
             d.putstr(0, r, ' ', NO_COLOR, 0);
-            d.putstr(1, r, head, NO_COLOR, ATR_INVERSE);
+            d.putstr(1, r, head, NO_COLOR, menuHeadAttr());
         } else if (it.type === 'item') {
-            d.putstr(0, r, ` ${it.sel} - ${it.body}`, NO_COLOR, 0);
+            d.putstr(0, r, ` ${it.sel} - ${it.body}`.slice(0, 79), NO_COLOR, 0);
         } else if (it.type === 'text') {
-            d.putstr(0, r, ' ' + it.body, NO_COLOR, 0);
+            d.putstr(0, r, (' ' + it.body).slice(0, 79), NO_COLOR, 0);
         }
         // 'blank' rows need no drawing (already cleared).
         r++;
@@ -1239,7 +1257,7 @@ export async function dosetSimple() {
         } else if (it.name === 'symset') {
             await runOptionsHandler(() => runSymbolSetHandler(rogue_symset()));
         } else if (it.name === 'statuslines') {
-            if (await runOptionsHandler(handler_statuslines)) await docrt();
+            await runStatuslinesHandler();
         }
         // Rebuild the parent menu with the updated option values.
     }
@@ -1260,6 +1278,10 @@ function toggleSimpleBool(name) {
         const cur = game.iflags.cmdassist === undefined
             ? SIMPLE_BOOL_DEFAULT.cmdassist : !!game.iflags.cmdassist;
         game.iflags.cmdassist = !cur;
+        return;
+    }
+    if (name === 'price_quotes') {   // C: &iflags.pricequotes
+        applyBooleanToggle(name, rawBoolValue(name) !== true);
         return;
     }
     const dflt = SIMPLE_BOOL_DEFAULT[name] ?? false;
@@ -1400,7 +1422,7 @@ export async function doset() {
         } else if (e.name === 'symset' || e.name === 'roguesymset') {
             await runOptionsHandler(() => runSymbolSetHandler(e.name === 'roguesymset'));
         } else if (e.name === 'statuslines') {
-            if (await runOptionsHandler(handler_statuslines)) await docrt();
+            await runStatuslinesHandler();
         }
         // Other compound/other selections aren't exercised by the recorded
         // sessions; left unhandled (no prompt) on purpose.
@@ -1422,6 +1444,11 @@ function applyBooleanToggle(name, turnOn) {
     // rc line; the interactive menu must write the same place.
     case 'fixinv': game.flags.invlet_constant = turnOn; break;
     case 'altmeta': (game.iflags = game.iflags || {}).altmeta = turnOn; break;
+    // C: optlist.h NHOPTB bp column (same storage as options.js set_boolean()).
+    case 'autodescribe': (game.iflags = game.iflags || {}).autodescribe = turnOn; break;
+    case 'price_quotes': (game.iflags = game.iflags || {}).pricequotes = turnOn; break;
+    case 'query_menu': (game.iflags = game.iflags || {}).query_menu = turnOn; break;
+    case 'mon_movement': (game.a11y = game.a11y || {}).mon_movement = turnOn; break;
     case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
     case 'color':
         game.flags.color = turnOn;

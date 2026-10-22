@@ -38,7 +38,7 @@ import {
 } from './const.js';
 import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
     level_specific_nocorpse, vamprises, mon_hates_silver } from './mon.js';
-import { newsym, map_invisible, unmap_object, m_at, canseemon_shared } from './display.js';
+import { newsym, map_invisible, unmap_object, m_at, canseemon_shared, You_feel } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl, Deaf_hero, Hallucination_u, You_hear } from './display.js';
 import { make_corpse, dmgval, mhitm_knockback, seemimicLocal, shade_miss as shade_miss_mm, canspotmon as mm_can_spot_mon } from './uhitm.js';
@@ -63,7 +63,7 @@ import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger } from './mhitm_ad.js
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac as worn_find_mac } from './worn.js';
-import { Monnam, mon_nam, a_monnam, mhis, mhe, YMonnam } from './do_name.js';
+import { Monnam, mon_nam, a_monnam, mhis, mhe, YMonnam, hliquid } from './do_name.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
 // attack loop.  Several mhitm_ad_* handlers rloc() a combatant and then still
@@ -827,7 +827,7 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
         game.disintegested = false;
         if (rose) return;
     }
-    mvitals_died(mdef);                // mondead restores the true form first
+    await mvitals_died(mdef);                // mondead restores the true form first
     // C ref: mon.c:2744 m_detach() — a light-emitting monster stops being a
     // light source (delete_ls() sets vision_full_recalc).
     {
@@ -891,13 +891,12 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181
     // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
     // square can hold a corpse (accessible terrain or a pool).
-    // C ref: mon.c:935 make_corpse() ends with newsym(x, y) itself, so the
-    // redraw below only covers the no-corpse case (a second newsym on a
-    // hallucinated corpse square would burn an extra display-RNG draw).
-    let corpse = null;
+    // C ref: mon.c:935 make_corpse() ends with newsym(x, y) itself.  With no
+    // corpse nothing more is drawn: mon_leaving_level() and relobj() already
+    // issued their newsym()s (a further one burns display-RNG draws on a
+    // hallucinated object square).
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
-        corpse = await make_corpse(mdef, mx, my);
-    if (!corpse && mx > 0 && my > 0) newsym(mx, my);
+        await make_corpse(mdef, mx, my);
 }
 
 // C ref: makemon.c:2051 grow_up(mtmp, victim) — the killer may gain HP/levels.
@@ -1025,7 +1024,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     case AD_ACID:
         if (mhitb && !rn2(2)) {
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix(mon_nam(mdef))} acid!`);
+                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix(mon_nam(mdef))} ${hliquid('acid')}!`);
             if (mm_resists_acid(magr)) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is not affected.`);
@@ -1949,10 +1948,10 @@ export async function mon_poly(magr, mdef, dmg) {
                 const { polyself } = await import('./polyself.js');
                 await polyself(0 /*POLY_NOFLAGS*/);
             } else if (u.umonnum !== u.ulycn) {
-                await emitMMmsg('You feel an unnatural urge coming on.');
+                await You_feel('an unnatural urge coming on.');
                 await you_were_mm();
             } else {
-                await emitMMmsg('You feel a natural urge coming on.');
+                await You_feel('a natural urge coming on.');
                 await you_unwere_mm(false);
             }
             dmg = 0;

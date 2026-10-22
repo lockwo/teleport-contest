@@ -2,6 +2,7 @@
 // C ref: display.c — newsym, show_glyph, docrt, cls, flush_screen.
 
 import { has_innate } from './exper.js';
+import { Blind_telepat } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { SYMBOL_BYTES } from './symset-data.js';
@@ -33,7 +34,7 @@ import {
     DB_FLOOR, MAX_TYPE, MAXTCHARS, MAXEXPCHARS, BOLT_LIM,
     M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
     In_mines, Is_waterlevel,
-    GPCOORDS_NONE, GPCOORDS_COMFULL, Unaware, MON_DETACH,
+    GPCOORDS_NONE, GPCOORDS_COMFULL, Unaware, MON_DETACH, MON_STILL_ARRIVING,
 } from './const.js';
 import {
     NO_COLOR, CLR_BLACK, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW,
@@ -43,7 +44,7 @@ import {
 } from './terminal.js';
 import { monster_by_pmidx, infravisible, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { recalc_telepat_range } from './worn.js';
-import { mindless } from './monflags_data.js';
+import { mindless, mflags2_of } from './monflags_data.js';
 import { random_monster, random_object, rn2_on_display_rng, NUMMONS } from './disprng.js';
 import { objects } from './mkobj.js';
 import { engr_at, can_reach_floor } from './engrave.js';
@@ -222,7 +223,7 @@ function random_obj_glyph() {
 function halluc_statue_glyph() {
     const mon = monster_by_pmidx(random_monster());
     rn2_on_display_rng(2);
-    return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false };
+    return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false, hstatue: true };
 }
 
 // C ref: display.h obj_to_glyph(obj, rn2_on_display_rng) as passed to
@@ -435,6 +436,16 @@ export function bg_attr(bg) {
         || female_attr(bg?.female);
 }
 
+// show_glyph() of a background_glyph() result.  A hallucinated STATUE is drawn
+// as a random MONSTER glyph (display.h statue_to_glyph), which C's glyph_at()
+// then reports as glyph_is_monster() although no monster stands there (getpos
+// 'm' jumps to it, farlook names it with rndmonnam()): disp_hstatue records it.
+function show_bg_glyph(x, y, bg) {
+    show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+    const loc = game.level?.at(x, y);
+    if (loc) loc.disp_hstatue = !!bg.hstatue;
+}
+
 // The long worm whose TAIL segment stands on (x,y), if any.  C ref: worm.c
 // place_worm_seg() writes the worm's own pointer into svl.level.monsters[x][y]
 // for every tail square, so this is one half of C's single monster grid; this
@@ -621,6 +632,22 @@ export function see_with_infrared(mon) {
         && infravisible(mon.data) && couldsee(mon.mx, mon.my);
 }
 
+// C ref: hack.h MATCH_WARN_OF_MON(mon) — Warn_of_mon (a wielded Sting/Orcrist
+// = svc.context.warntype.obj; a vampire hero's polysense() = warntype.polyd;
+// a purple worm hero's shrieker = warntype.species) senses matching monsters
+// at any distance, like telepathy, drawing the real monster glyph.
+export function match_warn_of_mon(mon) {
+    if (!mon?.data) return false;
+    const u = game.u, p = u?.uprops || {};
+    if (!((p.HWarn_of_mon | 0) || (p.EWarn_of_mon | 0)
+          || ((u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0))) return false;
+    const wt = game.context?.warntype || {};
+    const m2 = mflags2_of(mon.data);
+    return (((game.warntype_obj | 0) & m2) !== 0)
+        || (((wt.polyd | 0) & m2) !== 0)
+        || (!!wt.species && wt.species.pmidx === mon.data.pmidx);
+}
+
 // C ref: display.h _tp_sensemon(mon) — telepathy senses any monster with a mind:
 // unconditionally while blind and telepathic, otherwise only inside the range a
 // worn ESP source confers (worn.c recalc_telepat_range()).  This port has no
@@ -632,7 +659,7 @@ export function tp_sensemon(mtmp) {
     // ESP source the range is -1, which fails the distance test on its own.
     const range = recalc_telepat_range();
     // C: Blind_telepat == HTelepat || ETelepat, and it ignores the range.
-    if (Blind() && ((p.Telepat ?? 0) || (p.HTelepat ?? 0) || range > 0)) return true;
+    if (Blind() && (Blind_telepat() || range > 0)) return true;
     const dx = mtmp.mx - (u.ux ?? 0), dy = mtmp.my - (u.uy ?? 0);
     return dx * dx + dy * dy <= range;
 }
@@ -761,7 +788,7 @@ function _only(sv, bits) { return ((sv & bits) && !(sv & ~bits)); }
 
 // C ref: display.c wall_angle(lev) — choose the wall cmap index from wall
 // type, wall mode (WM_MASK), and the seen vector.  Assumes seenv != 0.
-function wall_angle(lev) {
+export function wall_angle(lev) {
     let seenv = lev.seenv & 0xff;
     const wm = lev.wall_info & WM_MASK;
     let row, col, idx;
@@ -1015,6 +1042,19 @@ export function stairway_at(x, y) {
     }
     for (let s = head; s; s = s.next)
         if (s.sx === x && s.sy === y) return s;
+    return null;
+}
+
+// C ref: stairs.c stairway_find_dir(up) — first stairway going the given way
+// (same list-or-array tolerance as stairway_at above).
+export function stairway_find_dir(up) {
+    const head = game.stairs;
+    if (Array.isArray(head)) {
+        for (const s of head) if (s && !!s.up === !!up) return s;
+        return null;
+    }
+    for (let s = head; s; s = s.next)
+        if (!!s.up === !!up) return s;
     return null;
 }
 
@@ -1375,9 +1415,22 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
         attr = 0;
         color = NO_COLOR;
     }
+    // C ref: display.c show_glyph() sets gbuf[y][x].gnew whenever the glyph
+    // differs from the stored one, and flush_screen() clears it only by writing
+    // the cell: a glyph that changed and changed back between two flushes is
+    // still rewritten (over any status text sitting there).
+    const newColor = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
+    // S_room and S_darkroom are different glyphs even when they print the same
+    // symbol (DECgraphics), so a lit/dark flip is gnew too.
+    const newDark = dark || (!keepColor && color === CLR_BLACK && newColor === NO_COLOR);
+    if (loc.disp_ch !== ch || loc.disp_color !== newColor
+        || !!loc.disp_decgfx !== !!decgfx || (loc.disp_attr | 0) !== (attr | 0)
+        || !!loc.disp_dark !== !!newDark)
+        loc._gchg = true;
     loc.disp_ch = ch;
     loc.disp_warning = false;
     loc.disp_monster = false;
+    loc.disp_hstatue = false;
     loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
        dark-room floor (S_darkroom, CLR_BLACK) is stored with its lit colour,
@@ -1775,6 +1828,10 @@ function mon_warning(mon) {
 // analogue here; newsym() draws no RNG unless the hero is hallucinating, and
 // C's Hallucination arm is a different branch.
 export function see_monsters() {
+    // C ref: display.c see_monsters() `if (gd.defer_see_monsters) return;` —
+    // restgamestate() sets it so docrt() during a restore does not paint
+    // sensed/telepathic monsters before moveloop_preamble() releases it.
+    if (game.defer_see_monsters) return;
     // C ref: makemon.c m_initweap-era `mtmp->nmon = fmon; fmon = mtmp` — fmon is
     // a PREPEND list, so C walks the level's monsters newest-first.  This port's
     // level.monsters[] is append-ordered, i.e. exactly the reverse.  The order
@@ -1785,7 +1842,12 @@ export function see_monsters() {
     for (let i = mons.length - 1; i >= 0; i--) {
         const mon = mons[i];
         if (!mon || (mon.mhp != null && mon.mhp <= 0)) continue;
-        if (mon.mridden && game.program_state?.gameover) continue;
+        // C ref: display.c see_monsters() `(mon->mstate & MON_STILL_ARRIVING)
+        // continue`.  mon_arrive() returns early for u.usteed without clearing
+        // the bit, so a steed that came along on a level change is never drawn
+        // here (nor is the hero's square, via the `!u.usteed` tail) — docrt()
+        // at end-of-game disclosure leaves the remembered floor glyph.
+        if ((mon.mstate || 0) & MON_STILL_ARRIVING) continue;
         newsym(mon.mx, mon.my);
         // C ref: worm.c see_wsegs(mon) — every tail segment short of the
         // hidden one under the head.  Inlined: worm.js imports this module.
@@ -1860,9 +1922,14 @@ export function canspotself() {
     const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis
         || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0)) && !(p.BInvis || u.BInvis);
     if (!(invis && !see_invisible()) && !u.uundetected) return true;
-    return !!(p.ETelepat || u.ETelepat || p.Detect_monsters
+    /* senseself(): Unblind_telepat is ETelepat (worn helm of telepathy / amulet
+       of ESP live in the extrinsic store), Detect_monsters either half */
+    const ex = u.uprops_extrinsic || {};
+    return !!(p.ETelepat || u.ETelepat || (ex[30 /* TELEPAT */] | 0)
+        || p.Detect_monsters
         || p.HDetect_monsters || p.EDetect_monsters
-        || u.HDetect_monsters || u.EDetect_monsters);
+        || u.HDetect_monsters || u.EDetect_monsters
+        || (ex[37 /* DETECT_MONSTERS */] | 0));
 }
 
 // C ref: display.c swallowed(first) — while u.uswallow the map window shows
@@ -1908,7 +1975,19 @@ export async function swallowed(first) {
         if (game._pending_message) await display_nhwindow_message();
         game._pending_message = '';
         for (let y = 0; y < ROWNO; y++)
-            for (let x = 1; x < COLNO; x++) show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+            for (let x = 1; x < COLNO; x++) {
+                show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+                // C ref: display.c clear_glyph_buffer() — nul_gbuf.gnew is 0, so
+                // nothing but the stomach drawn below is printed over the status.
+                const l = game.level.at(x, y);
+                if (l) l._gchg = false;
+            }
+        // C ref: cls() sets disp.botlx; swallowed() then runs bot() before any map
+        // glyph is flushed, and (unlike docrt()'s memory loop) marks no cell gnew.
+        game._statusDocrt = false;
+        game.botlx = true;
+        game._statusSnap = null;
+        await bot();
     } else {
         const lx = game._swallow_lastx ?? u.ux, ly = game._swallow_lasty ?? u.uy;
         for (let y = ly - 1; y <= ly + 1; y++)
@@ -2107,7 +2186,7 @@ function feel_location_terrain(x, y) {
     loc.invisMon = false;
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
-    show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+    show_bg_glyph(x, y, bg);
     // C ref: display.c feel_location tail — a felt plain ROOM floor that isn't
     // remembered as lit becomes S_darkroom (S_stone without dark_room), even on
     // the Rogue level, where newsym() later only blanks a remembered S_room.
@@ -2160,7 +2239,7 @@ export function feel_location(x, y) {
     if (u && u.ux === x && u.uy === y) return;
     const mon = m_at(x, y);
     if (mon && _sensemon(mon))
-        display_sensed_monster(x, y, mon, tp_sensemon(mon));
+        display_sensed_monster(x, y, mon, tp_sensemon(mon) || match_warn_of_mon(mon));
 }
 
 // engrave.c can_reach_floor(FALSE).
@@ -2262,6 +2341,10 @@ export function newsym(x, y) {
         //   if (see_self) display_self();
         // An INVISIBLE hero without see-invisible is not drawn at all: the
         // square shows (and is remembered as) the background under it.
+        // C ref: display.c _map_location(x, y, !see_self) -> map_object(): the object under the hero is
+        // observed (dknown) whether or not the hero is drawn over it, so an invisible hero's square
+        // shows the pile top in its real appearance color, not the generic class color.
+        maybe_observe_near_object(x, y);
         const bg = background_glyph(loc, x, y);
         if (canspotself()) {
             // C ref: display.c display_self() — a mounted hero is drawn as the
@@ -2269,9 +2352,12 @@ export function newsym(x, y) {
             const hg = hero_glyph();
             show_glyph_cell(x, y, hg.ch, hg.color, false, hg.attr, hg.keepColor);
         } else {
-            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+            show_bg_glyph(x, y, bg);
         }
         remember_bg(loc, bg);
+        // C ref: _map_location() overwrites levl[x][y].glyph, so a remembered
+        // 'I' under the hero is gone (it must not reappear when he steps off).
+        loc.invisMon = false;
         update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
         return;
     }
@@ -2302,7 +2388,8 @@ export function newsym(x, y) {
         // every one of its tail squares, and only the coordinate comparison
         // tells the two apart.
         const worm_tail = !!mon && (x !== mon.mx || y !== mon.my);
-        const see_it = mon && (mon_visible(mon) || (!worm_tail && tp_sensemon(mon)));
+        const see_it = mon && (mon_visible(mon)
+            || (!worm_tail && (tp_sensemon(mon) || match_warn_of_mon(mon))));
         const detected = mon && !worm_tail && detect_monsters;
         // C ref: display.c newsym:1015 — "if monster is in a physical trap, you
         // see trap too".  Runs BEFORE _map_location, so the trap this reveals is
@@ -2424,7 +2511,7 @@ export function newsym(x, y) {
                 remember_bg(loc, bg);
             }
             update_lastseentyp_d(x, y); // _map_location(x, y, 1) -> update_lastseentyp()
-            show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+            show_bg_glyph(x, y, bg);
         }
     } else {
         // Can't physically see <x,y>.  C ref: display.c newsym "Can't see the
@@ -2437,7 +2524,8 @@ export function newsym(x, y) {
         // && mon_visible(mon))`.  Telepathy reaches monsters the hero has no
         // line of sight to at all, which is what keeps a warning glyph off a
         // sensed one (display.c takes this arm before the mon_warning arm).
-        if (mon && (tp_sensemon(mon) || (mon_visible(mon) && see_with_infrared(mon))
+        if (mon && (tp_sensemon(mon) || match_warn_of_mon(mon)
+                    || (mon_visible(mon) && see_with_infrared(mon))
                     || (detect_monsters && !dark_worm_tail))) {
             // A warm monster within the hero's line of sight but on a square too
             // dark to see is revealed by infravision (see_with_infrared &&
@@ -2446,7 +2534,8 @@ export function newsym(x, y) {
             // background/lit memory is untouched (the glyph is erased later by
             // the monster-move / vision redraw when it is no longer sensed).
             display_sensed_monster(x, y, mon,
-                tp_sensemon(mon) || (mon_visible(mon) && see_with_infrared(mon)));
+                tp_sensemon(mon) || match_warn_of_mon(mon)
+                || (mon_visible(mon) && see_with_infrared(mon)));
         } else if (mon && mon_warning(mon) && !dark_worm_tail) {
             // C ref: display.c newsym:1055 — the out-of-sight arm of the same
             // rule: a threatening monster the hero cannot see still shows its
@@ -2652,10 +2741,23 @@ function hero_female_attr() {
 export function hero_glyph() {
     const u = game.u;
     const st = u?.usteed;
-    if (st) {
-        const d = st.data || {};
+    // C ref: display.h maybe_display_usteed(): the steed's glyph only when mon_visible(u.usteed).
+    if (st && mon_visible(st)) {
+        // C ref: display.h ridden_mon_to_glyph(mon, rn2_on_display_rng) -> what_mon(): a hallucinating hero's steed is a fresh random species per draw.
+        const d = (Hallucination_u() ? monster_by_pmidx(random_monster()) : st.data) || {};
         return { ch: d.mlet || 'u', color: (d.mcolor != null) ? d.mcolor : CLR_WHITE,
                  attr: female_attr(st.female) };
+    }
+    // C ref: display.h display_self() — U_AP_TYPE == M_AP_FURNITURE / M_AP_OBJECT
+    // draws cmap_to_glyph / objnum_to_glyph(mappearance) (a hero who ate a mimic
+    // corpse shows as a pile of gold).  This port keeps youmonst's disguise on
+    // game.youmonst (eat.js) or game.u (polyself.js dohide): take whichever is set.
+    const ap = M_AP_TYPE(u) ? u : game.youmonst;
+    if (M_AP_TYPE(ap) === M_AP_FURNITURE && ap.mappearance != null)
+        return { ...furniture_mimic_glyph(ap.mappearance | 0), attr: undefined };
+    if (M_AP_TYPE(ap) === M_AP_OBJECT && ap.mappearance != null) {
+        const otyp = ap.mappearance | 0;
+        return object_glyph({ otyp, oclass: objects[otyp]?.oclass ?? 1, corpsenm: -1, dknown: 1 });
     }
     // C ref: display.h display_self() — U_AP_TYPE == M_AP_MONSTER (e.g. the
     // slime countdown's "mimic green slime" hack) draws monnum_to_glyph(mappearance).
@@ -3430,8 +3532,19 @@ function _renderStatus() {
                 }
                 _putStatusField(cells, ']', x++, 0);
             } else {
-                if (idx === BL_VERS && x < STATUS_COLS - lth[BL_VERS])
-                    x = STATUS_COLS - lth[BL_VERS]; /* right justify version */
+                /* C ref: wintty.c render_status() BL_VERS arm.  x is the
+                   field's check_fields() column, not the running draw column:
+                   the blank-fill from there to the right-justify column
+                   erases whatever the indented condition words drew in
+                   between (the C "FIXME: x ends up out of synch" case; the
+                   vx resync is only reachable when version directly follows
+                   conditions in fieldorder, which no order array has). */
+                if (idx === BL_VERS && fields[i + 1] === BL_FLUSH) {
+                    const vstart = STATUS_COLS - lth[BL_VERS];
+                    for (; x < vstart; x++)
+                        if (cells[x - 1] && cells[x - 1].ch !== ' ')
+                            _putStatusField(cells, ' ', x, 0);
+                }
                 let text = val[idx];
                 if (hlOn) {
                     while (text[0] === ' ') {
@@ -3521,14 +3634,78 @@ export function putStatusRow(display, which, row, cut = null) {
     }
 }
 
-// C ref: wintty.c docorner() — with statuslines:3 the status window's first
-// line sits on screen row 21, so the same cl_end() sweep that wrecks the tail
-// of rows 22/23 on dismissal of a corner menu wrecks that row too.  The row
-// 22/23 helpers above never touch it; truncate it at `cut` (null: untouched).
-export function cutTopStatusRow(display, cut) {
-    if (cut == null || botl_lines().length < 3) return;
-    const row = display.rows - 3;
-    for (let c = cut; c < display.cols; c++) display.setCell(c, row, ' ', NO_COLOR, 0);
+// C ref: wintty.c docorner(xmin, ymax) -- tearing down a corner window sweeps
+// cl_end() from its left edge over every terminal row 0..ymax (ymax = the
+// window's last row + 1), so a window whose content reaches within one row of
+// the status window wrecks the status tail.  game._statusCuts records, per
+// terminal row, the first column that sweep blanked; the record stands until
+// bot() repaints (_buildScreenOutput clears it).  With statuslines:3 the status
+// window starts at row 21, which docorner's row_refresh then refills with the
+// map's last row.  `lastRow` is the dismissed window's last content row.
+// docorner() also runs `disp.botlx = TRUE; bot();` when ymax >= the status
+// window's offy, one row sooner than the sweep itself reaches a status row
+// (the loop is y < ymax): game._statusSweepBotlx records that for the dismissal.
+export function status_sweep(xcut, lastRow) {
+    const rows = game.nhDisplay?.rows ?? 24;
+    const cuts = (game._statusCuts ??= {});
+    for (let r = rows - StatusRows(); r < rows && r <= lastRow + 1; r++)
+        cuts[r] = Math.min(cuts[r] ?? xcut, xcut);
+    if (lastRow + 2 >= rows - StatusRows()) game._statusSweepBotlx = true;
+}
+
+// True when the window just drawn will, once torn down by docorner(), run
+// `disp.botlx = TRUE; bot();`.
+export function status_sweep_reached() {
+    return !!game._statusSweepBotlx;
+}
+
+// The recorded sweep (a copy), or null when no status row was reached.
+export function status_cuts_snapshot() {
+    const cuts = game._statusCuts;
+    return cuts && Object.keys(cuts).length ? { ...cuts } : null;
+}
+
+// Re-establish a sweep captured by status_cuts_snapshot() after a repaint
+// dropped it, minimised against any newer one.
+export function status_cuts_restore(snap) {
+    if (!snap) return;
+    const cuts = (game._statusCuts ??= {});
+    for (const [r, c] of Object.entries(snap)) cuts[r] = Math.min(cuts[r] ?? c, c);
+}
+
+// docorner() also runs `disp.botlx = TRUE; bot();` when its sweep reached the
+// status window.  bot() is a no-op while select_menu() holds gb.bot_disabled,
+// leaving disp.botlx pending: the next bot() rewrites every status field.
+export function status_sweep_botlx() {
+    game.botlx = true;
+    game._statusSnap = null;
+    if (game.disp) game.disp.botlx = true;
+    game._statusSweepBotlx = false;
+}
+
+// Paint a recorded (or given) sweep onto the grid: blank each swept status row
+// from its cut column, and refill the map cells docorner's row_refresh redraws
+// on a row the status window shares with the map.  `skip` = {col, lastRow}: a
+// window drawn afterwards owns that rectangle.
+export function apply_status_cuts(display, skip = null, cuts = game._statusCuts) {
+    if (!cuts || !display?.setCell) return;
+    for (const [rs, cut] of Object.entries(cuts)) {
+        const r = +rs;
+        const free = (c) => !(skip && r <= skip.lastRow && c >= skip.col);
+        for (let c = cut; c < display.cols; c++)
+            if (free(c)) display.setCell(c, r, ' ', NO_COLOR, 0);
+        if (_mapRowAtScreen(r) >= 0) render_map_row_to_grid(r, cut, free);
+    }
+}
+
+// C ref: wintty.c tty_clear_nhwindow(WIN_STATUS) — blank the status window's
+// own rows: the last StatusRows() terminal rows.  A row the map also draws on
+// (an unclipped 3-line window's first row) keeps the map cells docrt() drew.
+export function blank_status_rows(display) {
+    for (let r = display.rows - StatusRows(); r < display.rows; r++) {
+        for (let c = 0; c < display.cols; c++) display.setCell(c, r, ' ', NO_COLOR, 0);
+        if (_mapRowAtScreen(r) >= 0) render_map_row_to_grid(r);
+    }
 }
 
 // ── Serialize terminal grid for screen comparison ──
@@ -3578,21 +3755,61 @@ export function decgfxMapChar(ch, decgfx) {
 
 // ── Map clipping (wintty.c setclipped/tty_cliparound) ──
 // The map is 21 rows but the terminal only has LI-1-statuslines rows left for
-// it, so 'statuslines:3' turns CLIPPING on and the visible band scrolls with
-// the hero.  With CO == COLNO the horizontal arms can never move clipx off 0.
+// it, so a runtime 'statuslines:3' (newclipping) turns CLIPPING on and the
+// visible band scrolls with the hero.  With CO == COLNO the horizontal arms
+// can never move clipx off 0.
 let clipx = 0, clipy = 0, clipxmax = COLNO, clipymax = ROWNO;
 let clipping = false;
 
-// C ref: wintty.c newclipping() — clipping is needed exactly when the map plus
-// the message row plus the status rows do not fit in the terminal.
-function _clipNeeded() {
+// Whether the tty is clipping is window state, decided by exactly two C
+// events and otherwise persistent (game._ttyClipping):
+//   termcap.c tty_startup(): `if (CO < COLNO || LI < ROWNO + 3) setclipped()`
+//     with a LITERAL 3.  An rc-file 'statuslines:3' is parsed before
+//     iflags.window_inited, so the status-line count never reaches it: a
+//     24-row tty stays unclipped and the map's last row is drawn over the
+//     first status row.
+//   wintty.c newclipping(): the same test against the live
+//     iflags.wc2_statuslines, run by tty_preference_update("statuslines").
+function _startupClipping() {
     const d = game?.nhDisplay;
-    // C ref: termcap.c:240 tty_startup() — `if (CO < COLNO || LI < ROWNO + 3)
-    // setclipped()` with a LITERAL 3.  An rc-file 'statuslines:3' is parsed
-    // before iflags.window_inited, so tty_preference_update()'s newclipping()
-    // (which does use wc2_statuslines) never runs: a 24-row tty stays
-    // unclipped and the map's last row is drawn over the first status row.
     return ((d?.cols ?? 80) < COLNO) || ((d?.rows ?? 24) < ROWNO + 3);
+}
+
+// C ref: wintty.c newclipping().
+export function newclipping(x, y) {
+    const d = game?.nhDisplay;
+    if ((d?.cols ?? 80) < COLNO || (d?.rows ?? 24) < 1 + ROWNO + StatusRows()) {
+        game._ttyClipping = true;
+        setclipped();
+        if (x) cliparound(x, y);
+    } else {
+        game._ttyClipping = false;
+        clipping = false;
+        clipx = clipy = 0;
+    }
+}
+
+// C ref: wintty.c new_status_window() — destroy and recreate the status
+// window.  Everything a previous window had drawn or tracked is gone and
+// tty_clear_nhwindow(WIN_STATUS) leaves disp.botlx set, so the next bot()
+// rewrites every field.
+function new_status_window() {
+    game._statusPrevCells = null;
+    game._statusPrevArr = null;
+    game._statusFresh = null;
+    game._statusFinalx = null;
+    game._statusSnap = null;
+    game._statusSnapLevel = null;
+    game.botlx = true;
+}
+
+// C ref: wintty.c tty_preference_update() — the tty answer to options.c
+// preference_update("statuslines") once the window system is up (always true
+// for the in-game 'O' menu; an rc-file value is applied before it is).
+export function tty_preference_update(pref) {
+    if (pref !== 'statuslines') return;
+    new_status_window();
+    newclipping(game.u?.ux, game.u?.uy);
 }
 
 // C ref: wintty.c setclipped().
@@ -3627,14 +3844,12 @@ export function cliparound(x, y) {
 // the hero.  tty_cliparound() is idempotent for a fixed position, so running it
 // once per frame is the same as running it on every hero move.
 function _syncClipping() {
-    if (!_clipNeeded()) {
-        clipping = false;
-        clipx = clipy = 0;
-        clipxmax = COLNO;
-        clipymax = ROWNO;
-        return;
+    if (game._ttyClipping === undefined) {
+        game._ttyClipping = _startupClipping();
+        if (game._ttyClipping) setclipped();
+        else { clipping = false; clipx = clipy = 0; clipxmax = COLNO; clipymax = ROWNO; }
     }
-    if (!clipping) setclipped();
+    if (!game._ttyClipping) return;
     if (game.u?.ux) cliparound(game.u.ux, game.u.uy);
 }
 
@@ -3647,6 +3862,13 @@ function _syncClipping() {
 // capture_screen_for_level_change() records the departing screen (after the
 // vision_recalc(2) flush), freeze_screen_for_level_change() holds it from the
 // point C postpones flushes, and docrt()'s thaw lifts it.
+// Signature of what a map cell displays, for renderStatusLines' record of which
+// cells the status text owns.  A frozen departing-level cell carries the
+// signature its live cell had when it was captured.
+function _mapSigOf(l) {
+    return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}|${l.remembered_glyph ? 'g' : ''}` : '';
+}
+
 export function capture_screen_for_level_change() {
     const cells = new Array(COLNO * ROWNO);
     for (let y = 0; y < ROWNO; y++)
@@ -3655,11 +3877,12 @@ export function capture_screen_for_level_change() {
             if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) {
                 // a blank but remembered square still owns its screen cell
                 // (renderStatusLines' mapWins test), though it draws nothing
-                if (loc?.remembered_glyph) cells[y * COLNO + x] = { remembered_glyph: loc.remembered_glyph };
+                if (loc?.remembered_glyph) cells[y * COLNO + x] = { remembered_glyph: loc.remembered_glyph, sig: _mapSigOf(loc) };
                 continue;
             }
             cells[y * COLNO + x] = { disp_ch: loc.disp_ch, disp_decgfx: loc.disp_decgfx,
-                disp_color: loc.disp_color, disp_attr: loc.disp_attr, disp_dark: loc.disp_dark };
+                disp_color: loc.disp_color, disp_attr: loc.disp_attr, disp_dark: loc.disp_dark,
+                sig: _mapSigOf(loc) };
         }
     game._staleCapture = { cells, status: botl_lines() };
 }
@@ -3685,10 +3908,19 @@ function _mapRowOnScreen(y) {
     return y + 1 - clipy;
 }
 
+// Inverse of _mapRowOnScreen: the map row the tty draws on terminal row `sr`,
+// or -1.  A status row can only share cells with a map row that is really on
+// screen, so a clipped-away last map row (statuslines:3 on 24 lines) owns none.
+function _mapRowAtScreen(sr) {
+    const y = sr - 1 + clipy;
+    if (y < 0 || y >= ROWNO || (clipping && y >= clipymax)) return -1;
+    return y;
+}
+
 // C ref: wintty.c docorner(1, cury+1, 0) — after a multi-row top line is
 // cleared, each screen row it spilled onto is blanked and its map cells are
 // redrawn from the remembered map (row_refresh).  Redraw screen row `sy` only.
-export function render_map_row_to_grid(sy) {
+export function render_map_row_to_grid(sy, minCol = 0, free = null) {
     const display = game?.nhDisplay;
     if (!display?.setCell || !display.grid) return;
     _syncClipping();
@@ -3696,6 +3928,7 @@ export function render_map_row_to_grid(sy) {
         if (_mapRowOnScreen(y) !== sy) continue;
         for (let x = 1; x < COLNO; x++) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
+            if (x - 1 - clipx < minCol || (free && !free(x - 1 - clipx))) continue;
             const loc = _displayed_loc(x, y);
             if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
@@ -3751,8 +3984,8 @@ function _buildScreenOutput() {
     // A normal (non-modal) screen build is a genuine full bot(): any status
     // truncation a prior chained corner window (draw_corner_window) needs to
     // carry forward no longer applies once we're back to plain gameplay.
-    game._statusTruncCol = null;
-    game._statusTrunc22 = null;
+    game._statusCuts = null;
+    game._statusSweepBotlx = false;
     game._menuTruncCarry = null;
 
     _syncClipping();
@@ -3818,7 +4051,11 @@ function _buildScreenOutput() {
         }
         // Status rows
         if (game._screenBlank !== true) {
-            renderStatusLines(display, null, true);
+                    renderStatusLines(display, null, true);
+            if (game.level) for (let y = 0; y < ROWNO; y++) for (let x = 1; x < COLNO; x++) {
+                const l = game.level.at(x, y);
+                if (l) l._gchg = false;
+            }
         } else if (game._screenBlankStatus)
             renderStatusLines(display, game._screenBlankStatus);
         // Cursor at hero
@@ -3875,7 +4112,9 @@ export function bot_snapshot(direct = false) {
 function status_field_spans(cells) {
     const text = cells.map((c) => (c ? c.ch : ' ')).join('');
     const spans = [];
-    const re = /(St|Dx|Co|In|Wi|Ch):\S+/g;
+    // each field's text starts with the format's leading space (" St:%s"), which
+    // is part of the field that tty_putstatusfield() rewrites.
+    const re = / ?(St|Dx|Co|In|Wi|Ch):\S+/g;
     let m, first = -1;
     while ((m = re.exec(text))) {
         if (first < 0) first = m.index;
@@ -3938,7 +4177,8 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         // C ref: wintty.c check_fields(): only DIRTY fields are rewritten, and a
         // field whose position moved dirties everything to its right; BL_RESET
         // (disp.botlx, i.e. prev === null) rewrites them all.
-        const sharedRow = top + r <= ROWNO;
+        const my = _mapRowAtScreen(top + r);
+        const sharedRow = my >= 0;
         const freshV = game._statusFresh?.[top + r];
         const fresh = !!freshV;
         const unchanged = !fresh && prev && prev[top + r] === rowSig && sharedRow;
@@ -3953,7 +4193,6 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
             if (was === true || !prev) ranges = null;
         } else if (fresh && rebuild) delete game._statusFresh[top + r];
         const inRanges = (c) => ranges === null || ranges.some(([a, b]) => c >= a && c < b);
-        const my = top + r - 1 - clipy;
         // Signature of the map glyph on a status cell, recorded when the status
         // text was painted over it: while it is unchanged the status text still
         // owns the cell (tty only rewrites a map cell whose glyph changed).
@@ -3964,16 +4203,17 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         const mapSig = (c) => {
             if (my < 0 || my >= ROWNO) return '';
             const l = _displayed_loc(c + 1 + clipx, my);
-            return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}|${l.remembered_glyph ? 'g' : ''}` : '';
+            return l ? (l.sig ?? _mapSigOf(l)) : '';
         };
         // A held departing frame (goto_level's postponed flushes) still shows the
         // OLD level, so its snapshot of what owns each status cell stays valid.
         if (game._statusSnapLevel !== game.level && !game._staleFrame) game._statusSnap = null;
         const snap = sharedRow && game._statusSnap ? game._statusSnap : null;
         const owned = (c) => !!snap && (top + r) in snap && snap[top + r][c] !== undefined
-            && snap[top + r][c] === mapSig(c);
+            && snap[top + r][c] === mapSig(c)
+            && !(my >= 0 && my < ROWNO && _displayed_loc(c + 1 + clipx, my)?._gchg);
         const written = [];
-        for (let c = 0; c < Math.min(cells.length, display.cols); c++) {
+            for (let c = 0; c < Math.min(cells.length, display.cols); c++) {
             const cell = cells[c];
             const terrain = sharedRow && game._terrainStatusWipe?.[c];
             if (terrain) {
@@ -3985,6 +4225,12 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
                 continue;
             }
             if (!cell) continue;
+            // flush_screen() runs bot() BEFORE it writes the map: a cell whose glyph
+            // changed since the last flush (gnew) is drawn over the status text.
+            if (rebuild && sharedRow && _displayed_loc(c + 1 + clipx, my)?._gchg) {
+                if (game._statusSnap?.[top + r]) game._statusSnap[top + r][c] = undefined;
+                continue;
+            }
             if ((unchanged || (sharedRow && !inRanges(c))) && !owned(c)) {
                 const have = display.grid?.[top + r]?.[c];
                 const mapWins = (have && have.ch && have.ch !== ' ')
@@ -4015,9 +4261,28 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         for (let c = Math.min(cells.length, display.cols) - 1; c >= 0; c--)
             if (cells[c]) { finalx = c + 1; break; }
         const beforeFx = game._statusFinalx?.[top + r] | 0;
-        if (!unchanged && (finalx < beforeFx || !beforeFx) && finalx < display.cols)
+        // The cl_end() blank is a one-off write: the frame is rebuilt from the
+        // map every time, so the swept cells are re-blanked on later rebuilds
+        // for as long as their glyph is unchanged (game._statusSnap['cl<row>']).
+        const clKey = 'cl' + (top + r);
+        if (!unchanged && (finalx < beforeFx || !beforeFx) && finalx < display.cols) {
             for (let c = finalx; c < display.cols; c++)
                 display.setCell(c, top + r, ' ', NO_COLOR, 0);
+            if (sharedRow) (game._statusSnap ??= {})[clKey] = { from: finalx, sig: [] };
+        }
+        const cl = game._statusSnap?.[clKey];
+        if (cl && finalx > cl.from) cl.from = finalx;
+        if (cl && sharedRow && rebuild)
+            for (let c = cl.from; c < display.cols; c++) {
+                if (cl.sig[c] === null) continue;
+                const sig = mapSig(c);
+                if (_displayed_loc(c + 1 + clipx, my)?._gchg || (cl.sig[c] !== undefined && cl.sig[c] !== sig)) {
+                    cl.sig[c] = null;
+                    continue;
+                }
+                cl.sig[c] = sig;
+                display.setCell(c, top + r, ' ', NO_COLOR, 0);
+            }
         (game._statusFinalx ??= {})[top + r] = finalx;
     }
     game._statusPrevCells = cur;
@@ -4184,6 +4449,107 @@ export function remember_topl() {
     h.data[h.maxrow] = game._toplines;
     game._toplines = '';
     h.maxcol = h.maxrow = (h.maxrow + 1) % h.rows;
+}
+
+// C ref: topl.c:553 `static char **snapshot_mesgs` and msghistory_snapshot() —
+// copy the ring into a sequential oldest-first array.  A passive snapshot
+// (save) locks the ring so later remember_topl() calls cannot clobber what the
+// walker still reads; a purging one (restore) empties the ring as it copies.
+let snapshot_mesgs = null;
+
+function msghistory_snapshot(purge) {
+    const cw = msghist();
+
+    /* flush gt.toplines[], moving most recent message to history */
+    remember_topl();
+
+    if (!purge)
+        cw.locked = true; /* WIN_LOCKHISTORY */
+
+    snapshot_mesgs = [];
+    let inidx = cw.maxrow;
+    for (let i = 0; i < cw.rows; ++i) {
+        const mesg = cw.data[inidx];
+        if (mesg) {
+            snapshot_mesgs.push(mesg);
+            if (purge)
+                cw.data[inidx] = undefined;
+        }
+        inidx = (inidx + 1) % cw.rows;
+    }
+
+    /* for a destructive snapshot, history is now completely empty */
+    if (purge)
+        cw.maxcol = cw.maxrow = 0;
+}
+
+// C ref: topl.c:605 free_msghistory_snapshot(); `purged` is TRUE when the
+// strings were taken out of the ring (restore), FALSE when merely cloned.
+function free_msghistory_snapshot(purged) {
+    if (snapshot_mesgs) {
+        snapshot_mesgs = null;
+        /* history can resume being updated at will now... */
+        if (!purged)
+            msghist().locked = false;
+    }
+}
+
+// C ref: topl.c:637 tty_getmsghistory() — called by save.c save_msghistory():
+// one ring string per call, oldest first, then null.  The history is collected
+// at the init call, so messages issued afterwards are not part of the output.
+let getmsghistory_nxtidx = 0;
+export function getmsghistory(init) {
+    let result = null;
+
+    if (init) {
+        msghistory_snapshot(false);
+        getmsghistory_nxtidx = 0;
+    }
+
+    if (snapshot_mesgs) {
+        const nextmesg = snapshot_mesgs[getmsghistory_nxtidx++];
+        if (nextmesg !== undefined)
+            result = nextmesg;
+        else
+            free_msghistory_snapshot(false);
+    }
+    return result;
+}
+
+// C ref: topl.c:677 tty_putmsghistory() — restore.c restore_msghistory() sends
+// the saved messages oldest first, then a null to finish; files.c, cmd.c,
+// invent.c and questpgr.c send a one-line text straight into the ring.
+// Restored messages go BEHIND whatever this process already issued
+// ("Restoring save file..."), because they logically precede it: the first
+// restoring call parks the current history in the snapshot and the closing
+// null pushes it back after the restored ones.
+// (C also feeds gs.saved_plines[] through dumplogmsg() here.  This port's
+// pline() never fills that ring, so there is nothing to reset or extend.)
+let putmsghistory_initd = false;
+export function putmsghistory(msg, restoring_msghist) {
+    if (restoring_msghist && !putmsghistory_initd) {
+        msghistory_snapshot(true);
+        putmsghistory_initd = true;
+    }
+
+    if (msg != null) {
+        /* Caller is asking us to remember a top line that needed more. */
+        if (game._toplin === TOPLIN_NEED_MORE)
+            game._toplin = 0; /* TOPLINE_NON_EMPTY */
+
+        /* move most recent message to history, make this become most recent */
+        remember_topl();
+        game._toplines = msg;
+    } else if (snapshot_mesgs) {
+        /* done putting arbitrary messages in; put the snapshot ones back */
+        for (const mesg of snapshot_mesgs) {
+            remember_topl();
+            game._toplines = mesg;
+        }
+        /* now release the snapshot */
+        free_msghistory_snapshot(true);
+        putmsghistory_initd = false; /* reset */
+    }
 }
 
 // C ref: topl.c tty_yn_function() clean_up: — `Sprintf(gt.toplines, "%s%s",
@@ -4573,13 +4939,28 @@ async function botl_flush(direct = false) {
     }
     // C ref: botl.c bot() with disp.botlx (after docrt()/cls()) repaints every
     // status field, covering any map glyph drawn on the status rows.
-    if (game.botlx) {
+    // C ref: botl.c:259 bot() does nothing at all while u.uhp == -1 (the dosave()
+    // sentinel, also lava_effects()'s "burn to a crisp" HP): no status_update(),
+    // so no BL_RESET and the tty's per-field state survives.
+    if (game.botlx && game.u?.uhp !== -1) {
         game._statusPrevCells = null;
         // C ref: botl.c evaluate_and_notify_windowport() — disp.botlx alone only
         // triggers status_update(BL_RESET) (make_things_fit(FORCE_RESET)); a field
         // is resent only when its value changed (or gu.update_all, set just by
         // status_initialize()/reset_status_hilites()).  So the " " that
         // shrink_enc(0) leaves in status_vals[BL_CAP] survives a docrt().
+    }
+    // C ref: botl.c evaluate_and_notify_windowport() ends with
+    // gu.update_all = FALSE.  While it was set (status_initialize(), reached
+    // from polyself.c set_uasmon()), every field went through
+    // tty_status_update() again: BL_CAP and BL_LEVELDESC come back at full
+    // length with their shrink levels reset, and a lone " " in BL_CAP is
+    // suppressed to length 0 instead of surviving as shrink_enc(0)'s blank.
+    if (game._statusUpdateAll) {
+        const tst = _ttyStatusState();
+        tst.prevCap = null;
+        tst.prevLev = null;
+        delete game._statusUpdateAll;
     }
     game.botl = game.botlx = false;
     if (game._statusClsBlank) game._statusDocrt = false; // status repaints AFTER the map
@@ -4601,6 +4982,14 @@ export function timebot_sync() {
     if (!game.time_botl) return;
     game.time_botl = false;
     game._shownMoves = game.moves || 1;
+}
+
+// C ref: pline.c Norep(line, ...) — pline() with PLINE_NOREPEAT: the message is
+// dropped when it is identical to gp.prevmsg, the last INDIVIDUAL message
+// (game._prevmsg here), not the concatenated top row.
+export async function Norep(msg) {
+    if (game._prevmsg === msg) return;
+    await update_topl(msg);
 }
 
 export async function update_topl(bp) {
@@ -4846,6 +5235,12 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = false) {
         return res;
     }
     game.yn_number = 0;
+    {
+        /* cmd.c yn_function(): yn_function_menu() before win_yn_function() */
+        const { yn_function_menu_ask } = await import('./invent.js');
+        const menuRes = await yn_function_menu_ask(query, resp, def);
+        if (menuRes !== null) return menuRes || '\x1b';
+    }
     if (game._yn_need_more && (!game._winStop || game._winNoStop)) {
         await topl_more();
         // Acking a deferred --More-- is where a pending status redraw lands:
@@ -5403,8 +5798,7 @@ function _sensemon(mon) {
         return false;
     return !!((p.Detect_monsters ?? 0) || (p.HDetect_monsters ?? 0)
               || (p.EDetect_monsters ?? 0))
-        || tp_sensemon(mon) || false /* MATCH_WARN_OF_MON: no warned-of-mon
-                                        artifact or ring of warning here */;
+        || tp_sensemon(mon) || match_warn_of_mon(mon);
 }
 // C ref: hack.h mdistu(mon) — dist2(mon->mx, mon->my, u.ux, u.uy).
 function mdistu_d(mon) {
@@ -5627,7 +6021,7 @@ export function map_object(obj, show) {
     if (halluc && obj.otyp === STATUE_OTYP && game.level?.flags?.hero_memory)
         bg.mem = random_obj_glyph();
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
-    if (show) show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
+    if (show) show_bg_glyph(x, y, bg);
 }
 
 function clear_invisible_memory(x, y) {

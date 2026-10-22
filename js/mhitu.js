@@ -19,6 +19,7 @@
 
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
+import { monnear } from './dogmove.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE,
@@ -26,7 +27,7 @@ import {
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
     A_CON, A_CHA, A_DEX, A_STR, HAIR, HAND, W_RINGL, W_RINGR, KILLED_BY,
-    NO_MINVENT, MM_EDOG, MM_NOMSG, Unaware,
+    NO_MINVENT, MM_EDOG, MM_NOMSG, Unaware, DISMOUNT_ENGULFED,
 } from './const.js';
 import {
     AT_NONE, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT, AT_TUCH, AT_STNG, AT_HUGS,
@@ -38,16 +39,16 @@ import {
     AD_HALU, AD_PEST, AD_FAMN, AD_ENCH, AD_POLY, AD_DGST,
 } from './monattk_data.js';
 import {
-    mflags1_of, mflags2_of, is_animal, is_neuter_flag, perceives_flag,
+    mflags1_of, mflags2_of, is_animal, is_neuter_flag, perceives_flag, unsolid_flag, amorphous_flag,
     humanoid as humanoid_flag,
     M1_NOEYES, M1_NOLIMBS, M1_THICK_HIDE, M1_SLITHY, M2_MINION, M1_BREATHLESS, M1_AMPHIBIOUS,
 } from './monflags_data.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { acurr_eff, exercise, adjattrib } from './attrib.js';
-import { newsym, map_invisible, unmap_object, impossible, update_topl, urgent_topl, You_feel, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp, status_hold } from './display.js';
+import { newsym, map_invisible, impossible, update_topl, urgent_topl, You_feel, canseemon_shared, Hallucination_u as Hallucination, hold_botl_hp, status_hold } from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { is_home_elemental, monster_by_pmidx, name_to_pmidx } from './makemon.js';
-import { DEADMONSTER, mvitals_died, m_detach, wake_nearto_core } from './mon.js';
+import { DEADMONSTER, mondead, wake_nearto_core } from './mon.js';
 import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
@@ -55,10 +56,10 @@ import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, 
 import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion } from './invent.js';
 import { has_innate } from './exper.js';
 import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
-import { Monnam, mon_nam, mhis, mhe } from './do_name.js';
+import { Monnam, mon_nam, mhis, mhe, hliquid } from './do_name.js';
 import { Invis } from './monmove.js';
 import { Acid_resistance } from './explode.js';
-import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION } from './const.js';
+import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION, REFLECTING } from './const.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -452,22 +453,13 @@ export function calc_mattacku_vars(mtmp) {
     const mux = mtmp.mux ?? mtmp.mx, muy = mtmp.muy ?? mtmp.my;
     const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
     const ranged = (dx * dx + dy * dy) > 3;                 // mdistu(mtmp) > 3
-    const range2 = !monnear_xy(mtmp, mux, muy);
+    const range2 = !monnear(mtmp, mux, muy);
     const foundyou = (mux === u.ux && muy === u.uy);
     const youseeit = canseemon_shared(mtmp);
     // do_attack() uses bhitpos to set/clear notonhead; do likewise here.
     game.bhitpos = { x: u.ux, y: u.uy };
     game.notonhead = false;
     return { ranged, range2, foundyou, youseeit };
-}
-// C ref: mon.c monnear(mon, x, y) — within one king-step; a grid bug can't
-// reach a diagonal neighbour.
-const PM_GRID_BUG_NAME = 'grid bug';
-function monnear_xy(mon, x, y) {
-    const dx = mon.mx - x, dy = mon.my - y;
-    const distance = dx * dx + dy * dy;
-    if (distance === 2 && mon.data?.name === PM_GRID_BUG_NAME) return false;
-    return distance < 3;
 }
 
 // ═══ mhitu.c:29 hitmsg ══════════════════════════════════════════════════════
@@ -708,10 +700,25 @@ export async function gulpmu(mtmp, mattk) {
         // what the recorded --More-- frame shows (seed0383 step 140 still has
         // the 'v' on row 7).
         newsym(mtmp.mx, mtmp.my);
-        /* C ref mhitu.c:1335 urgent_pline(): NOSTOP, so it shows even after an
-           ESC at an earlier --More-- this turn. */
-        await urgent_topl(`${Monnam(mtmp)} ${digests(mtmp.data) ? 'swallows you whole'
-            : enfolds(mtmp.data) ? 'folds itself around you' : 'engulfs you'}!`);
+        /* C ref mhitu.c:1318-1339: 5.0 dismounts the hero for every engulfer
+           (not just purple worms); the engulfer already stands on the hero's
+           square (place_monster + set_ustuck above), so dismount_steed()
+           takes its `m_at(u.ux,u.uy)` / `u.ustuck` arms.  urgent_pline()
+           is NOSTOP, so it shows even after an ESC at an earlier --More--
+           this turn. */
+        if (u.usteed) {
+            const { Some_Monnam } = await import('./do_name.js');
+            const steedbuf = mon_nam(u.usteed);
+            await urgent_topl(`${Some_Monnam(mtmp)} ${is_animal(mtmp.data) ? 'lunges'
+                : is_whirly(mtmp.data) ? 'whirls'
+                : unsolid_flag(mtmp.data) ? 'flows'
+                : amorphous_flag(mtmp.data) ? 'oozes' : 'surges'} forward and plucks you off ${steedbuf}!`);
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_ENGULFED);
+        } else {
+            await urgent_topl(`${Monnam(mtmp)} ${digests(mtmp.data) ? 'swallows you whole'
+                : enfolds(mtmp.data) ? 'folds itself around you' : 'engulfs you'}!`);
+        }
         await (await import('./hack.js')).stop_occupation();
 
         if (u.utrap) {
@@ -865,7 +872,7 @@ export async function gulpmu(mtmp, mattk) {
             if (Cold_resistance() || has_innate('HCold_resistance')) {
                 const { shieldeff } = await import('./display.js');
                 await shieldeff(u.ux, u.uy);
-                await emitU('You feel mildly chilly.');
+                await You_feel('mildly chilly.');
                 monstseesu(M_SEEN_COLD);
                 const { ugolemeffects } = await import('./polyself.js');
                 await ugolemeffects(AD_COLD, tmp);
@@ -883,7 +890,7 @@ export async function gulpmu(mtmp, mattk) {
             if (Fire_resistance() || has_innate('HFire_resistance')) {
                 const { shieldeff } = await import('./display.js');
                 await shieldeff(u.ux, u.uy);
-                await emitU('You feel mildly hot.');
+                await You_feel('mildly hot.');
                 monstseesu(M_SEEN_FIRE);
                 const { ugolemeffects } = await import('./polyself.js');
                 await ugolemeffects(AD_FIRE, tmp);
@@ -951,13 +958,6 @@ export async function gulpmu(mtmp, mattk) {
 }
 const MZ_HUGE = 4;   // C ref: monflag.h:182 (MZ_GIGANTIC is 7, not 5)
 
-// C ref: mon.c:3170 mondead() — `if (glyph_is_invisible(levl[mx][my].glyph))
-// unmap_object(mx, my)` just before m_detach: killing a monster the hero only
-// remembered as 'I' drops the marker.
-function mondead_unmap(mtmp) {
-    if (game.level?.at(mtmp.mx, mtmp.my)?.invisMon) unmap_object(mtmp.mx, mtmp.my);
-}
-
 // ═══ mhitu.c:1591 explmu ════════════════════════════════════════════════════
 // A yellow light / gas spore style attacker detonates next to the hero.
 // RNG: d(damn,damd) always; AD_BLND adds rnd(tmp/2) but ONLY when the exploder
@@ -1013,9 +1013,7 @@ export async function explmu(mtmp, mattk, ufound) {
                 await emitU('You are caught in a blast of kaleidoscopic light!');
             // C ref mhitu.c:1645 — mondead(mtmp) BEFORE make_hallucinated(),
             // so the dying light is never itself displayed hallucinated.
-            mondead_unmap(mtmp);
-            mvitals_died(mtmp);
-            await m_detach(mtmp, mtmp.data, true);
+            await mondead(mtmp);
             kill_agr = false;                 /* already killed (maybe lifesaved) */
             const { make_hallucinated, HHallucination } = await import('./potion.js');
             const chg = await make_hallucinated(HHallucination() + tmp, false, 0);
@@ -1035,14 +1033,12 @@ export async function explmu(mtmp, mattk, ufound) {
     // AD_HALU's mondead); AD_BLND (and any not_affected arm) falls through
     // to here with kill_agr still TRUE.
     if (kill_agr && !DEADMONSTER(mtmp)) {
-        mondead_unmap(mtmp);
-        mvitals_died(mtmp);
-        await m_detach(mtmp, mtmp.data, true);
+        await mondead(mtmp);
     }
     await wake_nearto_core(mtmp.mx, mtmp.my, 49, false);   // mhitu.c:1662
     return (!DEADMONSTER(mtmp)) ? M_ATTK_MISS : M_ATTK_AGR_DIED;
 }
-function resists_blnd_u() {
+export function resists_blnd_u() {
     if (Blind() || Unaware() || resists_blnd_by_arti(game.u)) return true;
     const ptr = youmonst_data();
     return !!(dmgtype_fromattack(ptr, AD_BLND, AT_EXPL)
@@ -1228,7 +1224,8 @@ function mdistu(mtmp) {
     const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
     return dx * dx + dy * dy;
 }
-function Reflecting() { return !!game.u?.formprops?.Reflecting || !!game.u?.uprops?.Reflecting; }
+// C ref: youprop.h Reflecting == EReflecting (worn amulet/shield/silver DSM) || silver dragon form.
+function Reflecting() { return !!game.u?.formprops?.Reflecting || !!game.u?.uprops?.Reflecting || !!worn_extrinsic(REFLECTING); }
 function Confusion() { return (game.u?.uprops?.Confusion | 0) || (game.u?.uconf | 0); }
 function HConfusion() { return game.u?.uprops?.Confusion | 0; }
 function HStun() { return game.u?.uprops?.Stun | 0; }
@@ -1246,7 +1243,7 @@ export async function make_stunned_u(xtime, talk) {
     const old = HStun();
     if (Unaware()) talk = false;
     if (!xtime && old && talk)
-        await emitU(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
+        await You_feel(`${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
     if (xtime && !old && talk) {
         const ptr = youmonst_data();
         const { stagger_verb } = await import('./uhitm.js');
@@ -1354,20 +1351,21 @@ export async function doseduce(mon) {
     const { Monnam, mon_nam } = await import('./uhitm.js');
     const { noit_mon_nam, noit_Monnam } = await import('./do_name.js');
     const { losexp } = await import('./exper.js');
+    const { unresponsive } = await import('./steal.js');
     const { cloak_simple_name, suit_simple_name, helm_simple_name } = await import('./do_wear.js');
     if (mon.mcan || mon.mspec_used) {
         await emitU(`${Monnam(mon)} acts as though ${mhe(mon)} has got a ${
             mon.mcan ? 'severe ' : ''}headache.`);
         return 0;
     }
-    if (Unaware()) {
+    if (unresponsive()) {
         await emitU(`${Monnam(mon)} seems dismayed at your lack of response.`);
         return 0;
     }
     const seewho = canseemon_shared(mon);
     const fem = (mon.data?.name === 'amorous demon' && gender(mon) === 1);
     if (!seewho) await emitU('Someone caresses you...');
-    else await emitU(`You feel very attracted to ${mon_nam(mon)}.`);
+    else await You_feel(`very attracted to ${mon_nam(mon)}.`);
     const Who = !seewho ? (fem ? 'She' : 'He') : Monnam(mon);
 
     /* if in the process of putting armor on or taking armor off,
@@ -1485,7 +1483,7 @@ export async function doseduce(mon) {
         await emitU(`${noit_Monnam(mon)} seems to have enjoyed it more than you...`);
         switch (rn2(5)) {
         case 0:
-            await emitU('You feel drained of energy.');
+            await You_feel('drained of energy.');
             /* C sets no disp.botl here: the status keeps the old Pw */
             status_hold('uen', u.uen);
             status_hold('uenmax', u.uenmax);
@@ -1509,7 +1507,7 @@ export async function doseduce(mon) {
         case 3: {
             const { resists_drli } = await import('./artifact.js');
             if (!resists_drli(game.youmonst || u)) {
-                await emitU('You feel out of shape.');
+                await You_feel('out of shape.');
                 await losexp('overexertion', emitU);
             } else {
                 await emitU('You have a curious feeling...');
@@ -1520,7 +1518,7 @@ export async function doseduce(mon) {
             break;
         }
         case 4: {
-            await emitU('You feel exhausted.');
+            await You_feel('exhausted.');
             await exercise(A_STR, false);
             const tmp = rn1(10, 6);
             const { losehp } = await import('./zap.js');
@@ -1534,7 +1532,7 @@ export async function doseduce(mon) {
         await emitU(`You seem to have enjoyed it more than ${noit_mon_nam(mon)}...`);
         switch (rn2(5)) {
         case 0:
-            await emitU('You feel raised to your full potential.');
+            await You_feel('raised to your full potential.');
             await exercise(A_CON, true);
             /* C sets no disp.botl here: the status keeps the old Pw until a
                later bot() (the next "takes N zorkmids" or turn-end flush). */
@@ -1545,7 +1543,7 @@ export async function doseduce(mon) {
             if (u.uenmax > (u.uenpeak | 0)) u.uenpeak = u.uenmax;
             break;
         case 1:
-            await emitU('You feel good enough to do it again.');
+            await You_feel('good enough to do it again.');
             await adjattrib(A_CON, 1, true);
             await exercise(A_CON, true);
             game.botl = true;
@@ -1564,7 +1562,7 @@ export async function doseduce(mon) {
             break;
         }
         case 4:
-            await emitU('You feel restored to health!');
+            await You_feel('restored to health!');
             u.uhp = u.uhpmax;
             if (Upolyd()) u.mh = u.mhmax;
             await exercise(A_STR, true);
@@ -1715,7 +1713,7 @@ export async function passiveum(olduasmon, mtmp, mattk) {
     case AD_ACID:
         if (!rn2(2)) {
             await emitU(`${Monnam(mtmp)} is splashed by ${
-                !Upolyd() ? '' : 'your '}acid!`);
+                !Upolyd() ? '' : 'your '}${hliquid('acid')}!`);
             if (mres(MR_ACID)) {
                 await emitU(`${Monnam(mtmp)} is not affected.`);
                 tmp = 0;

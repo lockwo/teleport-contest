@@ -113,6 +113,7 @@ function shade_glare(obj) {
 }
 // artifact.c artifact_light(obj): the real predicate lives in light.js.
 import { artifact_light } from './light.js';
+import { You_feel } from './display.js';
 
 // The defender's permonst.  Callers pass a real monster (mon.data), the
 // youmonst pseudo-monster, or bare game.u; C always has &youmonst.data.
@@ -382,11 +383,13 @@ const SKILL_NAMES_INDICES = [
     -1 /*PN_BARE_HANDED*/, -2 /*PN_TWO_WEAPONS*/, -3 /*PN_RIDING*/,
 ];
 // C ref: objclass.h def_oc_syms[].name — the class-name fallback.
+// C ref: weapon.c weapon_descr() returns makesingular(def_oc_syms[class].name)
+// ("chains" -> "chain", "large stones" -> "large stone"); defsym.h OBJCLASS names.
 const OC_CLASS_NAME = {
     1: 'illegal object', 2: 'weapon', 3: 'armor', 4: 'ring', 5: 'amulet',
     6: 'tool', 7: 'food', 8: 'potion', 9: 'scroll', 10: 'spellbook',
-    11: 'wand', 12: 'coin', 13: 'gem', 14: 'large rock', 15: 'iron ball',
-    16: 'iron chain', 17: 'venom',
+    11: 'wand', 12: 'coin', 13: 'rock', 14: 'large stone', 15: 'iron ball',
+    16: 'chain', 17: 'venom',
 };
 export function weapon_descr(obj) {
     const skill = weapon_type(obj);
@@ -551,7 +554,7 @@ export async function drain_weapon_skill(n) {
 // C ref: weapon.c:76 give_may_advance_msg(skill).
 export async function give_may_advance_msg(skill) {
     const { pline } = await import('./display.js');
-    await pline(`You feel more confident in your ${
+    await You_feel(`more confident in your ${
         skill === P_NONE ? ''
         : skill <= P_LAST_WEAPON ? 'weapon '
         : skill <= P_LAST_SPELL ? 'spell casting '

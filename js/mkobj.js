@@ -27,6 +27,9 @@ import { block_point, recalc_block_point } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, obj_nutrition, eating_glob } from './eat.js';
 import { is_human_flag } from './monflags_data.js';
 
+// artifact.js imports this module, and its top level needs `objects` while this one is still evaluating (steal.js reads it at load),
+// so a static import of mk_artifact/nartifact_exist throws a TDZ ReferenceError.  artifact.js installs them on hooks at load.
+
 export const RANDOM_CLASS = 0;
 export const ILLOBJ_CLASS = 1;
 export const WEAPON_CLASS = 2;
@@ -1238,79 +1241,6 @@ export function blessorcurse(otmp, chance) {
     }
 }
 
-// Artifact list (C: artilist.h). Only the fields mk_artifact()/nartifact_exist()
-// need for RNG parity: the artifact index m (1-based, matching artiexist[]), its
-// base object otyp, whether SPFX_NOGEN is set, the gift_value, and the role it is
-// a first choice for. The quest artifacts and Excalibur carry SPFX_NOGEN so they
-// are never random-generated; they are omitted because nogen entries are skipped
-// before they can be selected and they do not contribute to the eligible list.
-// (They DO count toward artiexist once created by other means, but in the early
-// game covered by the parity sessions none are created, and nartifact_exist()
-// only matters via the random-generation path implemented here.)
-// [m, otyp, gift_value, role(PM_ or -1)]
-const ARTIFACTS = [
-    [2, 58 /*RUNESWORD*/, 9, -1],        // Stormbringer
-    [3, 76 /*WAR_HAMMER*/, 8, -1],       // Mjollnir (PM_VALKYRIE; first-choice only matters for by_align)
-    [4, 45 /*BATTLE_AXE*/, 8, -1],       // Cleaver
-    [5, 36 /*ORCISH_DAGGER*/, 5, -1],    // Grimtooth
-    [6, 53 /*ELVEN_BROADSWORD*/, 4, -1], // Orcrist
-    [7, 35 /*ELVEN_DAGGER*/, 1, -1],     // Sting
-    [8, 38 /*ATHAME*/, 7, -1],           // Magicbane
-    [9, 54 /*LONG_SWORD*/, 9, -1],       // Frost Brand
-    [10, 54 /*LONG_SWORD*/, 5, -1],      // Fire Brand
-    [11, 52 /*BROADSWORD*/, 5, -1],      // Dragonbane
-    [12, 74 /*SILVER_MACE*/, 3, -1],     // Demonbane
-    [13, 51 /*SILVER_SABER*/, 4, -1],    // Werebane
-    [14, 51 /*SILVER_SABER*/, 10, -1],   // Grayswandir
-    [15, 54 /*LONG_SWORD*/, 4, -1],      // Giantslayer
-    [16, 76 /*WAR_HAMMER*/, 1, -1],      // Ogresmasher
-    [17, 75 /*MORNING_STAR*/, 1, -1],    // Trollsbane
-    [18, 54 /*LONG_SWORD*/, 5, -1],      // Vorpal Blade
-    [19, 56 /*KATANA*/, 8, -1],          // Snickersnee
-    [20, 54 /*LONG_SWORD*/, 6, -1],      // Sunsword
-];
-// C ref: artilist.h A("<name>", ...) — artilist[m].name, indexed like ARTIFACTS.
-const ARTI_NAMES = [null, 'Excalibur', 'Stormbringer', 'Mjollnir', 'Cleaver',
-    'Grimtooth', 'Orcrist', 'Sting', 'Magicbane', 'Frost Brand', 'Fire Brand',
-    'Dragonbane', 'Demonbane', 'Werebane', 'Grayswandir', 'Giantslayer',
-    'Ogresmasher', 'Trollsbane', 'Vorpal Blade', 'Snickersnee', 'Sunsword'];
-
-function nartifact_exist() {
-    const set = game.artiexist;
-    if (!set) return 0;
-    return set.size;
-}
-
-// C artifact.c:172 mk_artifact() restricted to the A_NONE / random-generation
-// case used by mksobj_init (by_align == FALSE). For an object whose otyp has
-// unused non-NOGEN artifacts, picks one with rn2(n) and marks it created. For a
-// generic item with no matching artifact (the common case) it consumes no RNG
-// and leaves the object unchanged. Returns the (possibly artifacted) obj.
-function mk_artifact(otmp) {
-    const o_typ = otmp.otyp;
-    const oc_unique = !!(objects[o_typ]?.flags & F_UNIQUE);
-    if (oc_unique) return otmp; // unique base items never become random artifacts
-    if (!game.artiexist) game.artiexist = new Set();
-    const eligible = [];
-    for (const [m, otyp /*, gv, role*/] of ARTIFACTS) {
-        if (game.artiexist.has(m)) continue;       // artiexist[m].exists
-        // gift_value > 99 never happens (max 12); role first-choice only used by_align
-        if (otyp === o_typ) eligible.push(m);
-    }
-    const n = eligible.length;
-    if (n) {
-        const m = eligible[rn2(n)];
-        otmp.oeroded = 0;
-        otmp.oeroded2 = 0;
-        otmp.oname = ARTI_NAMES[m];                /* oname(otmp, a->name) */
-        otmp.oartifact = m;
-        game.artiexist.add(m);                     // artifact_origin -> exists
-    }
-    // C ref: artifact.c:306 — random Grimtooth is permanently poisoned.
-    if (otmp.oartifact === 5 /* ART_GRIMTOOTH */) otmp.opoisoned = 1;
-    return otmp;
-}
-
 function hasFlag(otmp, flag) {
     return !!(objects[otmp.otyp]?.flags & flag);
 }
@@ -1354,6 +1284,11 @@ export function is_rottable(otmp) {
     const mat = objects[otmp.otyp]?.material ?? NO_MATERIAL;
     return ((mat <= WOOD && mat !== LIQUID) || mat === DRAGON_HIDE);
 }
+// C ref: obj.h:418 is_flimsy(otmp) — oc_material <= LEATHER or a rubber hose.
+export function is_flimsy(otmp) {
+    return (objects[otmp?.otyp]?.material ?? NO_MATERIAL) <= LEATHER
+        || otmp?.otyp === 78 /* RUBBER_HOSE */;
+}
 export function is_rustprone(otmp) { return objects[otmp.otyp]?.material === IRON; }
 export function is_corrodeable(otmp) {
     const mat = objects[otmp.otyp]?.material;
@@ -1380,12 +1315,24 @@ function mkobj_erosions(otmp) {
     if (!rn2(1000)) otmp.greased = 1;
 }
 
-function rndmonnum() {
-    return rndmonst_adj(0, 0)?.pmidx ?? 0;
+// C ref: mkobj.c:388 rndmonnum().
+export function rndmonnum() {
+    return rndmonnum_adj(0, 0);
 }
 
+// C ref: mkobj.c:395 rndmonnum_adj() — Plan A: a level-appropriate common
+// monster; Plan B: any common monster (rn1 re-roll loop).
 function rndmonnum_adj(minadj = 0, maxadj = 0) {
-    return rndmonst_adj(minadj, maxadj)?.pmidx ?? 0;
+    const ptr = rndmonst_adj(minadj, maxadj);
+    if (ptr) return ptr.pmidx;
+    const G_UNIQ = 0x1000, G_NOHELL = 0x0800, G_HELL = 0x0400, G_NOGEN = 0x0200;
+    const SPECIAL_PM = 330, LOW_PM = 0;   /* PM_LONG_WORM_TAIL */
+    const excludeflags = G_UNIQ | G_NOGEN | (Inhell() ? G_NOHELL : G_HELL);
+    let i;
+    do {
+        i = rn1(SPECIAL_PM - LOW_PM, LOW_PM);
+    } while ((monster_by_pmidx(i).geno & excludeflags) !== 0);
+    return i;
 }
 
 function mkcorpstat_spe(corpsenm) {
@@ -1567,6 +1514,12 @@ export async function run_object_timers() {
     scan(game.level?.buriedobjlist);
     scan(game.migrating_objs);
     for (const mon of (Array.isArray(game.level?.monsters) ? game.level.monsters : []))
+        scan(mon.minvent);
+    /* timers of objects carried by monsters that left the level stay queued
+       (timer_is_local() is FALSE for them) and fire wherever the hero is */
+    for (const mon of (Array.isArray(game.migrating_mons) ? game.migrating_mons : []))
+        scan(mon.minvent);
+    for (const mon of (Array.isArray(game.mydogs) ? game.mydogs : []))
         scan(mon.minvent);
     due.sort((a, b) => a.timer.when - b.timer.when
         || (b.timer.tid ?? 0) - (a.timer.tid ?? 0));
@@ -2233,7 +2186,7 @@ function mksobj_init(otmp, artif) {
             blessorcurse(otmp, 10);
         }
         if (hasFlag(otmp, F_POISONABLE) && !rn2(100)) otmp.opoisoned = 1;
-        if (artif && !rn2(20 + 10 * nartifact_exist())) mk_artifact(otmp);
+        if (artif && !rn2(20 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp);
         break;
     case FOOD_CLASS:
         otmp.oeaten = 0;
@@ -2436,7 +2389,7 @@ function mksobj_init(otmp, artif) {
         } else {
             blessorcurse(otmp, 10);
         }
-        if (artif && !rn2(40 + 10 * nartifact_exist())) mk_artifact(otmp);
+        if (artif && !rn2(40 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp);
         // C ref: mkobj.c mksobj() — "simulate lacquered armor for samurai".
         // Consumes no RNG.  Role check uses the resolved player monster number
         // (PM_SAMURAI == 9); the splint mail only gets lacquered at game start
@@ -3018,6 +2971,7 @@ export function replace_object(obj, otmp) {
         break;
     case OBJ_FLOOR:
         otmp.ox = obj.ox; otmp.oy = obj.oy;
+        if (obj.fobj_seq != null) otmp.fobj_seq = obj.fobj_seq;
         swapIn(game.level?.objects);
         break;
     default:
@@ -3503,13 +3457,13 @@ export function obj_meld(o1ref, o2ref) {
 // C ref: mkobj.c:3818 — the hero notices floor or inventory globs coalescing.
 export async function pudding_merge_message(obj, other) {
     const { cansee, Blind } = await import('./vision.js');
-    const { pline, You_hear, Hallucination_u } = await import('./display.js');
+    const { pline, You_hear, You_see, Hallucination_u } = await import('./display.js');
     const visible = cansee(obj.ox, obj.oy) || cansee(other.ox, other.oy);
     const onfloor = [obj, other].some(o => o.where === OBJ_FLOOR);
     const inpack = [obj, other].some(o => o.where === OBJ_INVENT);
     if ((!Blind() && visible) || inpack) {
         if (Hallucination_u()) {
-            if (onfloor) await pline('You see parts of the floor melting!');
+            if (onfloor) await You_see('parts of the floor melting!');
             else if (inpack) await pline('Your pack reaches out and grabs something!');
         } else if (onfloor || inpack) {
             const { obj_typename } = await import('./objnam.js');
@@ -3584,30 +3538,6 @@ export function nextoid(oldobj, newobj) {
     return oid;
 }
 
-// C ref: mkobj.c bill_dummy_object(otmp) — a shop object is about to be altered,
-// so put a copy of the ORIGINAL on the bill.  The copy gets a fresh o_id from
-// nextoid() (which spends next_ident()'s rnd(2)), inherits the oextra but never
-// the m_id association, and is never worn or timed.
-export function bill_dummy_object(otmp) {
-    if (!otmp) return;
-    const dummy = { ...otmp };
-    dummy.oextra = null;
-    dummy.where = OBJ_FREE;
-    dummy.o_id = nextoid(otmp, dummy);
-    dummy.timed = 0;
-    delete dummy.timer;
-    copy_oextra(dummy, otmp);
-    if (has_omid(dummy)) free_omid(dummy);
-    dummy.owornmask = 0;
-    if (!Array.isArray(game.billobjs)) game.billobjs = [];
-    dummy.where = OBJ_ONBILL;
-    game.billobjs.push(dummy);                 /* addtobill() */
-    otmp.no_charge = (otmp.where === OBJ_FLOOR
-                      || otmp.where === OBJ_CONTAINED)
-        ? 1 : 0;
-    otmp.unpaid = 0;
-}
-
 /* ---- misc object queries ----------------------------------------------- */
 
 /* C ref: mkobj.c treefruits[] — APPLE, ORANGE, PEAR, BANANA, EUCALYPTUS_LEAF. */
@@ -3633,10 +3563,10 @@ export function stone_object_type(mappearance) {
 // C ref: mkobj.c stone_furniture_type(mappearance) — for FURNITURE the
 // mappearance is a DISPLAY SYMBOL (a cmap index), not a terrain type: the two
 // staircases, both branch staircases, altar, throne, sink, and every wall.
-// defsym.h cmap order (S_vwall == 1 ... S_trwall == 11, S_upstair == 20 ...).
+// Values mirror symbols.js (importing it from here creates a load-order cycle).
 const S_vwall = 1, S_trwall = 11;
-const S_upstair = 20, S_dnstair = 21, S_brupstair = 22, S_brdnstair = 23;
-const S_altar = 30, S_throne = 31, S_sink = 32;
+const S_upstair = 25, S_dnstair = 26, S_brupstair = 29, S_brdnstair = 30;
+const S_altar = 33, S_throne = 35, S_sink = 36;
 export function stone_furniture_type(mappearance) {
     const sym = mappearance | 0;
     switch (sym) {
@@ -3843,7 +3773,7 @@ export async function hornoplenty(horn, tipping, targetbox) {
         const { vtense } = await import('./dothrow.js');
         let obj, what;
 
-        I.consume_obj_charge(horn, !tipping);
+        await I.consume_obj_charge(horn, !tipping);
         if (!rn2(13)) {
             obj = mkobj(POTION_CLASS, false);
             if (objects[obj.otyp]?.oc_magic) {

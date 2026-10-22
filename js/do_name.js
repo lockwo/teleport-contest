@@ -15,7 +15,7 @@ import { get_rnd_text, decode_dlb, MD_PAD_BOGONS } from './engrave.js';
 import { BOGUSMON_B64 } from './bogusmon_data.js';
 import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
-import { mflags2_of, M2_PNAME } from './monflags_data.js';
+import { mflags2_of, M2_PNAME, msound_of } from './monflags_data.js';
 import { objects } from './mkobj.js';
 import { m_at } from './display.js';
 import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM } from './const.js';
@@ -503,7 +503,7 @@ export async function do_mgivenname() {
             await pline(`${upstart(monnambuf)} doesn't like being called names!`);
     } else if (mtmp.isshk
                && !(Deaf_dn() || helpless_dn(mtmp)
-                    || (mtmp.data?.msound ?? 99) <= MS_ANIMAL)) {
+                    || (msound_of(mtmp.data) ?? 99) <= MS_ANIMAL)) {
         if (!await alreadynamed(mtmp, monnambuf, buf)) {
             const { shkname } = await import('./shkroom.js');
             await pline(`"I'm ${shkname(mtmp)}, not ${buf}."`);

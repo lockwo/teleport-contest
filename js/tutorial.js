@@ -20,11 +20,11 @@ import {
     LAVAPOOL, LAVAWALL, IRONBARS, DOOR, CORR, ROOM, STAIRS, FOUNTAIN, THRONE, ALTAR, ICE,
     MAX_TYPE, INVALID_TYPE, NO_ROOM, D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED,
     W_NONDIGGABLE, LA_DOWN, ENGRAVE, BURN, NON_PM, SPACE_POS,
-    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR } from './const.js';
+    MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR, STRAT_WAITFORU } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state, mkstairs } from './mklev.js';
 import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
-import { name_to_pmidx, monster_by_pmidx, newmonhp } from './makemon.js';
+import { name_to_pmidx, monster_by_pmidx, makemon, set_malign } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
 import { cmd_from_ecname } from './cmd.js';
@@ -274,8 +274,11 @@ function createObject(cx, cy, name, opts = {}) {
 function mrandom(lo, hi) { return lo + rn2(hi + 1 - lo); }
 
 // ── create_monster (sp_lev.c create_monster -> makemon) ──
-// The des.monster path: find_montype (rn2(2)), induced_align, then makemon.
-// We reproduce the exact PRNG of makemon for a fixed (non-random) monster.
+// The des.monster path: find_montype (rn2(2)), induced_align, then a real
+// makemon() at the spot.  Every tutorial monster is `waiting = true`
+// (sp_lev.c:2160 STRAT_WAITFORU): dochug() leaves it alone, drawing nothing,
+// until it can see the hero or is hurt.  `peaceful = 0` (the wolf) overrides
+// makemon's peace_minded() result and re-runs set_malign (sp_lev.c:2126-2130).
 function createMonster(cx, cy, name, opts = {}) {
     rn2(2);                 // find_montype(name) — random-gender roll
     const pm = name_to_pmidx(name);
@@ -284,22 +287,14 @@ function createMonster(cx, cy, name, opts = {}) {
     // gate rolls rn2(100); only when that result is >= 80 (i.e. the dungeon
     // align is NOT taken) does it fall through to the random rn2(3).
     if (rn2(100) >= 80) rn2(3);
-    next_ident();           // mtmp->m_id
-    newmonhp({ data });     // d(m_lev,8) or rnd(4)
-    if (data && data.gcode === 0) rn2(2); // gender roll for non-fixed-gender
-    rn2(50); rn2(100);      // m_initinv
-    rn2(100);               // makemon saddle/trailing roll
-    // Materialize (asleep/waiting) so it joins fmon but emits no movement RNG.
     const { x, y } = A(cx, cy);
-    if (data && game.level) {
-        if (!game.level.monsters) game.level.monsters = [];
-        game.level.monsters.push({
-            data, mx: x, my: y, m_id: game.context_ident ?? 0,
-            m_lev: data.mlevel ?? 0, mhp: 1, mhpmax: 1, movement: 0,
-            mcanmove: 1, mcansee: 1, msleeping: 1, mpeaceful: opts.peaceful ?? 0,
-            mflee: 0, mtame: 0, minvis: 0, mstrategy: 0,
-        });
+    const mtmp = makemon(data, x, y, 0);
+    if (!mtmp) return;
+    if (opts.peaceful !== undefined) {
+        mtmp.mpeaceful = opts.peaceful;
+        set_malign(mtmp);
     }
+    mtmp.mstrategy = (mtmp.mstrategy | STRAT_WAITFORU) >>> 0;
 }
 
 // ── the tut-1.lua des.* program, in exact source order ──

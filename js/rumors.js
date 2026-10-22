@@ -167,6 +167,9 @@ export async function doconsult(oracl) {
     game.disp = game.disp || {};
     game.disp.botl = true;
     u.uevent = u.uevent || {};
+    /* C ref: rumors.c:744 -- the first consultation of either kind is an achievement */
+    if (!u.uevent.major_oracle && !u.uevent.minor_oracle)
+        (await import('./insight.js')).record_achievement(19 /* ACH_ORCL */);
     let add_xpts = 0;
     if (u_pay === minor_cost) {
         await oracle_says(1);
@@ -266,7 +269,8 @@ async function display_nhwindow(win, _blocking) {
                 if (c === 32 || c === 13 || c === 10) break;
             }
         }
-        await inv.dismiss_invent_screen();
+        // NHW_TEXT: no select_menu() bot_disabled bracket around the docrt().
+        await inv.dismiss_invent_screen(true);
     } else {
         const { display_nhwindow_message } = await import('./display.js');
         await display_nhwindow_message();

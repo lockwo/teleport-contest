@@ -15,13 +15,14 @@
 import { game, hooks } from './gstate.js';
 import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
+import { msound_of } from './monflags_data.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
 import { exercise, stone_luck } from './attrib.js';
 import { A_CON } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer } from './mkobj.js';
-import { update_topl, urgent_topl, see_monsters, status_hold } from './display.js';
+import { update_topl, urgent_topl, see_monsters, status_hold, You_feel } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
@@ -39,7 +40,7 @@ import { float_vs_flight } from './polyself.js';
 // error that would take the whole game down at startup.
 import * as C from './const.js';
 import { objects } from './mkobj.js';
-import { pline, impossible, You_hear, You_feel } from './display.js';
+import { pline, impossible, You_hear, You_see } from './display.js';
 import { rn1 } from './rng.js';
 
 const {
@@ -48,7 +49,7 @@ const {
     NUM_TIMER_KINDS, RANGE_GLOBAL,
     ROT_ORGANIC, ROT_CORPSE, REVIVE_MON, ZOMBIFY_MON, BURN_OBJECT, HATCH_EGG,
     FIG_TRANSFORM, SHRINK_GLOB, MELT_ICE_AWAY, NUM_TIME_FUNCS,
-    NON_PM, G_GENOD, G_EXTINCT, MV_KNOWS_EGG, M_AP_MONSTER,
+    NON_PM, G_GENOD, G_EXTINCT, M_AP_MONSTER,
     NECK, A_DEX, A_STR, NO_KILLER_PREFIX, KILLED_BY, KILLED_BY_AN,
     GENOCIDED, TURNED_SLIME, SICK_NONVOMITABLE, NHW_MENU, WIN_ERR, ECMD_OK,
     DRAWBRIDGE_DOWN, DB_UNDER, DB_ICE, STONED, SLIMED,
@@ -76,7 +77,8 @@ async function expire_confusion() {
     // is cleared only after the message, so a --More-- it forces still shows Conf.
     u.uprops.Confusion = 1;
     if (!Unaware()) // make_confused: `if (Unaware) talk = FALSE`
-        await update_topl(`You feel less ${Hallucination() ? 'trippy' : 'confused'} now.`);
+        await You_feel(`less ${Hallucination() ? 'trippy' : 'confused'} now.`);
+    game.botl = true;   // potion.c:100 make_confused(): the flip republishes the status
     u.uprops.Confusion = 0;
     u.uconf = false;
     // C ref: timeout.c:734 `if (!Confusion) stop_occupation();` — clearing the
@@ -92,7 +94,8 @@ async function expire_stun() {
     // C ref: timeout.c:737 `HStun = 1; make_stunned(0L, TRUE)` — see expire_confusion.
     u.uprops.Stun = 1;
     if (!Unaware()) // make_stunned: `if (Unaware) talk = FALSE`
-        await update_topl(`You feel ${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
+        await You_feel(`${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
+    game.botl = true;   // potion.c make_stunned(): the flip republishes the status
     u.uprops.Stun = 0;
     u.Stunned = false;
     // C ref: timeout.c:741 `if (!Stunned) stop_occupation();`.
@@ -263,8 +266,6 @@ const VOMITING_TEXTS = [
 ];
 function _conf() { return (game.u?.uprops?.Confusion || 0); }
 function _stun() { return (game.u?.uprops?.Stun || 0); }
-function _make_confused(x) { const u = game.u; u.uprops.Confusion = x; u.uconf = x > 0; }
-function _make_stunned(x) { const u = game.u; u.uprops.Stun = x; u.Stunned = x > 0; }
 
 async function vomiting_dialogue() {
     const u = game.u;
@@ -279,11 +280,13 @@ async function vomiting_dialogue() {
         if (_conf() > 0) txt = 'feel slightly more confused.';
         break;
     case 6:
-        _make_stunned(_stun() + d(2, 4));
-        await stop_occupation();
+        /* potion.c make_stunned(): sets disp.botl when the property flips */
+        await (await import('./mhitu.js')).make_stunned_u(_stun() + d(2, 4), false);
+        if (!await Popeye(C.VOMITING)) await stop_occupation();
         /* FALLTHROUGH */
     case 9:
-        _make_confused(_conf() + d(2, 4));
+        /* potion.c make_confused(): sets disp.botl when the property flips */
+        await (await import('./potion.js')).make_confused(_conf() + d(2, 4), false);
         if ((game.multi || 0) > 0) nomul(0);
         break;
     case 8:
@@ -579,7 +582,7 @@ const TIMED_PROPS = [
     { name: 'VOMITING',
       get: (u) => u.uprops?.Vomiting || 0,
       set: (u, v) => { u.uprops.Vomiting = v; },
-      expire: async () => _make_vomiting(0, true) },
+      expire: async () => (await import('./potion.js')).make_vomiting(0, true) },
     timed_uprop('GLIB', 'Glib', expire_glib),
     timed_uprop('SLIMED', 'Slimed', expire_slimed),
     { name: 'HALLUC',
@@ -926,12 +929,12 @@ function _Deaf() {
     return _prop('HDeaf') > 0 || !!game.u?.EDeaf || !!game.u?.uroleplay?.deaf;
 }
 
-// C ref: eat.c:3920 Popeye(threat) — TRUE while the hero is part-way through
-// opening a tin that might cure `threat`, which is why the countdown declines to
-// break the occupation.  eat.js has no Popeye() and go.occupation is never
-// opentin in this port, so C's leading `if (go.occupation != opentin) return
-// FALSE` is the only reachable arm.
-function _Popeye(_threat) { return false; }
+// C ref: eat.c:3920 Popeye(threat) — eat.js owns the port; reached through a
+// dynamic import because eat.js sits in a module cycle with this file.
+async function Popeye(threat) {
+    const { Popeye: popeye } = await import('./eat.js');
+    return await popeye(threat);
+}
 
 // C ref: region.c:1341 region_danger() — hero standing in a gas cloud that can
 // actually hurt him.  js/region.js keeps the regions on game.regions with
@@ -1126,7 +1129,7 @@ export async function stoned_dialogue() {
     case 4: /* limbs stiffening */
         /* one move left to save oneself, so stop fiddling around -- but don't
            interrupt opening a tin, which might be lizard or acidic */
-        if (!_Popeye(STONED)) await stop_occupation();
+        if (!await Popeye(STONED)) await stop_occupation();
         if ((game.multi || 0) > 0) nomul(0);
         break;
     case 3: /* limbs turned to stone */
@@ -1142,8 +1145,8 @@ export async function stoned_dialogue() {
         if (_prop('HDeaf') > 0 && _prop('HDeaf') < 5)
             _set_itimeout('HDeaf', 5); /* avoid Hear_again at the tail end */
         /* if also vomiting or turning into slime, stop those (no messages) */
-        if (_prop('Vomiting') > 0) _make_vomiting(0, false);
-        if (_prop('Slimed') > 0) await _make_slimed(0, null);
+        if (_prop('Vomiting') > 0) await (await import('./potion.js')).make_vomiting(0, false);
+        if (_prop('Slimed') > 0) await (await import('./potion.js')).make_slimed(0, null);
         break;
     default:
         break;
@@ -1311,7 +1314,7 @@ export async function slime_dialogue() {
     switch (i) {
     case 3:  /* limbs becoming oozy */
         _clear_HFast();                 /* lose intrinsic speed */
-        if (!_Popeye(SLIMED)) await stop_occupation();
+        if (!await Popeye(SLIMED)) await stop_occupation();
         if ((game.multi || 0) > 0) nomul(0);
         break;
     case 2: /* skin begins to peel */
@@ -1321,7 +1324,7 @@ export async function slime_dialogue() {
     case 1: /* turning into slime */
         /* if also turning to stone, stop doing that (no message) */
         if (_prop('Stoned') > 0)
-            await _make_stoned(0, null, KILLED_BY_AN, null);
+            await (await import('./potion.js')).make_stoned(0, null, KILLED_BY_AN, null);
         break;
     default:
         break;
@@ -1329,32 +1332,10 @@ export async function slime_dialogue() {
     exercise(A_DEX, false);
 }
 
-// C ref: potion.c make_slimed()/make_stoned()/make_vomiting() — none of the
-// three is ported in js/ and all three are potion.c symbols, so these are local
-// stand-ins doing what timeout.c depends on: set the countdown, undo the
-// mimic-green-slime hack, refresh the status line, print the optional message.
-// The real versions also manage the delayed killer.
-async function _make_slimed(otmp, msg) {
-    _set_itimeout('Slimed', otmp | 0);
-    const u = game.u;
-    if (u && !(otmp | 0)) { u.m_ap_type = 0; u.mappearance = 0; }
-    _set_botl();
-    if (msg) await pline(msg);
-}
-async function _make_stoned(otmp, msg, _killedby, _killername) {
-    _set_itimeout('Stoned', otmp | 0);
-    _set_botl();
-    if (msg) await pline(msg);
-}
-function _make_vomiting(otmp, _talk) {
-    _set_itimeout('Vomiting', otmp | 0);
-    _set_botl();
-}
-
 // C ref: timeout.c:447 burn_away_slime() — fire cures sliming.
 export async function burn_away_slime() {
     if (_prop('Slimed') > 0)
-        await _make_slimed(0, 'The slime that covers you is burned away!');
+        await (await import('./potion.js')).make_slimed(0, 'The slime that covers you is burned away!');
 }
 
 // C ref: timeout.c:528 phaze_texts[] and :533 phaze_dialogue().  The joke
@@ -1520,7 +1501,7 @@ async function _maybe_unhide_at(x, y) {
 
 // C ref: mondata.h is_silent(ptr) — msound == MS_SILENT, and monsym.h numbers
 // MS_SILENT 0.
-function _is_silent(ptr) { return (ptr?.msound | 0) === 0; }
+function _is_silent(ptr) { return (msound_of(ptr) | 0) === 0; }
 
 // C ref: pline.c verbalize() — the monster's speech, suppressed entirely while
 // Deaf; and sounds.c SetVoice(), which only picks the synthesised voice for
@@ -1534,19 +1515,10 @@ export async function kill_egg(egg) {
     stop_object_timer(egg, HATCH_EGG);
 }
 
-// C ref: timeout.c:1192 learn_egg_type(mnum) — learn to recognise eggs of the
-// given type.  js/invent.js:347 has a PRIVATE no-op stub of the same name that
-// shadows this at its own call site; this is the real body.
+// C ref: timeout.c:1192 learn_egg_type(mnum) — the body lives in js/invent.js
+// (synchronous, so fully_identify_obj() can call it).
 export async function learn_egg_type(mnum) {
-    /* baby monsters hatch from grown-up eggs */
-    const { little_to_big } = await import('./makemon.js');
-    const idx = little_to_big(mnum);
-    const mv = (game.mvitals = game.mvitals || []);
-    mv[idx] = mv[idx] || { mvflags: 0 };
-    mv[idx].mvflags |= MV_KNOWS_EGG;
-    /* we might have just learned about other eggs being carried */
-    const { update_inventory } = await import('./invent.js');
-    await update_inventory();
+    (await import('./invent.js')).learn_egg_type(mnum);
 }
 
 // C ref: timeout.c:1016 hatch_egg(arg, timeout) — the HATCH_EGG timer callback.
@@ -1633,9 +1605,9 @@ export async function hatch_egg(arg, timeout) {
         case OBJ_INVENT:
             knows_egg = true;   /* true even if you are blind */
             if (!cansee_hatchspot)
-                await pline(`You feel something ${await _locomotion(mon.data, 'drop')} from your pack!`);
+                await You_feel(`something ${await _locomotion(mon.data, 'drop')} from your pack!`);
             else
-                await pline(`You see ${monnambuf} ${await _locomotion(mon.data, 'drop')} out of your pack!`);
+                await You_see(`${monnambuf} ${await _locomotion(mon.data, 'drop')} out of your pack!`);
             if (yours) {
                 await pline(`${siblings ? 'Their' : 'Its'} ${_ing_suffix(cry_sound(mon))} ${(_is_silent(mon.data) || _Deaf()) ? 'seems' : 'sounds'} like "${game.flags?.female ? 'mommy' : 'daddy'}${egg.spe ? '.' : '?'}"`);
             } else if (mon.data?.mlet === S_DRAGON_LET && !_Deaf()) {
@@ -1647,7 +1619,7 @@ export async function hatch_egg(arg, timeout) {
         case OBJ_FLOOR:
             if (cansee_hatchspot) {
                 knows_egg = true;
-                await pline(`You see ${monnambuf} hatch.`);
+                await You_see(`${monnambuf} hatch.`);
                 redraw = true;  /* update the egg's map location */
             }
             break;
@@ -1665,7 +1637,7 @@ export async function hatch_egg(arg, timeout) {
                 } else {
                     carriedby = 'thin air';
                 }
-                await pline(`You see ${monnambuf} ${await _locomotion(mon.data, 'drop')} out of ${carriedby}!`);
+                await You_see(`${monnambuf} ${await _locomotion(mon.data, 'drop')} out of ${carriedby}!`);
             }
             break;
 
@@ -1735,7 +1707,7 @@ export async function see_lamp_flicker(obj, tailer) {
         await pline(`${await _Yname2(obj)} flickers${tailer}.`);
         break;
     case OBJ_FLOOR:
-        await pline(`You see ${_an(xname(obj))} flicker${tailer}.`);
+        await You_see(`${_an(xname(obj))} flicker${tailer}.`);
         break;
     default:
         break;
@@ -1752,7 +1724,7 @@ export async function lantern_message(obj) {
             await pline('Batteries have not been invented yet.');
         break;
     case OBJ_FLOOR:
-        await pline('You see a lantern getting dim.');
+        await You_see('a lantern getting dim.');
         break;
     case OBJ_MINVENT: {
         const { Monnam } = await import('./do_name.js');
@@ -1838,7 +1810,7 @@ export async function burn_object(arg, timeout) {
                 await pline(`${whose}potion of oil has burnt away.`);
                 break;
             case OBJ_FLOOR:
-                await pline('You see a burning potion of oil go out.');
+                await You_see('a burning potion of oil go out.');
                 need_newsym = true;
                 break;
             default:
@@ -1884,7 +1856,7 @@ export async function burn_object(arg, timeout) {
                         await pline(`${await _Yname2(obj)} seems about to go out.`);
                         break;
                     case OBJ_FLOOR:
-                        await pline(`You see ${_an(xname(obj))} about to go out.`);
+                        await You_see(`${_an(xname(obj))} about to go out.`);
                         break;
                     default:
                         break;
@@ -1908,9 +1880,9 @@ export async function burn_object(arg, timeout) {
                     break;
                 case OBJ_FLOOR:
                     if (obj.otyp === _BRASS_LANTERN())
-                        await pline('You see a lantern run out of power.');
+                        await You_see('a lantern run out of power.');
                     else
-                        await pline(`You see ${_an(xname(obj))} go out.`);
+                        await You_see(`${_an(xname(obj))} go out.`);
                     break;
                 default:
                     break;
@@ -1940,7 +1912,7 @@ export async function burn_object(arg, timeout) {
                     await pline(`${whose}${menorah ? "candelabrum's " : ''}candle${many ? 's are' : ' is'} getting short.`);
                     break;
                 case OBJ_FLOOR:
-                    await pline(`You see ${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? 's' : ''} getting short.`);
+                    await You_see(`${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? 's' : ''} getting short.`);
                     break;
                 default:
                     break;
@@ -1956,7 +1928,7 @@ export async function burn_object(arg, timeout) {
                     await pline(`${whose}${menorah ? "candelabrum's " : ''}candle${many ? "s'" : "'s"} flame${many ? 's' : ''} flicker${many ? '' : 's'} low!`);
                     break;
                 case OBJ_FLOOR:
-                    await pline(`You see ${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? "s'" : "'s"} flame${many ? 's' : ''} flicker low!`);
+                    await You_see(`${menorah ? "a candelabrum's " : many ? 'some ' : 'a '}candle${many ? "s'" : "'s"} flame${many ? 's' : ''} flicker low!`);
                     break;
                 default:
                     break;
@@ -1976,7 +1948,7 @@ export async function burn_object(arg, timeout) {
                         await pline(`${whose}candelabrum's flame${many ? 's die' : ' dies'}.`);
                         break;
                     case OBJ_FLOOR:
-                        await pline(`You see a candelabrum's flame${many ? 's' : ''} die.`);
+                        await You_see(`a candelabrum's flame${many ? 's' : ''} die.`);
                         break;
                     default:
                         break;
@@ -1990,7 +1962,7 @@ export async function burn_object(arg, timeout) {
                         await pline(`${await _Yname2(obj)} ${many ? 'are' : 'is'} consumed!`);
                         break;
                     case OBJ_FLOOR:
-                        await pline(`You see ${many ? 'some ' : ''}${many ? xname(obj) : _an(xname(obj))} consumed!`);
+                        await You_see(`${many ? 'some ' : ''}${many ? xname(obj) : _an(xname(obj))} consumed!`);
                         need_newsym = true;
                         break;
                     default:
@@ -2646,13 +2618,25 @@ export async function run_timers() {
 }
 
 // C ref: timeout.c:2246 start_timer(when, kind, func_index, arg) — the timer
-// fires at svm.moves + when.
+// fires at svm.moves + when.  A TIMER_OBJECT timer is the per-object record
+// mkobj.js start_object_timer() keeps (what run_object_timers() fires and what
+// peek_timer/obj_stop_timers/save read), NOT an entry of timer_base, which no
+// loop runs: a queue entry here would never expire.
 export async function start_timer(when, kind, func_index, arg) {
     if (kind <= TIMER_NONE || kind >= NUM_TIMER_KINDS
         || func_index < 0 || func_index >= NUM_TIME_FUNCS)
         _panic(`start_timer (${await kind_name(kind)}: ${func_index})`);
 
     /* fail if <arg> already has a <func_index> timer running */
+    if (kind === TIMER_OBJECT) {
+        const t = arg.a_obj.timed && arg.a_obj.timer;
+        if (t && t.action === func_index) {
+            await impossible('Attempted to start duplicate '
+                             + `${timeout_funcs[func_index]?.name} timer, aborted.`);
+            return false;
+        }
+        return start_object_timer(when, func_index, arg.a_obj);
+    }
     let dup = timer_base;
     for (; dup; dup = dup.next)
         if (dup.kind === kind && dup.func_index === func_index
@@ -2675,8 +2659,6 @@ export async function start_timer(when, kind, func_index, arg) {
     };
     insert_timer(gnu);
 
-    if (kind === TIMER_OBJECT)  /* increment the object's timed count */
-        arg.a_obj.timed = (arg.a_obj.timed | 0) + 1;
 
     return true;
 }
@@ -2685,6 +2667,11 @@ export async function start_timer(when, kind, func_index, arg) {
 // corpse).  Same queue and bookkeeping; a duplicate timer is refused
 // silently instead of via the async impossible().
 export function start_timer_sync(when, kind, func_index, arg) {
+    if (kind === TIMER_OBJECT) {
+        const t = arg.a_obj.timed && arg.a_obj.timer;
+        if (t && t.action === func_index) return false;
+        return start_object_timer(when, func_index, arg.a_obj);
+    }
     for (let dup = timer_base; dup; dup = dup.next)
         if (dup.kind === kind && dup.func_index === func_index
             && dup.arg.a_void === arg.a_void)
@@ -2693,21 +2680,27 @@ export function start_timer_sync(when, kind, func_index, arg) {
         next: null, tid: timer_id++, timeout: (game.moves | 0) + when,
         kind, needs_fixup: 0, func_index, arg,
     });
-    if (kind === TIMER_OBJECT) arg.a_obj.timed = (arg.a_obj.timed | 0) + 1;
     return true;
 }
 
 // C ref: timeout.c:2298 stop_timer(func_index, arg) — returns the turns
 // remaining until it would have gone off, 0 if there was no such timer.
 export async function stop_timer(func_index, arg) {
+    const obj = arg.a_obj;
+    if (obj && obj.timed && obj.timer && obj.timer.action === func_index) {
+        /* the per-object record (see start_timer above) */
+        const timeout = obj.timer.when;
+        clear_object_timer(obj);
+        const cleanup_func = timeout_funcs[func_index]?.cleanup;
+        if (cleanup_func) await cleanup_func(arg, timeout);
+        return timeout - (game.moves | 0);
+    }
     const ref = { base: timer_base };
     const doomed = remove_timer(ref, func_index, arg);
     timer_base = ref.base;
 
     if (doomed) {
         const timeout = doomed.timeout;
-        if (doomed.kind === TIMER_OBJECT)
-            arg.a_obj.timed = (arg.a_obj.timed | 0) - 1;
         const cleanup_func = timeout_funcs[doomed.func_index]?.cleanup;
         if (cleanup_func) await cleanup_func(arg, timeout);
         return timeout - (game.moves | 0);
@@ -2730,30 +2723,22 @@ export function peek_timer(type, arg) {
 }
 
 // C ref: timeout.c:2338 obj_move_timers(src, dest) — reassign every timer from
-// src to dest, leaving src untimed.
+// src to dest, leaving src untimed.  Object timers are the per-object record
+// (see start_timer), so the record changes hands.
 export function obj_move_timers(src, dest) {
-    let count = 0;
-    for (let curr = timer_base; curr; curr = curr.next)
-        if (curr.kind === TIMER_OBJECT && curr.arg.a_obj === src) {
-            curr.arg.a_obj = dest;
-            curr.arg.a_void = dest;
-            dest.timed = (dest.timed | 0) + 1;
-            count++;
-        }
-    if (count !== (src.timed | 0)) _panic('obj_move_timers');
-    src.timed = 0;
+    if (src.timed && src.timer) {
+        dest.timer = src.timer;
+        dest.timed = true;
+    }
+    src.timed = false;
+    delete src.timer;
 }
 
-// C ref: timeout.c:2358 obj_split_timers(src, dest) — duplicate src's timers
-// onto dest.  `next_timer` is captured first because start_timer() inserts.
-export async function obj_split_timers(src, dest) {
-    let next_timer = null;
-    for (let curr = timer_base; curr; curr = next_timer) {
-        next_timer = curr.next;
-        if (curr.kind === TIMER_OBJECT && curr.arg.a_obj === src)
-            await start_timer(curr.timeout - (game.moves | 0), TIMER_OBJECT,
-                              curr.func_index, _obj_to_any(dest));
-    }
+// C ref: timeout.c:2358 obj_split_timers(src, dest) — duplicate src's timer
+// onto dest, same expiry turn.
+export function obj_split_timers(src, dest) {
+    if (src.timed && src.timer)
+        start_object_timer(src.timer.when - (game.moves | 0), src.timer.action, dest);
 }
 
 // C ref: timeout.c:2376 obj_stop_timers(obj) — stop every timer attached to

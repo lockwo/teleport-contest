@@ -9,6 +9,7 @@ import { nhgetch } from './input.js';
 import { Blind } from './vision.js';
 import { ATR_NONE, NO_COLOR } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
+import { status_sweep } from './display.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
 import { hliquid } from './do_name.js';
@@ -1233,6 +1234,7 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
         clearRow(row);
         disp.putstr(offx + 1, row, morestr, NO_COLOR, 0);
         if (offx === 0) for (let r = row + 1; r < rows; r++) clearRow(r);
+        else status_sweep(offx, row);
         // C dmore parks the cursor just past the morestr (col 1 + its length).
         disp.setCursor(offx + 1 + morestr.length, row);
     };
@@ -1262,6 +1264,13 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
         game._pending_message = '';
     }
 
+    // C ref: windows.c select_menu() holds gb.bot_disabled across the whole
+    // blocking menu, including tty_dismiss_nhwindow()'s erase_menu_or_text()
+    // docrt()+flush_screen(1): that flush prints the map's gnew cells with no
+    // status painted, so the status text written by the later bot() stays over
+    // the map glyphs sharing its row instead of being overdrawn by them.
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
     let result = 0;
     let pageNo = 1;
     pick: for (;;) {
@@ -1304,11 +1313,17 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     if (wt.wins[win].offx === 0) {
         await wt.erase_menu_or_text(win, wt.wins[win], false);
     } else {
-        // A corner menu (the short endgame list): docorner() addresses the NHW_BASE
-        // window, which gameplay sessions never create, so repaint the level.
-        const { docrt } = await import('./display.js');
-        await docrt();
+        // A corner menu (the short endgame list): erase_menu_or_text() is
+        // docorner(), which row_refresh()es the glyph buffer back over the
+        // vacated columns -- no docrt(), so no cell is marked gnew and the
+        // status text on the map's shared row 21 is not repainted over.  The
+        // port's dismissal of a corner window lives in invent.js.
+        const { dismiss_invent_screen } = await import('./invent.js');
+        game._modal_screen = 'menu';
+        game._menuOffx = wt.wins[win].offx;
+        await dismiss_invent_screen();
     }
+    game.bot_disabled = old_bot_disabled;
     wt.wins[win].active = false;
     wt.tty_destroy_nhwindow(win);
     return result;
@@ -1443,11 +1458,11 @@ export function recbranch_mapseen(source, dest) {
     mapseen_of(`${source.dnum}:${source.dlevel}`).br = found;
 }
 
-// C ref: dungeon.c:3388 br_string2(branch *).  The quest-portal "Sealed portal"
-// arm needs u.uevent.qexpelled, which this port does not track.
+// C ref: dungeon.c:3388 br_string2(branch *).
 function br_string2(br) {
+    const closed_portal = br.end2.dnum === game.quest_dnum && !!game.u?.uevent?.qexpelled;
     switch (br.type) {
-    case BR_PORTAL: return 'Portal';
+    case BR_PORTAL: return closed_portal ? 'Sealed portal' : 'Portal';
     case BR_NO_END1: return 'Connection';
     case BR_NO_END2: return br.end1_up ? 'One way stairs up' : 'One way stairs down';
     case BR_STAIR: return br.end1_up ? 'Stairs up' : 'Stairs down';
@@ -1645,16 +1660,19 @@ export async function build_overview_lines(final = 0, how = 0) {
                       + `${depthstart + dunlevUreached - 1}`;
             // C ref: windows.c add_menu_heading() — "suppress highlighting
             // during end-of-game disclosure": program_state.gameover forces
-            // ATR_NONE there, so only the live '#overview' command (final==0)
-            // gets the highlighted iflags.menu_headings.attr (ATR_INVERSE).
-            lines.push({ text: buf, attr: final ? 0 : menuHeadAttr() });
+            // ATR_NONE there, so the live '#overview' command (final==0) and its
+            // 'm' menu (final==-1) get the highlighted iflags.menu_headings.attr
+            // (ATR_INVERSE).
+            lines.push({ text: buf, attr: final > 0 ? 0 : menuHeadAttr() });
             lastdun = p.dnum;
         }
 
         // C ref: dungeon.c:3555-3560 — an endgame level is listed by plane name.
+        // The 'm' menu (final == -1) has no TAB: its lines carry accelerators.
+        const tab = final !== -1 ? OVERVIEW_TAB : '';
         let lbuf = In_endgame({ dnum: p.dnum, dlevel: p.dlevel })
-            ? `${OVERVIEW_TAB}${endgamelevelname(depthstart + p.dlevel - 1)}:`
-            : `${OVERVIEW_TAB}Level ${depthstart + p.dlevel - 1}:`;
+            ? `${tab}${endgamelevelname(depthstart + p.dlevel - 1)}:`
+            : `${tab}Level ${depthstart + p.dlevel - 1}:`;
         // C ref: print_mapseen():3567 — "wizmode prints out proto dungeon names
         // for clarity".  Sits BEFORE the custom annotation.
         if (wizard()) {
@@ -1668,7 +1686,10 @@ export async function build_overview_lines(final = 0, how = 0) {
                 : (final === 1 && how === ESCAPED) ? 'left from' : 'were';
             lbuf += ` <- You ${verb} here.`;
         }
-        lines.push({ text: lbuf, attr: 0 });
+        // final == -1: any.a_int = ledger_no + 1, i.e. a selectable PICK_ONE entry.
+        lines.push(final === -1
+            ? { text: lbuf, attr: 0, lev: { dnum: p.dnum, dlevel: p.dlevel } }
+            : { text: lbuf, attr: 0 });
 
         if (ofInterest) {
             let fbuf = '';
@@ -2155,35 +2176,6 @@ function cmap_to_type(sym) {
     default: break; /* not a cmap symbol? */
     }
     return typ;
-}
-
-// C ref: priest.c:376 has_shrine(pri) / :153 histemple_at() / :161
-// inhistemple().  monmove.js:1635 and sounds.js:790 hold private copies of the
-// last two; in_rooms() (shkroom.js) is behind a dynamic import, which is why
-// histemple_at()/inhistemple() are async here.
-function has_shrine(pri) {
-    if (!pri || !pri.ispriest) return false;
-    const epri_p = pri.epri;
-    const lev = game.level?.at(epri_p?.shrpos?.x, epri_p?.shrpos?.y);
-    if (!lev || !IS_ALTAR(lev.typ) || !((lev.altarmask | 0) & AM_SHRINE))
-        return false;
-    return epri_p.shralign === Amask2align((lev.altarmask | 0) & ~AM_SHRINE);
-}
-async function histemple_at(priest, x, y) {
-    const { in_rooms } = await import('./shkroom.js');
-    return !!priest && !!priest.ispriest
-        && (priest.epri?.shroom === in_rooms(x, y, TEMPLE)[0])
-        && on_level(priest.epri?.shrlevel, game.u?.uz);
-}
-async function inhistemple(priest) {
-    /* make sure we have a priest */
-    if (!priest || !priest.ispriest)
-        return false;
-    /* priest must be on right level and in right room */
-    if (!(await histemple_at(priest, priest.mx, priest.my)))
-        return false;
-    /* temple room must still contain properly aligned altar */
-    return has_shrine(priest);
 }
 
 // C ref: windows.c:1816 add_menu_heading() / :1832 add_menu_str() — the two
@@ -3234,7 +3226,7 @@ export async function recalc_mapseen() {
 
     const { shop_keeper } = await import('./shkroom.js');
     const { inhishop } = await import('./shk.js');
-    const { findpriest } = await import('./priest.js');
+    const { findpriest, inhistemple } = await import('./priest.js');
     /* svr.rooms[] is one flat array: rooms, then (from MAXNROFROOMS + 1) the
        subrooms, which this port keeps in level.subrooms */
     const roomAt = (i) => (i > MAXNROFROOMS
@@ -3253,7 +3245,7 @@ export async function recalc_mapseen() {
                 ? ((!(mtmp = shop_keeper(uroom)) || !inhishop(mtmp)) ? 1 : 0)
                 : ((roomAt(ridx)?.rtype | 0) === TEMPLE)
                       ? ((!(mtmp = findpriest(uroom))
-                          || !(await inhistemple(mtmp))) ? 1 : 0)
+                          || !inhistemple(mtmp)) ? 1 : 0)
                       : 0;
     }
 

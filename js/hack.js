@@ -19,15 +19,15 @@ import { lock_action } from './lock.js';
 import { visible_region_at, region_is_poisoncloud, show_region } from './region.js';
 import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
-import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu } from './trap.js';
-import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name } from './cmd.js';
+import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
+import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON, BEAR_TRAP, WEB, NO_TRAP, is_pit } from './const.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask } from './display.js';
+import { A_CON } from './const.js';
+import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask, You_feel } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed } from './pager.js';
 import { fruit_from_name } from './objnam.js';
-import { def_monsyms, S_WORM_TAIL } from './symbols.js';
+import { def_monsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          inventoryArray, is_pick, ansimpleoname,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
@@ -37,7 +37,7 @@ import { Invis } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
-import { distant_monnam, ARTICLE_NONE, a_monnam, coyotename } from './do_name.js';
+import { ARTICLE_NONE, a_monnam, rndmonnam as rndmonnam_dn } from './do_name.js';
 import { dist2, distmin } from './hacklib.js';
 import { worm_cross } from './worm.js';
 import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
@@ -54,14 +54,14 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, FOUNTAIN,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_STWALL, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
          IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, AIR, Is_airlevel, Is_astralevel,
-         Is_waterlevel, isok, VIBRATING_SQUARE, STRAT_WAITMASK, I_SPECIAL,
+         Is_waterlevel, isok, VIBRATING_SQUARE, I_SPECIAL,
          TELEDS_NO_FLAGS, def_warnsyms } from './const.js';
 
 // Imports used only by the hack.c completeness block at the bottom of this file.
 import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT, WT_SQUEEZABLE_INV,
          TIP_ENHANCE, TIP_SWIM, TIP_UNTRAP_MON, TIP_GETPOS, NUM_TIPS,
          NHCORE_GETPOS_TIP, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER,
-         GFILTER_VIEW, RUN_TPORT, RUN_LEAP, RUN_CRAWL,
+         GFILTER_VIEW, GFILTER_AREA, RUN_TPORT, RUN_LEAP, RUN_CRAWL,
          has_mgivenname, OBJ_FLOOR } from './const.js';
 import { in_rooms } from './shkroom.js';
 import { inside_room } from './mkroom.js';
@@ -73,11 +73,12 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar } from './display.js';
+import { stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, apply_status_cuts } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
-import { coord_desc } from './getpos.js';
+import { coord_desc, gloc_filter_init, gloc_filter_done, gloc_same_area, getpos_sethilite, getpos_toggle_hilite_state, getpos_refresh, getpos_has_hilitefunc, goodpos_shown } from './getpos.js';
+import { menuHeadAttr } from './menuattr.js';
 
 // Run direction deltas for the capital-letter run commands (and the
 // 'G'/'g' prefix followed by a movement key).  C: xdir[]/ydir[].
@@ -328,13 +329,12 @@ async function lookaround() {
     let i;
     let stop = false;
 
-    // C ref: hack.c:3906 — a grid bug that polymorphed mid-run stops dead
-    // rather than continuing on a diagonal.  NODIAG(mnum) == (mnum ==
+    // C ref: hack.c:3906-3911 — a grid bug that polymorphed mid-run (or travels
+    // to a diagonal "general direction" guess) stops dead rather than
+    // continuing on a diagonal, and says so.  NODIAG(mnum) == (mnum ==
     // PM_GRID_BUG).
     if (u.umonnum === PM_GRID_BUG && u.dx && u.dy) {
-        // C's "You cannot move diagonally." pline needs an async topline write
-        // that this synchronous scan cannot make; the nomul(0) is the part that
-        // steers later RNG.
+        await pline('You cannot move diagonally.');
         nomul(0);
         return;
     }
@@ -1326,6 +1326,7 @@ function render_getpos_tip() {
 // exactly.  Returns TRUE if the tip was shown (caller forces the goal message).
 const MENU_RESP_CMDS = '^|><.-@,\\~:';
 async function getpos_tip() {
+    if (!game.flags?.tips) return false; // C handle_tip(): `if (!flags.tips) return FALSE`
     const c = game.context;
     c.tips = c.tips || 0;
     const TIP_GETPOS = 1 << 4;
@@ -1416,9 +1417,15 @@ function getpos_help_lines(force, goal, doingWhatIs, hasValid, hasHilite) {
              + `${menu ? menuDescr : descr}${ftxt}.`;
     };
     const lines = [];
-    lines.push(`Use 'h', 'j', 'k', 'l' to move the cursor to ${goal}.`);
-    lines.push(`Use 'H', 'J', 'K', 'L' to fast-move the cursor, ${fastmove[skip]}.`);
-    lines.push(`(or prefix normal move with 'G' or 'g' to fast-move)`);
+    // getpos.c:178-198 — the movement keys are whatever the live command table
+    // binds to do_move_*, do_run_*, do_run and do_rush (number_pad, swap_yz,
+    // BIND=), rendered through visctrl().
+    const vk = (fn) => cmd_visctrl(cmd_from_func(fn));
+    lines.push(`Use '${vk('do_move_west')}', '${vk('do_move_south')}', '${vk('do_move_north')}', `
+             + `'${vk('do_move_east')}' to move the cursor to ${goal}.`);
+    lines.push(`Use '${vk('do_run_west')}', '${vk('do_run_south')}', '${vk('do_run_north')}', `
+             + `'${vk('do_run_east')}' to fast-move the cursor, ${fastmove[skip]}.`);
+    lines.push(`(or prefix normal move with '${vk('do_run')}' or '${vk('do_rush')}' to fast-move)`);
     lines.push(`Or enter a background symbol (ex. '<').`);
     lines.push(`Use '@' to move the cursor on yourself.`);
     // getpos.c:167 getpos_help() — #terrain's getpos (iflags.terrainmode != 0)
@@ -1548,7 +1555,9 @@ function truncate_to_map(cx, cy, dx, dy) {
 
 // C ref: display.h glyph_at(x, y) — used by getpos()'s moveskip fast-move only
 // to compare two cells for equality.  This port has no numeric glyph ids, so
-// the DISPLAYED cell identity (char + colour + DEC-graphics flag) stands in.
+// the DISPLAYED cell identity (char + colour + DEC-graphics flag + dark-room
+// flag, since S_room and S_darkroom are distinct glyphs that print alike)
+// stands in.
 function gp_glyph_at(x, y, detectMode = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return ' ';
@@ -1563,7 +1572,7 @@ function gp_glyph_at(x, y, detectMode = false) {
     }
     // GLYPH_UNEXPLORED and a seen S_stone both draw blank but are distinct glyphs.
     if ((loc.disp_ch ?? ' ') === ' ' && gloc_unexplored(x, y)) return 'unexplored';
-    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}`;
+    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}`;
 }
 
 // C ref: pager.c:123 self_lookat() -> mhidden_description(&youmonst,
@@ -1684,7 +1693,10 @@ function terrain_description(x, y, full = false) {
     // A felt-from-above (levitating) ROOM/CORR square keeps GLYPH_UNEXPLORED
     // even though feel_location() set seenv (display.c:775-870), and
     // glyph_is_unexplored beats the S_stone seenv test.
-    if (loc.disp_ch === ' ' && loc.typ !== AIR) {
+    // A remembered base-element glyph (mkmaze.js setup_waterlevel()/movebubbles())
+    // is what glyph_at() reports whatever the terrain under it is now.
+    const rcm = loc.remembered_glyph?.cmap;
+    if (loc.disp_ch === ' ' && loc.typ !== AIR && rcm !== S_air) {
         if ((loc.typ === ROOM || loc.typ === CORR) && loc.remembered_glyph == null)
             return 'unexplored area';
         /* the remembered glyph is S_darkroom (explanation "dark part of a
@@ -1704,6 +1716,15 @@ function terrain_description(x, y, full = false) {
                 return region_is_poisoncloud(reg) ? 'poison cloud'
                     : Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
         }
+    }
+    // C ref: pager.c lookat() cmap arms: S_water goes through waterbody_name()
+    // on the CURRENT terrain (an AIR square under a remembered S_water reads
+    // plain "water"), S_cloud and S_air keep their own wording.
+    if (rcm != null && loc.remembered_glyph.ch === loc.disp_ch) {
+        if (rcm === S_water) return waterbody_name(x, y);
+        if (rcm === S_cloud)
+            return Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
+        if (rcm === S_air) return 'air'; /* defsyms[S_air].explanation */
     }
     // C ref: pager.c do_screen_description() dispatches on glyph_at(x,y), the
     // REMEMBERED wall cmap glyph, not on levl[x][y].typ: a wall the hero dug
@@ -1747,13 +1768,15 @@ function terrain_description(x, y, full = false) {
         // newsym():1086 rewrites it to S_darkroom out-of-sight when
         // `!lev->waslit || (flags.dark_room && iflags.use_color)` (both
         // default on).  do_screen_description() dispatches on that DISPLAYED
-        // glyph, so wording tracks current visibility, not room lighting: an
+        // glyph, so wording tracks what was last drawn, not room lighting: an
         // unlit square under night vision still reads "floor of a room", and
         // a remembered-but-unseen square reads "dark part" even if lit.
-        if (cansee(x, y)) return 'floor of a room';
         // The remembered glyph is only rewritten to S_darkroom when newsym()
         // redraws the square out of sight, so a lit square the hero has not
-        // yet seen go dark is still a plain S_room ("floor of a room").
+        // yet seen go dark is still a plain S_room ("floor of a room").  A
+        // square beside the hero in a doorway can keep its S_darkroom glyph
+        // while cansee() is true (ridesweep-k 011 step 83), so the DISPLAYED
+        // glyph decides, not current visibility.
         return loc.remembered_glyph?.darkroom ? 'dark part of a room'
                                               : 'floor of a room';
     }
@@ -2216,10 +2239,11 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     // C ref: getpos.c:444 — the '"'/travel filters restrict the scan before any
     // gloc-specific test runs.  #lookaround sets GFILTER_VIEW for its per-cell
     // scan, so a remembered-but-currently-unseen feature must NOT be reported.
-    // GFILTER_AREA needs gloc_filter_init()'s selection map, which no caller of
-    // this port builds yet, so it is left unrestricted (matches every caller
-    // that never sets it).
     if (game.iflags?.getloc_filter === GFILTER_VIEW && !cansee(x, y))
+        return false;
+    if (game.iflags?.getloc_filter === GFILTER_AREA && !gloc_same_area(x, y)
+        && !gloc_same_area(x - 1, y) && !gloc_same_area(x, y - 1)
+        && !gloc_same_area(x + 1, y) && !gloc_same_area(x, y + 1))
         return false;
     const loc = game.level?.at(x, y);
     if (!loc) return false;
@@ -2253,18 +2277,31 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     const mtmp = showMonsters ? m_at(x, y) : null;
     switch (gloc) {
     case GLOC_MONS:
-        // C's glyph_is_monster(glyph_at(x,y)) tests the displayed glyph.
+        // C's glyph_is_monster(glyph_at(x,y)) tests the displayed glyph, minus
+        // the long worm tail glyphs (getpos.c:455).  S_WORM_TAIL '~' is that
+        // glyph's only symbol, so a hallucinated pet/monster that the display
+        // rng drew as PM_LONG_WORM_TAIL is skipped as well.
         // A visible mimic disguised as an object or furniture is named by
         // #terrain's object jump, not the monster jump.
-        return !!(mtmp && canspotmon(mtmp)
+        if (loc.disp_hstatue && !mtmp) return loc.disp_ch !== '~';
+        return !!(mtmp && canspotmon(mtmp) && loc.disp_monster
+            && loc.disp_ch !== '~'
             && (M_AP_TYPE(mtmp) === 0 || M_AP_TYPE(mtmp) === M_AP_MONSTER));
     case GLOC_OBJS:
+        // a hallucinated statue is displayed as a MONSTER glyph (display.h statue_to_glyph)
+        if (loc.disp_hstatue && !mtmp) return false;
         if (shows_mimic_object(mtmp, x, y))
             return mtmp.mappearance !== 475 /*BOULDER*/ && mtmp.mappearance !== 474 /*ROCK*/;
         // C excludes only the normal BOULDER and ROCK glyphs, not their
         // piletop variants (getpos.c:462-464, display.h:943-945).
         if (mtmp && canspotmon(mtmp)) return false;
         const rememberedObject = loc.remembered_glyph;
+        // A hallucinated floor object displays a random object glyph
+        // (display.h random_obj_to_glyph): still glyph_is_object(), so the
+        // 'o' jump lands on it unless the random draw was BOULDER or ROCK.
+        if (rememberedObject?.hallucotyp != null && rememberedObject.ch === loc.disp_ch)
+            return rememberedObject.hallucotyp !== 475 /*BOULDER*/
+                && rememberedObject.hallucotyp !== 474 /*ROCK*/;
         if (rememberedObject?.objotyp && rememberedObject.ch === loc.disp_ch)
             return rememberedObject.pile
                 || (rememberedObject.objotyp !== 475 /*BOULDER*/
@@ -2295,7 +2332,8 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     case GLOC_INTERESTING:
     default:
         if (isDoorSym) return true;
-        if (mtmp && canspotmon(mtmp)) return true;
+        if (loc.disp_hstatue && !mtmp) return true;
+        if (mtmp && canspotmon(mtmp) && loc.disp_monster) return true;
         // Warning and remembered invisible glyphs are interesting, but
         // neither is a monster target for GLOC_MONS.
         if (showMonsters && (loc.invisMon || loc.disp_warning)) return true;
@@ -2344,11 +2382,13 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
 export function gather_locs(gloc, validfn, detectMode = false) {
     const u = game.u;
     const arr = [];
+    gloc_filter_init();
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
             if ((u && x === u.ux && y === u.uy)
                 || gather_locs_interesting(x, y, gloc, validfn, detectMode))
                 arr.push({ x, y });
+    gloc_filter_done();
     const distu_cheb = (c) => Math.max(Math.abs((u?.ux ?? 0) - c.x), Math.abs((u?.uy ?? 0) - c.y));
     arr.sort((a, b) => {
         const d = distu_cheb(a) - distu_cheb(b);
@@ -2406,10 +2446,13 @@ async function getpos_render(message, cx, cy, hist = 'append') {
 // control_mon_tele() (the wizard-mode 'montelecontrol' monster-teleport
 // targeting prompt) reuses this same cursor loop via a dynamic import rather
 // than forking a second copy.
-async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
-    // C ref: getpos_sethilite(f, validf) / the teardown getpos_sethilite(0, 0):
-    // callers with a validity callback highlight its valid spots (framecolor).
-    game._getposFrameValid = (validfn && game.iflags?.bgcolors !== false && !detectMode) ? validfn : null;
+async function getpos(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false, hilitefn = null) {
+    // C ref: callers run getpos_sethilite(hilitef, validf) before getpos() and
+    // getpos() ends with getpos_sethilite(NULL, NULL).  The single injection
+    // point is this wrapper: `validfn` doubles as the validity callback and
+    // `hilitefn(on_off)` is the painter the '$' key drives.
+    if (!detectMode && (validfn || hilitefn))
+        getpos_sethilite(hilitefn, validfn);
     // C ref: getpos.c:809/1165 -- `schar udx = u.dx, udy = u.dy, udz = u.dz;`
     // restored at exitgetpos.  The travel-target validity check run for the
     // autodescribe text (findtravelpath(TRAVP_VALID)) and the movecmd() cursor
@@ -2421,10 +2464,147 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     try {
         return await getpos_inner(goalText, startx, starty, validfn, force, verbose, detectMode, terrainMode);
     } finally {
-        game._getposFrameValid = null;
+        getpos_sethilite(null, null);
         if (u0) { u0.dx = udx; u0.dy = udy; u0.dz = udz; }
     }
 }
+// C ref: getpos.c auto_describe() text builder: message for one cell (self or terrain),
+// with the optional "(invalid target)" suffix from getpos_getvalid.
+function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
+    const u = game.u;
+    let desc;
+    // C ref: pager.c:668 lookat() gates the self case on
+    // `!iflags.terrainmode || (iflags.terrainmode & TER_MON) != 0`. The
+    // #terrain command's four subsets (cmd.c doterrain()) never include
+    // TER_MON, so browsing terrain with the cursor on the hero's own
+    // square must fall through to the terrain description below instead
+    // of reporting the hero's identity (stale "dwarven valkyrie called
+    // wizard" instead of "floor of a room").
+    if (u && x === u.ux && y === u.uy && !terrainMode && canspotself()) {
+        desc = self_lookat();
+    } else if (u?.uswallow && !terrainMode && !detectMode) {
+        // C ref: pager.c do_screen_description() -- while engulfed every
+        // non-adjacent spot reads "unreconnoitered" and the adjacent ones
+        // are the swallow-boundary glyphs ("the interior of a monster").
+        const fm = { s: '' };
+        do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
+        desc = fm.s || 'unreconnoitered';
+    } else if (detectMode) {
+        // C ref: pager.c do_screen_description() via 'need_to_look' once a
+        // monster's class symbol matches: falls through to look_at_monster()
+        // for the full tame/peaceful-prefixed identity (a named/peaceful
+        // shopkeeper reads "peaceful Adjama", not a generic class string).
+        // A non-monster cell reads as the freshly-cls()'d blank glyph —
+        // monster_detect's repaint touches only the live display buffer,
+        // not remembered terrain — i.e. always "unexplored area".
+        const dl = game.level?.at(x, y);
+        /* do_screen_description() reads the DISPLAYED glyph: a monster that
+           was not drawn (gold/object detection, hallucination) is not there */
+        const mtmp = dl?.disp_monster ? m_at(x, y) : null;
+        const objShown = !!(dl?.remembered_glyph?.objotyp && dl.remembered_glyph.ch === dl.disp_ch);
+        desc = mtmp ? look_at_monster(mtmp, x, y, false).buf
+             : (objShown && look_at_object_here(x, y, true)) || 'unexplored area';
+    } else {
+        // C ref: pager.c lookat() dispatch, walked in DISPLAYED-glyph order
+        // (display.c newsym): a spotted monster, then a warning glyph
+        // (do_screen_description's def_warnsyms loop, levels 1..5), then
+        // the remembered-unseen-creature 'I', then a floor object (e.g. a
+        // STATUE drawn as the petrified monster's class letter), then the
+        // terrain underneath.
+        // C ref: detect.c reveal_terrain_getglyph() -- a terrain browse
+        // displays monsters/objects only for the TER_MON/TER_OBJ subsets.
+        const tmode = terrainMode ? gp_iflags().terrainmode : 0x08 | 0x04;
+        const mtmp = (tmode & 0x08) ? m_at(x, y) : null;
+        const shown = game.level?.at(x, y);
+        const warnlev = ((tmode & 0x08) && shown?.disp_warning) ? Number(shown.disp_ch) : 0;
+        const fm = { s: '' };
+        if (shows_mimic_object(mtmp, x, y))
+            do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
+        /* C: the cell shows the S_goodpos glyph that '$' tmp_at()ed over it
+           (defsyms[S_goodpos].explanation) whatever lies underneath */
+        desc = goodpos_shown(x, y) ? 'valid position'
+             : fm.s ? fm.s
+             : (shown?.disp_hstatue && !mtmp)
+             ? rndmonnam_dn().name   /* lookat(): "'monster' must actually be a statue" */
+             : (mtmp && canspotmon(mtmp) && shown?.disp_monster)
+             ? look_at_monster(mtmp, x, y, false).buf
+             : (warnlev >= 1 && def_warnsyms[warnlev]) ? def_warnsyms[warnlev].desc
+             : (unseen_creature_desc(x, y, terrainMode)
+                || ((tmode & 0x04) && look_at_object_here(x, y, true))
+                || terrain_description(x, y, terrainMode && !!(gp_iflags().terrainmode & TER_FULL)));
+        // C ref: detect.c reveal_terrain_getglyph() — while browsing a
+        // revealed map, S_darkroom is rewritten to S_room and S_litcorr to
+        // S_corr, and do_screen_description() dispatches on that DISPLAYED
+        // glyph.  So an unlit room square reads "floor of a room" here, not
+        // "dark part of a room".
+        if (terrainMode) {
+            if (desc === 'dark part of a room') desc = 'floor of a room';
+            else if (desc === 'lit corridor') desc = 'corridor';
+        }
+    }
+    // C ref: getpos.c auto_describe():650 -- "<description> <coords>" for the
+    // whatis_coord option (nothing, and no space, under GPCOORDS_NONE).
+    const coords = coord_desc(x, y, '', gp_iflags().getpos_coords);
+    if (coords) desc += ` ${coords}`;
+    if (menuForm) return desc;
+    if (validfn && !validfn(x, y)) desc += ' (invalid target)';
+    // C ref: getpos.c auto_describe():657 — gated on the GLOBAL
+    // iflags.getloc_travelmode, not on which command opened getpos().
+    // dotravel() sets it and only dotravel_target()'s non-early-out path
+    // clears it, so a travel answered with the hero's own square ("You are
+    // already here.") leaves it set and every LATER getpos — farlook,
+    // #glance, #terrain — keeps appending the suffix.
+    if (game.iflags?.getloc_travelmode && !is_valid_travelpt(x, y))
+        desc += ' (no travel path)';
+    return desc;
+}
+
+// C ref: getpos.c:664 getpos_menu(ccp, gloc) — the menu form of the
+// 'm'/'o'/'d'/'x'/'a'/'z' keys (iflags.getloc_usemenu) and of dotravel()'s `m_`.
+// gcount always includes the hero, hence the `< 2` test and the loop from 1.
+// You("cannot ...") does NOT set msg_given, so autodescribe re-describes the
+// spot on the next getpos pass.  Returns true with *ccp set on a pick.
+export async function getpos_menu(ccp, gloc, validfn = null, detectMode = false, terrainMode = false) {
+    const gdescr = [['any monsters', 'monster'], ['any items', 'item'],
+                    ['any doors', 'door'], ['any unexplored areas', 'unexplored area'],
+                    ['anything interesting', 'interesting thing'],
+                    ['any valid locations', 'valid location']][gloc];
+    const arr = gather_locs(gloc, validfn, detectMode);
+    const filt = ['', ' in view', ' in this area'][gp_iflags().getloc_filter | 0];
+    if (arr.length < 2) {
+        await update_topl(`You cannot ${gp_iflags().getloc_filter === GFILTER_VIEW ? 'see' : 'detect'} ${gdescr[0]}.`);
+        return false;
+    }
+    const { extcmd_end_menu, extcmd_select_menu } = await import('./extcmd-handlers.js');
+    const items = [];
+    for (let i = 1; i < arr.length; i++)
+        items.push({ text: getpos_describe(arr[i].x, arr[i].y, true, validfn, detectMode, terrainMode), idx: i });
+    const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
+    const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    // tty_end_menu() prepends a prompt + blank entry to page 0.
+    const pageOf = (n) => (n < lmax - 2) ? 0 : 1 + Math.floor((n - (lmax - 2)) / lmax);
+    const firstOf = (pg) => pg === 0 ? 0 : (lmax - 2) + (pg - 1) * lmax;
+    items.forEach((it, n) => { it.sel = letters[n - firstOf(pageOf(n))]; it.pg = pageOf(n); });
+    const m = extcmd_end_menu(items,
+        `Pick ${an(gdescr[1])}${filt}${game.iflags?.getloc_travelmode ? ' for travel destination' : ''}`);
+    // C ref: windows.c select_menu() holds gb.bot_disabled across the whole
+    // blocking menu, including tty_dismiss_nhwindow()'s erase_menu_or_text():
+    // docrt()'s disp.botlx / docorner()'s `disp.botlx = TRUE; bot();` stay
+    // pending for the next flush_screen().
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
+    let sel;
+    try {
+        sel = await extcmd_select_menu(m);
+        await (await import('./invent.js')).dismiss_invent_screen();
+    } finally { game.bot_disabled = old_bot_disabled; }
+    const hit = sel && items.find((it) => it.sel === sel && it.pg === m.lastPage);
+    if (!hit) return false;
+    ccp.x = arr[hit.idx].x;
+    ccp.y = arr[hit.idx].y;
+    return true;
+}
+
 async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
     const u = game.u;
     let cx = startx, cy = starty;
@@ -2437,7 +2617,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
     // already shown, the pending line is instead flushed by the following
     // update_topl("(For instructions...)") call.
     const TIP_GETPOS_BIT = 1 << 4;
-    const willShowTip = !((game.context.tips || 0) & TIP_GETPOS_BIT);
+    const willShowTip = !!game.flags?.tips && !((game.context.tips || 0) & TIP_GETPOS_BIT);
     // The pending line is paged whether it came from the verbose "Please move
     // the cursor to ..." or the quick "Pick a monster, object or location."
     // (pager.c:1908): what forces the --More-- is the tip WINDOW going up over
@@ -2488,90 +2668,9 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         }
     }
 
-    // C: auto_describe(cx,cy) — message for the current cell (self or terrain),
-    // with the optional "(invalid target)" suffix from getpos_getvalid.
-    const describe = (x, y, menuForm = false) => {
-        let desc;
-        // C ref: pager.c:668 lookat() gates the self case on
-        // `!iflags.terrainmode || (iflags.terrainmode & TER_MON) != 0`. The
-        // #terrain command's four subsets (cmd.c doterrain()) never include
-        // TER_MON, so browsing terrain with the cursor on the hero's own
-        // square must fall through to the terrain description below instead
-        // of reporting the hero's identity (stale "dwarven valkyrie called
-        // wizard" instead of "floor of a room").
-        if (u && x === u.ux && y === u.uy && !terrainMode && canspotself()) {
-            desc = self_lookat();
-        } else if (u?.uswallow && !terrainMode && !detectMode) {
-            // C ref: pager.c do_screen_description() -- while engulfed every
-            // non-adjacent spot reads "unreconnoitered" and the adjacent ones
-            // are the swallow-boundary glyphs ("the interior of a monster").
-            const fm = { s: '' };
-            do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
-            desc = fm.s || 'unreconnoitered';
-        } else if (detectMode) {
-            // C ref: pager.c do_screen_description() via 'need_to_look' once a
-            // monster's class symbol matches: falls through to look_at_monster()
-            // for the full tame/peaceful-prefixed identity (a named/peaceful
-            // shopkeeper reads "peaceful Adjama", not a generic class string).
-            // A non-monster cell reads as the freshly-cls()'d blank glyph —
-            // monster_detect's repaint touches only the live display buffer,
-            // not remembered terrain — i.e. always "unexplored area".
-            const dl = game.level?.at(x, y);
-            /* do_screen_description() reads the DISPLAYED glyph: a monster that
-               was not drawn (gold/object detection, hallucination) is not there */
-            const mtmp = dl?.disp_monster ? m_at(x, y) : null;
-            const objShown = !!(dl?.remembered_glyph?.objotyp && dl.remembered_glyph.ch === dl.disp_ch);
-            desc = mtmp ? look_at_monster_desc(mtmp)
-                 : (objShown && look_at_object_here(x, y, true)) || 'unexplored area';
-        } else {
-            // C ref: pager.c lookat() dispatch, walked in DISPLAYED-glyph order
-            // (display.c newsym): a spotted monster, then a warning glyph
-            // (do_screen_description's def_warnsyms loop, levels 1..5), then
-            // the remembered-unseen-creature 'I', then a floor object (e.g. a
-            // STATUE drawn as the petrified monster's class letter), then the
-            // terrain underneath.
-            // C ref: detect.c reveal_terrain_getglyph() -- a terrain browse
-            // displays monsters/objects only for the TER_MON/TER_OBJ subsets.
-            const tmode = terrainMode ? gp_iflags().terrainmode : 0x08 | 0x04;
-            const mtmp = (tmode & 0x08) ? m_at(x, y) : null;
-            const shown = game.level?.at(x, y);
-            const warnlev = ((tmode & 0x08) && shown?.disp_warning) ? Number(shown.disp_ch) : 0;
-            const fm = { s: '' };
-            if (shows_mimic_object(mtmp, x, y))
-                do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
-            desc = fm.s ? fm.s
-                 : (mtmp && canspotmon(mtmp))
-                 ? look_at_monster_desc(mtmp)
-                 : (warnlev >= 1 && def_warnsyms[warnlev]) ? def_warnsyms[warnlev].desc
-                 : (unseen_creature_desc(x, y, terrainMode)
-                    || ((tmode & 0x04) && look_at_object_here(x, y, true))
-                    || terrain_description(x, y, terrainMode && !!(gp_iflags().terrainmode & TER_FULL)));
-            // C ref: detect.c reveal_terrain_getglyph() — while browsing a
-            // revealed map, S_darkroom is rewritten to S_room and S_litcorr to
-            // S_corr, and do_screen_description() dispatches on that DISPLAYED
-            // glyph.  So an unlit room square reads "floor of a room" here, not
-            // "dark part of a room".
-            if (terrainMode) {
-                if (desc === 'dark part of a room') desc = 'floor of a room';
-                else if (desc === 'lit corridor') desc = 'corridor';
-            }
-        }
-        // C ref: getpos.c auto_describe():650 -- "<description> <coords>" for the
-        // whatis_coord option (nothing, and no space, under GPCOORDS_NONE).
-        const coords = coord_desc(x, y, '', gp_iflags().getpos_coords);
-        if (coords) desc += ` ${coords}`;
-        if (menuForm) return desc;
-        if (validfn && !validfn(x, y)) desc += ' (invalid target)';
-        // C ref: getpos.c auto_describe():657 — gated on the GLOBAL
-        // iflags.getloc_travelmode, not on which command opened getpos().
-        // dotravel() sets it and only dotravel_target()'s non-early-out path
-        // clears it, so a travel answered with the hero's own square ("You are
-        // already here.") leaves it set and every LATER getpos — farlook,
-        // #glance, #terrain — keeps appending the suffix.
-        if (game.iflags?.getloc_travelmode && !is_valid_travelpt(x, y))
-            desc += ' (no travel path)';
-        return desc;
-    };
+    // C: auto_describe(cx,cy) — see getpos_describe().
+    const describe = (x, y, menuForm = false) =>
+        getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode);
 
     let firstPass = true;
     let unknownMsg = null;
@@ -2599,9 +2698,17 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             // emulated here: C's identical PRE-loop pair is left to the
             // caller-side render, which already reproduces flush_screen()
             // leaving the tty cursor on the last glyph drawn, not at (cx,cy).
+            // flush_screen(0)'s bot() runs AFTER curs(): with disp.botl/botlx
+            // pending (a getpos_menu() whose dismissal ran under bot_disabled)
+            // it redraws the status fields and the tty cursor stays at the end
+            // of the last status row.
+            const botPending = !!(game.botl || game.botlx);
             await flush_screen(1);
             const disp = game.nhDisplay;
-            if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
+            if (botPending && disp?.setCursor) {
+                const lastRow = (disp.rows ?? 24) - 1;
+                disp.setCursor(game._statusFinalx?.[lastRow] | 0, lastRow);
+            } else if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
         }
         firstPass = false;
         // C getpos.c:882 readchar_poskey() -- sets input_state=getposInp
@@ -2695,26 +2802,25 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // existing glyph buffer that flush_screen already does, so the only
         // observable half is the goal message it re-shows.
         if (k === 0x12 /* C('r') */) {
+            if (getpos_has_hilitefunc()) await getpos_refresh();
             showGoal = true;
             continue;
         }
         if (ch === '?') {
-            // C's two help-line gates (getpos_getvalid "Use 'z' or 'Z'...",
-            // getpos_hilitefunc "Use '$' to toggle marking...") are the same
-            // predicate: every getpos_sethilite() caller (apply.c jump/
-            // polearm/grapple, read.c stinking cloud, spell.c spell target)
-            // sets BOTH.  `game._getpos_hilite` was never assigned, which
-            // dropped the '$' line from every #jump help window.
+            // C's two help-line gates: getpos_getvalid -> "Use 'z' or 'Z'...",
+            // getpos_hilitefunc -> "Use '$' to toggle marking...".  The
+            // second is true only when the caller registered a painter.
             await getpos_help(force, goalText, goalText === WHAT_IS_A_LOCATION,
-                              !!validfn, !!validfn);
+                              !!validfn, getpos_has_hilitefunc());
             showGoal = true;
             continue;
         }
         // C getpos.c:955 NHKF_GETPOS_SHOWVALID ('$') — toggles the marking of
-        // valid target spots.  This port draws no marking, but the branch still
-        // has to swallow the key and re-show the goal message; otherwise '$'
-        // reached the terrain-symbol fallback and printed "Unknown direction".
+        // valid target spots, only when the caller registered a painter
+        // (getpos_hilitefunc); otherwise the key is swallowed and the goal
+        // message re-shown instead of reaching the terrain-symbol fallback.
         if (ch === '$') {
+            if (getpos_has_hilitefunc()) await getpos_toggle_hilite_state();
             showGoal = true;
             continue;
         }
@@ -2771,37 +2877,8 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             const gtmp = GLOC_KEYS.indexOf(ch);
             if (gtmp >= 0 && gp_iflags().getloc_usemenu) {
                 // C getpos.c:1016 `if (iflags.getloc_usemenu)` -> getpos_menu()
-                                const gloc = gtmp >> 1;
-                const gdescr = [['any monsters', 'monster'], ['any items', 'item'],
-                                ['any doors', 'door'], ['any unexplored areas', 'unexplored area'],
-                    ['anything interesting', 'interesting thing'],
-                    ['any valid locations', 'valid location']][gloc];
-                const arr = gather_locs(gloc, validfn, detectMode);
-                const filt = ['', ' in view', ' in this area'][gp_iflags().getloc_filter | 0];
-                if (arr.length < 2) { /* gcount always includes the hero */
-                    // C ref: getpos_menu() — You("cannot detect any items.") does NOT set
-                    // msg_given, so autodescribe re-describes the spot on the next pass.
-                    await update_topl(`You cannot ${gp_iflags().getloc_filter === GFILTER_VIEW ? 'see' : 'detect'} ${gdescr[0]}.`);
-                    continue;
-                }
-                const { extcmd_end_menu, extcmd_select_menu } = await import('./extcmd-handlers.js');
-                const items = [];
-                for (let i = 1; i < arr.length; i++)
-                    items.push({ text: describe(arr[i].x, arr[i].y, true), idx: i });
-                const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
-                const letters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
-                // tty_end_menu() prepends a prompt + blank entry to page 0.
-                const pageOf = (n) => (n < lmax - 2) ? 0 : 1 + Math.floor((n - (lmax - 2)) / lmax);
-                const firstOf = (pg) => pg === 0 ? 0 : (lmax - 2) + (pg - 1) * lmax;
-                items.forEach((it, n) => { it.sel = letters[n - firstOf(pageOf(n))]; it.pg = pageOf(n); });
-                const m = extcmd_end_menu(items,
-                    `Pick ${an(gdescr[1])}${filt}${game.iflags?.getloc_travelmode ? ' for travel destination' : ''}`);
-                const sel = await extcmd_select_menu(m);
-                await (await import("./invent.js")).dismiss_invent_screen();
-                if (sel) {
-                    const hit = items.find((it) => it.sel === sel && it.pg === m.lastPage);
-                    if (hit) { cx = arr[hit.idx].x; cy = arr[hit.idx].y; }
-                }
+                const mc = { x: cx, y: cy };
+                if (await getpos_menu(mc, gtmp >> 1, validfn, detectMode, terrainMode)) { cx = mc.x; cy = mc.y; }
                 continue;
             }
             if (gtmp >= 0) {
@@ -2963,7 +3040,7 @@ function render_terrain_menu(items, blankTop = false) {
     const cols = disp.cols || 80;
 
     const lines = [];
-    lines.push({ text: blankTop ? '' : 'View which?', attr: ATR_INVERSE });
+    lines.push({ text: blankTop ? '' : 'View which?', attr: menuHeadAttr() });
     lines.push({ text: '' });
     for (const it of items)
         lines.push({ text: `${it.ch} ${it.sel ? '*' : '-'} ${it.desc}` });
@@ -3139,12 +3216,11 @@ export async function reveal_terrain(which_subset) {
             // corridor's) — the closing "dirty hack" normalizes S_darkroom and
             // S_litcorr but deliberately not these.  Reading pure terrain here
             // drew every engraved square as plain floor/corridor.
-            // The remembered glyph may be an engraving that no longer exists
-            // (wiped/erased since it was seen); glyph_at() still reports that
-            // engraving cmap glyph, which is none of the stripped kinds.
+            // The remembered glyph is kept whether or not the engraving still
+            // exists, and whatever objects now lie on the square: glyph_at() is
+            // levl[][].glyph, not the live floor contents.
             if (rg && rg.objotyp == null && !loc.invisMon && rg.color === 12 /* CLR_BRIGHT_BLUE */
-                && (rg.bwEngr || rg.ch === '`' || rg.ch === 'a')
-                && !is_cmap_engraving_at(x, y)) {
+                && (rg.bwEngr || rg.ch === '`' || rg.ch === 'a')) {
                 show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg));
                 continue;
             }
@@ -3269,7 +3345,10 @@ export async function browse_map_getpos(goal, detectMode = true) {
 export async function monster_detect(otmp, mclass) {
     const u = game.u;
     const alive = (m) => !(m.mhp != null && m.mhp <= 0) && !(m.isgd && !m.mx);
-    const mons = (game.level?.monsters || []).filter(alive);
+    // C ref: detect.c monster_detect() `for (mtmp = fmon; ...)` — makemon prepends, so
+    // C walks newest-first (map_monst's hallucinated glyph draws follow that order);
+    // level.monsters is creation-ordered.
+    const mons = (game.level?.monsters || []).filter(alive).reverse();
     const { map_monst, unconstrain_map, reconstrain_map, strange_feeling }
         = await import('./detect.js');
     if (!mons.length) {
@@ -3372,7 +3451,7 @@ function render_whatis_menu(items) {
     const cols = disp.cols || 80;
 
     const lines = [];
-    lines.push({ text: 'What do you want to look at:', attr: ATR_INVERSE });
+    lines.push({ text: 'What do you want to look at:', attr: menuHeadAttr() });
     lines.push({ text: '' });
     for (const it of items) {
         lines.push({ text: it.blank ? '' : `${it.ch} - ${it.desc}` });
@@ -3469,6 +3548,17 @@ function look_pick_description(x, y) {
     // fell through to the bare terrain description for any farlooked monster.
     const mtmp = m_at(x, y);
     const loc0 = game.level?.at(x, y);
+    // C ref: pager.c lookat() `glyph_is_monster(glyph)` with no monster here and
+    // Hallucination: "'monster' must actually be a statue" -> rndmonnam().  The
+    // class explanation comes from the displayed (random) monster letter.
+    if (!mtmp && loc0?.disp_hstatue) {
+        const scls = def_monsyms.find((d) => d.sym === loc0.disp_ch && d.explain);
+        if (scls) {
+            const specific = rndmonnam_dn().name;
+            return { text: `${loc0.disp_ch}        ${an(scls.explain)} (${specific})`,
+                     firstmatch: specific, found: 1 };
+        }
+    }
     if (shows_mimic_object(mtmp, x, y)) {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
@@ -3493,7 +3583,7 @@ function look_pick_description(x, y) {
         // hallucinating hero's random monster name (one rndmonnam() draw off the
         // core rng) is picked once, not once per helper.
         const lm = look_at_monster(mtmp, x, y, true);
-        const specific = game.u?.uhallu ? lm.buf : look_at_monster_desc(mtmp);
+        const specific = lm.buf;
         // C ref: pager.c do_screen_description() — the farlook pick appends
         // " [seen: <how>]" (look_at_monster's monbuf) unless only normal vision.
         const seen = lm.monbuf;
@@ -3516,8 +3606,14 @@ function look_pick_description(x, y) {
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         return { text: text.s, firstmatch: firstmatch.s, found };
     }
-    if (floorObject && !covers_objects(loc)
-        && object_glyph(floorObject).ch === loc.disp_ch) {
+    // A hallucinated floor object is drawn as a random object glyph (display.h
+    // random_obj_to_glyph), so glyph_is_object() holds for it whatever the real
+    // object is; lookat() then names that glyph's otyp via object_from_map().
+    const hrem = loc?.remembered_glyph;
+    if ((floorObject && !covers_objects(loc)
+         && object_glyph(floorObject).ch === loc.disp_ch)
+        || (loc && !covers_objects(loc) && hrem?.hallucotyp != null
+            && hrem.ch === loc.disp_ch)) {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         return { text: text.s, firstmatch: firstmatch.s, found };
@@ -3573,6 +3669,14 @@ function look_pick_description(x, y) {
     // things" (found>4).  lookat() then appends the actual terrain noun.
     if (typ === ROOM || typ === ICE
         || (typ === DOOR && !(loc.doormask & (D_CLOSED | D_LOCKED | D_ISOPEN)))) {
+        // C ref: pager.c do_screen_description() builds the symbol-sharing list from
+        // the live symbol table; the Rogue level draws doorways '+', so the shared
+        // list is the one the full port computes (pager.js showsym()).
+        if (Is_rogue_level(game.u?.uz)) {
+            const text = { s: '' }, firstmatch = { s: '' };
+            const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+            return { text: text.s, firstmatch: firstmatch.s, found };
+        }
         // doorway / floor / dark room / ice all share the '.'/'~' symbol.
         const look = terrain_description(x, y);
         return {
@@ -3622,6 +3726,11 @@ function look_pick_description(x, y) {
     // char actually drawn) plus the `disp_decgfx` flag it already carries
     // are what stand in for sym/is_swallow_sym here.
     if (IS_WALL(typ) && (!loc.disp_decgfx || loc.disp_ch === 'x')) {
+        if (Is_rogue_level(game.u?.uz)) { /* doors are '+' there: '-' / '|' share with fewer cmap rows */
+            const text = { s: '' }, firstmatch = { s: '' };
+            const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+            return { text: text.s, firstmatch: firstmatch.s, found };
+        }
         const look = terrain_description(x, y);
         // C ref: pager.c do_screen_description()'s defsyms[] scan lists every
         // cmap entry drawn with the same ASCII symbol, in defsyms order: '-'
@@ -3825,7 +3934,7 @@ async function wrap_text_lines(lines) {
 // after the content.  A window with >= rows lines is forced full-screen
 // (offx 0) and paged every rows-1 lines.  Reads the dismiss key(s) via nhgetch
 // (each drawn state is a recorded frame), then redraws the map underneath.
-let dbase_sweep = null;
+let dbase_cuts = null;
 async function display_dbase_window(lines, forceFull = false) {
     // C ref: wintty.c tty_display_nhwindow() — a text window first pages an
     // unacknowledged topline (the farlook description) with --More--.
@@ -3872,12 +3981,8 @@ async function display_dbase_window(lines, forceFull = false) {
         // textCol = offx + 1 rule as the overlay, which already shifts the text).
         const moreCol = (offx === 0 && !forceFull) ? 1 : textCol;
         disp.putstr(moreCol, moreRow, '--More--', NO_COLOR, 0);
-        if (dbase_sweep && offx !== 0) {
-            for (let c = dbase_sweep.col; c < cols; c++) {
-                disp.setCell(c, 22, ' ', NO_COLOR, 0);
-                if (dbase_sweep.lastRow >= 23) disp.setCell(c, 23, ' ', NO_COLOR, 0);
-            }
-        }
+        if (dbase_cuts && offx !== 0)
+            apply_status_cuts(disp, { col: offx, lastRow: moreRow }, dbase_cuts);
         disp.setCursor(moreCol + '--More--'.length, moreRow);
         // xwaitforspace(quitchars): any of space/return/ESC dismisses the page;
         // ESC cancels the rest (breaks out).  Each redraw is a recorded frame.
@@ -4153,77 +4258,6 @@ function upstart(s) {
     return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
-// C ref: defsym.h FURNSYMS explanation text (PCHAR2's 4th/"desc" field) for
-// the 6 furniture appearances makemon.js's FURNSYMS table can assign a mimic
-// (S_upstair/S_dnstair/S_altar/S_grave/S_throne/S_sink).
-const FURNITURE_EXPLANATION = {
-    25: 'staircase up',
-    26: 'staircase down',
-    33: 'altar',
-    34: 'grave',
-    35: 'opulent throne',
-    36: 'sink',
-};
-
-// C ref: pager.c mhidden_description() — the ", mimicking X" suffix
-// look_at_monster() appends whenever M_AP_TYPE(mtmp) is set (mundetected
-// hiders' ", hiding"/etc suffix isn't reached by the sessions modelled here).
-// For M_AP_FURNITURE it's always defsyms[mappearance].explanation.  For
-// M_AP_OBJECT, C's object_from_map() only names a REAL floor object standing
-// under the disguised mimic — _map_location maps what's actually there (the
-// mimic's fake appearance is display-only, never written to the remembered
-// glyph) — same object look_at_object_here's vobj_at/covers_objects check
-// finds; a mimic on otherwise bare/unseen floor falls back to "something".
-function mon_hidden_suffix(mtmp) {
-    if (mtmp.m_ap_type === 'furniture') {
-        const what = FURNITURE_EXPLANATION[mtmp.mappearance] || 'something';
-        return `, mimicking ${an(what)}`;
-    }
-    if (mtmp.m_ap_type === 'obj') {
-        const objname = look_at_object_here(mtmp.mx, mtmp.my);
-        return `, mimicking ${objname || 'something'}`;
-    }
-    return '';
-}
-
-// C ref: pager.c:422 look_at_monster() — the health/tame/peaceful-prefixed
-// monster name.  monhealthdescr is disabled in C (#if 0), so the adjective plus
-// distant_monnam() is the whole name; the "isn't able to move" suffixes below
-// are what turn the bones ghost into "Elara's ghost, asleep".
-function look_at_monster_desc(mtmp) {
-    // C: distant_monnam(mtmp, ARTICLE_NONE, buf) — which is x_monnam(called),
-    // so the shopkeeper / given-name / "<name>'s ghost" spellings all come from
-    // the one place that already models them, instead of a local subset.
-    // C ref: pager.c:432 — a coyote is `coyotename()` unless hallucinating.
-    let buf = (mtmp.data?.name === 'coyote' && !Hallucination_u())
-        ? coyotename(mtmp) : distant_monnam(mtmp, ARTICLE_NONE);
-    const adj = Hallucination_u() ? '' : mtmp.mtame ? 'tame ' : (mtmp.mpeaceful ? 'peaceful ' : '');
-    buf = `${adj}${buf}`;
-    // C ref: pager.c:445-451 — a monster sticking to / holding the hero.
-    if (game.u?.ustuck === mtmp) {
-        if (game.u.uswallow || game.iflags?.save_uswallow)
-            buf += (mtmp.data?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */)
-                ? ', swallowing you' : ', engulfing you'; // same test as pager.js pg_digests()
-        else
-            buf += ', holding you';
-    }
-    // C ref: pager.c:455-464 — "if mtmp isn't able to move ... say so".
-    if (mtmp.mfrozen) buf += ', can\'t move (paralyzed or sleeping or busy)';
-    else if (mtmp.msleeping) buf += ', asleep';
-    else if ((mtmp.mstrategy & STRAT_WAITMASK) !== 0) buf += ', meditating';
-    if (mtmp.mleashed) buf += ', leashed to you';
-    // C ref: pager.c:465-473 — "newsym lets you know of the trap, so mention it here".
-    if (mtmp.mtrapped && cansee(mtmp.mx, mtmp.my)) {
-        const t = t_at_hk(mtmp.mx, mtmp.my);
-        const tt = t ? t.ttyp : NO_TRAP;
-        if (tt === BEAR_TRAP || is_pit(tt) || tt === WEB) {
-            buf += `, trapped in ${an(trapname_hk(tt, false))}`;
-            t.tseen = 1;
-        }
-    }
-    return `${buf}${mon_hidden_suffix(mtmp)}`;
-}
-
 // C ref: pager.c look_all() — list monsters (do_mons) or objects (!do_mons) in
 // the look region as a full-screen NHW_TEXT window.  The per-line prefix is
 // "%8s  <sym>  " where the coord is the look_all form (a trailing space is
@@ -4261,7 +4295,7 @@ async function do_look_all(nearby, do_mons) {
                     // here (the objects listing picks up object disguises).
                     if (mtmp && canspotmon(mtmp)
                         && (M_AP_TYPE(mtmp) === 0 || M_AP_TYPE(mtmp) === M_AP_MONSTER)) {
-                        lookbuf = look_at_monster_desc(mtmp);
+                        lookbuf = look_at_monster(mtmp, x, y, false).buf;
                         sym = cellSym(loc);
                     } else if (loc?.invisMon) {
                         // C ref: pager.c:2005 glyph_is_invisible -> invisexplain
@@ -4389,14 +4423,13 @@ export async function do_look_full() {
         if (nm) {
             // The picked-item menu is dismissed; redraw the map before the
             // data.base overlay so it shows through to the left of the window.
-            const sweep = game._menuDismissSweep;
-            game._menuDismissSweep = null;
+            const cuts = status_cuts_snapshot();
             await flush_screen(1);
-            dbase_sweep = sweep;
+            dbase_cuts = cuts;
             try {
                 await checkfile(nm, 1 | 2);
             } finally {
-                dbase_sweep = null;
+                dbase_cuts = null;
             }
         }
         game.context.move = 0;
@@ -4724,7 +4757,9 @@ export function notice_all_mons_queue(reset) {
     const a11y = game.a11y || {};
     if (!(game.flags?.spot_monsters && !a11y.mon_notices_blocked))
         return;
-    const fmon = game.level?.monsters || [];
+    /* the level array is creation order, C's fmon chain is newest-first; the
+       distance sort below is stable, so equal distances keep fmon order */
+    const fmon = (game.level?.monsters || []).slice().reverse();
     let cnt = 0;
     for (const mtmp of fmon) {
         if (DEADMONSTER(mtmp)) continue;
@@ -4995,15 +5030,10 @@ export async function runmode_delay_output() {
 
 // ── hack.c:3064  the vibrating-square clue ──────────────────────────────────
 
-// C ref: dungeon.c invocation_pos(x, y) / On_stairs(x, y).  Both are private at
-// js/artifact.js:2801 and :2805 (and On_stairs again at js/dogmove.js:521); the
-// real fix is to export those, not to keep copies.
-function invocation_pos(x, y) {
-    const inv = game.level?.invocation_pos;
-    return !!inv && inv.x === x && inv.y === y;
-}
+// C ref: stairs.c On_stairs(x, y).  Private copies also live at js/artifact.js and
+// js/dogmove.js; invocation_pos() is shared from trap.js.
 function On_stairs(x, y) {
-    return (game.level?.stairs || []).some((s) => s.sx === x && s.sy === y);
+    return stairway_at(x, y) != null;
 }
 // C ref: objects[] CANDELABRUM_OF_INVOCATION; js/apply.js:1470 holds the same
 // private literal.
@@ -5027,7 +5057,7 @@ export async function invocation_message() {
         else
             buf = `under your ${makeplural(body_part(FOOT))}`;
 
-        await pline(`You feel a strange vibration ${buf}.`);
+        await You_feel(`a strange vibration ${buf}.`);
         (u.uevent = u.uevent || {}).uvibrated = 1;
         if (otmp && otmp.spe === 7 && otmp.lamplit)
             await pline(`${The_(xname(otmp))} ${

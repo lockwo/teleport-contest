@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
-         unmap_object, see_monsters, You_feel, status_hold } from './display.js';
+         unmap_object, see_monsters, You_feel, status_hold, You_see, You_hear } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
@@ -37,7 +37,7 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
          COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT,
-         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING } from './const.js';
+         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU } from './const.js';
 import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -51,6 +51,8 @@ import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
          placeOnLevel, pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
 import { object_detect } from './detect.js';
 import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
+import { hard_helmet } from './do_wear.js';
+import { Poison_resistance } from './youprop.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
@@ -115,21 +117,13 @@ function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || 
 function Upolyd() { return !!game.u?.Upolyd; }
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware) || Unaware_const(); }
 // C ref: attrib.h Fixed_abil — blocks every adjattrib().  Single reader in attrib.js.
-// C ref: attrib.c orc_abil[]/RACE_ABIL race-innate poison resistance (e.g.
-// every orc, from level 1) is never PERSISTED as a uprops/H*/E* flag anywhere
-// in js/ — adjabil() only emits the message, never the state write, and is
-// never called at chargen — so a bare H*/E* read always missed it.  OR in the
-// pure has_innate() derivation, which js/insight.js's enlightenment screen
-// already uses correctly for this same property.
-export function Poison_resistance() {
-    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return HProp('HPoison_resistance', 'PoisonResistance', 'Poison_resistance') > 0
-        || has_innate('HPoison_resistance');
-}
+// Poison_resistance lives in youprop.js (one reader for H/E/innate/form halves).
+export { Poison_resistance };
 function Sick_resistance() { return !!game.u?.formprops?.Sick_resistance || HProp('HSick_resistance') > 0; }
 function Invis() { return HProp('HInvis', 'EInvis') > 0; }
 function See_invisible() { return !!game.u?.see_invis || HProp('HSee_invisible', 'ESee_invisible') > 0; }
-function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0; }
+// C ref: youprop.h Levitation = HLevitation || ELevitation; the E half (ring, boots, invoked Heart of Ahriman) is worn_extrinsic().
+function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0 || worn_extrinsic(LEVITATION) !== 0; }
 function Fast() { return HProp('HFast', 'EFast') > 0; }
 function Wounded_legs() { return HProp('HWounded_legs', 'Wounded_legs') > 0; }
 function Detect_monsters() { return HProp('HDetect_monsters') > 0; }
@@ -163,7 +157,7 @@ export async function make_vomiting(xtime, talk) {
     uprops().Vomiting = xtime;
     game.botl = true;
     if (!xtime && old && talk && !Unaware())
-        await update_topl('You feel much less nauseated now.');
+        await You_feel('much less nauseated now.');
 }
 
 // C ref: potion.c make_deaf(xtime, talk).  No RNG.
@@ -200,10 +194,10 @@ export async function make_sick(xtime, cause, talk, type) {
         status_hold('sicktype', u.usick_type | 0);
         u.usick_type = (u.usick_type | 0) & ~type;
         if (u.usick_type) {
-            if (talk) await update_topl('You feel somewhat better.');
+            if (talk) await You_feel('somewhat better.');
             uprops().Sick = old * 2;
         } else {
-            if (talk) await update_topl('You feel cured.  What a relief!');
+            if (talk) await You_feel('cured.  What a relief!');
             uprops().Sick = 0;
             u.sick = false;
         }
@@ -278,44 +272,83 @@ async function make_blinded(xtime, talk) {
     if (u_could_see !== can_see_now) await toggle_blindness();
 }
 
-// C ref: potion.c make_hallucinated(xtime, talk, mask).  No RNG.  Only the
-// mask==0 (timer) arm is modelled: the mask arm belongs to Grayswandir /
-// hallucination-resistant gear, which nothing in this port equips.
-export async function make_hallucinated(xtime, talk, _mask) {
+// C ref: potion.c make_hallucinated(xtime, talk, mask).  No RNG.  `mask` is
+// the resistance-by-mask arm used by artifact.c set_artifact_intrinsic()
+// (Grayswandir): the helper, not the caller, owns EHalluc_resistance, and
+// `changed` is simply "currently hallucinating".  The state half is
+// synchronous (artifact.js set_artifact_intrinsic_core() runs inside the
+// worn.c setworn() chain, which is not async here); the redraw/message half
+// is queued by the core and run by flush_hallucination_transitions() at the
+// async boundary that follows (wield.js setuwep()).
+const HALLUC_RES_PROP = 24;
+export function make_hallucinated_state(xtime, mask) {
     const old = HHallucination();
     let changed = false;
-    if (Unaware()) talk = false;
-    if (!Halluc_resistance() && ((old > 0) !== (xtime > 0)))
-        changed = true;
-    set_hallucination(xtime);
-    void old;
-    if (changed) {
-        // C ref: potion.c make_hallucinated() — the display refresh runs BEFORE
-        // the pline.  A swallowed hero has no map to re-see, just the stomach
-        // box, whose eight cells each re-pick a random_monster() colour; not
-        // swallowed instead re-sees every monster/object/trap square on the
-        // level (each newsym() re-picks its own random_monster()/
-        // random_object() while Hallucination is on). Missing this else arm
-        // let the map's hallucinatory glyphs go stale until the NEXT turn's
-        // ordinary newsym() cycle repainted them one step late (seed0383).
-        const { swallowed, see_monsters, see_objects, see_traps } = await import('./display.js');
-        if (game.u?.uswallow) {
-            await swallowed(0);
-        } else {
-            see_monsters();
-            see_objects();
-            see_traps();
-        }
-        const { update_inventory } = await import('./invent.js');
-        update_inventory();
-        game.botl = true;
-        if (talk) {
-            await update_topl(!xtime
-                ? `Everything ${!Blind() ? 'looks' : 'feels'} SO boring now.`
-                : `Oh wow!  Everything ${!Blind() ? 'looks' : 'feels'} so cosmic!`);
-        }
+    if (mask) {
+        if (old) changed = true;
+        const u = (game.u = game.u || {});
+        const ext = u.uprops_extrinsic = u.uprops_extrinsic || {};
+        const cur = ext[HALLUC_RES_PROP] || 0;
+        const word = !xtime ? (cur | mask) : (cur & ~mask);
+        ext[HALLUC_RES_PROP] = word;
+        uprops().EHalluc_resistance = word;   // the spelling Hallucination() readers use
+    } else {
+        if (!Halluc_resistance() && ((old > 0) !== (xtime > 0)))
+            changed = true;
+        set_hallucination(xtime);
     }
     return changed;
+}
+
+// The display half of make_hallucinated(), run when `changed`: C ref: potion.c
+// make_hallucinated() — the see_* routines run BEFORE the pline.  A swallowed
+// hero has no map to re-see, just the stomach box, whose eight cells each
+// re-pick a random_monster() colour; not swallowed instead re-sees every
+// monster/object/trap square on the level (each newsym() re-picks its own
+// random_monster()/random_object() while Hallucination is on).  Missing this
+// else arm let the map's hallucinatory glyphs go stale until the NEXT turn's
+// ordinary newsym() cycle repainted them one step late (seed0383).
+export async function redraw_after_hallucination_change() {
+    const { swallowed, see_monsters, see_objects, see_traps } = await import('./display.js');
+    if (game.u?.uswallow) {
+        await swallowed(0);
+    } else {
+        see_monsters();
+        see_objects();
+        see_traps();
+    }
+    const { update_inventory } = await import('./invent.js');
+    update_inventory();
+    game.botl = true;
+}
+
+// The display/message half of make_hallucinated(), run when `changed`.
+export async function make_hallucinated_redraw(xtime, talk) {
+    if (Unaware()) talk = false;
+    await redraw_after_hallucination_change();
+    if (talk) {
+        await update_topl(!xtime
+            ? `Everything ${!Blind() ? 'looks' : 'feels'} SO boring now.`
+            : `Oh wow!  Everything ${!Blind() ? 'looks' : 'feels'} so cosmic!`);
+    }
+}
+
+export async function make_hallucinated(xtime, talk, mask) {
+    const changed = make_hallucinated_state(xtime, mask);
+    if (changed) await make_hallucinated_redraw(xtime, talk);
+    return changed;
+}
+
+// Queue the redraw half of a mask-arm make_hallucinated() that the synchronous
+// artifact core could not await.  `talk` already folds in program_state.restoring.
+export function queue_hallucination_transition(xtime, talk) {
+    (game._pending_hallucination ||= []).push({ xtime, talk });
+}
+export async function flush_hallucination_transitions() {
+    const q = game._pending_hallucination;
+    if (!q?.length) return;
+    game._pending_hallucination = null;
+    for (const { xtime, talk } of q) await make_hallucinated_redraw(xtime, talk);
 }
 
 // C ref: hack.c losehp(dmg, knam, k_format).  Delegates to do.js losehp_do(),
@@ -430,8 +463,6 @@ function Sleep_resistance() {
         || has_innate('HSleep_resistance');
 }
 function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || HProp('AcidResistance', 'HAcid_resistance') > 0 || worn_extrinsic(ACID_RES) !== 0; }
-function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || HProp('FireResistance', 'HFire_resistance', 'EFire_resistance') > 0 || worn_extrinsic(FIRE_RES) !== 0; }
-function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || HProp('ColdResistance', 'HCold_resistance', 'ECold_resistance') > 0 || worn_extrinsic(COLD_RES) !== 0; }
 function Unchanging() { return HProp('HUnchanging', 'EUnchanging') > 0 || worn_extrinsic(UNCHANGING) !== 0; }
 function Antimagic() { return !!game.u?.formprops?.Antimagic || HProp('HAntimagic', 'EAntimagic') > 0 || worn_extrinsic(ANTIMAGIC) !== 0; }
 
@@ -480,7 +511,7 @@ export async function potionhit_hero(obj, how) {
     case POT_POLYMORPH:
         // C ref: potion.c:1690 — the message fires before the Unchanging /
         // Antimagic gate, so it is NOT conditional on the shape change.
-        await update_topl(`You feel a little ${Hallucination() ? 'normal' : 'strange'}.`);
+        await You_feel(`a little ${Hallucination() ? 'normal' : 'strange'}.`);
         if (!Unchanging() && !Antimagic()) {
             const { polyself } = await import('./polyself.js');
             await polyself(POLY_NOFLAGS);
@@ -660,7 +691,8 @@ export async function potionbreathe_hero(obj) {
 // heals, THEN cures blindness (make_blinded + make_deaf), THEN cures sickness
 // (make_vomiting + make_sick) — and make_sick's trailing exercise(A_CON, FALSE)
 // is the one RNG draw reachable from here, so the sequence is load-bearing.
-async function healup(nhp, nxtra, curesick, cureblind) {
+// The single shared port: spell.js, zap.js and artifact.js call this one.
+export async function healup(nhp, nxtra, curesick, cureblind) {
     const u = game.u;
     if (!u) return;
     if (nhp) {
@@ -685,6 +717,7 @@ async function healup(nhp, nxtra, curesick, cureblind) {
         await make_vomiting(0, true);
         await make_sick(0, null, true, SICK_ALL);
     }
+    game.botl = true;
 }
 
 const ECMD_CANCEL = 0;
@@ -716,6 +749,7 @@ async function peffect_oil(otmp) {
             good_for_you = true;
         } else {
             await update_topl(`You burn your ${body_part(FACE)}.`);
+            const { Fire_resistance, Cold_resistance } = await import('./zap.js');
             const vulnerable = !Fire_resistance() || Cold_resistance();
             await losehp(d(vulnerable ? 4 : 2, 4), 'quaffing a burning potion of oil', KILLED_BY);
         }
@@ -840,17 +874,17 @@ async function peffect_extra_healing(otmp) {
     // the "You can see again." healup() emits next CHAINS onto the same topline
     // ("You feel much better.  You can see again.").  pline_sync only writes
     // _pending_message, which the next update_topl then replaces.
-    await update_topl('You feel much better.');
+    await You_feel('much better.');
     await healup(16 + d(4 + 2 * bcsign(otmp), 8),
                  otmp.blessed ? 5 : otmp.cursed ? 0 : 2, !otmp.cursed, true);
-    // C: make_hallucinated(0L, TRUE, 0L).  Its "Everything looks SO boring now."
-    // is appended to the pending topline here rather than routed through
-    // update_topl: this call site is exercised by the recorded corpus and the
-    // append is what matches the captured frame.
+    // C: make_hallucinated(0L, TRUE, 0L): see_*() then the pline, which pages with
+    // --More-- when it no longer fits after "You feel much better.  You can hear again."
     const wasHallucinating = Hallucination();
     set_hallucination(0);
-    if (wasHallucinating)
-        pline_append_sync(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
+    if (wasHallucinating) {
+        await redraw_after_hallucination_change();   // make_hallucinated(): see_*() before the pline
+        await update_topl(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
+    }
     await exercise(A_CON, true);
     await exercise(A_STR, true);
     if (Wounded_legs() && otmp.blessed && !game.u?.usteed)
@@ -868,8 +902,10 @@ async function peffect_full_healing(otmp) {
     }
     const wasHallucinating = Hallucination();
     set_hallucination(0);
-    if (wasHallucinating)
-        pline_append_sync(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
+    if (wasHallucinating) {
+        await redraw_after_hallucination_change();   // make_hallucinated(): see_*() before the pline
+        await update_topl(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
+    }
     await exercise(A_STR, true);
     await exercise(A_CON, true);
     if (Wounded_legs() && (otmp.blessed || (!otmp.cursed && !u?.usteed)))
@@ -911,6 +947,7 @@ async function peffect_sickness(otmp) {
     }
 }
 import { poisontell } from './attrib.js';
+import { Blind_telepat } from './youprop.js';
 
 // C ref: potion.c peffect_restore_ability() — POT_RESTORE_ABILITY and the
 // restore-ability spell.  rn2(A_MAX) picks the starting characteristic; a
@@ -993,7 +1030,7 @@ async function peffect_water(otmp) {
             }
             await losehp(Maybe_Half_Phys(d(2, 6)), 'potion of holy water');
         } else if (otmp.cursed) {
-            await update_topl('You feel quite proud of yourself.');
+            await You_feel('quite proud of yourself.');
             await healup(d(2, 6), 0, false, false);
             if ((u?.ulycn ?? -1) >= 0 && !u.Upolyd) {
                 const { you_were } = await import('./polyself.js');
@@ -1003,7 +1040,7 @@ async function peffect_water(otmp) {
         }
     } else {
         if (otmp.blessed) {
-            await update_topl('You feel full of awe.');
+            await You_feel('full of awe.');
             await make_sick(0, null, true, SICK_ALL);
             exercise(A_WIS, true);
             await exercise(A_CON, true);
@@ -1016,7 +1053,7 @@ async function peffect_water(otmp) {
                 await update_topl(`This burns like ${hliquid('acid')}!`);
                 await losehp(Maybe_Half_Phys(d(2, 6)), 'potion of unholy water');
             } else {
-                await update_topl('You feel full of dread.');
+                await You_feel('full of dread.');
             }
             if ((u?.ulycn ?? -1) >= 0 && !u.Upolyd) {
                 const { you_were } = await import('./polyself.js');
@@ -1056,7 +1093,7 @@ async function peffect_invisibility(otmp) {
 
     /* spell cannot penetrate mummy wrapping */
     if (is_spell && BInvis && game.uarmc?.otyp === MUMMY_WRAPPING) {
-        await update_topl(`You feel rather itchy under ${yname(game.uarmc)}.`);
+        await You_feel(`rather itchy under ${yname(game.uarmc)}.`);
         return;
     }
     if (Invis() || Blind() || BInvis) {
@@ -1089,7 +1126,10 @@ const FROMOUTSIDE = 0x04000000;
 // taste messages, POT_FRUIT_JUICE (which returns before the intrinsic part).
 async function peffect_see_invisible(otmp) {
     const msg = Invis() && !Blind();
-    const permchance = 10 - (HProp('HInvis') ? 3 : 0) - (HProp('HSee_invisible') ? 6 : 0);
+    /* C: HSee_invisible is nonzero for a Monk's level-1 FROMEXPER (and a Ranger's at 15) as well as
+       for a timed or FROMOUTSIDE source, so permchance starts at 4 for them. */
+    const permchance = 10 - (HProp('HInvis') ? 3 : 0)
+        - ((HProp('HSee_invisible') || has_innate('HSee_invisible')) ? 6 : 0);
 
     game.potion_unkn = (game.potion_unkn || 0) + 1;
     if (otmp.cursed) {
@@ -1202,7 +1242,7 @@ async function peffect_gain_level(otmp) {
 async function peffect_gain_energy(otmp) {
     const u = game.u;
     if (otmp.cursed)
-        await update_topl('You feel lackluster.');
+        await You_feel('lackluster.');
     else
         await update_topl('Magical energies course through your body.');
     let num = d(otmp.blessed ? 3 : !otmp.cursed ? 2 : 1, 6);  // potion.c:1246
@@ -1257,14 +1297,6 @@ async function peffect_levitation(otmp) {
 }
 // C ref: prop.h I_SPECIAL — "can be removed at will" bit.
 const I_SPECIAL = 0x20000000;
-// C ref: objects.c hard_helmet(otmp) — a metallic/hard hat.  DWARVISH_IRON_HELM
-// through HELM_OF_TELEPATHY (mkobj.js OBJECT_DATA rows) are the hard ones.
-function hard_helmet(otmp) {
-    const nm = objects[otmp?.otyp]?.name || '';
-    return /helmet|helm|orcish helm|dwarvish iron helm/.test(nm)
-        && !/cornuthaum|dunce cap|hat/.test(nm);
-}
-
 // C ref: potion.c peffect_acid().
 async function peffect_acid(otmp) {
     if (Acid_resistance()) {
@@ -1276,12 +1308,14 @@ async function peffect_acid(otmp) {
         await losehp(Maybe_Half_Phys(dmg), 'potion of acid');
         await exercise(A_CON, false);
     }
+    if (uprops().Stoned)
+        await (await import('./eat.js')).fix_petrification();
     game.potion_unkn = (game.potion_unkn || 0) + 1;
 }
 
 // C ref: potion.c peffect_polymorph().
 async function peffect_polymorph(otmp) {
-    await update_topl(`You feel a little ${Hallucination() ? 'normal' : 'strange'}.`);
+    await You_feel(`a little ${Hallucination() ? 'normal' : 'strange'}.`);
     if (!Unchanging()) {
         const u = game.u;
         const { polyself } = await import('./polyself.js');
@@ -1292,7 +1326,11 @@ async function peffect_polymorph(otmp) {
             await polyself(POLY_NOFLAGS);
         } else {
             await polyself(POLY_CONTROLLED | POLY_LOW_CTRL);
-            if (u.mtimedone && u.umonnum !== u.umonster) {
+            // C: `u.umonnum != u.umonster`.  Here u.umonnum is a mons[] index while
+            // polymorphed but a ROLE index (== u.umonster) otherwise, so the raw
+            // comparison collides when the new form's pmidx equals the role index
+            // (killer bee == 1 == Barbarian); Upolyd is the intended test.
+            if (u.mtimedone && u.Upolyd) {
                 // C: min(x, y) is a macro `((x) < (y) ? (x) : (y))`, so rn2(15) is drawn
                 // once for the comparison and AGAIN for the result when y is the smaller.
                 u.mtimedone = (u.mtimedone < rn2(15) + 10) ? u.mtimedone : rn2(15) + 10;
@@ -1326,7 +1364,7 @@ async function peffect_monster_detection(otmp) {
         // C: if swallowed or underwater, fall through to the uncursed case.
         if (!game.u?.uswallow && !Underwater()) {
             see_monsters();
-            if (game.potion_unkn) await update_topl('You feel lonely.');
+            if (game.potion_unkn) await You_feel('lonely.');
             return 0;
         }
     }
@@ -1571,7 +1609,7 @@ async function ghost_from_bottle() {
         const was_full = game._full_mon_gen;
         game._full_mon_gen = true;
         try {
-            mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+            mtmp = makemon(ptr, spot.x, spot.y, MM_APPARXY_BYYOU /* MM_NOMSG */);
         } finally {
             game._full_mon_gen = was_full;
         }
@@ -1685,7 +1723,7 @@ export async function dodip() {
             }
             ++drink_ok_extra;
         } else if (at_pool) {
-            const pooltype = dip_waterbody_name(u.ux, u.uy);
+            const pooltype = (await import('./cmd.js')).waterbody_name(u.ux, u.uy);
             if (await y_n(`Dip ${named} into the ${pooltype}?`) === 'y') {
                 if (Levitation()) {
                     await update_topl(`You are floating high above the ${pooltype}.`);
@@ -1720,10 +1758,6 @@ function dip_is_pool(x, y) {
     const t = game.level?.at(x, y)?.typ;
     return t === 16 /* POOL */ || t === 17 /* MOAT */ || t === 18 /* WATER */;
 }
-
-// C ref: mkmaze.c waterbody_name — "water" for an ordinary pool; the fancier
-// moat/sea/shore naming isn't reached by the covered sessions.
-function dip_waterbody_name(_x, _y) { return 'water'; }
 
 // C ref: fountain.c dipsink(obj) — dipping into a sink.  The OLD stub printed a
 // message and drew nothing; C opens with rn2(looted ? 15 : 25) (a pipe break)
@@ -1767,7 +1801,7 @@ async function dipsink(obj) {
     case POT_ACID:
         try_call = true;
         if (!Blind()) await update_topl('The drain seems less clogged.');
-        else if (!Deaf()) await update_topl('You hear a sucking sound.');
+        else if (!Deaf()) await You_hear('a sucking sound.');
         else { await update_topl('Nothing seems to happen.'); try_call = false; }
         break;
     case POT_LEVITATION:
@@ -1812,7 +1846,7 @@ async function sink_backs_up(x, y) {
                     : 'Flupp!  You hear a sloshing sound.')
         : `Something splashes you in the ${body_part(FACE)}.`);
     if ((((loc?.looted) | 0) & S_LRING) === 0) {
-        if (!Blind()) await update_topl('You see a ring shining in its midst.');
+        if (!Blind()) await You_see('a ring shining in its midst.');
         mkobj_at(RING_CLASS, x, y, true);
         newsym(x, y);
         exercise(A_DEX, true);
@@ -2075,7 +2109,6 @@ export async function toggle_blindness() {
 }
 // C ref: youprop.h Blind_telepat.
 // HTelepat || ETelepat (worn.js keeps the extrinsic word in u.uprops_extrinsic[TELEPAT=30]).
-function Blind_telepat() { return HProp('Telepat', 'HTelepat') > 0 || (game.u?.uprops_extrinsic?.[30] || 0) > 0; }
 
 // C ref: potion.c:2122 mixtype(o1, o2) — the potion type that results from
 // dipping o1 into o2, or STRANGE_OBJECT for "no recipe".
@@ -2297,7 +2330,7 @@ export async function impact_arti_light(obj, worsen, seeit) {
 // conjugated for the stack size.  js/wield.js and js/engrave.js keep private
 // Yname2()s; this is the same shape over invent.js's exported xname()/otense().
 function p_Yobjnam2(obj, verb) {
-    return `Your ${xname(obj)} ${p_otense(obj, verb)}`;
+    return `Your ${p_aobjnam(obj, verb)}`;
 }
 function p_otense(obj, verb) {
     return otense(obj, verb);
@@ -2380,7 +2413,7 @@ export async function potionhit(mon, obj, how) {
             }
             break;
         case POT_POLYMORPH:
-            await update_topl(`You feel a little ${
+            await You_feel(`a little ${
                 Hallucination() ? 'normal' : 'strange'}.`);
             if (!Unchanging() && !Antimagic()) {
                 const { polyself } = await import('./polyself.js');
@@ -2399,7 +2432,7 @@ export async function potionhit(mon, obj, how) {
     } else if (hit_saddle && saddle) {
         let affected = false;
         const useeit = !Blind() && D.canseemon_shared(mon) && cansee_p(tx, ty);
-        const mnam = UH.x_monnam(mon, 2, null, 0x04 | 0x40, false);
+        const mnam = UH.x_monnam(mon, 1 /* ARTICLE_THE */, null, 0x01 | 0x08 /* SUPPRESS_IT | SUPPRESS_SADDLE */, false);
         const buf = p_upstart(s_suffix(mnam));
 
         switch (obj.otyp) {
@@ -2577,9 +2610,7 @@ export async function potionhit(mon, obj, how) {
             }
             break;
         case POT_POLYMORPH:
-            /* C: (void) bhitm(mon, obj) — zap.c's per-monster beam effect.
-               js/zap.js has no exported bhitm; the polymorph-a-monster path is
-               the same gap js/zap.js:2370 documents. */
+            await Z.bhitm(mon, obj);
             break;
         /* POT_GAIN_LEVEL / POT_LEVITATION / POT_FRUIT_JUICE /
            POT_MONSTER_DETECTION / POT_OBJECT_DETECTION: nothing (C's commented
@@ -2624,11 +2655,17 @@ export async function potionhit(mon, obj, how) {
         await trycall(obj);
     }
 
-    /* C's shop tail: an unpaid potion thrown inside a tended shop is either
-       taken off the bill (monster threw it) or charged as theft (hero threw
-       it).  stolen_value()/subfrombill() need the shk bill machinery, which is
-       js/shk.js's; named here rather than half-run. */
-    void 0;
+    /* C ref: potion.c:1914-1927 — an unpaid potion that breaks inside a tended shop is either taken off the
+       bill (a monster threw it) or charged as theft (the hero threw it). */
+    if (game.u?.ushops?.[0] && obj.unpaid) {
+        const shk = await import('./shk.js');
+        const { in_rooms, shop_keeper } = await import('./shkroom.js');
+        const { SHOPBASE } = await import('./const.js');
+        const shkp = shop_keeper(in_rooms(game.u.ux, game.u.uy, SHOPBASE)[0]);
+        if (!shkp) obj.unpaid = 0;
+        else if (game.context?.mon_moving) shk.subfrombill(obj, shkp);
+        else await shk.stolen_value(obj, game.u.ux, game.u.uy, !!shkp.mpeaceful, false);
+    }
 
     const { obfree } = await import('./invent.js');
     await obfree(obj, null);
@@ -2652,7 +2689,9 @@ function p_upstart(s) {
     return str ? str[0].toUpperCase() + str.slice(1) : str;
 }
 function p_aobjnam(obj, verb) {
-    return `${xname(obj)}${verb ? ` ${p_otense(obj, verb)}` : ''}`;
+    /* aobjnam(): the count prefix is added here, not by xname() */
+    const count = (obj.quan ?? 1) !== 1 ? `${obj.quan} ` : '';
+    return `${count}${xname(obj)}${verb ? ` ${p_otense(obj, verb)}` : ''}`;
 }
 function p_Tobjnam(obj, verb) {
     return `The ${xname(obj)} ${p_otense(obj, verb)}`;
@@ -3114,7 +3153,7 @@ async function p_yname(obj) {
 function p_the(s) { return `the ${s}`; }
 function p_The(s) { return `The ${s}`; }
 // C ref: shk.c check_unpaid(obj) — bill an unpaid item that's being used up.
-async function p_check_unpaid(_obj) { /* shk.c, not reachable from here */ }
+async function p_check_unpaid(obj) { await (await import('./shk.js')).check_unpaid(obj); }
 
 // C ref: potion.c:2379 dip_into() — the inventory item-action form of #dip: the
 // POTION has already been chosen and is sitting in the command queue to answer
@@ -3208,7 +3247,7 @@ export async function djinni_from_bottle(obj) {
         const was_full = game._full_mon_gen;
         game._full_mon_gen = true;
         try {
-            mtmp = makemon(ptr, spot.x, spot.y, 0 /* MM_NOMSG */);
+            mtmp = makemon(ptr, spot.x, spot.y, MM_APPARXY_BYYOU /* MM_NOMSG */);
         } finally {
             game._full_mon_gen = was_full;
         }

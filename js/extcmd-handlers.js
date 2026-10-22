@@ -10,8 +10,9 @@
 
 import { game } from './gstate.js';
 import { nhgetch, unshiftKeys } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, putStatusRow, cutTopStatusRow, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
+import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
+import { menuHeadAttr } from './menuattr.js';
 import {
     obj_doname, floor_object_name, classOrder, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
@@ -27,9 +28,10 @@ import { pluslvl, losexp, rank_of } from './exper.js';
 import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
-         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT } from './const.js';
+         D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT,
+         SHOPBASE, SHOP_DOOR_COST } from './const.js';
 import { mon_mr } from './monmr_data.js';
-import { is_undead_flag, is_demon_flag, humanoid, nohands, hides_under_flag } from './monflags_data.js';
+import { is_undead_flag, is_demon_flag, humanoid, nohands, nolimbs, hides_under_flag, mflags1_of, M1_SLITHY } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname, halu_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
@@ -37,17 +39,18 @@ import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJE
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
-import { count_unpaid, is_worn, wearing_armor, inventoryArray, select_off,
-         dismiss_invent_screen } from './invent.js';
+import { is_worn, wearing_armor, inventoryArray, select_off,
+         dismiss_invent_screen, query_category, splitobj, unsplitobj } from './invent.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
-import { rn2 } from './rng.js';
-import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED } from './const.js';
+import { rn2, rnd } from './rng.js';
+import { A_STR, A_WIS, A_DEX, POLY_CONTROLLED, UNENCUMBERED, TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR,
+         TT_BURIEDBALL, LEFT_SIDE, RIGHT_SIDE, KILLED_BY, LEG, FORCETRAP, TOOKPLUNGE } from './const.js';
 import { nomul, getpos, get_valid_jump_position, set_jumping_is_magic, is_valid_jump_pos, getpos_render, jump_landing, jump_hilite_first_cursor, do_run, do_run_prefixed, do_look_full, do_farlook } from './hack.js';
 import { dotwoweapon } from './wield.js';
-import { doride } from './steed.js';
+import { doride, stucksteed } from './steed.js';
 import { doenhance } from './enhance.js';
-import { dorub, dowipe, doapply, ECMD as APPLY_ECMD } from './apply.js';
+import { dorub, dowipe, doapply, display_jump_positions, ECMD as APPLY_ECMD } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
@@ -60,16 +63,15 @@ import { rn1 } from './rng.js';
 import { HORN_OF_PLENTY, TALLOW_CANDLE, WAX_CANDLE, POT_OIL, OIL_LAMP, MAGIC_LAMP,
          CAN_OF_GREASE, FOOD_RATION, CRAM_RATION, LEMBAS_WAFER, VENOM_CLASS,
          POTION_CLASS } from './mkobj.js';
-import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname, count_buc, askchain, ggetobj, currency,
-         BUC_BLESSED, BUC_CURSED, BUC_UNCURSED, BUC_UNKNOWN } from './invent.js';
-// query_category's BUC menu tokens -> pickup.c BUC_* classes (count_buc() types).
-const BUC_OF_TOKEN = { get B() { return BUC_BLESSED; }, get C() { return BUC_CURSED; },
-    get U() { return BUC_UNCURSED; }, get X() { return BUC_UNKNOWN; } };
+import { query_objlist, INVORDER_SORT, INCLUDE_VENOM, USE_INVLET, SIGNAL_NOMENU } from './pickup.js';
+import { getobj, GETOBJ_PROMPT, consume_obj_charge, ansimpleoname, askchain, ggetobj, currency } from './invent.js';
 import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
          u_handsy, add_valid_menu_class, allow_category,
          explain_container_prompt, out_container, in_container, query_classes,
-         ck_bag, is_worn_by_type, menu_class_present } from './pickup.js';
-import { MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+         ck_bag, is_worn_by_type, menu_class_present,
+         PICK_ANY, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES, WORN_TYPES, CHOOSE_ALL,
+         BUCX_TYPES, JUSTPICKED } from './pickup.js';
+import { MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
@@ -106,8 +108,7 @@ import { wiz_debug_cmd_bury } from './dig.js';
 import { doeat } from './eat.js';
 import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
-import { invoke_ok as artifact_invoke_ok } from './artifact.js';
-import { doextlist } from './cmd.js';
+import { doextlist, dosuspend_core } from './cmd.js';
 import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
@@ -215,7 +216,7 @@ const EXTCMDLIST = [
     ["showtrap", 0, "describe an adjacent, discovered trap"],
     ["sit", AUTOCOMPLETE, "sit down"],
     ["stats", AUTOCOMPLETE | WIZMODECMD, "show memory statistics"],
-    ["suspend", CMD_NOT_AVAILABLE, "push game to background ('fg' to come back)"],
+    ["suspend", 0, "push game to background ('fg' to come back)"],
     ["swap", 0, "swap wielded and secondary weapons"],
     ["takeoff", 0, "take off one piece of armor"],
     ["takeoffall", 0, "remove all armor"],
@@ -349,7 +350,29 @@ function mungspaces(s) {
 // when query+buffer stays under 79 chars (the ordinary case).
 const TOPL_CO = 80;
 const TOPL_WRAP = TOPL_CO - 1;
-function draw_getlin(query, shown, cursorCol) {
+
+// C ref: topl.c topl_putsym() cursor effect only (ttyDisplay->curx/cury), used
+// to replay getline.c's "\b" / " " echoes.  A '\b' at curx == 0 on a wrapped
+// row first jumps to column CO on the row above, and the cursor then backs up
+// one; any other character advances it, wrapping lazily at CO - 1.  The
+// tracked cursor is history dependent: erasing the character that wrapped onto
+// row 1 leaves it at (0, 1), not at the (CO - 1, 0) a pure index -> (col, row)
+// map gives.
+function topl_putsyms_cursor(t, str) {
+    for (const c of str) {
+        if (c === '\b') {
+            if (t.x === 0 && t.y > 0) { t.x = TOPL_CO; t.y--; }
+            t.x--;
+        } else {
+            if (t.x === TOPL_CO - 1) { t.x = 0; t.y++; }
+            t.x++;
+        }
+    }
+}
+
+// draw_getlin() returns the cursor it parked, as {x, y}.  `cursorAt` replaces
+// the index-derived cursor with the tracked tty cursor after an erase.
+function draw_getlin(query, shown, cursorCol, cursorAt = null) {
     const disp = game?.nhDisplay;
     if (!disp?.setCell) return;
     const line = query + ' ' + shown;
@@ -372,7 +395,10 @@ function draw_getlin(query, shown, cursorCol) {
     // col CO-1), so a cursor sitting exactly at col CO-1 stays on its row.
     const cr = cursorCol === 0 ? 0 : Math.floor((cursorCol - 1) / TOPL_WRAP);
     const cc = cursorCol - cr * TOPL_WRAP;
-    disp.setCursor(Math.min(cc, disp.cols - 1), Math.min(cr, disp.rows - 1));
+    const at = cursorAt || { x: cc, y: cr };
+    const parked = { x: Math.min(at.x, disp.cols - 1), y: Math.min(at.y, disp.rows - 1) };
+    disp.setCursor(parked.x, parked.y);
+    return parked;
 }
 
 // C ref: win/tty/getline.c hooked_tty_getlin() — reads a line at the top line
@@ -435,6 +461,8 @@ export async function hooked_tty_getlin(query, hook) {
     let shown = '';   // what is displayed (typed, possibly autocompleted)
     let doprev = false;
     const base = (query + ' ').length; // column of first input char
+    let tty = { x: 0, y: 0 };  // ttyDisplay->curx/cury as last parked
+    let erased = null;         // tracked cursor left by a "\b" / "\b \b" echo
 
     // C ref: getline.c:63 custompline() replaces the top line with the prompt,
     // so a message left there by a previous yn_function() is gone for good.
@@ -443,7 +471,10 @@ export async function hooked_tty_getlin(query, hook) {
         // Cursor sits one past the typed characters.
         // C ref: getline.c NEWAUTOCOMP — typed chars are echoed as typed; the
         // hook rewrites the buffer but only the tail past them is drawn.
-        if (!doprev) draw_getlin(query, typed + shown.slice(typed.length), base + typed.length);
+        if (!doprev) {
+            tty = draw_getlin(query, typed + shown.slice(typed.length), base + typed.length, erased) || tty;
+            erased = null;
+        }
         // C ref: getline.c:81 — recall includes the current query and answer.
         game._toplines = query + ' ' + shown;
         const code = await nhgetch();
@@ -499,16 +530,27 @@ export async function hooked_tty_getlin(query, hook) {
         if (code === 8 || code === 127) { // backspace / delete-prev
             if (typed.length > 0) {
                 // C ref: getline.c NEWAUTOCOMP backspace: truncates the buffer
-                // at bufp (*bufp = 0); the hook is not re-run.
+                // at bufp (*bufp = 0); the hook is not re-run.  The echo is
+                // "\b", a blank over the erased character and any guessed
+                // tail, then "\b" back over each of them.
+                const gone = shown.length - typed.length + 1;
                 typed = typed.slice(0, -1);
                 shown = shown.slice(0, typed.length);
+                erased = { x: tty.x, y: tty.y };
+                topl_putsyms_cursor(erased, '\b' + ' '.repeat(gone) + '\b'.repeat(gone));
             }
             continue;
         }
         // C ref: getline.c:196 `c == kill_char || c == '\177'` — the pty's
         // VKILL is ^U (unixtty.c kill_char = inittyb.kill_sym); it erases the
-        // whole typed line, echoing "\b \b" per character.
+        // whole typed line, echoing a blank over any guessed tail, then
+        // "\b \b" per character of the buffer.
         if (code === 21) {
+            if (shown.length > 0) {
+                erased = { x: tty.x, y: tty.y };
+                topl_putsyms_cursor(erased, ' '.repeat(shown.length - typed.length)
+                                            + '\b \b'.repeat(shown.length));
+            }
             typed = '';
             shown = '';
             continue;
@@ -573,7 +615,7 @@ export function extcmd_end_menu(items, promptStr) {
     const body = items.map((it) => ({ ...it, text: (it.sel ? it.sel + ' - ' : '') + it.text,
                                       sel: it.sel }));
     const flat = promptStr == null ? body : [
-        { text: promptStr, attr: ATR_INVERSE },
+        { text: promptStr, attr: menuHeadAttr() },
         { text: '' },
         ...body,
     ];
@@ -615,11 +657,7 @@ function render_extcmd_page(m, idx) {
     // torn down by docrt(), whose cls() blanked the status window and only set
     // disp.botlx; no bot() runs before this overlay is drawn, so rows 22-23
     // stay blank until the command finishes.
-    if (m.statusBlank) {
-        const disp = game.nhDisplay;
-        for (const r of [22, 23])
-            for (let c = 0; c < (disp.cols ?? 80); c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
-    }
+    if (m.statusBlank) blank_status_rows(game.nhDisplay);
     game._modal_screen = 'extcmdwin';
 }
 
@@ -782,9 +820,7 @@ async function extcmd_via_menu() {
     if (statusBlank) {
         game._statusClsBlank = true;
         game.botlx = true;
-        const disp = game.nhDisplay;
-        for (const r of [22, 23])
-            for (let c = 0; c < (disp.cols ?? 80); c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+        blank_status_rows(game.nhDisplay);
     }
     return ret;
 }
@@ -881,6 +917,17 @@ async function doturn() {
 
     // halu_gname(): the hero's god, or a hallucinatory one (display rng).
     const Gname = halu_gname(u?.ualign?.type ?? 0);
+
+    /* [What about needing free hands (does #turn involve any gesturing)?] */
+    const { can_chant } = await import('./mondata.js');
+    if (!can_chant(null)) {
+        /* "evilness": "demons and undead" is too verbose and too precise */
+        await pline(`You are ${(u?.uprops?.Strangled | 0) > 0
+            ? 'not able to call' : 'incapable of calling'} upon ${Gname} to turn aside evilness.`);
+        /* violates agnosticism due to intent; use a move if this is the first
+           time agnostic conduct has been broken */
+        return (u.uconduct.gnostic === 1) ? 1 : 0;
+    }
 
     // C ref: pray.c doturn(). A lawful or neutral hero in demon, undead or
     // vampshifter form, or one whose god is very angry, is ignored: aggravate()
@@ -1016,38 +1063,65 @@ export async function jump(magic) {
         if (known_spell(SPE_JUMPING) >= spe_Fresh)
             return (await spelleffects_ext(SPE_JUMPING)) & 1; /* ECMD_TIME */
     }
-    // C ref: apply.c jump():2001 `else if (!magic && !Jumping) { You_cant("jump
-    // very far"); return ECMD_OK; }` — without innate/worn jumping the prompt
-    // never appears. (The nolimbs/slithy check needs polymorph state this port
-    // doesn't carry.)
-    if (!magic && !Jumping()) {
+    // C ref: apply.c jump():1994-2057 — one else-if chain, in this order.
+    const u0 = game.u;
+    const { youmonst_data } = await import('./invent.js');
+    const { Levitation_fu } = await import('./trap.js');
+    const { legs_in_no_shape } = await import('./do.js');
+    const { set_ustuck } = await import('./mon.js');
+    const slithy = (ptr) => (mflags1_of(ptr) & M1_SLITHY) !== 0;
+    if (!magic && (nolimbs(youmonst_data()) || slithy(youmonst_data()))) {
+        /* normally (nolimbs || slithy) implies !Jumping,
+           but that isn't necessarily the case for knights */
+        await pline("You can't jump; you have no legs!");
+        return 0;                                      // ECMD_OK
+    } else if (!magic && !Jumping()) {
         await pline("You can't jump very far.");
         return 0;                                      // ECMD_OK
-    }
-    if (game.u?.uswallow) {
+    /* if steed is immobile, can't do physical jump but can do spell one */
+    } else if (!magic && u0?.usteed && await stucksteed(false)) {
+        /* stucksteed gave "<steed> won't move" message */
+        return 0;
+    } else if (u0?.uswallow) {
         if (magic) { await pline('You bounce around a little.'); return 1; }
         await pline("You've got to be kidding!");
         return 0;
-    }
-    if (game.u?.uinwater) {
+    } else if (u0?.uinwater) {
         if (magic) { await pline('You swish around a little.'); return 1; }
         await pline('This calls for swimming, not jumping!');
         return 0;
-    }
-    if (game.u?.uprops?.Levitation || Is_airlevel(game.u?.uz) || Is_waterlevel(game.u?.uz)) {
+    } else if (u0?.ustuck) {
+        const { Conflict } = await import('./monmove.js');
+        if (u0.ustuck.mtame && !Conflict() && !u0.ustuck.mconf) {
+            const mtmp = u0.ustuck;
+            set_ustuck(null);
+            await pline(`You pull free from ${mon_nam(mtmp)}.`);
+            return 1;
+        }
+        if (magic) {
+            await pline(`You writhe a little in the grasp of ${mon_nam(u0.ustuck)}!`);
+            return 1;
+        }
+        await pline(`You cannot escape from ${mon_nam(u0.ustuck)}!`);
+        return 0;
+    } else if (Levitation_fu() || Is_airlevel(u0?.uz) || Is_waterlevel(u0?.uz)) {
         if (magic) { await pline('You flail around a little.'); return 1; }
         await pline("You don't have enough traction to jump.");
         return 0;
-    }
-    if (!magic && near_capacity() > UNENCUMBERED) {
+    } else if (!magic && near_capacity() > UNENCUMBERED) {
         await pline('You are carrying too much to jump!');
         return 0;
-    }
-    // C ref: apply.c:2047-2049.  This is after the encumbrance gate and
-    // before getpos(), so an exhausted knight must not consume target keys.
-    if (!magic && ((game.u?.uhunger ?? 900) <= 100
-                   || (await import('./attrib.js')).acurr_eff(A_STR) < 6)) {
+    } else if (!magic && ((u0?.uhunger ?? 900) <= 100
+                          || acurr_eff(A_STR) < 6)) {
+        // C ref: apply.c:2047-2049.  This is after the encumbrance gate and
+        // before getpos(), so an exhausted knight must not consume target keys.
         await pline('You lack the strength to jump!');
+        return 0;
+    } else if (!magic && ((u0?.HWounded_legs || 0) || (u0?.EWounded_legs || 0))) {
+        await legs_in_no_shape('jumping', !!u0?.usteed);
+        return 0;
+    } else if (u0?.usteed && u0.utrap) {
+        await pline(`${Monnam(u0.usteed)} is stuck in a trap.`);
         return 0;
     }
     // C ref: apply.c jump():  pline("Where do you want to jump?"); cc = <u>;
@@ -1064,7 +1138,7 @@ export async function jump(magic) {
     // hero).  Gated here with the TIP_GETPOS flag (1<<4) so only the first
     // #jump pages the prompt.
     const TIP_GETPOS = 1 << 4;
-    const tipPending = !((game.context?.tips || 0) & TIP_GETPOS);
+    const tipPending = !!game.flags?.tips && !((game.context?.tips || 0) & TIP_GETPOS);
     if (tipPending) {
         await topl_more();
     } else {
@@ -1086,7 +1160,8 @@ export async function jump(magic) {
     set_jumping_is_magic(magic);
     const cc = await getpos('the desired position', u.ux, u.uy,
                             (x, y) => get_valid_jump_position(x, y), /*force=*/true,
-                            /*verbose=*/game.flags?.verbose !== false);
+                            /*verbose=*/game.flags?.verbose !== false,
+                            false, false, display_jump_positions);
     if (!cc) return 0; // ESC -> ECMD_CANCEL (no time)
 
     // is_valid_jump_pos(showmsg=TRUE): emits "Illegal move!" / "Too far!" /
@@ -1094,12 +1169,74 @@ export async function jump(magic) {
     if (!(await is_valid_jump_pos(cc.x, cc.y, /*showmsg=*/true, magic))) {
         return 0;
     }
-    // (no steed: the "isn't capable of jumping in place" branch is N/A)
-    // Jumping onto the hero's own spot in the recorded sessions never happens
-    // when not trapped (an in-place jump on empty floor is free, ECMD_OK), and
-    // the knight here is never trapped.  Treat a same-spot pick as a free no-op.
+    if (u.usteed && u.ux === cc.x && u.uy === cc.y) {
+        const { YMonnam } = await import('./do_name.js');
+        await pline(`${YMonnam(u.usteed)} isn't capable of jumping in place.`);
+        return 0;                                      // ECMD_FAIL
+    }
+    let wastrapped = false;
+    if (u.utrap) {
+        wastrapped = true;
+        const T = await import('./trap.js');
+        switch (u.utraptype) {
+        case TT_BEARTRAP: {
+            const side = rn2(3) ? LEFT_SIDE : RIGHT_SIDE;
+            await pline('You rip yourself free of the bear trap!  Ouch!');
+            const { Maybe_Half_Phys, losehp } = await import('./zap.js');
+            await losehp(Maybe_Half_Phys(rnd(10)), 'jumping out of a bear trap', KILLED_BY);
+            await T.set_wounded_legs(side, rn1(1000, 500));
+            break;
+        }
+        case TT_PIT:
+            await pline('You leap from the pit!');
+            break;
+        case TT_WEB:
+            await pline('You tear the web apart as you pull yourself free!');
+            T.deltrap(T.t_at(u.ux, u.uy));
+            break;
+        case TT_LAVA: {
+            const { hliquid } = await import('./do_name.js');
+            await pline(`You pull yourself above the ${hliquid('lava')}!`);
+            cc.x = u.ux; cc.y = u.uy; /* take u_at() 'if' below */
+            break;
+        }
+        case TT_BURIEDBALL:
+        case TT_INFLOOR: {
+            const { makeplural } = await import('./plural.js');
+            const { body_part } = await import('./invent.js');
+            await pline(`You strain your ${makeplural(body_part(LEG))}, but you're still ${
+                u.utraptype === TT_INFLOOR ? 'stuck in the floor'
+                    : 'attached to the buried ball'}.`);
+            await T.set_wounded_legs(LEFT_SIDE, rn1(10, 11));
+            await T.set_wounded_legs(RIGHT_SIDE, rn1(10, 11));
+            return 1;                                  // ECMD_TIME
+        }
+        default:
+            await (await import('./display.js')).impossible(`Jumping out of strange trap (${u.utraptype})?`);
+            break;
+        }
+        /* if we reach here, hero is no longer trapped */
+        await T.reset_utrap_fu(true);
+    }
+    // jumping on hero's same spot doesn't use walk_path() and isn't allowed
+    // when riding (handled above)
     if (cc.x === u.ux && cc.y === u.uy) {
-        await pline(u.uhallu ? 'You hop up and down a bit.' : 'You decide not to jump after all.');
+        /* escaping from a trap takes precedence over jumping in place */
+        if (wastrapped) {
+            const { morehungry } = await import('./eat.js');
+            await morehungry(rnd(10));
+            return 1;
+        }
+        /* jumping in place on a trap will trigger it */
+        const { t_at, dotrap, Flying_fu } = await import('./trap.js');
+        const t = t_at(cc.x, cc.y);
+        if (t) {
+            await pline(`You jump up and ${!Flying_fu() ? 'come' : 'fly'} back down.`);
+            await dotrap(t, FORCETRAP | TOOKPLUNGE);
+            return 1;
+        }
+        /* jumping in place takes no time and doesn't exercise anything */
+        await pline(Hallucination_u() ? 'You hop up and down a bit.' : 'You decide not to jump after all.');
         return 0;
     }
     // Perform the jump: walk_path/hurtle (RNG-inert over open floor) then
@@ -1542,7 +1679,7 @@ function render_corner_menu(disp, title, items) {
     // maxcols mirrors tty_end_menu: max(str.length + 2) over all rendered
     // lines (items are "ch - text"; the title and blank line included).
     const lines = [];
-    lines.push({ text: title, attr: ATR_INVERSE });   // menu prompt (title)
+    lines.push({ text: title, attr: menuHeadAttr() });   // menu prompt (title)
     lines.push({ text: '' });                           // blank separator
     for (const it of items) lines.push({ text: `${it.ch} - ${it.desc}` });
 
@@ -1574,25 +1711,48 @@ function render_corner_menu(disp, title, items) {
     return offx;
 }
 
-function current_level_annotation_key() {
+// C ref: dungeon.c query_annotation(lev) — ask the user to annotate level lev
+// (null = the current level).  The annotation text lives in
+// game._level_annotations["dnum:dlevel"] (this port's mapseen->custom);
+// EDIT_GETLIN is not defined in the recorder build.
+async function query_annotation(lev) {
     const uz = game.u?.uz || { dnum: 0, dlevel: 1 };
-    return `${uz.dnum}:${uz.dlevel}`;
-}
-
-// C ref: dungeon.c query_annotation()/donamelevel().
-async function donamelevel() {
+    const target = lev || uz;
     const annotations = game._level_annotations || (game._level_annotations = {});
-    const key = current_level_annotation_key();
+    const key = `${target.dnum}:${target.dlevel}`;
     const current = annotations[key] || '';
-    const query = current
-        ? `Replace annotation "${current.slice(0, 30)}${current.length > 30 ? '...' : ''}" with?`
-        : 'What do you want to call this dungeon level?';
+    let query;
+    if (current) {
+        query = `Replace annotation "${current.slice(0, 30)}${current.length > 30 ? '...' : ''}" with?`;
+    } else {
+        let lbuf; /* level description */
+        if (!lev || (lev.dnum === uz.dnum && lev.dlevel === uz.dlevel)) {
+            lbuf = 'this dungeon level';
+        } else {
+            const dflgs = (lev.dnum === uz.dnum) ? 0 : 2;
+            const { describe_level } = await import('./botl.js');
+            const out = { buf: '' };
+            game.u.uz = lev;
+            describe_level(out, dflgs);
+            game.u.uz = uz;
+            lbuf = out.buf.replace('Dlvl:', 'level ').replace(/^[ \t]+|[ \t]+$/g, '');
+        }
+        query = `What do you want to call ${lbuf}?`;
+    }
     const raw = await hooked_tty_getlin(query, null);
     game._pending_message = '';
-    if (!raw || raw === '\x1b') return 0;
+    if (!raw || raw === '\x1b') return;
     const annotation = mungspaces(raw);
     if (annotation) annotations[key] = annotation;
     else delete annotations[key];
+}
+
+// C ref: dungeon.c donamelevel() — the #annotate command; with the 'm' prefix
+// it is #overview's selectable menu instead.
+async function donamelevel() {
+    if (game.iflags?.menu_requested)
+        return await dooverview();
+    await query_annotation(null);
     return 0;
 }
 
@@ -1613,16 +1773,23 @@ export async function docallcmd() {
 
     const groups = { m: 'C', i: 'y', o: 'n', f: ',', d: '\\', a: 'l' };
     const entries = [
-        { text: 'What do you want to name?', attr: ATR_INVERSE },
+        { text: 'What do you want to name?', attr: menuHeadAttr() },
         { text: '' },
         ...items.map(it => ({
             text: it.desc,
             item: { value: it.ch, sel: abc ? undefined : it.ch, gsel: groups[it.ch] },
         })),
     ];
-    const committed = await select_command_menu(entries, { how: PICK_ONE });
-    const ch = committed ? entries.find(entry => entry.item?.selected)?.item.value : 'q';
-    await dismiss_invent_screen();
+    /* windows.c select_menu() holds gb.bot_disabled across the selection AND the
+       dismissal, so a status window an earlier menu's docrt() blanked stays blank */
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
+    let ch;
+    try {
+        const committed = await select_command_menu(entries, { how: PICK_ONE });
+        ch = committed ? entries.find(entry => entry.item?.selected)?.item.value : 'q';
+        await dismiss_invent_screen();
+    } finally { game.bot_disabled = old_bot_disabled; }
 
     switch (ch) {
     case 'q':
@@ -1734,15 +1901,13 @@ function floor_obj_here(pred) {
         (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && pred(o.otyp));
     return objs.length ? objs[0] : null;
 }
-// Return every floor container at the hero's square (in floor-chain order),
-// for #loot's container_at()-driven single-container / multi-container-menu
-// split.  C ref: container_at()/do_loot_cont() iterate the floor object list
-// at (u.ux, u.uy), testing Is_container().
-function floor_boxes_here() {
-    const u = game.u;
-    if (!u) return [];
+// Return every floor container at (x, y) (in floor-chain order), for #loot's
+// container_at()-driven single-container / multi-container-menu split.  C ref:
+// container_at()/do_loot_cont() iterate the floor object list at the location,
+// testing Is_container().
+function floor_boxes_at(x, y) {
     return (game.level?.objects || []).filter(
-        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_container_otyp(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
 }
 // C ref: pickup.c doloot_core() lootmon: label — container_at(cc.x, cc.y,
 // FALSE) at an arbitrary (not-necessarily-hero) square, used to decide
@@ -1763,7 +1928,7 @@ function floor_lockboxes_here() {
         (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp));
 }
 
-// (the status rows of the modal container renders go through putStatusRow())
+// (the status rows of the modal container renders go through status_sweep/apply_status_cuts)
 
 // C ref: win/tty/wintty.c tty_display_nhwindow NHW_MENU (H2344_BROKEN offx) +
 // process_menu_window()/process_text_window().  Draw a partial-width corner
@@ -1804,16 +1969,12 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     // no vision_recalc) unless offx == 0; invent.js dismiss_invent_screen() reads this.
     game._menuOffx = offx;
     // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — dismissing a
-    // taller corner window (content reaching row 22) sweeps cl_end() through
-    // the status window, wiping the tail of row 22/23 even though this window's
-    // own content never touches them.  invent.js's putStatusLines records that
-    // cutoff in game._statusTruncCol; a short window opened right after must
-    // inherit it, not draw a freshly recomputed FULL status the real terminal
-    // never redrew.
-    const carried = game._statusTruncCol;
-    // invent.js putStatusLines(): a menu one row short of the status window
-    // still wrecked row 22 (only) on its docorner() dismissal.
-    const carried22 = game._statusTrunc22;
+    // taller corner window sweeps cl_end() through the status window, wiping
+    // the tails of the rows it reaches even though this window's own content
+    // never touches them.  invent.js's putStatusLines records that cutoff per
+    // row (status_sweep); a short window opened right after must inherit it,
+    // not draw a freshly recomputed FULL status the real terminal never redrew.
+    const carriedCuts = status_cuts_snapshot();
     disp.clearScreen();
     if (!fullScreen) {
         render_map_to_grid();
@@ -1826,36 +1987,15 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
     if (!fullScreen) {
-        // the status rows are redrawn through putStatusRow() below
         // render_map_to_grid() already laid down a FULL fresh status (its own
-        // renderStatusLines() call); putstr() never clears past what it writes,
-        // so a truncated re-write below must blank the tail itself or the full
-        // text it's replacing keeps showing through past the cutoff.
-        let cut = null;
-        if (moreRow >= 22) {
-            // This window's own content reaches into the status rows: truncate at
-            // its own left edge (same as invent.js's putStatusLines for the tall
-            // single-page menu), combined with any cutoff already inherited.
-            cut = (carried != null) ? Math.min(offx, carried) : offx;
-            game._statusTruncCol = cut;
-        } else if (carried != null) {
-            cut = carried;
-        }
+        // renderStatusLines() call).  Dismissing THIS window later sweeps the
+        // rows its content reaches; the sweep inherited from the window torn
+        // down before it is already on screen.
+        status_sweep(offx, moreRow);
         // docrt()'s cls() blanked the status window and nothing has run bot()
         // since (see botl_flush): it stays blank under this window.
-        let cut22 = cut;
-        if (carried22 != null) cut22 = (cut != null) ? Math.min(cut, carried22) : carried22;
-        if (cut22 != null && cut22 !== cut) game._statusTrunc22 = cut22;
-        if (game._statusClsBlank) cut = cut22 = 0;
-        else {
-            putStatusRow(disp, 1, 22, cut22);
-            putStatusRow(disp, 2, 23, cut);
-        }
-        cutTopStatusRow(disp, cut22);
-        if (cut22 != null)
-            for (let c = cut22; c < cols; c++) disp.setCell(c, 22, ' ', NO_COLOR, 0);
-        if (cut != null)
-            for (let c = cut; c < cols; c++) disp.setCell(c, 23, ' ', NO_COLOR, 0);
+        if (game._statusClsBlank) blank_status_rows(disp);
+        else apply_status_cuts(disp, { col: offx, lastRow: moreRow }, carriedCuts);
     }
     disp.setCursor(textCol + morestr.length + (curPad || 0), moreRow);
     game._modal_screen = 'container';
@@ -1902,7 +2042,7 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
     // mnemonic o/i/b/r/s.  a.a_int (1..8) indexes the selector; element [0]
     // ('_') is a skipped placeholder.
     const sel = game?.flags?.lootabc ? '_:abcdenq' : '_:oibrsnq';
-    const lines = [{ text: title, attr: ATR_INVERSE }, { text: '' }];
+    const lines = [{ text: title, attr: menuHeadAttr() }, { text: '' }];
     lines.push({ text: `${sel[1]} - Look inside ${name}` });
     if (outokay) lines.push({ text: `${sel[2]} - take something out` });
     if (inokay) lines.push({ text: `${sel[3]} - put something in` });
@@ -1999,6 +2139,8 @@ async function traditional_loot(box, put_in) {
 // count allowance.  Returns 1 (ECMD_TIME) iff a turn elapsed, else 0.
 async function use_container(box, more_containers) {
     let used = 0;
+    game._pickup = game._pickup || {};
+    game._pickup.sellobj_first = true; // in_container() should call sellobj_state()
     box.lknown = 1;
     // C ref: pickup.c:3001-3012 — a trapped container goes off instead of
     // opening; the turn is used up even if the trap fails.
@@ -2101,7 +2243,7 @@ async function use_container(box, more_containers) {
         // (WIN_MESSAGE) blanks the message window outright: the getobj/#loot
         // prompt that preceded the menu is GONE once it closes; without this the
         // next flush_screen() repainted it.
-        if (game._toplin === 1) await topl_more();
+        await (await import('./display.js')).display_nhwindow_message(); // a pline()d line (_toplinSoft) is as unacknowledged as _toplin === 1
         game._pending_message = '';
         game._toplin = 0;
         let deselected = false;
@@ -2206,14 +2348,13 @@ async function use_container(box, more_containers) {
     if (loot_out && loot_in_first) await do_out();
     // C ref: use_container() `containerdone:` — anything actually done reveals
     // the contents, which is what makes doname() start saying "containing N".
-    if (used) box.cknown = 1;
+    // C: `if (gc.current_container) cknown = 1` — a magic bag that exploded in in_container() is gone (on the shop
+    // bill as a used-up item, or deleted), so it is not marked as having known contents.
+    if (used && box.where !== OBJ_FREE && box.where !== OBJ_ONBILL && box.where !== OBJ_DELETED) box.cknown = 1;
     delete game._modal_screen;
+    (await import('./shk.js')).sellobj_state(SELL_NORMAL); // in case in_container() set it
     return used ? 1 : 0;
 }
-
-// C ref: options.c def_inv_order[] — the default packorder (sortpack) sequence
-// used to group objects by class in loot/inventory menus.
-const DEFAULT_INV_ORDER = [12, 5, 2, 3, 7, 9, 10, 8, 4, 11, 6, 13, 14, 15, 16];
 
 // C ref: drawing.c def_oc_syms[].sym, indexed by oclass — every add_menu() in
 // pickup.c's class/item menus passes this as the entry's GROUP accelerator.
@@ -2326,228 +2467,41 @@ async function run_pickany_menu(items, buildLines) {
     return items.filter((it) => it.selected);
 }
 
-// C ref: pickup.c query_category() — without paranoid_confirm:A, choosing 'A'
-// by itself is rejected ("the menu entry description is 'Auto-select every
-// relevant item'"), the pick list is dropped and the caller sees n == 0.
-async function reject_bare_autoselect(tokens) {
-    if (tokens.length === 1 && tokens[0] === 'A'
-        && !/autoall/i.test(String(game.flags?.paranoid_confirmation || ''))) {
-        await dismiss_invent_screen();
-        await pline('No relevant items selected.');
-        return [];
-    }
-    return tokens;
+// C ref: pickup.c menu_loot() item-menu arm — query_objlist(buf, olist,
+// INVORDER_SORT|INCLUDE_VENOM[|USE_INVLET], PICK_ANY, allow) drives the paged
+// tty menu (js/invent.js tty_select_menu).  Returns the {obj, count} picks in
+// menu order.
+async function query_objlist_loot(qstr, olist, qflags, allow) {
+    const pick_list = {};
+    const n = await query_objlist(qstr, olist, qflags, pick_list, PICK_ANY, allow);
+    return n > 0 ? pick_list.list : [];
 }
 
-// C ref: pickup.c query_category() for menustyle:Full — the "Take out what type
-// of objects?" class-filter menu.  Returns the picked tokens ('A' auto, 'ALL'
-// all-types, or oclass numbers / 'B'/'C'/'U'/'X' BUC classes), or null on ESC.
-async function query_category_take_out(box) {
-    const cobj = box.cobj || [];
-    const order = game?.flags?.inv_order || DEFAULT_INV_ORDER;
-    const presentClasses = order.filter((oc) => cobj.some((o) => o.oclass === oc));
-    const ccount = presentClasses.length;
-
-    // C count_buc(): gold counts as Uncursed (or Unknown when goldX), other
-    // items by bknown/blessed/cursed.
-    const bucCount = (type) => count_buc(cobj, BUC_OF_TOKEN[type]);
-    const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
-    const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
-    const anyBUC = do_blessed || do_cursed || do_uncursed || do_unknown;
-    const num_buc_types = [do_blessed, do_cursed, do_uncursed, do_unknown].filter(Boolean).length;
-
-    // C query_category(): "no point in actually showing a menu for a single
-    // category" — when the container holds exactly one object class (and no
-    // unpaid items / ambiguous BUC split), silently pick that class without
-    // drawing the type-selection menu at all.
-    if (ccount === 1 && count_unpaid(cobj) === 0 && num_buc_types <= 1) {
-        return [presentClasses[0]];
+// C ref: menu_loot() loop body — split a counted pick, run in/out_container(),
+// and merge the halves again when it did not move (res <= 0).  Returns false
+// when the loop must stop (res < 0 or the container is gone).
+async function loot_pick(pick, func) {
+    let otmp = pick.obj;
+    if (pick.count > 0 && pick.count < otmp.quan) otmp = splitobj(otmp, pick.count);
+    const res = await func(otmp);
+    if (res <= 0) {
+        if (!game._pickup.current_container) return false;
+        if (otmp !== pick.obj) unsplitobj(otmp);
+        if (res < 0) return false;
     }
-    const show_a = ccount > 1; // ALL_TYPES entry only when >1 class
-
-    const items = []; // {letter, token, skipinvert, selected, desc}
-    items.push({ letter: 'A', token: 'A', skipinvert: true, selected: false,
-                 desc: 'Auto-select every relevant item' });
-    if (show_a) items.push({ letter: 'a', token: 'ALL', skipinvert: true, selected: false,
-                             desc: 'All types' });
-    let invlet = show_a ? 'b' : 'a';
-    for (const oc of presentClasses) {
-        items.push({ letter: invlet, token: oc, skipinvert: false, selected: false,
-                     groupacc: DEF_OC_SYMS[oc], desc: let_to_name(oc, false, false) });
-        invlet = nextMenuCh(invlet);
-    }
-    if (do_blessed) items.push({ letter: 'B', token: 'B', skipinvert: true, selected: false, desc: 'Items known to be Blessed' });
-    if (do_cursed) items.push({ letter: 'C', token: 'C', skipinvert: true, selected: false, desc: 'Items known to be Cursed' });
-    if (do_uncursed) items.push({ letter: 'U', token: 'U', skipinvert: true, selected: false, desc: 'Items known to be Uncursed' });
-    if (do_unknown) items.push({ letter: 'X', token: 'X', skipinvert: true, selected: false, desc: 'Items of unknown Bless/Curse status' });
-
-    const buildLines = () => {
-        const lines = [{ text: 'Take out what type of objects?', attr: ATR_INVERSE }, { text: '' }];
-        let k = 0;
-        lines.push({ text: menuItemLine(items[k++]) }); // 'A'
-        // The hint always shows (cmdassist defaults On); C: A_first_hint/cmdassist.
-        lines.push({ text: '    (ignored unless some other choices are also picked)' });
-        lines.push({ text: '' });
-        if (show_a) lines.push({ text: menuItemLine(items[k++]) });         // 'a'
-        for (let c = 0; c < presentClasses.length; c++) lines.push({ text: menuItemLine(items[k++]) });
-        if (anyBUC) lines.push({ text: '' });                              // blank before B/C/U/X
-        for (; k < items.length; k++) lines.push({ text: menuItemLine(items[k]) });
-        return lines;
-    };
-
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return await reject_bare_autoselect(picked.map((it) => it.token));
+    return true;
 }
 
-// C ref: pickup.c query_objlist() (via menu_loot) — the "Take out what?" item
-// menu, grouped by class with inverse headings.  Gold takes the '$' accelerator;
-// the rest auto-letter a,b,c...  Returns the chosen objects (menu order), or null
-// on ESC.
-async function query_objlist_take_out(box, allow) {
-    const cobj = box.cobj || [];
-    const items = [];      // {letter, obj, selected, skipinvert, desc}
-    const linePlan = [];   // {type:'header'|'item', ...}
-    let menu_ch = 'a', first = true;
-    // C ref: pickup.c query_objlist() sortflags = INVORDER_SORT with the
-    // default sortloot='loot'/sortpack=on options -> sortloot(SORTLOOT_LOOT |
-    // SORTLOOT_PACK) — group by class in packorder, alphabetized within class
-    // (not raw cobj/creation order).
-    const sorted = sortloot(cobj, SORTLOOT_LOOT | SORTLOOT_PACK, false, allow);
-    // C ref: pickup.c query_objlist() `if (n == 0) return 0;` — no object passes
-    // the class / BUC filter, so no (empty) menu is displayed at all.
-    if (!sorted.some((sli) => sli.obj && allow(sli.obj))) return [];
-    let curClass = null;
-    for (const sli of sorted) {
-        if (!sli.obj) break;
-        const o = sli.obj;
-        if (o.oclass !== curClass) {
-            curClass = o.oclass;
-            linePlan.push({ type: 'header', text: let_to_name(curClass, false, false) });
-        }
-        let letter;
-        if (first && o.oclass === COIN_CLASS) letter = '$';        // C: first && COIN -> '$'
-        else { letter = menu_ch; menu_ch = nextMenuCh(menu_ch); }
-        first = false;
-        // C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per item
-        // (display-RNG draw while hallucinating).
-        obj_to_glyph(o);
-        const it = { letter, obj: o, selected: false, skipinvert: false,
-                     groupacc: DEF_OC_SYMS[o.oclass], desc: floor_object_name(o) };
-        items.push(it);
-        linePlan.push({ type: 'item', item: it });
-    }
-    const buildLines = () => {
-        const lines = [{ text: 'Take out what?', attr: ATR_INVERSE }, { text: '' }];
-        for (const p of linePlan) {
-            if (p.type === 'header') lines.push({ text: p.text, attr: ATR_INVERSE });
-            else lines.push({ text: menuItemLine(p.item) });
-        }
-        return lines;
-    };
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return picked.map((it) => it.obj);
-}
-
-// C ref: pickup.c query_category(qflags = WORN_TYPES|ALL_TYPES|UNPAID_TYPES|
-// BUCX_TYPES), called from do_wear.c menu_remarm() — the 'A' class filter.
-// WORN_TYPES sets ofilter = is_worn, so only worn/wielded items contribute to
-// the class list AND the BUC counts.  CHOOSE_ALL is NOT passed, so there's no
-// 'A' auto-select entry or hint line.
-async function query_category_takeoff() {
-    const worn = inventoryArray().filter(is_worn);
-    const order = game?.flags?.inv_order || DEFAULT_INV_ORDER;
-    const presentClasses = order.filter((oc) => worn.some((o) => o.oclass === oc));
-    const ccount = presentClasses.length;
-
-    const bucCount = (type) => count_buc(worn, BUC_OF_TOKEN[type]);
-    const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
-    const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
-    const num_buc_types = [do_blessed, do_cursed, do_uncursed, do_unknown].filter(Boolean).length;
-    // pickup.c query_category: `(qflags & UNPAID_TYPES) && count_unpaid(olist)`
-    // — count_unpaid is NOT passed the ofilter, so it scans the WHOLE pack, not
-    // just the worn subset.
-    const do_unpaid = count_unpaid(inventoryArray()) > 0;
-
-    // C: "no point in actually showing a menu for a single category".
-    if (ccount === 1 && !do_unpaid && num_buc_types <= 1)
-        return [presentClasses[0]];
-
-    const show_a = ccount > 1;
-    const items = [];
-    if (show_a) items.push({ letter: 'a', token: 'ALL', skipinvert: true, selected: false,
-                             desc: 'All worn and wielded types' });
-    let invlet = show_a ? 'b' : 'a';
-    for (const oc of presentClasses) {
-        items.push({ letter: invlet, token: oc, skipinvert: false, selected: false,
-                     groupacc: DEF_OC_SYMS[oc], desc: let_to_name(oc, false, false) });
-        invlet = nextMenuCh(invlet);
-    }
-    // pickup.c: the unpaid entry precedes the b/u/c/unknown cluster, and the
-    // blank separator is emitted when ANY of them is present.
-    const bucItems = [];
-    if (do_unpaid) bucItems.push(['u', 'Unpaid items']);
-    if (do_blessed) bucItems.push(['B', 'Items known to be Blessed']);
-    if (do_cursed) bucItems.push(['C', 'Items known to be Cursed']);
-    if (do_uncursed) bucItems.push(['U', 'Items known to be Uncursed']);
-    if (do_unknown) bucItems.push(['X', 'Items of unknown Bless/Curse status']);
-    for (const [ltr, desc] of bucItems)
-        items.push({ letter: ltr, token: ltr, skipinvert: true, selected: false, desc });
-
-    const nClassEntries = items.length - bucItems.length;
-    const buildLines = () => {
-        const lines = [{ text: 'What type of things do you want to take off?', attr: ATR_INVERSE },
-                       { text: '' }];
-        for (let k = 0; k < nClassEntries; k++) lines.push({ text: menuItemLine(items[k]) });
-        if (bucItems.length) lines.push({ text: '' });
-        for (let k = nClassEntries; k < items.length; k++) lines.push({ text: menuItemLine(items[k]) });
-        return lines;
-    };
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return picked.map((it) => it.token);
-}
-
-// C ref: pickup.c query_objlist("What do you want to take off?", invent,
-// SIGNAL_NOMENU|USE_INVLET|INVORDER_SORT, PICK_ANY, filter).  USE_INVLET means
-// the accelerators are the objects' own inventory letters.  Returns -1 when no
-// item passes the filter (SIGNAL_NOMENU), null when the menu is cancelled.
+// C ref: do_wear.c:3126 query_objlist("What do you want to take off?", invent,
+// SIGNAL_NOMENU|USE_INVLET|INVORDER_SORT, PICK_ANY, filter).  Returns -1 when no
+// item passes the filter, else the chosen objects (possibly none).
 async function query_objlist_takeoff(allow) {
-    const items = [], linePlan = [];
-    const sorted = sortloot(inventoryArray(),
-        SORTLOOT_INVLET | (game.flags?.sortpack !== false ? SORTLOOT_PACK : 0), false, allow);
-    // INVORDER_SORT: C runs the sorted list once per class in flags.inv_order
-    // (pickup.c:1105-1160), so classes group in pack order even with !sortpack.
-    for (const cls of classOrder()) {
-        let printedHeader = false;
-        for (const sli of sorted) {
-            if (!sli.obj) break;
-            const o = sli.obj;
-            if (o.oclass !== cls) continue;
-            if (!printedHeader) {
-                printedHeader = true;
-                linePlan.push({ type: 'header', text: let_to_name(cls, false, false) });
-            }
-            /* C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per listed item */
-            obj_to_glyph(o);
-            const it = { letter: o.invlet, obj: o, selected: false, skipinvert: false, desc: floor_object_name(o) };
-            items.push(it);
-            linePlan.push({ type: 'item', item: it });
-        }
-    }
-    if (!items.length) return -1;
-    const buildLines = () => {
-        const lines = [{ text: 'What do you want to take off?', attr: ATR_INVERSE }, { text: '' }];
-        for (const p of linePlan) {
-            if (p.type === 'header') lines.push({ text: p.text, attr: ATR_INVERSE });
-            else lines.push({ text: menuItemLine(p.item) });
-        }
-        return lines;
-    };
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return picked.map((it) => it.obj);
+    const pick_list = {};
+    const n = await query_objlist('What do you want to take off?', game.invent,
+                                  SIGNAL_NOMENU | USE_INVLET | INVORDER_SORT,
+                                  pick_list, PICK_ANY, allow);
+    if (n < 0) return -1;
+    return n > 0 ? pick_list.list.map((p) => p.obj) : [];
 }
 
 // C ref: do_wear.c:3022 doddoremarm() — select removable slots, then start
@@ -2591,11 +2545,12 @@ async function menu_remarm(retry) {
         all_worn_categories = (retry === -2);
     } else if (ms === MENU_FULL) {
         all_worn_categories = false;
-        const picks = await query_category_takeoff();
-        if (!picks || !picks.length) { await dismiss_invent_screen(); return 0; }
+        const picks = await query_category('What type of things do you want to take off?',
+            inventoryArray(), WORN_TYPES | ALL_TYPES | UNPAID_TYPES | BUCX_TYPES, PICK_ANY);
+        if (!picks.length) { await dismiss_invent_screen(); return 0; }
         for (const p of picks) {
-            if (p === 'ALL') all_worn_categories = true;
-            else add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
+            if (p.a_int === ALL_TYPES_SELECTED) all_worn_categories = true;
+            else add_valid_menu_class(menu_class_char(p.a_int));
         }
     } else if (ms === MENU_COMBINATION) {
         const ggofeedback = { value: 0 };
@@ -2622,6 +2577,13 @@ async function menu_remarm(retry) {
 // Worn-mask bits for the three weapon slots (js/invent.js QW_* convention).
 const WEAPON_SLOT_MASK = 0x100 | 0x200 | 0x400;
 
+// The qflags menu_loot() hands query_category() for both sides.
+const MENU_LOOT_QFLAGS = ALL_TYPES | UNPAID_TYPES | BUCX_TYPES | CHOOSE_ALL | JUSTPICKED;
+
+// class numbers come back from query_category() as a_int; valid_menu_classes[]
+// holds class SYMBOLS here (js/pickup.js allow_category()).
+function menu_class_char(a_int) { return typeof a_int === 'number' ? DEF_OC_SYMS[a_int] : a_int; }
+
 // C ref: pickup.c menu_loot(retry=0, put_in=FALSE) for menustyle:Full — pick the
 // object classes ("Take out what type of objects?"), then the items ("Take out
 // what?"), then out_container() each.  Returns the number removed (>0 => a turn
@@ -2630,22 +2592,24 @@ async function menu_loot_out(box, retry = 0) {
     // C ref: menu_loot(): the class menu (query_category) only under
     // menustyle:Full and a first try; otherwise all_categories = (retry == -2)
     // or TRUE, and the classes query_classes() collected stay valid.
-    let picks;
-    if (retry) picks = retry === -2 ? ['ALL'] : [];
-    else if (menu_style() === MENU_FULL) picks = await query_category_take_out(box);
-    else picks = ['ALL'];
-    if (!picks || (picks.length === 0 && !retry)) return 0;
-
-    // C ref: pickup.c menu_loot() — the picks feed add_valid_menu_class(), and
-    // allow_category() then ANDs the class / BUC filter types together.
-    let autopick = false, all_categories = false, loot_everything = false;
+    let autopick = false, all_categories = true, loot_everything = false;
     if (!retry) add_valid_menu_class(0);
-    for (const p of picks) {
-        if (p === 'A') loot_everything = autopick = true;
-        else if (p === 'ALL') all_categories = true;
-        else {
-            add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
-            loot_everything = false;
+    if (retry) {
+        all_categories = (retry === -2);
+    } else if (menu_style() === MENU_FULL) {
+        all_categories = false;
+        const picks = await query_category('Take out what type of objects?',
+                                           box.cobj, MENU_LOOT_QFLAGS, PICK_ANY);
+        if (!picks.length) return 0;   // no non-autopick category filters specified
+        for (const p of picks) {
+            if (p.a_int === 'A') {
+                loot_everything = autopick = true;
+            } else if (p.a_int === ALL_TYPES_SELECTED) {
+                all_categories = true;
+            } else {
+                add_valid_menu_class(menu_class_char(p.a_int));
+                loot_everything = false;
+            }
         }
     }
     const allow = (o) => loot_everything || all_categories || allow_category(o);
@@ -2656,8 +2620,8 @@ async function menu_loot_out(box, retry = 0) {
         chosen = (box.cobj || []).filter(allow);
     } else {
         box.cknown = 1;   // C: set just before query_objlist() on the take-out side
-        chosen = await query_objlist_take_out(box, all_categories ? () => true : allow);
-        if (chosen === null) return 0; // ESC cancelled
+        chosen = await query_objlist_loot('Take out what?', box.cobj,
+            INVORDER_SORT | INCLUDE_VENOM, all_categories ? () => true : allow);
     }
     if (!chosen.length) return 0;
 
@@ -2674,165 +2638,75 @@ async function menu_loot_out(box, retry = 0) {
     game._pickup.current_container = box;
     // C: autopick sums out_container()'s results; the menu path counts picks.
     let n = autopick ? 0 : chosen.length;
-    for (const obj of chosen) {
-        if (!game._pickup.current_container) break;
-        if ((box.cobj || []).indexOf(obj) < 0) continue;
-        const res = await out_container(obj);
-        if (autopick && res > 0) n += res;
-        if (res < 0) break;
+    if (autopick) {
+        for (const obj of chosen) {
+            if (!game._pickup.current_container) break;
+            if ((box.cobj || []).indexOf(obj) < 0) continue;
+            const res = await out_container(obj);
+            if (res > 0) n += res;
+            if (res < 0) break;
+        }
+    } else {
+        for (const pick of chosen) {
+            if (!game._pickup.current_container) break;
+            if (!await loot_pick(pick, out_container)) break;
+        }
     }
     game._pickup.current_container = saved;
     return n;
-}
-
-// C ref: pickup.c query_category() for menustyle:Full, put_in side — the "Put
-// in what type of objects?" class menu over INVENTORY.  menu_loot() passes
-// ALL_TYPES|UNPAID_TYPES|BUCX_TYPES|CHOOSE_ALL|JUSTPICKED, so this one also
-// carries the trailing 'P' ("Just picked up: ...") entry that the take-out side
-// has no flag for.  Returns the picked tokens, or null on ESC.
-async function query_category_put_in() {
-    const inv = inventoryArray();
-    const order = game?.flags?.inv_order || DEFAULT_INV_ORDER;
-    const presentClasses = order.filter((oc) => inv.some((o) => o.oclass === oc));
-    const ccount = presentClasses.length;
-
-    const bucCount = (type) => count_buc(inv, BUC_OF_TOKEN[type]);
-    const do_blessed = bucCount('B') > 0, do_cursed = bucCount('C') > 0;
-    const do_uncursed = bucCount('U') > 0, do_unknown = bucCount('X') > 0;
-    const anyBUC = do_blessed || do_cursed || do_uncursed || do_unknown;
-    const num_buc_types = [do_blessed, do_cursed, do_uncursed, do_unknown].filter(Boolean).length;
-    // C ref: pickup.c count_justpicked()/find_justpicked() — obj->pickup_prev.
-    const justpicked = inv.filter((o) => o.pickup_prev);
-
-    if (ccount === 1 && count_unpaid(inv) === 0 && num_buc_types <= 1
-        && justpicked.length === 0) {
-        return [presentClasses[0]];
-    }
-    const show_a = ccount > 1;
-
-    const items = [];
-    items.push({ letter: 'A', token: 'A', skipinvert: true, selected: false,
-                 desc: 'Auto-select every relevant item' });
-    if (show_a) items.push({ letter: 'a', token: 'ALL', skipinvert: true, selected: false,
-                             desc: 'All types' });
-    let invlet = show_a ? 'b' : 'a';
-    for (const oc of presentClasses) {
-        items.push({ letter: invlet, token: oc, skipinvert: false, selected: false,
-                     groupacc: DEF_OC_SYMS[oc], desc: let_to_name(oc, false, false) });
-        invlet = nextMenuCh(invlet);
-    }
-    if (do_blessed) items.push({ letter: 'B', token: 'B', skipinvert: true, selected: false, desc: 'Items known to be Blessed' });
-    if (do_cursed) items.push({ letter: 'C', token: 'C', skipinvert: true, selected: false, desc: 'Items known to be Cursed' });
-    if (do_uncursed) items.push({ letter: 'U', token: 'U', skipinvert: true, selected: false, desc: 'Items known to be Uncursed' });
-    if (do_unknown) items.push({ letter: 'X', token: 'X', skipinvert: true, selected: false, desc: 'Items of unknown Bless/Curse status' });
-    if (justpicked.length) {
-        items.push({ letter: 'P', token: 'P', skipinvert: true, selected: false,
-                     desc: justpicked.length === 1
-                         ? `Just picked up: ${obj_doname(justpicked[0])}`
-                         : 'Items you just picked up' });
-    }
-
-    const buildLines = () => {
-        const lines = [{ text: 'Put in what type of objects?', attr: ATR_INVERSE }, { text: '' }];
-        let k = 0;
-        lines.push({ text: menuItemLine(items[k++]) }); // 'A'
-        lines.push({ text: '    (ignored unless some other choices are also picked)' });
-        lines.push({ text: '' });
-        if (show_a) lines.push({ text: menuItemLine(items[k++]) });
-        for (let c = 0; c < presentClasses.length; c++) lines.push({ text: menuItemLine(items[k++]) });
-        if (anyBUC || justpicked.length) lines.push({ text: '' });
-        for (; k < items.length; k++) lines.push({ text: menuItemLine(items[k]) });
-        return lines;
-    };
-
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return await reject_bare_autoselect(picked.map((it) => it.token));
-}
-
-// C ref: pickup.c query_objlist() (via menu_loot put_in) — the "Put in what?"
-// item menu over inventory.  menu_loot passes USE_INVLET when flags.invlet_constant
-// (the default 'fixinv'), so the accelerator IS the object's inventory letter and
-// query_objlist() sorts with SORTLOOT_INVLET (not SORTLOOT_LOOT) | SORTLOOT_PACK;
-// with 'nofixinv' it sorts as sortloot=l and auto-letters a,b,c... ('$' first).
-async function query_objlist_put_in(allow) {
-    const inv = inventoryArray();
-    const items = [];
-    const linePlan = [];
-    const useInvlet = game.flags?.invlet_constant !== false;
-    const sorted = sortloot(inv, (useInvlet ? SORTLOOT_INVLET : SORTLOOT_LOOT) | SORTLOOT_PACK, false, allow);
-    let curClass = null, menu_ch = 'a', first = true;
-    for (const sli of sorted) {
-        if (!sli.obj) break;
-        const o = sli.obj;
-        if (o.oclass !== curClass) {
-            curClass = o.oclass;
-            linePlan.push({ type: 'header', text: let_to_name(curClass, false, false) });
-        }
-        let letter;
-        if (useInvlet) letter = o.invlet;
-        else if (first && o.oclass === COIN_CLASS) letter = '$';
-        else { letter = menu_ch; menu_ch = nextMenuCh(menu_ch); }
-        first = false;
-        // C ref: pickup.c:1131 — obj_to_glyph(curr, rn2_on_display_rng) per item
-        // (display-RNG draw while hallucinating).
-        obj_to_glyph(o);
-        const it = { letter, obj: o, selected: false, skipinvert: false,
-                     groupacc: DEF_OC_SYMS[o.oclass], desc: floor_object_name(o) };
-        items.push(it);
-        linePlan.push({ type: 'item', item: it });
-    }
-    const buildLines = () => {
-        const lines = [{ text: 'Put in what?', attr: ATR_INVERSE }, { text: '' }];
-        for (const p of linePlan) {
-            if (p.type === 'header') lines.push({ text: p.text, attr: ATR_INVERSE });
-            else lines.push({ text: menuItemLine(p.item) });
-        }
-        return lines;
-    };
-    const picked = await run_pickany_menu(items, buildLines);
-    if (picked === null) return null;
-    return picked.map((it) => it.obj);
 }
 
 // C ref: pickup.c menu_loot(retry=0, put_in=TRUE) for menustyle:Full — the
 // class menu, then the item menu, then in_container() each.  Returns the number
 // inserted (>0 => the command elapses a turn).
 async function menu_loot_in(box, retry = 0) {
-    let picks;
-    if (retry) picks = retry === -2 ? ['ALL'] : [];
-    else if (menu_style() === MENU_FULL) picks = await query_category_put_in();
-    else picks = ['ALL'];
-    if (!picks || (picks.length === 0 && !retry)) return 0;
-
-    // C ref: pickup.c menu_loot() pick handling (see menu_loot_out).
-    let autopick = false, all_categories = false, loot_justpicked = false;
-    let loot_everything = false;
+    // C ref: pickup.c menu_loot(): the class menu (query_category) only under
+    // menustyle:Full and a first try; otherwise all_categories = (retry == -2)
+    // or TRUE, and the classes query_classes() collected stay valid.
+    let autopick = false, all_categories = true, loot_justpicked = false;
+    let loot_everything = false, count = 0;
     if (!retry) add_valid_menu_class(0);
-    for (const p of picks) {
-        if (p === 'A') loot_everything = autopick = true;
-        else if (p === 'P') {
-            loot_justpicked = true;
-            add_valid_menu_class('P');
-            loot_everything = false;
-        } else if (p === 'ALL') all_categories = true;
-        else {
-            add_valid_menu_class(typeof p === 'number' ? DEF_OC_SYMS[p] : p);
-            loot_everything = false;
+    if (retry) {
+        all_categories = (retry === -2);
+    } else if (menu_style() === MENU_FULL) {
+        all_categories = false;
+        const picks = await query_category('Put in what type of objects?',
+                                           inventoryArray(), MENU_LOOT_QFLAGS, PICK_ANY);
+        if (!picks.length) return 0;   // no non-autopick category filters specified
+        for (const p of picks) {
+            if (p.a_int === 'A') {
+                loot_everything = autopick = true;
+            } else if (p.a_int === 'P') {
+                loot_justpicked = true;
+                count = Math.max(0, p.count);
+                add_valid_menu_class('P');
+                loot_everything = false;
+            } else if (p.a_int === ALL_TYPES_SELECTED) {
+                all_categories = true;
+            } else {
+                add_valid_menu_class(menu_class_char(p.a_int));
+                loot_everything = false;
+            }
         }
     }
     const allow = (o) => loot_everything || all_categories || allow_category(o);
 
-    let chosen;
+    let chosen, lone = false;
     if (autopick) {
         chosen = inventoryArray().filter(allow);
     } else if (loot_justpicked
                && inventoryArray().filter((o) => o.pickup_prev).length === 1) {
-        // C: the lone just-picked item goes in without an item menu.
-        chosen = inventoryArray().filter((o) => o.pickup_prev);
+        // C: the lone just-picked item goes in without an item menu, split to
+        // the count the 'P' entry was given.
+        let otmp = inventoryArray().find((o) => o.pickup_prev);
+        if (count > 0 && count < otmp.quan) otmp = splitobj(otmp, count);
+        chosen = [otmp];
+        lone = true;
     } else {
-        chosen = await query_objlist_put_in(allow);
-        if (chosen === null) return 0;
+        let mflags = INVORDER_SORT | INCLUDE_VENOM;
+        if (game.flags?.invlet_constant !== false) mflags |= USE_INVLET;
+        if (loot_justpicked) mflags |= JUSTPICKED;
+        chosen = await query_objlist_loot('Put in what?', inventoryArray(), mflags, allow);
     }
     if (!chosen.length) return 0;
 
@@ -2850,11 +2724,18 @@ async function menu_loot_in(box, retry = 0) {
     // selection in_container() refuses (e.g. the container itself: "That would
     // be an interesting topological exercise.") still returns ECMD_TIME.
     let n = autopick ? 0 : chosen.length;
-    for (const obj of chosen) {
-        if (!game._pickup.current_container) break;
-        const res = await in_container(obj);
-        if (res < 0) break;
-        if (autopick) n += res;
+    if (autopick || lone) {
+        for (const obj of chosen) {
+            if (!game._pickup.current_container) break;
+            const res = await in_container(obj);
+            if (res < 0) break;
+            if (autopick) n += res;
+        }
+    } else {
+        for (const pick of chosen) {
+            if (!game._pickup.current_container) break;
+            if (!await loot_pick(pick, in_container)) break;
+        }
     }
     game._pickup.current_container = saved;
     return n;
@@ -2961,7 +2842,7 @@ async function loot_containers_menu(boxes) {
         menu_ch = nextMenuCh(menu_ch);
     }
     const buildLines = () => {
-        const lines = [{ text: 'Loot which containers?', attr: ATR_INVERSE }, { text: '' }];
+        const lines = [{ text: 'Loot which containers?', attr: menuHeadAttr() }, { text: '' }];
         for (const it of items) lines.push({ text: menuItemLine(it) });
         return lines;
     };
@@ -3018,90 +2899,110 @@ async function doloot_core() {
 
     let timepassed = 0;
     let c = -1;
-    const boxes = floor_boxes_here();
-    if (boxes.length > 0) {
-        // C ref: pickup.c doloot_core():2223 — blind and gloveless, touching a
-        // cockatrice corpse here is fatal before any container prompt appears.
-        if (Blind() && !game.uarmg) {
-            for (const nobj of objects_at(u.ux, u.uy)) {
-                if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
-                    await feel_cockatrice(nobj, false);
-                    return 1; // ECMD_TIME
+    let underfoot = true;
+    const cc = { x: u.ux, y: u.uy };
+    // C ref: pickup.c doloot_core() `lootcont:` — the containers on square cc.
+    // Returns null to fall into `lootmon:`, else the command's result.
+    const lootcont = async () => {
+        const boxes = floor_boxes_at(cc.x, cc.y);
+        if (boxes.length > 0) {
+            // C ref: pickup.c doloot_core():2223 — blind and gloveless, touching a
+            // cockatrice corpse here is fatal before any container prompt appears.
+            if (Blind() && !game.uarmg) {
+                for (const nobj of objects_at(cc.x, cc.y)) {
+                    if (nobj.otyp === CORPSE && will_feel_cockatrice(nobj, false)) {
+                        await feel_cockatrice(nobj, false);
+                        return 1; // ECMD_TIME
+                    }
                 }
             }
-        }
-        if (boxes.length > 1) {
-            const picks = await loot_containers_menu(boxes);
-            if (picks === null) {
-                // ESC: C's select_menu returns -1 here, which is `!= 0`, so C
-                // still sets c = 'y' and skips the "nothing to loot" fallback.
-                c = 'y';
-            } else if (picks.length > 0) {
-                const n = picks.length;
-                for (let i = 0; i < n; i++)
-                    timepassed |= await do_loot_one(picks[i].obj, i + 1 < n);
+            if (boxes.length > 1) {
+                const picks = await loot_containers_menu(boxes);
+                if (picks === null) {
+                    // ESC: C's select_menu returns -1 here, which is `!= 0`, so C
+                    // still sets c = 'y' and skips the "nothing to loot" fallback.
+                    c = 'y';
+                } else if (picks.length > 0) {
+                    const n = picks.length;
+                    for (let i = 0; i < n; i++)
+                        timepassed |= await do_loot_one(picks[i].obj, i + 1 < n);
+                    c = 'y';
+                }
+                // confirmed with nothing picked (picks === []): c stays -1, C
+                // falls through to the mon_beside/"nothing to loot" tail below.
+            } else {
+                timepassed |= await do_loot_one(boxes[0], false);
                 c = 'y';
             }
-            // confirmed with nothing picked (picks === []): c stays -1, C
-            // falls through to the mon_beside/"nothing to loot" tail below.
-        } else {
-            timepassed |= await do_loot_one(boxes[0], false);
-            c = 'y';
+        } else if (IS_GRAVE(game.level?.at?.(cc.x, cc.y)?.typ)) {
+            await pline('You need to dig up the grave to effectively loot it...');
         }
-    } else if (IS_GRAVE(game.level?.at?.(u.ux, u.uy)?.typ)) {
-        await pline('You need to dig up the grave to effectively loot it...');
-    }
+        return null;
+    };
 
-    if (c === 'y') return timepassed ? 1 : 0;
-
-    // C ref: pickup.c doloot_core():2295 lootmon: — "3.3.1 introduced
-    // directional looting for some things."  mon_beside() finds a monster in
-    // the 3x3 box; get_adjacent_loc()'s getdir() EATS the following keystroke
-    // regardless of what's found there.
-    if (mon_beside(u.ux, u.uy) || game.iflags?.menu_requested) {
-        const { getdir } = await import('./cmd.js');
-        const dir = await getdir('Loot in what direction?');
-        if (!dir) { await pline('Never mind.'); return 0; }
-        const cx = u.ux + dir.dx, cy = u.uy + dir.dy;
-        if (!isok(cx, cy)) { await pline('Invalid loot location'); return 0; }
-        const underfoot = (dir.dx === 0 && dir.dy === 0);
-        // C ref: pickup.c:2304-2307. Looking for loot overhead spends a
-        // turn even when there is nothing there, before testing monsters.
-        if (dir.dz < 0) {
-            await pline(`You don't find anything to loot on the ${ceiling(cx, cy)}.`);
-            return 1;
+    // C ref: pickup.c doloot_core():2213 — `if (iflags.menu_requested) goto
+    // lootmon;`: the 'm' prefix skips the containers underfoot and asks for a
+    // direction first (choosing '.' comes back to `lootcont:` below).
+    let skipcont = !!game.iflags?.menu_requested;
+    for (;;) {
+        if (!skipcont) {
+            const res = await lootcont();
+            if (res !== null) return res;
         }
+        skipcont = false;
 
-        const mtmp = m_at(cx, cy);
-        let looted_mon = false;
-        let mon_timepassed = 0;
-        const passed_info = { value: 0 };
-        const prev_loot = { value: false };
-        if (mtmp) {
-            mon_timepassed = await loot_mon(mtmp, passed_info, prev_loot);
-            if (mon_timepassed) looted_mon = true;
-        }
-        const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
-        const confused = (u?.uprops?.Confusion || 0) > 0;
-        if (confused || stunned) mon_timepassed = 1;
+        // C ref: pickup.c doloot_core():2295 lootmon: — "3.3.1 introduced
+        // directional looting for some things."  mon_beside() finds a monster in
+        // the 3x3 box; get_adjacent_loc()'s getdir() EATS the following keystroke
+        // regardless of what's found there.
+        if (c !== 'y' && (mon_beside(u.ux, u.uy) || game.iflags?.menu_requested)) {
+            const { getdir } = await import('./cmd.js');
+            const dir = await getdir('Loot in what direction?');
+            if (!dir) { await pline('Never mind.'); return 0; }
+            cc.x = u.ux + dir.dx;
+            cc.y = u.uy + dir.dy;
+            if (!isok(cc.x, cc.y)) { await pline('Invalid loot location'); return 0; }
+            underfoot = (cc.x === u.ux && cc.y === u.uy);
+            if (underfoot && has_container_at(cc.x, cc.y))
+                continue; // goto lootcont
+            // C ref: pickup.c:2304-2307. Looking for loot overhead spends a
+            // turn even when there is nothing there, before testing monsters.
+            if (dir.dz < 0) {
+                await pline(`You don't find anything to loot on the ${ceiling(cc.x, cc.y)}.`);
+                return 1;
+            }
 
-        if (looted_mon) return mon_timepassed ? 1 : 0;
-
-        if (!underfoot && has_container_at(cx, cy)) {
+            const mtmp = m_at(cc.x, cc.y);
+            let looted_mon = false;
+            const passed_info = { value: 0 };
+            const prev_loot = { value: false };
             if (mtmp) {
-                await pline(`You can't loot anything ${passed_info.value ? 'else ' : ''}`
-                            + `there with ${mon_nam(mtmp)} in the way.`);
-                return mon_timepassed ? 1 : 0;
+                timepassed = await loot_mon(mtmp, passed_info, prev_loot);
+                if (timepassed) looted_mon = true;
             }
-            await pline('You have to be at a container to loot it.');
-            return mon_timepassed ? 1 : 0;
+            const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
+            const confused = (u?.uprops?.Confusion || 0) > 0;
+            if (confused || stunned) timepassed = 1;
+
+            if (!looted_mon) {
+                if (!underfoot && has_container_at(cc.x, cc.y)) {
+                    if (mtmp) {
+                        await pline(`You can't loot anything ${passed_info.value ? 'else ' : ''}`
+                                    + `there with ${mon_nam(mtmp)} in the way.`);
+                        return timepassed ? 1 : 0;
+                    }
+                    await pline('You have to be at a container to loot it.');
+                } else {
+                    await pline(`You don't find anything ${(passed_info.value || prev_loot.value) ? 'else ' : ''}`
+                                + `${!underfoot ? 't' : ''}here to loot.`);
+                    return timepassed ? 1 : 0;
+                }
+            }
+        } else if (c !== 'y' && c !== 'n') {
+            await pline(`You don't find anything ${underfoot ? 'here' : 'there'} to loot.`);
         }
-        await pline(`You don't find anything ${(passed_info.value || prev_loot.value) ? 'else ' : ''}`
-                    + `${!underfoot ? 't' : ''}here to loot.`);
-        return mon_timepassed ? 1 : 0;
+        return timepassed ? 1 : 0;
     }
-    await pline("You don't find anything here to loot.");
-    return 0;
 }
 
 // C ref: lock.c picklock() — the lock-picking occupation, run each turn from the
@@ -3178,6 +3079,9 @@ export async function picklock() {
         if (door.doormask & D_TRAPPED) {
             await (await import('./cmd.js')).b_trapped('door', true);
             door.doormask = D_NODOOR;
+            (await import('./vision.js')).unblock_point(x, y);
+            if ((await import('./shkroom.js')).in_rooms(x, y, SHOPBASE)[0])
+                await (await import('./shk.js')).add_damage(x, y, SHOP_DOOR_COST);
         } else if (door.doormask & D_LOCKED) {
             door.doormask = D_CLOSED;
         } else {
@@ -3187,8 +3091,11 @@ export async function picklock() {
     } else {
         xl.box.olocked = !xl.box.olocked;
         xl.box.lknown = 1;
-        // C lock.c:154-155 chest_trap() is not modeled; scheduled boxes are
-        // untrapped, so this has no effect on the covered path.
+        if (xl.box.otrapped) {
+            const { chest_trap } = await import('./trap.js');
+            const { FINGER } = await import('./const.js');
+            await chest_trap(xl.box, FINGER, false); /* C lock.c:154 */
+        }
     }
     exercise(A_DEX, true);
     game._picklock_box = null;
@@ -3258,11 +3165,14 @@ async function doforce() {
         await pline(`You can't force anything ${why} weapon${use_plural ? 's' : ''}.`);
         return 0;
     }
-    // C ref: lock.c doforce():706 — !can_reach_floor(TRUE) -> cant_reach_floor()
-    // and no turn: a levitating hero can't get at a box on the floor.
-    if (game.u?.uprops?.Levitation) {
-        await pline(`You can't reach the ${surface(game.u.ux, game.u.uy)}.`);
-        return 0;
+    // C ref: lock.c doforce():702 -- !can_reach_floor(TRUE) -> cant_reach_floor(u.ux, u.uy, FALSE, TRUE, FALSE)
+    // and no turn: levitation, an engulfer, or a rider without Basic riding skill can't get at a box on the floor.
+    {
+        const { can_reach_floor, cant_reach_floor } = await import('./engrave.js');
+        if (!can_reach_floor(true)) {
+            await cant_reach_floor(game.u.ux, game.u.uy, false, true, false);
+            return 0;
+        }
     }
 
     const picktyp = (is_blade_obj(uwep) && !is_pick_obj(uwep)) ? 1 : 0;
@@ -3275,7 +3185,7 @@ async function doforce() {
         game._force_box = xl.box;
         return 1;
     }
-    game.xlock = null;
+    if (game.xlock) game.xlock.box = null;   // C ref: lock.c doforce():715 `gx.xlock.box = 0` only -- usedtime/door survive so a later pick resumes
 
     let chosen = null;
     for (const box of floor_lockboxes_here()) {
@@ -3364,15 +3274,16 @@ async function chest_shatter_msg(otmp) {
     await update_topl(`${art} ${thing} ${disposition}!`);
 }
 
-// C ref: lock.c breakchestlock(box, destroyit):172-211 — destroy-it path only
-// (forcelock success on a non-blade weapon with !rn2(3)).  Spills contents at
-// the hero's feet; every potion and a 1/3 chance of each other item are
-// destroyed (chest_shatter_msg), the rest land on the floor.  No shop on the
-// starting level, so no costly_alteration.
+// C ref: lock.c breakchestlock(): bill a broken lock without its contents,
+// or spill and shatter contents when #force destroys the box.
 async function breakchestlock(box, destroyit) {
     if (!destroyit) {
-        // C ref: lock.c:162 breakchestlock() — the lock breaks, the box stays,
-        // and NOTHING is printed.  The caller passes !picktyp && !rn2(3).
+        const contents = box.cobj;
+        box.cobj = [];
+        const { costly_alteration } = await import('./shk.js');
+        const { COST_BRKLCK } = await import('./const.js');
+        await costly_alteration(box, COST_BRKLCK);
+        box.cobj = contents;
         box.olocked = 0; box.obroken = 1; box.lknown = 1;
         return;
     }
@@ -3488,12 +3399,14 @@ function render_overview_menu(lines) {
     disp.setCursor(textCol + 6, moreRow);
 }
 
-// C ref: dungeon.c dooverview() -> show_overview(0, 0) -> select_menu(win,
-// PICK_NONE, ...): a plain display, dismissed by ESC/space/return.  Afterwards
-// tty_dismiss_nhwindow()'s corner-menu path (docorner) repaints the area the
-// menu covered with the real map/status; flush_screen(1) reproduces that.
+// C ref: dungeon.c dooverview() -> show_overview(menu_requested ? -1 : 0, 0) ->
+// select_menu(win, PICK_NONE, ...): a plain display, dismissed by
+// ESC/space/return.  Afterwards tty_dismiss_nhwindow()'s corner-menu path
+// (docorner) repaints the area the menu covered with the real map/status;
+// flush_screen(1) reproduces that.  `m^o` (why -1) is the selectable variant.
 export async function dooverview() {
-    await show_overview_disclosure(0, 0);
+    await show_overview_disclosure(game.iflags?.menu_requested ? -1 : 0, 0);
+    if (game.iflags) game.iflags.menu_requested = false;
     return 0;
 }
 
@@ -3501,9 +3414,35 @@ export async function dooverview() {
 // Same corner-menu rendering as the live command, just with build_overview_lines'
 // `final`/`how` params threaded through so it lists every visited level and
 // (for a real death) appends the "Final resting place for you, ..." lines.
+// final == -1 is dungeon.c show_overview(-1, ...), the 'm' prefix menu: every
+// level listed, each "Level N:" line a PICK_ONE entry whose pick goes to
+// query_annotation() for that level.
 export async function show_overview_disclosure(final, how) {
     const lines = await build_overview_lines(final, how);
     if (!lines.length) return;
+    if (final === -1) {
+        // C ref: wintty.c tty_end_menu() — accelerators are handed out in item
+        // order, restarting at 'a' on each page of min(52, rows-1) entries.
+        const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
+        let menu_ch = 'a';
+        lines.forEach((ln, i) => {
+            if (i % lmax === 0) menu_ch = 'a';
+            if (ln.lev) {
+                ln.sel = menu_ch;
+                menu_ch = menu_ch === 'z' ? 'A' : String.fromCharCode(menu_ch.charCodeAt(0) + 1);
+            }
+        });
+        const m = extcmd_end_menu(lines, null);
+        const picked = await extcmd_select_menu(m);
+        // tty_select_menu() dismisses the window before show_overview() acts
+        // on the selection.
+        await dismiss_invent_screen();
+        if (picked != null) {
+            const it = m.pages[m.lastPage].find((x) => x.sel === picked);
+            await query_annotation(it.lev);
+        }
+        return;
+    }
     // C ref: wintty.c tty_display_nhwindow() — a menu whose maxrow reaches the
     // screen height (23+ entries, or several pages) takes the whole screen
     // (offx == 0) and is torn down with docrt() instead of docorner().
@@ -3514,9 +3453,22 @@ export async function show_overview_disclosure(final, how) {
         return;
     }
     render_overview_menu(lines);
+    // C ref: wintty.c process_menu_window() for a one-page PICK_NONE menu: only
+    // the keys in `resp` (xwaitforspace) reach the switch, a digit starts a
+    // count, ESC while counting just stops the count, any other accepted key
+    // ends it, and ESC/Enter/space leave.
+    let counting = false, count = 0;
     for (;;) {
-        const key = await nhgetch();
-        if (key === 27 || key === 13 || key === 10 || key === 32) break;
+        const morc = await xwaitforspace(' 0123456789\x1b\n\r' + DEFAULT_MENU_CMDS);
+        if (morc >= '0' && morc <= '9') {
+            count = count * 10 + (morc.charCodeAt(0) - 48);
+            counting = count !== 0;
+            continue;
+        }
+        if (morc === '\x1b' && counting) { counting = false; count = 0; continue; }
+        if (morc === '\x1b' || morc === '\0' || morc === ' ') break;
+        counting = false;
+        count = 0;
     }
     await flush_screen(1);
 }
@@ -3703,7 +3655,7 @@ const HANDLERS = {
     seerings: itemaction_time(doprring),
     seetools: itemaction_time(doprtool),
     seeweapon: itemaction_time(doprwep),
-    showgold: doprgold,
+    showgold: itemaction_time(doprgold),
     showspells: dovspell,
     takeoffall: doddoremarm,
     teleport: dotelecmd,
@@ -3739,6 +3691,8 @@ const HANDLERS = {
     search: dosearch_extcmd,
     seeall: doprinuse_extcmd,
     showtrap: doidtrap_extcmd,
+    // C ref: cmd.c extcmdlist[] { C('z'), "suspend", dosuspend_core } (SUSPEND is defined in this build, so not CMD_NOT_AVAILABLE).
+    suspend: dosuspend_core,
     swap: doswapweapon_extcmd,
     takeoff: dotakeoff_extcmd,
     therecmdmenu: dotherecmdmenu_extcmd,
@@ -4541,7 +4495,7 @@ function wizIntrinsicEntries() {
         return t ? (t.get(game.u || {}) || 0) : (uprops[key] || 0);
     };
     const entries = [
-        { text: 'Which intrinsics?', attr: ATR_INVERSE },
+        { text: 'Which intrinsics?', attr: menuHeadAttr() },
         { text: '', attr: 0 },
     ];
     // C ref: wizcmds.c:967 — command assistance, independent of verbose.
@@ -4559,6 +4513,40 @@ function wizIntrinsicEntries() {
     return entries;
 }
 
+// C ref: wizcmds.c wiz_intrinsic() tail `docrt();` -- run for every outcome of
+// the menu, including a cancelled one.
+async function wiz_intrinsic_docrt() {
+    // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
+    // post_map; }`, skipping cls()/the message flush entirely.  This is a
+    // SECOND full stomach repaint after make_hallucinated()'s own, and while
+    // hallucinating each repaint spends eight more display-RNG picks, so
+    // skipping it leaves every later frame one batch behind (seed0383 step 165).
+    if (game.u?.uswallow) {
+        if (game._pending_message) await topl_more();
+        game._pending_message = '';
+        const { swallowed } = await import('./display.js');
+        await swallowed(1);
+    } else {
+        // C ref: display.c docrt_flags() non-swallow path — cls() (flush the
+        // pending topline through its OWN --More--), vision_recalc(2), repaint
+        // remembered glyphs, then vision_recalc(0)+see_monsters() to re-see
+        // everything visible.  This whole pass was OUTRIGHT MISSING (only
+        // flush_screen(1) ran after), so a hallucinating hero's map kept
+        // showing make_hallucinated()'s own see_monsters()/see_objects() draw
+        // instead of docrt()'s full second pass — every later screen one whole
+        // redraw's worth of display-rng picks behind (heldout-mirror44
+        // seed0383-wizard-hallucinate, step 165: C 40 more draws here, ours 0).
+        // js/display.js's docrt() already ports this sequence faithfully
+        // (message flush included); call it directly rather than also
+        // flushing the message here — a duplicate EARLY flush closed this
+        // step's capture before docrt()'s own redraw ran, pushing all 40
+        // draws into the WRONG step.
+        const { docrt } = await import('./display.js');
+        await docrt();
+    }
+    await flush_screen(1);
+}
+
 // C ref: wizcmds.c wiz_intrinsic() — a PICK_ANY menu of every timeable
 // property; each pick adds DEFAULT_TIMEOUT_INCR to its intrinsic timeout and
 // plines "Timeout for <prop> set to/increased by N.".
@@ -4567,8 +4555,9 @@ async function wiz_intrinsic() {
     const committed = await select_command_menu(entries);
     await dismiss_invent_screen();
     if (!committed) {
-        // ESC deselects everything and cancels; the map is repainted.
-        await flush_screen(1);
+        // ESC deselects everything and cancels; wiz_intrinsic() still ends
+        // with docrt() (no pick, n <= 0).
+        await wiz_intrinsic_docrt();
         return 0;
     }
     const u = game.u;
@@ -4647,35 +4636,7 @@ async function wiz_intrinsic() {
             if (game.program_state?.gameover) return 0;
         }
     }
-    // C ref: display.c docrt():1727 — `if (u.uswallow) { swallowed(1); goto
-    // post_map; }`, skipping cls()/the message flush entirely.  This is a
-    // SECOND full stomach repaint after make_hallucinated()'s own, and while
-    // hallucinating each repaint spends eight more display-RNG picks, so
-    // skipping it leaves every later frame one batch behind (seed0383 step 165).
-    if (game.u?.uswallow) {
-        if (game._pending_message) await topl_more();
-        game._pending_message = '';
-        const { swallowed } = await import('./display.js');
-        await swallowed(1);
-    } else {
-        // C ref: display.c docrt_flags() non-swallow path — cls() (flush the
-        // pending topline through its OWN --More--), vision_recalc(2), repaint
-        // remembered glyphs, then vision_recalc(0)+see_monsters() to re-see
-        // everything visible.  This whole pass was OUTRIGHT MISSING (only
-        // flush_screen(1) ran after), so a hallucinating hero's map kept
-        // showing make_hallucinated()'s own see_monsters()/see_objects() draw
-        // instead of docrt()'s full second pass — every later screen one whole
-        // redraw's worth of display-rng picks behind (heldout-mirror44
-        // seed0383-wizard-hallucinate, step 165: C 40 more draws here, ours 0).
-        // js/display.js's docrt() already ports this sequence faithfully
-        // (message flush included); call it directly rather than also
-        // flushing the message here — a duplicate EARLY flush closed this
-        // step's capture before docrt()'s own redraw ran, pushing all 40
-        // draws into the WRONG step.
-        const { docrt } = await import('./display.js');
-        await docrt();
-    }
-    await flush_screen(1);
+    await wiz_intrinsic_docrt();
     return 0;
 }
 
@@ -4807,33 +4768,12 @@ export async function doextcmd() {
 // missing message: the answer keystroke falls through to rhack() as a fresh
 // command, which desynchronises every later step in the session.
 
-const GETOBJ_EXCLUDE_X = -3, GETOBJ_SUGGEST_X = 2;           // js/invent.js:147,152
-
-// C ref: artifact.c:1727 invoke_ok().  js/artifact.js already ports the real
-// check (obj.oartifact || objects[].flags & F_UNIQUE || unidentified fake
-// Amulet, plus the crystal-ball synonym-for-apply case) — F_UNIQUE is this
-// port's own object-table bit (js/mkobj.js), correctly set for the
-// Candelabrum/Bell, unlike the oc_unique field o_init.js only ever populates
-// for the Amulet of Yendor and the Book of the Dead.  Its return codes are
-// scoped to artifact.js's own local GETOBJ_EXCLUDE(-3)/GETOBJ_SUGGEST(1)
-// pair though, and that SUGGEST(1) collides with invent.js's real
-// GETOBJ_DOWNPLAY(1) — the getobj() below would silently omit a suggested
-// otyp from the prompt instead of highlighting it, so remap it to invent.js's
-// real GETOBJ_SUGGEST(2).
-function invoke_ok(obj) {
-    return artifact_invoke_ok(obj) === GETOBJ_EXCLUDE_X ? GETOBJ_EXCLUDE_X : GETOBJ_SUGGEST_X;
-}
-
-// C ref: artifact.c:1749 doinvoke() -> retouch_object() -> :2131 arti_invoke().
-// artifact.js numbers ECMD_TIME 4; this module's convention is 1.
+// C ref: artifact.c:1749 doinvoke() — getobj, retouch_object, arti_invoke all
+// live in js/artifact.js.  artifact.js numbers ECMD_TIME 4; this module's
+// convention is 1 for time, 0 for none.
 async function doinvoke() {
-    const inv = await import('./invent.js');
     const art = await import('./artifact.js');
-    const obj = await inv.getobj('invoke', invoke_ok, inv.GETOBJ_PROMPT);
-    if (!obj) return 0;                                  // ECMD_CANCEL
-    const ref = { obj };
-    if (!(await art.retouch_object(ref, false))) return 1; // ECMD_TIME
-    return (await art.arti_invoke(ref.obj)) === 4 ? 1 : 0;
+    return (await art.doinvoke()) === 4 ? 1 : 0;
 }
 
 // C ref: pickup.c:3505 choose_tip_container_menu() — PICK_ONE over the floor
@@ -4924,7 +4864,7 @@ async function run_pickone_corner_menu(title, entries) {
     const sels = entries.filter((e) => e.sel).map((e) => e.sel).join('');
     let result;
     for (;;) {
-        const lines = [{ text: title, attr: ATR_INVERSE }, { text: '' }];
+        const lines = [{ text: title, attr: menuHeadAttr() }, { text: '' }];
         for (const e of entries)
             lines.push({ text: e.sel ? `${e.sel} ${e.selected ? '*' : '-'} ${e.text}` : e.text });
         let maxcol = '(end) '.length;
@@ -5043,7 +4983,7 @@ export async function dotip() {
                     + `${surface(u.ux, u.uy)}${buf}.`);
         /* shop usage message comes after the spill message */
         if (otyp === CAN_OF_GREASE && cobj.spe > 0)
-            consume_obj_charge(cobj, true);
+            await consume_obj_charge(cobj, true);
         /* something [useless] happened */
         return 1;
     }
@@ -5067,28 +5007,10 @@ async function dountrap() {
     const { could_untrap } = await import('./trap.js');
     if (!(await could_untrap(true, false))) return 0;
 
-    // C ref: trap.c:5253 `untrap(FALSE, 0, 0, (struct obj *) 0)`.  With no rx/ry
-    // and no container, untrap() opens with the usual-case prompt
-    // (trap.c:5870-5875): `if (!getdir((char *) 0)) return 0;` then
-    // x = u.ux+u.dx, y = u.uy+u.dy.  getdir draws "In what direction?" and
-    // consumes one key, so skipping it both lost that screen and left the
-    // direction key to be re-read as a top-level command.
-    const { getdir } = await import('./cmd.js');
-    const dir = await getdir(null);
-    if (!dir) return 0;
-    const u = game.u;
-    const x = (u?.ux | 0) + (dir.dx | 0), y = (u?.uy | 0) + (dir.dy | 0);
-    if (!isok(x, y)) {
-        // C ref: trap.c:5886.
-        await pline('The perils lurking there are beyond your grasp.');
-        return 0;
-    }
-    // C ref: trap.c:5886 onwards — the floor-trap / door / box arms.  They live
-    // in js/trap.js as untrap_at(x, y, force) because C reads the direction
-    // inside untrap() and this port reads it above; `force` is TRUE only for
-    // #invoke or a magic key, neither of which reaches dountrap().
-    const { untrap_at } = await import('./trap.js');
-    return await untrap_at(x, y, false) ? 1 : 0;
+    // C ref: trap.c:5253 `untrap(FALSE, 0, 0, (struct obj *) 0)` (reads the
+    // direction itself, then resolves the square).
+    const { untrap } = await import('./trap.js');
+    return await untrap(false);
 }
 
 // C ref: cmd.c rhack() `res = (*func)()` — run an extended command's ef_funct

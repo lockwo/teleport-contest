@@ -8,6 +8,18 @@ export function resetGame() {
     return game;
 }
 
+// C ref: a freshly exec'd NetHack process starts every file-scope `static` and
+// every decl.c global that save.c never writes (mthrowu.c do_not_annoy, shk.c
+// pickmovetime, uhitm.c clockwise, ...) at its compiled-in value.  The judge
+// runs every segment of a session in ONE node process (frozen/ps_test_runner.mjs
+// runSession -> runSegment), so a module-level `let` that mirrors such a static
+// would carry the previous segment's value across a save/restore (or into the
+// next game).  A module registers a resetter here and NethackGame.start() runs
+// them all, right after resetGame(), exactly where a new process would begin.
+const process_statics = [];
+export function register_process_static(reset) { process_statics.push(reset); }
+export function reset_process_statics() { for (const reset of process_statics) reset(); }
+
 // C ref: svc.context.run.  This port splits C's one variable three ways:
 // context.run (the live run/travel), context.run_leftover8 (the run == 8 a
 // finished travel leaves behind, see hack.js travel_walk()) and

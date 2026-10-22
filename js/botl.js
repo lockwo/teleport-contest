@@ -2570,7 +2570,7 @@ function add_menu_str(win, str) {
                     NO_COLOR, str, MENU_ITEMFLAGS_NONE);
 }
 function add_menu_heading(win, str) {
-    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_INVERSE,
+    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, game.iflags?.menu_headings?.attr ?? ATR_INVERSE,
                     NO_COLOR, str, MENU_ITEMFLAGS_SKIPINVERT);
 }
 function end_menu(win, prompt) {

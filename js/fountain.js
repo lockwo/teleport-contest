@@ -7,18 +7,18 @@
 
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold } from './display.js';
+import { update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
-import { find_ac } from './u_init.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
 import { fruitname } from './objnam.js';
 import { makeplural } from './plural.js';
-import { hcolor, rndmonnam } from './do_name.js';
+import { hcolor, rndmonnam, mhe, mhis } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
-import { newuhs } from './eat.js';
+import { Poison_resistance } from './youprop.js';
+import { newuhs, morehungry, vomit } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
 import { clear_area_cells } from './vision.js';
@@ -42,34 +42,6 @@ const nothing_seems_to_happen = 'Nothing seems to happen.';
 
 // C ref: rm.h FOUNTAIN_IS_LOOTED / _WARNED — bits in levl[x][y].looted.
 function fountain_is_looted(loc) { return ((loc?.looted || 0) & F_LOOTED) !== 0; }
-
-// C ref: eat.c morehungry(num) — `u.uhunger -= num; newuhs(TRUE);`.  eat.js
-// keeps the arithmetic inline at each of its own call sites and exports no
-// morehungry(), so the two fountain callers (foul water, "no good" water) and
-// the sink's sewage sip get it here.  RNG-free itself, but u.uhunger steers
-// the botl hunger word AND newuhs()'s fainting rn2, so discarding the roll's
-// value (as this file used to) leaves the hero permanently un-hungered.
-async function morehungry(num) {
-    const u = game.u;
-    if (!u) return;
-    u.uhunger = (u.uhunger ?? 900) - num;
-    await newuhs(true);
-}
-
-// C ref: prop.h Poison_resistance.  Mirrors js/potion.js's reader: the port
-// spreads the intrinsic over three different uprops spellings depending on
-// which subsystem granted it (role intrinsic, race intrinsic, item).
-function Poison_resistance() {
-    if (game.u?.formprops?.Poison_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u;
-    if (!u) return false;
-    const p = u.uprops || {};
-    // A race-innate grant (e.g. every orc, from level 1) is never persisted
-    // as a stored flag anywhere in js/ — OR in the pure has_innate() derivation.
-    return !!(u.Poison_resistance || p.Poison_resistance
-              || p.HPoison_resistance || p.PoisonResistance)
-        || has_innate('HPoison_resistance');
-}
 
 // C ref: mondata.h is_watch(ptr) — a literal `ptr == &mons[PM_WATCHMAN] ||
 // ptr == &mons[PM_WATCH_CAPTAIN]` species-pointer test, so comparing pmidx is
@@ -215,11 +187,9 @@ export async function dipfountain(obj) {
     if (is_hands || obj === game.uarmg) {
         er = await wash_hands();
     } else {
+        // C ref: allmain.c moveloop_core() -- find_ac() runs once per player input (not from erode_obj/water_damage),
+        // so this turn's monster attacks still use the old u.uac and the new AC shows from the next input loop head.
         er = await water_damage(obj, null, true);
-        // C ref: allmain.c moveloop_core() — find_ac() runs once per player
-        // input (not from erode_obj/water_damage itself), so a dipped piece
-        // of worn armor's AC penalty is already visible on this same screen.
-        find_ac();
     }
 
     if (er === ER_DESTROYED || (er !== ER_NOTHING && !rn2(2))) {
@@ -266,7 +236,7 @@ export async function dipfountain(obj) {
         await update_topl('A strange tingling runs up your arm.');
         break;
     case 27: // Strange feeling
-        await update_topl('You feel a sudden chill.');
+        await You_feel('a sudden chill.');
         break;
     case 28: { // Strange feeling
         await update_topl('An urge to take a bath overwhelms you.');
@@ -364,7 +334,7 @@ export async function drinkfountain() {
 
     if (fate < 10) {
         await update_topl('The cool draught refreshes you.');
-        u.uhunger = (u.uhunger || 0) + rnd(10); /* don't choke on water */
+        u.uhunger = (u.uhunger ?? 900) + rnd(10); /* don't choke on water */
         await newuhs(false);
         if (mgkftn) return;
     } else {
@@ -373,7 +343,7 @@ export async function drinkfountain() {
             // C ref: fountain.c drinkfountain() case 19 — You_feel,
             // display_nhwindow(WIN_MESSAGE), enlightenment(MAGICENLIGHTENMENT),
             // exercise, "The feeling subsides."
-            await update_topl('You feel self-knowledgeable...');
+            await You_feel('self-knowledgeable...');
             await display_nhwindow_message();
             {
                 const { show_attributes_disclosure } = await import('./insight.js');
@@ -385,7 +355,7 @@ export async function drinkfountain() {
         case 20: /* Foul water */
             await update_topl(`The ${hliquid('water')} is foul!  You gag and vomit.`);
             await morehungry(rn1(20, 11));
-            vomit();
+            await vomit();
             break;
         case 21: /* Poisonous */
             await update_topl(`The ${hliquid('water')} is contaminated!`);
@@ -436,7 +406,7 @@ export async function drinkfountain() {
                     await update_topl('Then it passes.');
                 }
             } else {
-                await update_topl('You see an image of someone stalking you.');
+                await You_see('an image of someone stalking you.');
                 await update_topl('But it disappears.');
             }
             if (u) {
@@ -484,12 +454,6 @@ export async function drinkfountain() {
     await dryup(u.ux, u.uy, true);
 }
 
-// C ref: you.h mhe/mhis — genders[pronoun_gender(mtmp, PRONOUN_HALLU)].  The
-// neuter/"it" case (pronoun_gender's !canspotmon and is_neuter arms) is not
-// modelled; js/muse.js's local mhe() makes the same simplification.
-function mhe(mtmp) { return mtmp?.female ? 'she' : 'he'; }
-function mhis(mtmp) { return mtmp?.female ? 'her' : 'his'; }
-
 // C ref: fountain.c dowaterdemon() — unless the species is extinct/genocided,
 // makemon a water demon at the hero's square (MM_NOMSG).  Since the hero
 // occupies that square, makemon.c's byyou && !in_mklev branch fires first:
@@ -531,7 +495,7 @@ async function dowaterdemon() {
         if (!Blind())
             await update_topl(`You unleash ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}!`);
         else
-            await update_topl('You feel the presence of evil.');
+            await You_feel('the presence of evil.');
         // Low-level survival chance (fountain.c:75).
         if (rnd(100) > (80 + level_difficulty())) {
             await update_topl(
@@ -576,7 +540,7 @@ async function dowaternymph() {
         if (!Blind())
             await update_topl(`You attract ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}!`);
         else
-            await update_topl('You hear a seductive voice.');
+            await You_hear('a seductive voice.');
         mtmp.msleeping = 0;
         if (t_at(mtmp.mx, mtmp.my)) {
             /* C ref: fountain.c:141 mintrap(mtmp, NO_TRAP_FLAGS) */
@@ -588,7 +552,7 @@ async function dowaternymph() {
     if (!Blind())
         await update_topl('A large bubble rises to the surface and pops.');
     else
-        await update_topl('You hear a loud pop.');
+        await You_hear('a loud pop.');
 }
 // C ref: fountain.c dowatersnakes() — `int num = rn1(5, 2);` is the FIRST
 // statement, so the roll fires before (and independently of) the G_GONE test,
@@ -613,7 +577,7 @@ async function dowatersnakes() {
         await update_topl(`An endless stream of ${
             Hallucination() ? makeplural(rndmonnam().name) : 'snakes'} pours forth!`);
     } else {
-        await update_topl('You hear something hissing!');
+        await You_hear('something hissing!');
     }
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return;
@@ -642,7 +606,7 @@ async function dofindgem() {
     if (!Blind())
         await update_topl('You spot a gem in the sparkling waters!');
     else
-        await update_topl('You feel a gem here!');
+        await You_feel('a gem here!');
     mksobj_at(rnd_class(DILITHIUM_CRYSTAL, LUCKSTONE - 1),
               game.u.ux, game.u.uy, false, false);
     const loc = game.level?.at(game.u.ux, game.u.uy);
@@ -776,17 +740,6 @@ export async function dryup(x, y, isyou) {
 
 function Hallucination() { return !!game.u?.uhallu; }
 
-// C ref: prop.h Fire_resistance — intrinsic (Monk XL13, red dragon scales,
-// role/race grants) or extrinsic.  Same multi-spelling read as
-// Poison_resistance() above.
-function Fire_resistance() {
-    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u;
-    if (!u) return false;
-    const p = u.uprops || {};
-    return !!(u.Fire_resistance || p.Fire_resistance || p.HFire_resistance
-              || p.FireResistance);
-}
 
 // C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
 // (death path, killer text, polymorph arm).
@@ -842,20 +795,6 @@ async function spawnAtHeroSquare(pmidx) {
     return mtmp;
 }
 
-// C ref: eat.c:3736 vomit() — retching immobilizes the hero.  For a plain
-// (non-acid-breathing, non-poly'd) hero standing off an altar the cantvomit /
-// Sick / spewed arms draw nothing, so this reduces to C's universal tail:
-// nomul(-2) plus the deferred gn.nomovemsg that unmul() prints once the
-// countdown reaches 0.  RNG-free, but the TWO frozen turns it buys are not —
-// their monster moves belong to the same input boundary.
-function vomit() {
-    if ((game.multi ?? 0) >= -2) {              // eat.c:3759
-        nomul(-2);
-        game.multi_reason = 'vomiting';
-        game.nomovemsg = 'You can move again.';
-    }
-}
-
 // C ref: fountain.c drinksink() — quaff from a sink the hero stands on.
 // fate = rn2(20) selects the outcome.  Branches driving subsystems this port
 // doesn't model yet (random-form polyself) still spend their observable
@@ -884,7 +823,7 @@ export async function drinksink() {
         // tasty." and takes NO damage, so the rnd(6) must not be drawn either.
         // monstseesu/monstunseesu (M_SEEN_FIRE) is monster-memory bookkeeping
         // with no RNG.
-        if (Fire_resistance()) {
+        if ((await import('./zap.js')).Fire_resistance()) {
             await update_topl('It seems quite tasty.');
         } else {
             await losehp(rnd(6), 'sipping boiling water', 1 /* KILLED_BY */);
@@ -951,7 +890,7 @@ export async function drinksink() {
     case 9:
         await update_topl('Gaggg... this tastes like sewage!  You vomit.');
         await morehungry(rn1(30 - acurr_eff(A_CON), 11));
-        vomit();
+        await vomit();
         break;
     case 10: {
         await update_topl(`This ${water} contains toxic wastes!`);
@@ -963,10 +902,10 @@ export async function drinksink() {
         break;
     }
     case 11:
-        await update_topl('You hear clanking from the pipes...');
+        await You_hear('clanking from the pipes...');
         break;
     case 12:
-        await update_topl('You hear snatches of song from among the sewers...');
+        await You_hear('snatches of song from among the sewers...');
         break;
     case 13:
         await update_topl('Ew, what a stench!');

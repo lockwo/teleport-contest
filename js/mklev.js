@@ -1317,7 +1317,9 @@ function Is_rogue_level_mk() {
 async function makerooms() {
     const g = game;
     let tried_vault = false;
-    const difficulty = depth_of_level(g.u?.uz);
+    // C ref: themerms.lua is_eligible() reads nh.level_difficulty() (dungeon.c:
+    // amulet / builds_up / ring-of-aggravate-monster doubling), not depth().
+    const difficulty = level_difficulty();
     let themeroom_tries = 0;
 
     while (g.level.nroom < (MAXNROFROOMS - 1) && rnd_rect()) {
@@ -5223,6 +5225,8 @@ function hf_pick_vibrasquare_location() {
     const x_range = mz.x_maze_max - X_MAZE_MIN - 2 * INVPOS_X_MARGIN - 1;
     const y_range = mz.y_maze_max - Y_MAZE_MIN - 2 * INVPOS_Y_MARGIN - 1;
     let x = 0, y = 0, trycnt = 0;
+    if (!game.inv_pos) game.inv_pos = { x: 0, y: 0 };
+    game.inv_pos.x = game.inv_pos.y = 0; /*{occupied() => invocation_pos()}*/
     for (;;) {
         x = (X_MAZE_MIN + INVPOS_X_MARGIN + 1) + rn2(x_range);
         y = (Y_MAZE_MIN + INVPOS_Y_MARGIN + 1) + rn2(y_range);
@@ -5235,6 +5239,8 @@ function hf_pick_vibrasquare_location() {
             || !SPACE_POS(game.level.at(x, y)?.typ) || occupied(x, y));
         if (!reject) break;
     }
+    game.inv_pos.x = x;   /* svi.inv_pos: what invocation_pos() tests */
+    game.inv_pos.y = y;
     return { x, y };
 }
 

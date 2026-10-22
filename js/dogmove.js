@@ -14,16 +14,16 @@
 //   - the m_in_out_region / m_digweapon_check arms of newdogpos.
 
 import { game } from './gstate.js';
-import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT } from './const.js';
+import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT, A_NONE, EPRI, EMIN } from './const.js';
 import { an } from './hacklib.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
-    IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED,
+    IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, ALTAR,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
 import { is_quest_artifact } from './questpgr.js';
-import { newsym, display_nhwindow_message, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at } from './display.js';
+import { Deaf_hero, newsym, display_nhwindow_message, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at, You_feel } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
@@ -32,7 +32,7 @@ import { dist2, mfndpos, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku, m_digweapon_check } from './monmove.js';
 import { goodpos } from './teleport.js';
-import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, In_sokoban, SHOPBASE, W_SADDLE } from './const.js';
+import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, ALLOW_M, ALLOW_MDISP, In_sokoban, SHOPBASE, W_SADDLE } from './const.js';
 import { t_at } from './trap.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
@@ -49,7 +49,8 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     is_animal, mindless, nohands, M1_TUNNEL, M1_NEEDPICK,
     passes_walls_flag, throws_rocks_flag, is_swimmer_flag,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
-import { healmon, mon_hates_silver, max_mon_load } from './mon.js';
+import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn } from './mon.js';
+import { on_qstart_level } from './questok.js';
 import { max_passive_dmg, resists_ston, resists_poison, resists_acid, big_little_match } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
@@ -290,7 +291,7 @@ function terrainTyp(x, y) { return game.level?.at(x, y)?.typ; }
 // (oldest-first), so reverse it to reproduce C's traversal order — in dog_goal
 // the traversal order determines which object's APPORT rn2(8) fires first and
 // how gg.gtyp evolves, so the obj_resists/rn2(8) stream must match C's fobj.
-function fobj() {
+export function fobj() {
     const arr = game.level?.objects;
     if (!arr) return [];
     // C ref: mkobj.c:2362 place_object() — head insertion into fobj.  The array
@@ -743,7 +744,7 @@ async function dog_hunger(mtmp, edog) {
             else if (couldsee(mtmp.mx, mtmp.my))
                 await (await import('./sounds.js')).beg(mtmp);
             else
-                await emit_pet_msg(`You feel worried about ${y_monnam(mtmp)}.`);
+                await You_feel(`worried about ${y_monnam(mtmp)}.`);
             await (await import('./hack.js')).stop_occupation();
         } else if (moves > (edog.hungrytime || 0) + DOG_STARVE
                    || (mtmp.mhp ?? 1) <= 0) {
@@ -761,7 +762,7 @@ async function dog_starve(mtmp) {
     else if (cansee(mtmp.mx, mtmp.my))
         await emit_pet_msg(`${Monnam(mtmp)} starves.`, { x: mtmp.mx, y: mtmp.my });
     else
-        await emit_pet_msg(`You feel ${game.u?.uhallu ? 'bummed' : 'sad'} for a moment.`);
+        await You_feel(`${game.u?.uhallu ? 'bummed' : 'sad'} for a moment.`);
     const { mondied_mm } = await import('./mhitm.js');
     await mondied_mm(mtmp);
 }
@@ -891,8 +892,13 @@ async function dog_invent(mtmp, edog, udist) {
                         // lets the pickup APPEND after an unacknowledged prior message
                         // (e.g. a preceding "The <mon> is killed!") on the same top
                         // line, exactly as C's topl buffer does.
-                        if (cansee(omx, omy) && game.flags?.verbose !== false)
-                            await emit_pet_msg(`${Monnam(mtmp)} picks up ${pet_doname(otmp, true)}.`, { x: omx, y: omy });
+                        if (cansee(omx, omy)) {
+                            // C: distant_name() is evaluated for its artifact
+                            // discovery side effect even when verbose is off.
+                            const otmpname = pet_doname(otmp, true);
+                            if (game.flags?.verbose !== false)
+                                await emit_pet_msg(`${Monnam(mtmp)} picks up ${otmpname}.`, { x: omx, y: omy });
+                        }
                         // C ref: dogmove.c:463-464 — obj_extract_self(otmp) then
                         // newsym(omx, omy).  The pet is on the object's tile (omx,omy);
                         // the newsym refreshes the remembered background so the picked-up
@@ -913,10 +919,8 @@ async function dog_invent(mtmp, edog, udist) {
                             mtmp.weapon_check = NEED_HTH_WEAPON_PET;
                             await mon_wield_item(mtmp);
                         }
-                        // check_gear_next_turn(mtmp) sets misc_worn_check
-                        // |I_SPECIAL so the monster re-evaluates armour next
-                        // turn; m_dowear is not ported (monmove.js says the same
-                        // at its own mpickobj site), so the bit would be inert.
+                        // C ref: dogmove.c:471
+                        check_gear_next_turn(mtmp);
                     }
                 }
             }
@@ -988,8 +992,16 @@ export async function mdrop_obj(mtmp, obj, verbosely) {
     // C ref: steal.c:846 — do this last, after placing obj on the floor;
     // removing a steed's saddle throws the rider.
     const { DEADMONSTER } = await import('./mon.js');
-    if (!DEADMONSTER(mtmp) && unwornmask)
+    if (!DEADMONSTER(mtmp) && unwornmask) {
         update_mon_extrinsics(mtmp, obj, false, true);
+        // C ref: worn.c update_mon_extrinsics() tail (reached from mdrop_obj): `if (!on && mon == u.usteed && obj->otyp == SADDLE)
+        // dismount_steed(DISMOUNT_FELL)` -- a wand of opening that unsaddles the steed throws the rider.
+        if ((unwornmask & W_SADDLE) !== 0 && mtmp === game.u?.usteed) {
+            const { dismount_steed } = await import('./steed.js');
+            const { DISMOUNT_FELL } = await import('./const.js');
+            await dismount_steed(DISMOUNT_FELL);
+        }
+    }
 }
 
 // C ref: monmove.c weapon_check states (mon.h NEED_WEAPON / NEED_HTH_WEAPON).
@@ -1410,18 +1422,27 @@ function find_friends(mtmp, mtarg, maxdist) {
 function score_targ(mtmp, mtarg) {
     let score = 0;
     // C ref: dogmove.c:748 — `if (!mtmp->mconf || !rn2(3) || Is_qstart(&u.uz))`.
-    // The `!rn2(3)` half was dropped as "starting pets aren't confused", but a
-    // pet CAN be confused (dog_hunger sets mconf, so does a potion/trap), and
-    // then C draws rn2(3) here for every lined-up target before anything else.
-    const qstart = false; // Is_qstart(&u.uz): the quest home level, not modelled
-    if (!mtmp.mconf || !rn2(3) || qstart) {
+    // A pet CAN be confused (dog_hunger sets mconf, so does a potion/trap), and
+    // then C draws rn2(3) here for every lined-up target before the quest-start
+    // override, which is only consulted when that draw fails.
+    if (!mtmp.mconf || !rn2(3) || on_qstart_level()) {
         // quest friendlies: never targeted (no rnd(5)).  Read the real MSOUND
         // table, not a nonexistent `data.msound` string field.
         const tms = (mtarg !== HERO_TARG) ? msound_of(mtarg.data) : undefined;
         if (tms === MS_LEADER || tms === MS_GUARDIAN) return -5000;
-        // C ref: dogmove.c:771 — a coaligned peaceful priest/minion is spared.
-        // (isminion/ispriest alignment is not tracked on our monsters, so the
-        //  branch reduces to false; it draws no RNG either way.)
+        // C ref: dogmove.c:750-774 — faith1/faith2 and the coaligned-peaceful
+        // guard.  The hero (HERO_TARG) is not a minion/priest.  EPRI/EMIN live
+        // either in mextra or flat on the monster in this port.
+        let faith1 = true, faith2 = true, align1 = A_NONE, align2 = A_NONE;
+        if (mtmp.isminion) align1 = (EMIN(mtmp) ?? mtmp.emin)?.min_align ?? A_NONE;
+        else if (mtmp.ispriest) align1 = (EPRI(mtmp) ?? mtmp.epri)?.shralign ?? A_NONE;
+        else faith1 = false;
+        if (mtarg === HERO_TARG) faith2 = false;
+        else if (mtarg.isminion) align2 = (EMIN(mtarg) ?? mtarg.emin)?.min_align ?? A_NONE;
+        else if (mtarg.ispriest) align2 = (EPRI(mtarg) ?? mtarg.epri)?.shralign ?? A_NONE;
+        else faith2 = false;
+        if (faith1 && faith2 && align1 === align2 && mtarg.mpeaceful)
+            return -5000;
         // adjacent monster -> melee range, not a ranged target (no rnd(5)).
         if (mtarg !== HERO_TARG
             && distmin(mtmp.mx, mtmp.my, mtarg.mx, mtarg.my) <= 1)
@@ -1643,8 +1664,9 @@ export async function dog_move(mtmp, after) {
 
     // Count uncursed-item squares (for the cursed-item avoidance roll).  C ref
     // dogmove.c:1070-1077 — a monster-occupied square without ALLOW_M/ALLOW_MDISP
-    // is skipped.  mon_allowflags() gives every tame monster ALLOW_M, so the
-    // skip cannot fire here and the loop reduces to the cursed-object test.
+    // is skipped.  mon_allowflags() gives every tame monster ALLOW_M, so this
+    // only fires for the hero's own square when a monster (an engulfer) shares
+    // it: mfndpos() reports that square as ALLOW_U (Conflict) and not ALLOW_M.
     // C ref: dogmove.c:1080 — `better_with_displacing = should_displace(...)`
     // and the ALLOW_MDISP arm of the candidate loop are omitted: mfndpos only
     // sets ALLOW_MDISP for is_displacer(ptr) (the displacer beast), and with no
@@ -1652,7 +1674,8 @@ export async function dog_move(mtmp, after) {
     // Neither draws RNG, so this is inert until a displacer beast is tamed.
     let uncursedcnt = 0;
     for (let i = 0; i < cnt; i++) {
-        const { x: nx, y: ny } = poss[i];
+        const { x: nx, y: ny, info } = poss[i];
+        if (MON_AT(nx, ny) && !((info & ALLOW_M) || (info & ALLOW_MDISP))) continue;
         if (cursed_object_at(nx, ny)) continue;
         uncursedcnt++;
     }
@@ -1686,11 +1709,13 @@ export async function dog_move(mtmp, after) {
             if (dj > 16 && dj >= udist) continue;
         }
 
-        // C ref: dogmove.c:1102 — ALLOW_M: the pet melees an adjacent monster.
-        // A monster square either triggers an attack (return) or the pet balks
-        // and the square is skipped entirely (C `continue`); either way it never
-        // reaches the cursed-object / backtrack / distance logic below.
-        const mtmp2 = MON_AT(nx, ny);
+        // C ref: dogmove.c:1102 — `(info & ALLOW_M) && MON_AT`: the pet melees an
+        // adjacent monster.  A monster square either triggers an attack (return)
+        // or the pet balks and the square is skipped entirely (C `continue`);
+        // either way it never reaches the cursed-object / backtrack / distance
+        // logic below.  The hero's own square (ALLOW_U, engulfer there) is not
+        // ALLOW_M and falls through to those tests like any other candidate.
+        const mtmp2 = (poss[i].info & ALLOW_M) ? MON_AT(nx, ny) : null;
         if (mtmp2) {
             const r = await dog_attack_mon(mtmp, mtmp2, omx, omy, after, nx, ny);
             if (r !== null) return r; // attacked -> done with this move
@@ -1726,8 +1751,8 @@ export async function dog_move(mtmp, after) {
             const trap = t_at(nx, ny);
             if (trap) {
                 if (mtmp.mleashed) {
-                    if (!game.u?.udeaf)
-                        await emit_pet_msg(`${noit_Monnam(mtmp)} whimpers.`);
+                    if (!Deaf_hero())
+                        await (await import('./sounds.js')).whimper(mtmp);
                 } else if (trap.tseen && rn2(40)) {
                     continue;
                 }
@@ -2001,14 +2026,11 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
             const oprice = unpaid_cost(obj, 1 /* COST_CONTENTS */);
             await emit_pet_msg(`That ${objnambuf} will cost you ${oprice} ${currency(oprice)}.`);
         }
-        // C ref: mon.c:1392 m_consume_obj() — delobj(), then the
-        // polymorph / grow-up / heal / mon_givit() arms.  newsym() repaints the
-        // vacated tile (the pet stands on it, so the remembered background
-        // glyph must refresh to the object-free terrain).
+        // C ref: mon.c:1392 m_consume_obj() — delobj() (whose newsym repaints
+        // the vacated tile), then the polymorph / grow-up / heal / mon_givit()
+        // arms.  dog_eat() itself issues no further newsym() here.
         const { m_consume_obj } = await import('./monmove.js');
-        const ox = obj.ox, oy = obj.oy;
         await m_consume_obj(mtmp, obj);
-        if (isok(ox, oy)) newsym(ox, oy);
     }
 
     // C ref: dogmove.c:344 — return (DEADMONSTER(mtmp)) ? 2 : 1.
@@ -2159,10 +2181,12 @@ function vtense(verb) {
 // Remembered glyphs are stored as display chars here, so "is an object glyph" is
 // the object-class symbol set, minus '+' on a door square (a closed door).
 const OBJ_CLASS_SYMS = ')[="(%!?/*`0$';
+// '_' is an iron chain (CHAIN_CLASS) except where it is the altar's cmap symbol.
 function remembered_is_object(loc) {
     const ch = loc?.remembered_glyph?.ch;
     if (!ch || ch === ' ') return false;
     if (ch === '+') return !IS_DOOR(loc.typ);
+    if (ch === '_') return loc.typ !== ALTAR;
     return OBJ_CLASS_SYMS.includes(ch);
 }
 function reluctant_what(x, y) {

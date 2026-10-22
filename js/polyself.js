@@ -12,7 +12,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, You_feel } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -30,7 +30,8 @@ import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
 import { weapon_descr } from './weapon.js';
 import { objects as OBJECTS, maybe_adjust_light } from './mkobj.js';
-import { place_object, WEAPON_CLASS } from './mkobj.js';
+import { place_object, WEAPON_CLASS, is_flimsy } from './mkobj.js';
+import { helm_simple_name } from './do_wear.js';
 import { the } from './objnam.js';
 import { makesingular } from './plural.js';
 import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
@@ -54,13 +55,13 @@ import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
 import { is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag, strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING, M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID, lays_eggs_flag, mindless, msound_of, is_swimmer_flag, is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid, polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM, M1_WALLWALK, M1_REGEN, is_whirly, is_animal, noncorporeal, is_golem, flaming, touch_petrifies } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AT_ENGL, AT_HUGS, AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC, AD_HALU, AD_RBRE,
-    AD_BLND, AD_STCK, AD_WRAP, AD_COLD, dmgtype } from './monattk_data.js';
+    AD_BLND, AD_DRST, AD_STCK, AD_WRAP, AD_COLD, dmgtype } from './monattk_data.js';
 import { dmgtype_fromattack, poly_when_stoned } from './mondata.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Protection_from_shape_changers } from './mon.js';
 import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
-import { surface, In_hell } from './dungeon.js';
+import { surface, In_hell, hliquid } from './dungeon.js';
 import { emits_light, new_light_source, del_light_source, LS_MONSTER,
     HERO, arti_light_radius, artifact_light } from './light.js';
 
@@ -158,15 +159,6 @@ function rounddiv(x, y) {
     return divsgn * r;
 }
 
-// C ref: objnam.c cloak_simple_name(cloak).  otyp 143 == ROBE (u_init.js's
-// ROBE constant); MUMMY_WRAPPING/ALCHEMY_SMOCK aren't reachable as a covered
-// session's cloak-slot item so only the ROBE special case is modeled.
-const ROBE_OTYP = 143;
-function cloak_simple_name(obj) {
-    if (obj && obj.otyp === ROBE_OTYP) return 'robe';
-    return 'cloak';
-}
-
 // C ref: obj.h is_sword(otmp) — a WEAPON_CLASS item whose oc_skill lies in
 // P_SHORT_SWORD(5)..P_SABER(9).  (Note the C macro's low bound is
 // P_SHORT_SWORD, NOT P_DAGGER as the older comment block above it suggests.)
@@ -198,21 +190,6 @@ async function dropp(obj) {
 // into `nohands || verysmall`: the helmet has a SEPARATE has_horns() arm
 // (horns pierce a flimsy hat instead of knocking it off) and the boots arm
 // also fires for slithy forms and centaurs.
-const MAT_LEATHER = 7;                 // objclass.h LEATHER
-const RUBBER_HOSE_NAME = 'rubber hose';
-function is_flimsy(otmp) {
-    const mat = OBJECTS[otmp?.otyp]?.material;
-    return (mat !== undefined && mat <= MAT_LEATHER)
-        || OBJECTS[otmp?.otyp]?.name === RUBBER_HOSE_NAME;
-}
-// C ref: do_wear.c hard_helmet(obj) / objnam.c helm_simple_name(helmet).
-const MAT_IRON = 11, MAT_MITHRIL = 17, MAT_GLASS = 19;
-function hard_helmet(otmp) {
-    const mat = OBJECTS[otmp?.otyp]?.material;
-    if (mat === undefined) return false;
-    return (mat >= MAT_IRON && mat <= MAT_MITHRIL) || mat === MAT_GLASS;
-}
-function helm_simple_name(helmet) { return hard_helmet(helmet) ? 'helm' : 'hat'; }
 // C ref: mondata.c num_horns(ptr) — four two-horned and four one-horned forms.
 // Resolved by name off mons[] so a table reshuffle cannot re-point them.
 let _hornPmidx = null;
@@ -397,7 +374,8 @@ export async function instapetrify(str) {
         return;
     await urgent_topl('You turn to stone...');
     game.killer = { format: 1 /* KILLED_BY */, name: str || '' };
-    game._killer_name = str || '';
+    /* formatkiller(how = STONING): "petrified by " + str */
+    game._killer_name = (await import('./topten.js')).formatkiller(256, 8 /* STONING */, false);
     game.multi_reason = 'turning to stone';
     const { done } = await import('./end.js');
     await done(8 /* STONING */);
@@ -770,6 +748,9 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // C ref: polyself.c:123 status_initialize(REASSESS_ONLY) ends with
     // disp.botlx = TRUE, so the next bot() repaints every status field.
     game.botlx = true;
+    // ... and sets gu.update_all, so that bot() resends EVERY field through
+    // status_update() (see display.js botl_flush).
+    game._statusUpdateAll = true;
     game.were_changes = 0;
 }
 // C ref: set_uasmon()'s PROPSET(prop, FROMFORM) bit for the current form.
@@ -880,7 +861,7 @@ export async function polymon(mntmp) {
     let dochange = false, was_expelled = false;
 
     if ((game.mvitals?.[mntmp]?.mvflags ?? 0) & 0x02 /* G_GENOD */) {
-        await pline(`You feel rather ${await pmname_of(mdatNew, game.flags.female)}-ish.`);
+        await You_feel(`rather ${await pmname_of(mdatNew, game.flags.female)}-ish.`);
         exercise(A_WIS, true);
         return 0;
     }
@@ -1114,7 +1095,7 @@ export async function polymon(mntmp) {
         set_utrap(0, 0);
     } else if ((mntmp === PM_FIRE_ELEMENTAL || mntmp === PM_SALAMANDER)
                && u.utrap && u.utraptype === TT_LAVA) {
-        await pline('The lava now feels soothing.');
+        await pline(`The ${hliquid('lava')} now feels soothing.`);
         set_utrap(0, 0);
     }
     const amorph = (mflags1_of(newdat) & M1_AMORPHOUS) !== 0;
@@ -1216,6 +1197,9 @@ export async function newman() {
     if (newlvl > MAXULEV) newlvl = MAXULEV;
     if (newlvl < oldlvl) u.ulevelmax = (u.ulevelmax || oldlvl) - (oldlvl - newlvl);
     if ((u.ulevelmax || 0) < newlvl) u.ulevelmax = newlvl;
+    // C ref: polyself.c:358 — u.ulevel changes with no disp.botl, so adjabil()'s
+    // "You feel stealthy!" --More-- still shows the pre-newman Xp and rank.
+    hold_botl_xl();
     u.ulevel = newlvl;
 
     // C ref: polyself.c newman() — `if (gs.sex_change_ok && !rn2(10))`.
@@ -1772,8 +1756,10 @@ export async function rehumanize() {
     const { update_inventory } = await import('./invent.js');
     await update_inventory();
     const fp2 = u.uprops || {};
-    if (was_flying && !(fp2.Flying || fp2.HFlying || fp2.EFlying) && u.usteed)
+    if (was_flying && !(fp2.Flying || fp2.HFlying || fp2.EFlying) && u.usteed) {
+        const { mon_nam } = await import('./do_name.js');
         await pline(`You and ${mon_nam(u.usteed)} return gently to the ${surface(u.ux, u.uy)}.`);
+    }
     const { retouch_equipment } = await import('./artifact.js');
     await retouch_equipment(2);
     if (!game.uarmg)
@@ -1849,7 +1835,7 @@ export async function you_unwere(purify) {
     const u = game.u;
     if (!u) return;
     if (purify) {
-        await pline('You feel purified.');
+        await You_feel('purified.');
         set_ulycn(NON_PM);                       // C: cure lycanthropy
     }
     const controllable_poly = Polymorph_control() && !(Stunned() || Unaware());
@@ -2171,14 +2157,24 @@ export async function dobreathe() {
     return ECMD_TIME;
 }
 
-// C ref: polyself.c dospit() — #monster for a venom spitter.  The getdir() is
-// the load-bearing half (it eats the direction key); the venom object itself
-// needs throwit(), which this port does not have, so the projectile is
-// deferred rather than faked.
+// C ref: polyself.c dospit() — #monster for a venom spitter: the direction is
+// asked first (getdir() eats the key), then a venom object marked as the
+// hero's (spe = 1) is thrown.
 async function dospit() {
     if (!(await u_getdir()))
         return ECMD_CANCEL;
-    // mksobj(BLINDING_VENOM|ACID_VENOM, TRUE, FALSE) + throwit(): deferred.
+    const u = game.u;
+    const mattk = mattk_of(u.data).find((a) => a.aatyp === AT_SPIT);
+    if (!mattk) {
+        /* C: impossible("bad spit attack?") */
+    } else {
+        const venom = (mattk.adtyp === AD_BLND || mattk.adtyp === AD_DRST)
+            ? 'splash of blinding venom' : 'splash of acid venom';
+        const { mksobj } = await import('./mkobj.js');
+        const otmp = mksobj(OBJECTS.findIndex((o) => o.name === venom), true, false);
+        otmp.spe = 1; /* to indicate it's yours */
+        await (await import('./invent.js')).throwit(otmp, 0);
+    }
     return ECMD_TIME;
 }
 
@@ -2263,7 +2259,7 @@ async function dohide() {
         if (IS_FOUNTAIN(game.level?.at?.(u.ux, u.uy)?.typ))
             await pline('The fountain is not deep enough to hide in.');
         else
-            await pline('There is no water to hide in here.');
+            await pline(`There is no ${hliquid('water')} to hide in here.`);
         u.uundetected = 0;
         return ECMD_OK;
     }
@@ -2563,13 +2559,15 @@ export async function domonability() {
             await pline('There is no fountain here.');
         }
     } else if (mdat && is_unicorn_pm(mdat)) {
-        // use_unicorn_horn(NULL): deferred (apply.c's version is not ported).
+        // C ref: cmd.c domonability() `use_unicorn_horn((struct obj **) 0)`.
+        await (await import('./apply.js')).use_unicorn_horn(null);
         return ECMD_TIME;
     } else if (msound_of(mdat) === MS_SHRIEK) {
         await pline('You shriek.');
-        // u.uburied / aggravate(): aggravate() wakes every monster on the
-        // level; deferred, but the shriek message itself is a real --More--
-        // boundary that used to be dropped entirely.
+        if (u.uburied)
+            await pline('Unfortunately sound does not carry well through rock.');
+        else
+            (await import('./monmove.js')).aggravate();
     } else if ((mdat && is_vampire_pm(mdat)) || is_vampshifter_u()) {
         return await dopoly();
     } else if (u.Upolyd) {

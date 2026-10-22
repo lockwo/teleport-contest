@@ -8,6 +8,7 @@
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { roomAt } from './roomat.js';
+import { in_rooms } from './shkroom.js';
 import { rn2, rn1 } from './rng.js';
 import { isok, ROOMOFFSET, Amask2align, A_NONE, ALTAR, AM_SHRINE,
          MM_EPRI, MM_EMIN } from './const.js';
@@ -133,7 +134,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
 }
 
 // C ref: priest.c:410 intemple(roomno), called from check_special_room().
-import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at } from './display.js';
+import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at, You_feel } from './display.js';
 import { d } from './rng.js';
 import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
 import { roles, align_gname, halu_gname } from './role.js';
@@ -148,19 +149,13 @@ export function temple_occupied(array) {
     return 0;
 }
 
-// C ref: priest.c:392 findpriest(roomno) + priest.c:154 histemple_at().
+// C ref: priest.c:392 findpriest(roomno).
 export function findpriest(roomno) {
     for (const m of game.level?.monsters || []) {
         if (m.mhp != null && m.mhp <= 0) continue;
         if (!m.ispriest) continue;
-        if ((m.epri?.shroom ?? -1) !== roomno) continue;
-        const loc = game.level?.at(m.mx, m.my);
-        const here = (loc?.roomno ?? 0);
-        const hr = roomAt(here);
-        if (!hr || hr.rtype !== TEMPLE || here !== roomno) continue;
-        const sl = m.epri?.shrlevel, uz = game.u?.uz;
-        if (!sl || !uz || sl.dnum !== uz.dnum || sl.dlevel !== uz.dlevel) continue;
-        return m;
+        if (EPRI_(m)?.shroom === roomno && histemple_at(m, m.mx, m.my))
+            return m;
     }
     return null;
 }
@@ -265,7 +260,7 @@ export async function intemple(roomno) {
         /* untended */
         switch (rn2(4)) {
         case 0: await pline('You have an eerie feeling...'); break;
-        case 1: await pline('You feel like you are being watched.'); break;
+        case 1: await You_feel('like you are being watched.'); break;
         case 2: {
             const { body_part } = await import('./polyself.js');
             await pline(`A shiver runs down your ${body_part(SPINE)}.`);
@@ -368,27 +363,27 @@ export function free_epri(mtmp) {
 
 // C ref: priest.c:161 inhistemple(priest) — the priest is on the right level,
 // in the right room, and that room still holds a properly aligned altar.
-// js/dungeon.js:1876 and js/monmove.js:1635 and js/sounds.js:790 each hold an
-// unexported copy; the fix is to export one.  No RNG.
+// No RNG.
 export function inhistemple(priest) {
     /* make sure we have a priest */
     if (!priest || !priest.ispriest) return false;
     /* priest must be on right level and in right room */
-    if (!histemple_at_(priest, priest.mx, priest.my)) return false;
+    if (!histemple_at(priest, priest.mx, priest.my)) return false;
     /* temple room must still contain properly aligned altar */
     return has_shrine(priest);
 }
-// C ref: priest.c:152 histemple_at(priest, x, y).
-function histemple_at_(priest, x, y) {
+// C ref: priest.c:152 histemple_at(priest, x, y) —
+//   EPRI(priest)->shroom == *in_rooms(x, y, TEMPLE) && on_level(shrlevel, &u.uz)
+// in_rooms() (not level.roomno) so a temple subroom or a SHARED/SHARED_PLUS
+// square (door, wall) resolves as in C.  Exported: the private copies in
+// dungeon.js, monmove.js and sounds.js now import this one.
+export function histemple_at(priest, x, y) {
     if (!priest || !priest.ispriest) return false;
     const p = EPRI_(priest);
     if (!p) return false;
-    const loc = game.level?.at(x, y);
-    const here = loc?.roomno ?? 0;
-    const hr = roomAt(here);
-    if (!hr || hr.rtype !== TEMPLE) return false;
-    if (p.shroom !== here) return false;
-    return on_level_(p.shrlevel, game.u?.uz);
+    const hits = in_rooms(x, y, TEMPLE);
+    return p.shroom === (hits.length ? hits[0] : 0)
+        && on_level_(p.shrlevel, game.u?.uz);
 }
 // C ref: dungeon.c on_level(lev1, lev2) / assign_level(dst, src).
 function on_level_(a, b) {

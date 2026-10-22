@@ -24,7 +24,7 @@
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
-import { A_STR, Unaware } from './const.js';
+import { A_STR, Unaware, COST_DEGRD } from './const.js';
 import { rn2, rn1, rnd, rnl, d, rnz } from './rng.js';
 import { print_dungeon, builds_up, In_hell, Is_valley, surface,
          find_hell, dunlevs_in_dungeon, single_level_branch, level_difficulty,
@@ -41,7 +41,7 @@ import { fumaroles, movebubbles, is_exclusion_zone } from './mkmaze.js';
 const PM_ROGUE_DO = 8;     // roles[].mnum is the role index in this port (Rogue = 8), not a mons[] index
 import { clear_regions, remove_region } from './region.js';
 import { fastforward_fill_mineralize } from './fastforward.js';
-import { depth as depth_of_level } from './hacklib.js';
+import { depth as depth_of_level, s_suffix } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          STRAT_WAITMASK, STRAT_ARRIVE, IS_STWALL, W_NONPASSWALL,
          ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED, In_quest, In_mines, In_endgame,
@@ -64,17 +64,18 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, freeze_screen_for_level_change,
-         thaw_screen_for_level_change, Deaf_hero } from './display.js';
-import { seetrap, dotrap, trapname, fill_pit, Teleport_control_fu } from './trap.js';
+         thaw_screen_for_level_change, Deaf_hero, You_feel, You_see } from './display.js';
+import { seetrap, dotrap, fill_pit, Teleport_control_fu, pooleffects, u_locomotion } from './trap.js';
 import { check_special_room } from './shkroom.js';
+import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { enexto_gpflags } from './teleport.js';
-import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked, youmonst_data } from './invent.js';
+import { near_capacity, addinv, prinv_fmt, worn_extrinsic, worn_blocked, youmonst_data } from './invent.js';
 import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm, clear_no_charge_on_getlev } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
-import { hide_monst, DEADMONSTER } from './mon.js';
+import { hide_monst, DEADMONSTER, ceiling_hider } from './mon.js';
 import { mflags2_of, M2_STALK, is_swimmer_flag, throws_rocks_flag,
          is_flyer_flag, mflags1_of, mflags3_of, M1_WALLWALK, M2_UNDEAD,
          M3_DISPLACES, humanoid, msound_of } from './monflags_data.js';
@@ -87,6 +88,7 @@ import { mon_catchup_elapsed_time, monnear } from './dogmove.js';
 import { onquest, com_pager, ok_to_quest } from './questpgr.js';
 import { initrack } from './track.js';
 import { carry_global_light_sources } from './light.js';
+import { mon_has_amulet } from './monspecial.js';
 
 // ── small geometry / occupancy helpers (C ref: mklev.c occupied,
 //    mkmaze.c bad_location, teleport.c goodpos/collect_coords/enexto) ──
@@ -408,12 +410,6 @@ function levl_follower(m) {
     return false;
 }
 
-// C ref: wizard.c:106 mon_has_amulet(mtmp) — the REAL Amulet in its inventory
-// (the plastic imitation, otyp 212, does not count).
-function mon_has_amulet(m) {
-    return (m?.minvent || []).some((o) => o.otyp === AMULET_OF_YENDOR);
-}
-
 // C ref: shk.c:5012 is_fshk(mtmp) — `mtmp->isshk && ESHK(mtmp)->following`, a
 // shopkeeper chasing the hero over an unpaid bill.  js/shk.js's hot_pursuit()
 // sets eshk.following (and shk.js's paybill()/shk_chat() etc. clear it), so
@@ -451,8 +447,11 @@ async function keepdogs_capture() {
     const u = game.u;
     const kept = [];
     kept.leftAt = []; /* [x, y] each follower occupied before relmon() */
-    const remain = [];
-    const chain = lev.monsters.slice();
+    const gone = new Set(); /* followers and migrators taken off the level */
+    /* C walks fmon from its head, the newest monster; this port's array is
+       oldest-first.  relmon() prepends each follower to gm.mydogs, so the
+       oldest ends up first in the list losedogs() places from. */
+    const chain = lev.monsters.slice().reverse();
     for (const m of chain) {
         if (DEADMONSTER(m))
             continue;
@@ -498,29 +497,31 @@ async function keepdogs_capture() {
                 }
                 /* C: `if (mtmp == u.usteed) impossible(...)` — can't happen
                    unless the stay_behind logic above is scrambled. */
-                remain.push(m);
                 continue;
             }
+            /* prepare to take mtmp off the map */
+            const { mon_leave } = await import('./dog.js');
+            const num_segs = await mon_leave(m);
             kept.leftAt.push([m.mx, m.my]);
             m.mx = m.my = 0; /* C ref: dog.c:864, mx==0 implies migrating */
+            m.wormno = num_segs;
             m.mlstmv = game.moves; /* C ref: dog.c:866 */
-            kept.push(m);
+            kept.unshift(m);
+            gone.add(m);
         } else {
             const { keep_mon_accessible, migrate_to_level } = await import('./dog.js');
             if (keep_mon_accessible(m)) {
                 await migrate_to_level(m, ledger_no_do(u.uz), MIGR_EXACT_XY, null);
+                gone.add(m);
             } else if (m.mleashed) {
                 const DN = await import('./do_name.js');
-                await pline(`${DN.Monnam(m)}'s leash goes slack.`);
+                await pline(`${s_suffix(DN.Monnam(m))} leash goes slack.`);
                 const { m_unleash } = await import('./apply.js');
                 await m_unleash(m, false);
-                remain.push(m);
-            } else {
-                remain.push(m);
             }
         }
     }
-    lev.monsters = remain;
+    lev.monsters = lev.monsters.filter((m) => !gone.has(m) && !DEADMONSTER(m));
     return kept;
 }
 
@@ -662,13 +663,6 @@ function Levitation_do() {
 // C ref: youprop.h Punished — u.uball is set only while punished.
 function Punished_do() { return !!game.u?.uball; }
 
-// C ref: hack.c u_locomotion(def) — the verb for the hero's mode of travel.
-// locomotion(youmonst.data, def) below it only differs for a polymorphed hero
-// (nolimbs -> "slither", etc.), which no covered role reaches.
-function u_locomotion(def) {
-    return Levitation_do() ? 'float' : Flying_do() ? 'fly' : def;
-}
-
 // C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() — the hero is standing
 // on a seen pit (without being caught in it) or on a seen hole/trap door.  Both
 // make '>' a deliberate plunge rather than a "you can't go down here".
@@ -699,33 +693,18 @@ async function u_rooted() {
     return true;
 }
 
-// C ref: steed.c stucksteed(checkfeeding) — a helpless or still-eating steed
-// refuses to move; the command is aborted with no time passing.
-async function stucksteed(checkfeeding) {
-    const steed = game.u?.usteed;
-    if (!steed) return false;
-    if (steed.msleeping || !steed.mcanmove) {
-        await pline(`Your ${steed.data?.name ?? 'steed'} won't move!`);
-        return true;
-    }
-    if (checkfeeding && steed.meating) {
-        await pline(`Your ${steed.data?.name ?? 'steed'} is still eating.`);
-        return true;
-    }
-    return false;
-}
-
-// C ref: pline.c Norep() — suppress the message when it is identical to the
-// persistent top line (gt.toplines), which survives the command prompt.
+// C ref: pline.c Norep() — suppress the message when it is identical to
+// gp.prevmsg, the last individual message vpline() processed (game._prevmsg);
+// not the concatenated top row (game._toplines).
 async function Norep_do(msg) {
-    if (game._toplines === msg) return;
+    if (game._prevmsg === msg) return;
     await update_topl(msg);
 }
 
 // C ref: mkobj.c sobj_at(otyp, x, y).  NOT js/invent.js's sobj_at: that one
 // indexes game.level.objects as a 2-D `[x][y]` grid while place_object() keeps
 // it as a FLAT push-ordered array, so it answered null for every square and
-// silently disabled the boulder test in climb_pit() below (js/muse.js keeps the
+// silently disabled every boulder test here (js/muse.js keeps the
 // same private copy for the same reason).  Boolean use only, so pile order
 // doesn't matter.
 function sobj_at(otyp, x, y) {
@@ -733,54 +712,6 @@ function sobj_at(otyp, x, y) {
         if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
-}
-
-// C ref: trap.c climb_pit() — what '<' does when the hero is caught in a pit.
-// The rn2(2) is ALWAYS drawn (C evaluates `!rn2(2) && sobj_at(...)` left to
-// right), so this is not an RNG-free branch even when there is no boulder.
-// Passes_walls needs a polymorph/amulet and is not modelled.
-async function climb_pit() {
-    const u = game.u;
-    if (!u.utrap || u.utraptype !== TT_PIT) return;
-    // C: pitname = trapname(PIT, FALSE) — a hallucinating hero burns a display draw.
-    const pitname = trapname(PIT, false);
-    if (!rn2(2) && sobj_at(BOULDER, u.ux, u.uy)) {
-        await pline('Your leg gets stuck in a crevice.');
-        // C: display_nhwindow(WIN_MESSAGE, FALSE) + clear_nhwindow() — force the
-        // --More-- so the second line starts a fresh top line.
-        await topl_more();
-        game._pending_message = '';
-        game._toplin = 0;
-        await pline('You free your leg.');
-    } else if (Flying_do() && !In_sokoban(u.uz)) {
-        // C also admits is_clinger(youmonst.data) here (polymorph only).
-        u.utrap = 0; u.utraptype = 0;
-        await pline(`You ${u_locomotion('climb')} from the ${pitname}.`);
-        game.vision_full_recalc = 1;
-    } else if (!(--u.utrap) || m_easy_escape_pit()) {
-        u.utrap = 0; u.utraptype = 0;
-        await pline(`You ${
-            (In_sokoban(u.uz) && Levitation_do())
-                ? 'struggle against the air currents and float'
-                : u.usteed ? 'ride' : 'crawl'} to the edge of the ${pitname}.`);
-        game.vision_full_recalc = 1;
-    } else if (u.dz || game.flags?.verbose !== false) {
-        if (u.usteed)
-            await Norep_do(`Your ${u.usteed.data?.name ?? 'steed'} is still in a pit.`);
-        else
-            await Norep_do((game.u?.uhallu && !rn2(5))
-                ? "You've fallen, and you can't get up."
-                : 'You are still in a pit.');
-    }
-}
-// C ref: trap.c m_easy_escape_pit() — a pit fiend or any MZ_HUGE-or-bigger
-// monster steps straight out.  MZ_HUGE == 4 (include/monflag.h); PM_PIT_FIEND
-// == 300 (js/monmove.js:3206 carries the identical constants for its own
-// per-monster copy of this function).
-const PM_PIT_FIEND_DO = 300, MZ_HUGE_DO = 4;
-function m_easy_escape_pit() {
-    const mdat = game.u?.data;
-    return !!mdat && (mdat.pmidx === PM_PIT_FIEND_DO || (mdat.msize ?? 0) >= MZ_HUGE_DO);
 }
 
 // C ref: dungeon.c on_level(&u.uz, &qstart_level); game.qstart_level comes from
@@ -1422,8 +1353,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             await update_topl('The odor of burnt flesh and decay pervades the air.');
             // C ref: pline.c You_hear() — gated on Deaf/acoustics (unlike the two
             // plines above, which always print).
-            if (!Deaf_do() && game.flags?.acoustics !== false)
-                await update_topl('You hear groans and moans everywhere.');
+            await You_hear('groans and moans everywhere.');
         }
         await record_ach(2 /* you.h ACH_HELL */); /* reached Gehennom */
     }
@@ -1650,6 +1580,8 @@ async function getlev_restore(ledger) {
     g.level = store.level;
     g.stairs = store.stairs;
     g.fmon = g.level.monsters;
+    restore_doorindex(g.level); /* getlev(): doorindex recomputed from the last room */
+    reverse_trap_chain(g.level); /* getlev(): ftrap rebuilt by prepending */
     clear_no_charge_on_getlev(g.level); /* find_lev_obj() -> place_object() */
     requeue_level_timers(); // restore_timers(): insert_timer() reverses equal-timeout ties
 
@@ -1818,7 +1750,8 @@ export async function doup() {
     // on a staircase changed level (drawing a whole mklev()) where C only
     // struggles.
     if (u.utrap && u.utraptype === TT_PIT) {
-        await climb_pit();
+        // climb_pit() lives in cmd.js (the one port of trap.c climb_pit(), also run by the movement keys).
+        await (await import('./cmd.js')).climb_pit();
         return 1; // ECMD_TIME
     }
 
@@ -1829,7 +1762,7 @@ export async function doup() {
     }
 
     // C ref: do.c:1318 stucksteed(TRUE) — no time passes.
-    if (await stucksteed(true)) return 0; // ECMD_OK
+    if (game.u?.usteed && await (await import('./steed.js')).stucksteed(true)) return 0; // ECMD_OK
 
     if (await u_stuck_cannot_go('up')) return 1;     // do.c:1321, ECMD_TIME
 
@@ -1907,7 +1840,7 @@ export async function level_tele(readLevel, immediate = false) {
     // C: teleport.c:1169 `(u.uhave.amulet || In_endgame || In_sokoban) && !wizard`.
     if ((u.uhave?.amulet || u.uhave_amulet || In_endgame(u.uz) || In_sokoban(u.uz))
         && !wizard) {
-        await pline('You feel very disoriented for a moment.');
+        await You_feel('very disoriented for a moment.');
         return;
     }
 
@@ -1976,7 +1909,10 @@ export async function level_tele(readLevel, immediate = false) {
                 const amu0 = mksobj(AMULET_OF_YENDOR, true, false);
                 if (amu0) {
                     const amu = addinv(amu0);
-                    prinv('Endgame prerequisite:', amu, 0);
+                    // prinv() is a pline(): its flush_screen(1) runs the bot() the
+                    // menu dismissal's gb.bot_disabled left pending (disp.botlx), so
+                    // the status is painted before goto_level() freezes the departing frame.
+                    await update_topl(prinv_fmt('Endgame prerequisite:', amu, 0));
                 }
             }
             force_dest = true;
@@ -2064,7 +2000,7 @@ export async function level_tele(readLevel, immediate = false) {
             await pline('"Thou art early, but we\'ll admit thee."');
             set_tele_killer('went to heaven prematurely');
         } else if (newlev === -9) {
-            await pline('You feel deliriously happy.');
+            await You_feel('deliriously happy.');
             await pline("(In fact, you're on Cloud 9!)");
             await display_nhwindow_message();
         } else {
@@ -2187,18 +2123,9 @@ export async function run_deferred_lvltport() {
     const pend = game._lvltport_dest;
     if (!pend) return;
     game._lvltport_dest = null;
-    // C ref: do.c:1839 goto_level() -> docrt() -> display.c cls() ->
-    // display_nhwindow(WIN_MESSAGE, FALSE), which pages a still-unacknowledged
-    // top line ("You feel disoriented.") over the DEPARTING level's map.  Our
-    // cls() just drops the pending message; page it here (scoped to this
-    // function — a global cls() change is the pline-vs-update_topl -341 trap).
-    // tty_display_nhwindow() returns early while WIN_STOP/WIN_CANCELLED is set
-    // (an ESC at an earlier --More--), so nothing is paged then.
-    if (game._toplin === 1 && !game._winStop) {
-        await topl_more();
-        game._pending_message = '';
-        game._toplin = 0;
-    }
+    // An unacknowledged top line ("You feel disoriented.", "There's a gaping hole
+    // under you!") is NOT paged here: goto_level() runs keepdogs() first, whose
+    // pline()s append to it, and docrt()'s cls() then pages the merged line.
     // C ref: do.c deferred_goto() -> goto_level(), which delivers gd.dfr_post_msg
     // itself via maybe_lvltport_feedback() right after its docrt().
     game._goto_post_msg = pend.post_msg;
@@ -2411,7 +2338,7 @@ async function next_to_u() {
 // Covers the on-foot descent, the deliberate plunge into a seen pit/hole
 // (dotrap TOOKPLUNGE), the Gehennom gate confirmation, levitation, the rooted /
 // stuck-steed / held refusals and their ECMD_TIME-vs-ECMD_OK turn cost.  Still
-// missing: flags.autodig (default off) and the Upolyd ceiling-hider drop-out.
+// missing: flags.autodig (default off).
 // C ref: do.c:1110 u_stuck_cannot_go(updn) — a held hero can't take the stairs
 // unless polymorphed into a sticker (which releases its victim instead), and
 // the failed attempt COSTS THE TURN (both callers return ECMD_TIME).
@@ -2442,7 +2369,7 @@ export async function dodown() {
     // C ref: do.c:1137 u_rooted() — costs the turn (ECMD_TIME).
     if (await u_rooted()) return 1;
     // C ref: do.c:1140 stucksteed(TRUE) — no time passes.
-    if (await stucksteed(true)) return 0; // ECMD_OK
+    if (game.u?.usteed && await (await import('./steed.js')).stucksteed(true)) return 0; // ECMD_OK
 
     // C ref: do.c:1145 — stairs_down / ladder_down.  A DOWN LADDER is a legal
     // descent in C; treating it as "not stairs" made '>' on one print "You can't
@@ -2491,8 +2418,27 @@ export async function dodown() {
         return 0; // ECMD_OK
     }
 
-    // (do.c:1201's Upolyd && ceiling_hider drop-out-of-hiding arm needs a
-    // piercer/lurker-above polymorph.)
+    // C ref: do.c:1204 — a hero polymorphed into a ceiling hider (piercer,
+    // lurker above) that is hiding on the ceiling drops down/flies out of hiding
+    // instead of descending; the turn is used and '>' must be repeated.
+    if (u.Upolyd && ceiling_hider(youmonst_data()) && u.uundetected) {
+        u.uundetected = 0;
+        if (Flying_do()) {
+            await pline('You fly out of hiding.');
+        } else {
+            await pline(`You drop to the ${surface(u.ux, u.uy)}.`);
+            const DB = await import('./dbridge.js');
+            if (DB.is_pool_or_lava(u.ux, u.uy)) {
+                await pooleffects(false);
+            } else {
+                const P = await import('./pickup.js');
+                await P.pickup(1);
+                const trap = t_at(u.ux, u.uy);
+                if (trap) await dotrap(trap, TOOKPLUNGE);
+            }
+        }
+        return 1; // ECMD_TIME
+    }
 
     if (await u_stuck_cannot_go('down')) return 1;   // do.c:1221, ECMD_TIME
 
@@ -2605,10 +2551,6 @@ function Hallucination_do() {
     return uprop_do('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu;
 }
 function Underwater_do() { return !!(game.u?.uinwater); }
-function Fire_resistance_do() {
-    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return uprop_do('Fire_resistance', 'HFire_resistance', 'EFire_resistance') > 0;
-}
 function Passes_walls_do() {
     if (game.u?.formprops?.Passes_walls) return true; /* FROMFORM: polyself.js set_uasmon() */
     return uprop_do('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0;
@@ -2686,13 +2628,6 @@ async function impossible_do(msg) {
     const { impossible } = await import('./display.js');
     await impossible(msg);
 }
-// C ref: pline.c You_hear() — suppressed when Deaf.
-async function You_hear_do(msg) {
-    // C ref: pline.c You_hear() — "You dream that you hear " while Unaware.
-    const unaware = Unaware();
-    if (!Deaf_do() || unaware)
-        await pline(`${unaware ? 'You dream that you hear ' : 'You hear '}${msg}`);
-}
 // C ref: mondata.h is_whirly(ptr) = mlet == S_VORTEX || ptr == &mons[PM_AIR_ELEMENTAL].
 async function is_whirly_do(ptr) {
     if (!ptr) return false;
@@ -2720,6 +2655,7 @@ async function Doname2_do(obj) {
 // and js/dig.js:702 keep the same private copy).
 function reset_utrap_do(_msg) {
     const u = game.u;
+    if (u.utrap) game.botl = true; // set_utrap(0, 0)
     u.utrap = 0;
     u.utraptype = 0;
 }
@@ -2811,7 +2747,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
                                 + `${fills_up ? 'fills' : 'falls into'} the ${what}.`);
                 } else if (!Deaf_do()) {
                     /* C: Soundeffect(se_sizzling|se_splash, 100) then You_hear() */
-                    await pline(`You hear a${lava ? ' sizzling' : ''} splash.`);
+                    await You_hear(`a${lava ? ' sizzling' : ''} splash.`);
                 }
                 const C = await import('./cmd.js');
                 await C.wake_nearto(rx, ry, 40);
@@ -2826,11 +2762,12 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
                 await pline('You find yourself on dry land again!');
             } else if (lava && next2u(rx, ry)) {
                 const DN = await import('./do_name.js');
+                const { Fire_resistance } = await import('./zap.js');
                 await pline(`You are hit by molten ${DN.hliquid('lava')}`
-                            + `${Fire_resistance_do() ? '.' : '!'}`);
+                            + `${Fire_resistance() ? '.' : '!'}`);
                 const TO = await import('./timeout.js');
                 await TO.burn_away_slime();
-                const dmg = d(Fire_resistance_do() ? 1 : 3, 6);
+                const dmg = d(Fire_resistance() ? 1 : 3, 6);
                 /* C: losehp(Maybe_Half_Phys(dmg), "molten lava", KILLED_BY) */
                 await losehp_do(Maybe_Half_Phys_do(dmg), 'molten lava', KILLED_BY);
             } else if (!fills_up && game.flags?.verbose
@@ -2853,8 +2790,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
 // in no chain at all.  Returns TRUE if the object went away.
 //
 // Unported dependencies, each kept as its call site so the control flow is C's:
-//   * uhitm.c hmon()      — ported but module-private in js/uhitm.js:1145 under
-//                           a reduced signature with no HMON_* mode argument.
+//   * (hmon() is called through js/uhitm.js's exported full-signature port.)
 //   * trap.c lava_damage()— no port anywhere in js/.
 //   * dig.c  ship_object()— no port anywhere in js/.
 //   * display.c map_background() — no port; newsym() is what redraws here.
@@ -2926,11 +2862,10 @@ export async function flooreffects(obj, x, y, verb) {
                             await MM.mondied_mm(mtmp);
                         }
                     } else {
-                        // C ref: do.c:223 `(void) hmon(mtmp, obj, HMON_THROWN,
-                        // dieroll);` — see the header note; exporting the full
-                        // hmon() is the fix.  Skipped, so the trapped monster
-                        // takes no damage here.
-                        void dieroll;
+                        // C ref: do.c:223 hmon(mtmp, obj, HMON_THROWN, dieroll)
+                        const U = await import('./uhitm.js');
+                        const { HMON_THROWN } = await import('./const.js');
+                        await U.hmon(mtmp, obj, HMON_THROWN, dieroll);
                     }
                     if (!MN.DEADMONSTER(mtmp) && !await is_whirly_do(mtmp.data))
                         res = false; /* still alive, boulder still intact */
@@ -2950,14 +2885,14 @@ export async function flooreffects(obj, x, y, verb) {
         }
         if (!deletedwithboulder && verb) {
             if (Blind() && u_at(x, y)) {
-                await You_hear_do('a CRASH! beneath you.');
+                await You_hear('a CRASH! beneath you.');
             } else if (!Blind() && cansee(x, y)) {
                 await pline('The boulder '
                     + `${(ttyp === TRAPDOOR && !tseen) ? 'triggers and ' : ''}`
                     + `${(ttyp === TRAPDOOR) ? 'plugs a trap door'
                         : (ttyp === HOLE) ? 'plugs a hole' : 'fills a pit'}.`);
             } else {
-                await You_hear_do(`a boulder ${verb}.`);
+                await You_hear(`a boulder ${verb}.`);
             }
         }
         /* deletedwithboulder: — the trap may already have gone away through
@@ -2997,7 +2932,7 @@ export async function flooreffects(obj, x, y, verb) {
                && (uteetering_at_seen_pit(t) || uescaped_shaft(t))) {
         if (is_pit(t.ttyp)) {
             if (Blind() && !Deaf_do()) {
-                await You_hear_do(`${the(I.xname(obj))} tumble downwards.`);
+                await You_hear(`${the(I.xname(obj))} tumble downwards.`);
             } else {
                 await pline(`${await Tobjnam_do(obj, 'tumble')} into `
                             + `${t.madeby_u ? 'your' : 'the'} pit.`);
@@ -3046,7 +2981,7 @@ export async function flooreffects(obj, x, y, verb) {
                 await pline(I.is_plural(obj) ? 'They shatter from the heat!'
                                             : 'It shatters from the heat!');
             } else {
-                await You_hear_do('a shattering noise.');
+                await You_hear('a shattering noise.');
             }
             const DT = await import('./dothrow.js');
             await DT.breakobj(obj, x, y, false, false);
@@ -3233,7 +3168,7 @@ export async function dosinkring(obj) {
         await pline('Static electricity surrounds the sink.');
         break;
     case RIN_CONFLICT:
-        await You_hear_do('loud noises coming from the drain.');
+        await You_hear('loud noises coming from the drain.');
         break;
     case RIN_SUSTAIN_ABILITY: /* KMH */
         await pline(`The ${await hliquid_do('water')} flow seems fixed.`);
@@ -3313,10 +3248,10 @@ export async function dosinkring(obj) {
             await pline("You don't see anything happen to the sink.");
             break;
         case RIN_FREE_ACTION:
-            await pline('You see the ring slide right down the drain!');
+            await You_see('the ring slide right down the drain!');
             break;
         case RIN_SEE_INVISIBLE:
-            await pline(`You see some ${Hallucination_do()
+            await You_see(`some ${Hallucination_do()
                 ? 'oxygen molecules' : 'air'} in the sink.`);
             break;
         case RIN_STEALTH:
@@ -3354,7 +3289,7 @@ export async function dosinkring(obj) {
     if (ideed) {
         await I.trycall(obj);
     } else if (!nosink) {
-        await You_hear_do('the ring bouncing down the drainpipe.');
+        await You_hear('the ring bouncing down the drainpipe.');
     }
     if (!rn2(20) && !nosink) {
         await pline(`The sink backs up, leaving ${I.obj_doname(obj)}.`);
@@ -3447,10 +3382,9 @@ export async function obj_no_longer_held(obj) {
         if (!obj.oerodeproof || !rn2(10)) {
             /* if monsters aren't moving, assume the player is responsible */
             if (!game.context?.mon_moving && !game.program_state?.gameover) {
-                // C ref: do.c:914 costly_alteration(obj, COST_DEGRD) — shk.c
-                // costly_alteration() is a private no-op stub at js/trap.js:829;
-                // the shop bill is therefore not adjusted.
-                void 0;
+                // C ref: do.c:914 costly_alteration(obj, COST_DEGRD): an unpaid
+                // or shop-floor crysknife reverting is billed.
+                await (await import('./shk.js')).costly_alteration(obj, COST_DEGRD);
             }
             obj.otyp = WORM_TOOTH;
             obj.oerodeproof = 0;
@@ -3730,7 +3664,7 @@ export async function revive_corpse(corpse) {
             if (is_uwep)
                 await pline(`The ${cname} writhes out of your grasp!`);
             else
-                await pline('You feel squirming in your backpack!');
+                await You_feel('squirming in your backpack!');
             break;
 
         case OBJ_FLOOR:
@@ -3794,7 +3728,7 @@ export async function revive_corpse(corpse) {
                                 + 'claws itself out of the ground!');
                     newsym(mtmp.mx, mtmp.my);
                 } else if (distu(mtmp.mx, mtmp.my) < 5 * 5) {
-                    await You_hear_do('scratching noises.');
+                    await You_hear('scratching noises.');
                 }
                 await T.fill_pit(mtmp.mx, mtmp.my);
                 break;
@@ -3902,8 +3836,8 @@ export async function revive_mon(arg, timeout) {
             when = 12 + rnd(500);
         } else { /* rot this corpse away */
             if (!TO.obj_has_timer(body, ROT_CORPSE))
-                await pline(`You feel ${MO.is_rider_pm(body.corpsenm) ? 'much ' : ''}`
-                            + 'less hassled.');
+                await You_feel(`${MO.is_rider_pm(body.corpsenm) ? 'much ' : ''}`
+                           + 'less hassled.');
             action = ROT_CORPSE;
             when = d(5, 50) - ((game.moves | 0) - (body.age | 0));
             if (when < 1) when = 1;
