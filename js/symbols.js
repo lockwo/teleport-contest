@@ -604,7 +604,7 @@ export const def_r_oc_syms = [
 
 // C ref: symbols.c loadsyms[] — the three defsym.h expansions, in the order
 // symbols.c includes them (PCHAR_PARSE, OBJCLASS_PARSE, MONSYMS_PARSE).
-const LOADSYMS_PCHAR_NAMES = [
+export const LOADSYMS_PCHAR_NAMES = [
     "S_stone", "S_vwall", "S_hwall", "S_tlcorn", "S_trcorn",
     "S_blcorn", "S_brcorn", "S_crwall", "S_tuwall", "S_tdwall",
     "S_tlwall", "S_trwall", "S_ndoor", "S_vodoor", "S_hodoor",

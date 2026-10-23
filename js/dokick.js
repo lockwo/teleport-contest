@@ -237,8 +237,11 @@ export async function altar_wrath(x, y) {
     } else {
         // C ref: pray.c altar_wrath() — the whisper names the altar's god, and
         // goes Deaf-aware ("Despite your deafness, you seem to hear <god> say").
-        const { align_gname } = await import('./role.js');
-        const gname = align_gname(game.urole?.mnum ?? -1, altaralign);
+        const { align_gname, roles } = await import('./role.js');
+        /* align_gname() takes the roles[] ARRAY index, not the PM_ mnum (they differ
+           for Rogue/Ranger: a chaotic Ranger heard "Kos" instead of "Mars") */
+        const ri = roles.findIndex((r) => r.mnum === game.urole?.mnum);
+        const gname = align_gname(ri >= 0 ? ri : (game.urole?.mnum ?? -1), altaralign);
         await pline(`${!Deaf() ? 'A voice (could it be' : 'Despite your deafness, you seem to hear'} `
             + `${gname}${!Deaf() ? '?) whispers' : ' say'}:`);
         await pline('"Thou shalt pay, infidel!"');   /* verbalize(): its own pline */

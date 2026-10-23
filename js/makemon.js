@@ -3543,7 +3543,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // to be a falsiness test on a value defaulting to TRUE.  `=== false` never
     // matched sp_lev's 0, so allmain.c maybe_generate_rnd_mon()'s makemon()
     // spawned a monster (~20 RNG draws) on every !rn2(70) inside the tutorial.
-    if (!mdat && !(game.level?.flags?.rndmongen ?? true)) return null;
+    if (game.iflags?.debug_mongen || (!mdat && !(game.level?.flags?.rndmongen ?? true))) return null;
 
     // C ref: makemon.c:1194 — "Does monster already exist at the position?"
     // Without MM_ADJACENTOK this is a bare early return, consuming NO RNG —

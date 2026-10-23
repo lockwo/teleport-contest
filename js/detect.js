@@ -8,7 +8,7 @@ import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
+         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
 import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
@@ -84,7 +84,7 @@ async function findone(zx, zy, found) {
         && ttmp.ttyp !== STATUE_TRAP) {
         ttmp.tseen = 1;
         sense_trap(ttmp, zx, zy, 0); /* handles Hallucination */
-        foundone(zx, zy, trap_glyph(ttmp));
+        foundone(zx, zy, { kind: 'cmap' }); /* trap_to_glyph(): a cmap glyph */
         found.num_traps++;
     }
     if (lev.typ === DOOR && ((lev.doormask | 0) & (D_CLOSED | D_LOCKED))
@@ -93,7 +93,7 @@ async function findone(zx, zy, found) {
         dummytrap.tx = zx; dummytrap.ty = zy;
         dummytrap.tseen = 1;
         sense_trap(dummytrap, zx, zy, 0); /* handles Hallucination */
-        foundone(zx, zy, trap_glyph(dummytrap));
+        foundone(zx, zy, { kind: 'cmap' }); /* trap_to_glyph(): a cmap glyph */
         found.num_traps++;
     }
     /* trapped chests */
@@ -738,7 +738,7 @@ function magic_map_background(x, y, show) {
 
 // C ref: display.c map_trap(trap, show).  The extra loc.mapped_trap_ttyp stamp
 // is what lets glyph_at() report a trapped chest/door that is in no ftrap chain.
-function map_trap(trap, show) {
+export function map_trap(trap, show) {
     const x = trap.tx, y = trap.ty, loc = game.level?.at(x, y);
     if (!loc) return;
     const g = trap_glyph(trap);
@@ -775,12 +775,14 @@ function map_object(obj, show) {
         }
     }
     if (!g) return;
+    /* C ref: display.h obj_to_glyph() -> obj_is_piletop(): MG_OBJPILE */
+    const pile = obj_is_piletop(obj);
     if (game.level?.flags?.hero_memory) {
         loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
-                                 objotyp: obj.otyp };
+                                 objotyp: obj.otyp, pile };
         loc.mapped_trap_ttyp = 0;
     }
-    if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
+    if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr({ pile }));
 }
 
 // ── detect.c ───────────────────────────────────────────────────────────────

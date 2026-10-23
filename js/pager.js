@@ -13,7 +13,7 @@
 // No dungeon RNG is consumed and no game time elapses (dohelp returns ECMD_OK).
 
 import { makeplural } from './plural.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
 import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
@@ -976,8 +976,8 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          S_fountain, S_sink, S_throne, S_bars, S_air, S_hodbridge, S_vcdbridge,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
          S_sw_tl, S_sw_br, SYM_OFF_O, SYM_OFF_M, SYM_OFF_W, SYM_OFF_X, gs,
-         S_upstair, S_dnstair, S_upladder, S_dnladder,
-         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder, S_vodoor, S_hodoor, def_r_oc_syms }
+         S_upstair, S_dnstair, S_upladder, S_dnladder, S_trwall,
+         S_brupstair, S_brdnstair, S_brupladder, S_brdnladder, S_vodoor, S_hodoor, def_r_oc_syms, LOADSYMS_PCHAR_NAMES }
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          update_topl, Hallucination_u, impossible as pg_impossible_async,
@@ -1076,16 +1076,47 @@ function is_cmap_trap(i) {
 function is_cmap_drawbridge(i) { return i >= S_vodbridge && i <= S_hcdbridge; }
 function is_cmap_engraving(i) { return i === S_engroom || i === S_engrcorr; }
 
+// dat/symbols "DECgraphics" (Handling: DEC): the meta-<char> codes of the cmaps it
+// remaps.  A square drawn with DEC line-drawing is the code with its high bit set
+// in C's glyphinfo.ttychar, so e.g. S_pool/S_lava/S_lavawall/S_water all read
+// \xe0 and never equal a plain '`' (boulder / engraving).
+const DEC_META = {
+    S_vwall: 0xf8, S_hwall: 0xf1, S_tlcorn: 0xec, S_trcorn: 0xeb, S_blcorn: 0xed,
+    S_brcorn: 0xea, S_crwall: 0xee, S_tuwall: 0xf6, S_tdwall: 0xf7, S_tlwall: 0xf5,
+    S_trwall: 0xf4, S_ndoor: 0xfe, S_vodoor: 0xe1, S_hodoor: 0xe1, S_bars: 0xfc,
+    S_tree: 0xe7, S_room: 0xfe, S_upladder: 0xf9, S_dnladder: 0xfa,
+    S_brupladder: 0xf9, S_brdnladder: 0xfa, S_altar: 0xfb, S_pool: 0xe0,
+    S_ice: 0xfe, S_lava: 0xe0, S_lavawall: 0xe0, S_vodbridge: 0xfe,
+    S_hodbridge: 0xfe, S_water: 0xe0, S_vbeam: 0xf8, S_hbeam: 0xf1,
+    S_sw_tc: 0xef, S_sw_ml: 0xf8, S_sw_mr: 0xf8, S_sw_bc: 0xf3,
+    S_expl_tc: 0xef, S_expl_ml: 0xf8, S_expl_mr: 0xf8, S_expl_bc: 0xf3,
+};
+
+// cmaps display.js draws as a bare ASCII letter under DECgraphics (see back_to_glyph()).
+const DEC_BARE_CELLS = new Map([[S_pool, '`'], [S_water, '`'], [S_lava, '`'], [S_lavawall, '`'],
+    [S_bars, '|'], [18 /* S_tree */, 'g'], [S_upladder, 'y'], [S_dnladder, 'z'],
+    [S_brupladder, 'y'], [S_brdnladder, 'z']]);
+
+// True when the active DECgraphics/curses symset remaps cmap `c` (showsym() then
+// returns a meta code or the \u0001 placeholder, never the plain default char).
+function cmap_symset_remapped(c) {
+    return (useDECgraphics('S_pool') && DEC_REMAPPED.has(c))
+        || (useDECgraphics() && !useDECgraphics('S_pool') && CURSES_REMAPPED.has(c));
+}
+
 // C ref: symbols.c gs.showsyms[] — falls back to the compiled-in default when
 // init_showsyms() has not run (no SYMBOLS= in the rc).
 function showsym(idx, fallback) {
     // dat/symbols DECgraphics remaps these cmap entries to VT100 line-drawing
     // codes; no plain map character can equal them.
-    if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS
-        && ((useDECgraphics('S_pool') && DEC_REMAPPED.has(idx - SYM_OFF_P))
-            || (useDECgraphics() && !useDECgraphics('S_pool')
-                && CURSES_REMAPPED.has(idx - SYM_OFF_P))))
-        return '\u0001';
+    if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS) {
+        const c = idx - SYM_OFF_P;
+        if (useDECgraphics('S_pool') && DEC_REMAPPED.has(c))
+            return DEC_META[LOADSYMS_PCHAR_NAMES[c]] != null
+                ? String.fromCharCode(DEC_META[LOADSYMS_PCHAR_NAMES[c]]) : '\u0001';
+        if (useDECgraphics() && !useDECgraphics('S_pool') && CURSES_REMAPPED.has(c))
+            return '\u0001';
+    }
     /* C ref: do.c goto_level() assign_graphics(ROGUESET): on the Rogue level
        gs.showsyms[] holds symbols.c init_rogue_symbols() -- doorways '+', stairs
        '%' and drawing.c def_r_oc_syms (armor ']', amulet ',', food ':') -- so
@@ -1184,6 +1215,28 @@ export function pg_glyph_at(x, y) {
         return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
 }
+// C ref: display.c show_glyph() `a11y.glyph_updates` (mention_map) arm: a spot
+// that was GLYPH_NOTHING/UNEXPLORED (or whose new glyph is furniture), and is not
+// being shown as a wall or room floor, is described by a pline_xy() with
+// a11y.accessiblemsg forced on.  Returns the "%s" text, or null for no message.
+// `oldUnexplored`/`oldMonster` describe the cell BEFORE newsym() redrew it.
+export function mention_map_text(x, y, oldUnexplored, oldMonster) {
+    const g = pg_glyph_at(x, y);
+    if (g.kind === 'nothing' || g.kind === 'unexplored') return null;
+    const c = pg_glyph_is_cmap(g) ? g.cmap : MAXPCHARS;
+    const furniture = c >= S_upstair && c <= S_fountain;
+    const wall = c >= S_stone && c <= S_trwall;
+    const room = c >= S_room && c <= S_darkroom;
+    if (!((oldUnexplored || furniture) && !wall && !room)) return null;
+    if ((game.flags?.spot_monsters && pg_glyph_is_monster(g)) || oldMonster
+        || pg_u_at(x, y))
+        return null;
+    const out_str = { s: '' }, firstmatch = { s: '' };
+    do_screen_description({ x, y }, true, 0, out_str, firstmatch, null);
+    return firstmatch.s ? `${firstmatch.s}.` : null;
+}
+hooks.mentionMap = mention_map_text;
+
 function pg_glyph_is_monster(g) { return g?.kind === 'monster'; }
 function pg_glyph_is_object(g) { return g?.kind === 'object'; }
 function pg_glyph_is_trap(g) { return g?.kind === 'trap'; }
@@ -1308,6 +1361,9 @@ const pg_ice_descr = (x, y) => ice_descr(x, y);
 // C ref: pager.c self_lookat(outbuf) — js/hack.js:1356 owns the canonical port
 // (role/race/plname assembly plus the ball and trap suffixes).
 function pg_self_lookat() {
+    // js/hack.js self_lookat() is the full port (race, role, invisibility, steed,
+    // polymorph form, ball, trap predicament); hack.js registers it at load.
+    if (_pg.self_lookat) return _pg.self_lookat();
     const u = pg_u();
     const nm = game.flags?.debug ? 'wizard' : (game.plname || 'Player');
     const pm = monster_by_pmidx(u.umonnum)?.name || 'human';
@@ -1964,6 +2020,12 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
     if (looked) {
         glyph = pg_glyph_at(cc.x, cc.y);
         sym = glyph.sym;
+        /* C: ttychar is showsyms[cmap], i.e. the DEC meta code for a cmap the DECgraphics
+           symset remaps.  This port draws water/lava, trees, bars and ladders as the
+           bare letter (dec=false: the recorded decoder has no entry for them), so the
+           displayed char alone no longer says which cmap it is. */
+        if (glyph.kind === 'cmap' && useDECgraphics('S_pool') && DEC_BARE_CELLS.get(glyph.cmap) === sym)
+            sym = showsym(SYM_OFF_P + glyph.cmap, sym);
         prefix = `${encglyph(glyph)}        `;
     } else {
         prefix = `${sym}        `;
@@ -2110,7 +2172,7 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
            entry (altar \xfb), which this port stores as the bare char ('{'):
            only the entry that was drawn matches it, never fountain/sink. */
         if (looked && glyph?.dec
-            ? (showsym(alt_i + SYM_OFF_P, '') === '\u0001' && alt_i === glyph.cmap)
+            ? (cmap_symset_remapped(alt_i) && alt_i === glyph.cmap)
             : sym === (looked ? showsym(alt_i + SYM_OFF_P, defsyms[alt_i].sym)
                               : defsyms[alt_i].sym)) {
             /* check if dark part of a room was already included above */

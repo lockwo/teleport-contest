@@ -21,12 +21,13 @@
 // It consumes no PRNG, matching C: opening/navigating the options menu never
 // touches the dungeon RNG.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { update_topl, topl_more, render_map_to_grid, docrt, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
 import { NO_COLOR, ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
 import { color_attr_to_str } from './coloratt.js';
+import * as OPTS from './options.js';
 import { OPT_MENU_DRIVER, handler_number_pad,
          handler_autounlock, autounlock_val, handler_autopickup_exception,
          handler_menu_colors, handler_statuslines, paranoid_confirmation_val } from './options.js';
@@ -247,7 +248,12 @@ function rawBoolValue(name) {
     case 'price_quotes': return game.iflags?.pricequotes;
     case 'query_menu': return game.iflags?.query_menu;
     case 'mon_movement': return game.a11y?.mon_movement;
-    default:           return game.flags[name];
+    default:
+        if (WIZ_IFLAGS_FIELD[name]) {
+            const v = game.iflags?.[WIZ_IFLAGS_FIELD[name]];
+            return v === undefined ? game.flags[name] : v;
+        }
+        return game.flags[name];
     }
 }
 
@@ -482,6 +488,31 @@ const WIZ_ONLY_BOOLS = [
     ['wizmgender', null],
     ['wizweight', null],
 ];
+
+// C: optlist.h NHOPTB bp column for the wizard-only booleans -- the iflags.*
+// field behind each option (same storage as options.js set_boolean()).
+const WIZ_IFLAGS_FIELD = {
+    debug_hunger: 'debug_hunger', debug_mongen: 'debug_mongen',
+    debug_overwrite_stairs: 'debug_overwrite_stairs',
+    menu_tab_sep: 'menu_tab_sep', monpolycontrol: 'mon_polycontrol',
+    montelecontrol: 'mon_telecontrol', sanity_check: 'sanity_check',
+    travel_debug: 'trav_debug', wizmgender: 'wizmgender', wizweight: 'wizweight',
+};
+
+// C: optlist.h `has_handler` compounds that doset() dispatches through
+// optfn(do_handler); the handler lives in options.js.
+const FULL_MENU_HANDLERS = {
+    align_message: 'handler_align_misc', align_status: 'handler_align_misc',
+    disclose: 'handler_disclose', menu_headings: 'handler_menu_headings',
+    menustyle: 'handler_menustyle', msg_window: 'handler_msg_window',
+    perminv_mode: 'handler_perminv_mode', petattr: 'handler_petattr',
+    pickup_burden: 'handler_pickup_burden', runmode: 'handler_runmode',
+    sortloot: 'handler_sortloot', versinfo: 'handler_versinfo',
+    whatis_coord: 'handler_whatis_coord', whatis_filter: 'handler_whatis_filter',
+    windowborders: 'handler_windowborders', menu_objsyms: 'handler_menu_objsyms',
+    paranoid_confirmation: 'handler_paranoid_confirmation',
+    msgtype: 'handler_msgtype',
+};
 
 // doset()'s fmtstr_doset is "%s%-*s [%s]" with the width from
 // longest_option_name(), 23 for this build ("status condition fields").
@@ -934,7 +965,11 @@ async function runFruitHandler() {
 export async function runOptionsHandler(handler) {
     const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-    if (game._toplin === 1 || game._yn_need_more) await topl_more();
+    let blankStatus = true;
+    if (game._toplin === 1 || game._yn_need_more) {
+        await topl_more();
+        blankStatus = false; // the --More-- repainted the status window
+    }
     game._pending_message = '';
     game._toplin = 0;
     game._yn_need_more = false;
@@ -944,7 +979,6 @@ export async function runOptionsHandler(handler) {
     const savedSelect = OPT_MENU_DRIVER.select;
     const savedGetlin = OPT_MENU_DRIVER.getlin;
     const savedError = OPT_MENU_DRIVER.error;
-    let blankStatus = true;
     OPT_MENU_DRIVER.select = async (win, how) => {
         // tty_display_nhwindow acknowledges a pending pline before a menu.
         if (game._toplin === 1 || game._yn_need_more) {
@@ -1004,7 +1038,11 @@ export async function runOptionsHandler(handler) {
     };
     try {
         const res = await handler();
-        if (game._toplin) await topl_more();
+        if (game._toplin) {
+            await topl_more();
+            game._toplin = 0;
+            game._pending_message = '';
+        }
         return res;
     } finally {
         OPT_MENU_DRIVER.select = savedSelect;
@@ -1159,7 +1197,9 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
 export async function dosetSimple() {
     for (;;) { // doset_simple_menu() loop — one select_menu round per iteration
         // tty_display_nhwindow() clears WIN_MESSAGE when raising the parent
-        // menu, including any error a compound option just acknowledged.
+        // menu, including any error a compound option just acknowledged; a
+        // message still waiting (toplin NEED_MORE) is paged first.
+        if (game._toplin === 1 || game._yn_need_more) await topl_more();
         game._pending_message = '';
         game._toplin = 0;
         game._yn_need_more = false;
@@ -1217,6 +1257,10 @@ export async function dosetSimple() {
             // unknown accelerator: ignore (tty rings the bell)
         }
 
+        // C ref: tty_dismiss_nhwindow() -> erase_menu_or_text() docrt() for the
+        // full-screen menu (see doset()).
+        await docrt();
+        if (game._noticeQueue?.length) await hooks.flushNotices();
         if (cancelled) return 0;
         if (!pick) return 0;                              // no pick: exit menu
 
@@ -1380,6 +1424,11 @@ export async function doset() {
         }
     }
 
+    // C ref: tty_dismiss_nhwindow() -> erase_menu_or_text(): the full-screen
+    // (offx == 0) menu is torn down with docrt(), which runs vision_recalc(2)
+    // then (0), so spot_monsters re-announces what the hero can see.
+    await docrt();
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     if (cancelled) return 0;
 
     // Apply picks in menu order (select_menu returns picks in menu order).
@@ -1423,6 +1472,11 @@ export async function doset() {
             await runOptionsHandler(() => runSymbolSetHandler(e.name === 'roguesymset'));
         } else if (e.name === 'statuslines') {
             await runStatuslinesHandler();
+        } else if (FULL_MENU_HANDLERS[e.name]) {
+            // C ref: options.c doset() -- `allopt[k].has_handler` compounds
+            // run their optfn(do_handler) menu.
+            const h = OPTS[FULL_MENU_HANDLERS[e.name]];
+            await runOptionsHandler(() => h(e.name));
         }
         // Other compound/other selections aren't exercised by the recorded
         // sessions; left unhandled (no prompt) on purpose.
@@ -1463,6 +1517,7 @@ function applyBooleanToggle(name, turnOn) {
     case 'verbose':    game.flags.verbose = turnOn; break;
     default:
         game.flags[name] = turnOn;
+        if (WIZ_IFLAGS_FIELD[name]) (game.iflags = game.iflags || {})[WIZ_IFLAGS_FIELD[name]] = turnOn;
         break;
     }
 }

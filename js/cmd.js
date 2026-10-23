@@ -8,7 +8,7 @@
 import { game, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, glyph_at, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, You_feel, You_hear } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
@@ -25,7 +25,8 @@ import { ddoinv, dismiss_invent_screen, dolook,
          ECMD_TIME as I_ECMD_TIME } from './invent.js';
 import { makeplural } from './plural.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
-         disturb_buried_zombies, add_to_migration, stamp_fobj } from './mkobj.js';
+         disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object } from './mkobj.js';
+import { fobj } from './dogmove.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
 import { dodrink } from './potion.js';
@@ -4001,9 +4002,14 @@ async function domove_core(dx, dy, attemptTracked) {
         hero_tread_disturbs_zombies();
         await hero_rehides();
         u.umoved = (u.ux !== _umoved_ux0 || u.uy !== _umoved_uy0);
-        newsym(u.ux0, u.uy0);
-        vision_recalc(1);
-        newsym(u.ux, u.uy);
+        // C ref: hack.c:2964-2974 — the old square is cleaned and vision redone
+        // only `if (u.ux0 != u.ux || u.uy0 != u.uy)`; a refused swap redraws
+        // nothing, so a map-mapped trap glyph under the hero stays on screen.
+        if (u.umoved) {
+            newsym(u.ux0, u.uy0);
+            vision_recalc(1);
+            newsym(u.ux, u.uy);
+        }
         // C ref: hack.c domove_core() — after swapping with a pet, C still
         // falls through to the SAME spoteffects(TRUE) tail every relocating
         // move runs (pooleffects/check_special_room/dosinkfall, pickup(1),
@@ -4395,10 +4401,15 @@ async function domove_core(dx, dy, attemptTracked) {
             return;
         }
         if (bobj) {
+            // C ref: hack.c:1001 test_move() starts with context.door_opened = FALSE;
+            // moverock()'s nopick arm sets it (with context.move) when the hero
+            // learned something, and domove_core() 2844 then keeps the turn.
+            game.context.door_opened = false;
             const pushed = await moverock(bobj, newx, newy, u.dx, u.dy);
             if (pushed < 0) {
-                // Boulder couldn't be pushed: hero stays put, no turn elapses.
-                game.context.move = 0;
+                // Boulder couldn't be pushed: hero stays put, no turn elapses
+                // unless door_opened kept the move.
+                if (!game.context.door_opened) game.context.move = 0;
                 return;
             }
             // Boulder rolled away -> fall through to the normal move onto its old
@@ -5304,7 +5315,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
         // C ref: hack.c:386 the m<dir>/travel "nopick" branch: step over or
         // squeeze past the boulder instead of pushing it.
         if (game.context?.nopick) {
-            const oldglyph = glyph_at(sx, sy);
+            const oldglyph = displayed_glyph_sig(sx, sy);
             feel_location(sx, sy);
             let res;
             if (hero_throws_rocks()) {
@@ -5317,7 +5328,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
                 res = 0;
             } else {
                 await pline('There is a boulder in your way.');
-                if (glyph_at(sx, sy) !== oldglyph)
+                if (displayed_glyph_sig(sx, sy) !== oldglyph)
                     game.context.door_opened = game.context.move = true;
                 res = -1;
             }
@@ -5485,6 +5496,16 @@ async function moverock(otmp, sx, sy, dx, dy) {
 
         if (await boulder_hits_pool(otmp, rx, ry, true)) continue;
 
+        // C ref: hack.c:628-631 — "Re-link at top of fobj chain so that pile
+        // order is preserved when level is restored."  remove_object() lets
+        // the boulder's light-blocking go (vision_full_recalc, so the first
+        // pline of dopush() runs a pending vision_recalc and, for a
+        // hallucinating hero, its newsym() draws) and place_object() puts it
+        // back on top of its pile.
+        if (otmp !== fobj()[0]) {
+            remove_object(otmp);
+            place_object(otmp, otmp.ox, otmp.oy);
+        }
         await dopush(sx, sy, rx, ry, otmp, costly);
         /* loop: another boulder may be stacked at sx,sy */
     }

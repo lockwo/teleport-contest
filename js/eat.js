@@ -609,7 +609,7 @@ export async function gethungry() {
     if (!u) return;
 
     // C ref: eat.c:3167 — u.uinvulnerable / debug_hunger skip the whole thing.
-    if (u.uinvulnerable) return;
+    if (u.uinvulnerable || game.iflags?.debug_hunger) return;
 
     const unaware = !!(u.usleep || u.uunconscious || u.ufrozen);
     // C: (!Unaware || !rn2(10)) && (carnivorous || herbivorous || metallivorous)

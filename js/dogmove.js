@@ -28,6 +28,7 @@ import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
 import { floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
+import { is_pool, is_lava } from './dbridge.js';
 import { dist2, mfndpos, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku, m_digweapon_check } from './monmove.js';
@@ -404,7 +405,7 @@ export function dogfood(mon, obj) {
         // the corpse is on floor ice or in an ice box before deciding whether
         // it has rotted.
         const corpse_age = peek_at_iced_corpse_age(obj);
-        const isLizardLichen = (fx === 158 /*lichen*/ || fx === 325 /*lizard*/);
+        const isLizardLichen = (fx === 158 /*PM_LICHEN*/ || fx === 326 /*PM_LIZARD*/);
 
         // C ref: dog.c:1041-1055 — the ghoul diet, which inverts the freshness
         // test (ghouls want ROTTEN corpses and stale eggs) and rates everything
@@ -1221,14 +1222,10 @@ function cri_is_swimmer(d) { return is_swimmer_flag(d); }
 function cri_likes_lava(d) {
     return d?.name === 'fire elemental' || d?.name === 'salamander';
 }
-function cri_is_pool(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === POOL || t === MOAT || t === WATER;
-}
-function cri_is_lava(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === LAVAPOOL || t === LAVAWALL;
-}
+// C ref: dbridge.c is_pool()/is_lava() — include the water/lava UNDER a raised
+// drawbridge (DRAWBRIDGE_UP) span, not just POOL/MOAT/WATER/LAVAPOOL squares.
+function cri_is_pool(x, y) { return is_pool(x, y); }
+function cri_is_lava(x, y) { return is_lava(x, y); }
 function cri_Is_rogue_level() {
     const uz = game.u?.uz, rl = game.rogue_level;
     return !!uz && !!rl && uz.dnum === rl.dnum && uz.dlevel === rl.dlevel;

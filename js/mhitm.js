@@ -1106,7 +1106,7 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                 if (!magr.mstun) {
                     magr.mstun = 1;
                     if (mm_can_see_mon(magr))
-                        await emitMMmsg(`${Monnam(magr)} ${stagger(permonst(magr), 'stagger')}s...`);
+                        await emitMMmsg(`${Monnam(magr)} ${stagger(permonst(magr), 'stagger')}s...`, magr);
                 }
                 tmp = 0;
                 break;

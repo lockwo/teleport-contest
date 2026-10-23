@@ -25,7 +25,7 @@ import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allm
 import { exercise } from './attrib.js';
 import { A_CON } from './const.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask, You_feel } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -73,7 +73,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, apply_status_cuts } from './display.js';
+import { stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -1641,6 +1641,8 @@ export function self_lookat() {
     if (u.utrap) buf += `, ${trap_predicament(null, false, false)}`;
     return buf;
 }
+
+set_pager_deps({ self_lookat });
 
 // C ref: getpos.c getpos() else-branch — terrain symbol matching (see
 // display.js getpos_is_feature_sym/getpos_find_feature for the shared table
@@ -3501,7 +3503,15 @@ function look_prefix_char(loc) {
 
 function look_pick_description(x, y) {
     const u = game.u;
-    if (u && x === u.ux && y === u.uy && canspotself()) {
+    // C ref: pager.c do_screen_description() keys off glyph_at(), what is DRAWN on
+    // the hero's square: after wiz_map's map_trap() it is the trap glyph, and
+    // the farlook reads "^ a trap (human ... called ...)" -- the class lookup
+    // finds the trap while lookat() still appends self_lookat() (u_at && canspotself).
+    const heroDrawn = (() => {
+        const l = game.level?.at(x, y);
+        return !l || l.disp_ch == null || l.disp_ch === ' ' || l.disp_ch === hero_glyph().ch;
+    })();
+    if (u && x === u.ux && y === u.uy && canspotself() && heroDrawn) {
         // '@' matches S_HUMAN ("human or elf"); need_to_look => lookat() appends
         // " (<self_lookat>)".  firstmatch becomes the self_lookat string.
         // C ref: pager.c:1347-1353 — a hero whose race is NOT human/elf (and
@@ -4790,9 +4800,24 @@ export async function flush_notice_queue(render = false) {
     game._noticeQueue = [];
     game._noticeFlushing = true;
     try {
-        for (const { text, x, y } of q) {
+        const a11y = game.a11y || (game.a11y = {});
+        const lag = game._lagLog || [];
+        game._lagLog = [];
+        let qi = -1;
+        for (const { text, x, y, a11y: force } of q) {
+            qi++;
             set_msg_xy(x, y);
+            /* cells newsym()ed after this announcement was queued are not on
+               screen yet when C's pline() pages it */
+            const undo = lag.filter((e) => e.qlen > qi);
+            for (let k = undo.length - 1; k >= 0; k--) applyDisp(undo[k].loc, undo[k].before);
+            /* show_glyph(): tmp_accessiblemsg = a11y.accessiblemsg;
+               a11y.accessiblemsg = TRUE; pline_xy(); restore */
+            const tmp_accessiblemsg = a11y.accessiblemsg;
+            if (force) a11y.accessiblemsg = true;
             await update_topl(text);
+            if (force) a11y.accessiblemsg = tmp_accessiblemsg;
+            for (const e of undo) applyDisp(e.loc, e.after);
         }
         // The caller is about to read a key: paint what was just printed.
         if (render) await flush_screen(1);

@@ -10,7 +10,7 @@
 
 import { game } from './gstate.js';
 import { nhgetch, unshiftKeys } from './input.js';
-import { pline, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
+import { pline, pline_vision_flush, StatusRows, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
 import {
@@ -444,6 +444,31 @@ export async function hooked_tty_getlin(query, hook) {
         game._toplinSoft = null;
     }
     game._winStop = false;
+    // C ref: getline.c:67 custompline() -> pline.c vpline():266-274 — a pending
+    // vision_recalc() and flush_screen(1) run before the prompt is written, so
+    // the map behind it is current (a light source just created, a door just
+    // opened).  windows.c getlin() holds gb.bot_disabled around win_getlin, so
+    // for a plain getlin (no hook) the status lines are NOT painted by that
+    // flush; the tty_get_ext_cmd() hook prompt is called directly and does.
+    {
+        const old_bot_disabled = game.bot_disabled;
+        const disp = game.nhDisplay;
+        // flush_screen() here rebuilds the whole model screen, status rows
+        // included; the real tty leaves them alone, so put them back.
+        let kept = null;
+        if (!hook && disp?.grid) {
+            game.bot_disabled = true;
+            kept = [];
+            for (let r = disp.rows - StatusRows(); r < disp.rows; r++)
+                kept.push(disp.grid[r].map((cell) => ({ ...cell })));
+        }
+        pline_vision_flush();
+        await flush_screen(1);
+        game.bot_disabled = old_bot_disabled;
+        if (kept)
+            for (let i = 0; i < kept.length; i++)
+                kept[i].forEach((cell, c) => Object.assign(disp.grid[disp.rows - kept.length + i][c], cell));
+    }
     // C ref: getline.c:67 — the prompt is a SUPPRESS_HISTORY line, which
     // remember_topl()s whatever was on the top line.
     remember_topl();
@@ -1637,7 +1662,11 @@ function strcmpi_eq(a, b) { return String(a).toLowerCase() === String(b).toLower
 export async function wiz_genesis() {
     if (!isWizard()) return 0;
     const { create_particular } = await import('./read.js');
+    const iflags = (game.iflags ||= {});
+    const mongen_saved = iflags.debug_mongen;
+    iflags.debug_mongen = false;
     await create_particular();
+    iflags.debug_mongen = mongen_saved;
     return 0;
 }
 
@@ -3397,6 +3426,7 @@ function render_overview_menu(lines) {
     disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
     // C dmore: cursor parked at offx + strlen("(end) ") + 2 = textCol + 6.
     disp.setCursor(textCol + 6, moreRow);
+    return offx;
 }
 
 // C ref: dungeon.c dooverview() -> show_overview(menu_requested ? -1 : 0, 0) ->
@@ -3452,7 +3482,7 @@ export async function show_overview_disclosure(final, how) {
         await dismiss_invent_screen();
         return;
     }
-    render_overview_menu(lines);
+    const offx = render_overview_menu(lines);
     // C ref: wintty.c process_menu_window() for a one-page PICK_NONE menu: only
     // the keys in `resp` (xwaitforspace) reach the switch, a digit starts a
     // count, ESC while counting just stops the count, any other accepted key
@@ -3470,7 +3500,12 @@ export async function show_overview_disclosure(final, how) {
         counting = false;
         count = 0;
     }
-    await flush_screen(1);
+    // C ref: wintty.c erase_menu_or_text(): a window with offx == 0 (it blanked
+    // the whole screen) is torn down with docrt() + flush_screen(1), which
+    // re-runs see_monsters() (fresh hallucinatory glyphs); a corner window
+    // uses docorner()'s row_refresh() instead.
+    if (offx === 0) await docrt_after_text();
+    else await flush_screen(1);
 }
 
 // C ref: wizcmds.c:218 wiz_where() — `print_dungeon(FALSE, 0, 0)`, the
@@ -4341,6 +4376,10 @@ const FOOD_CLASS_X = 7;   // js/mkobj.js object classes
 // browse_map() getpos loop and no extra keystroke consumed.
 export async function wiz_map_extcmd() {
     const { do_mapping } = await import('./detect.js');
+    // C ref: wizcmds.c:183 notice_mon_off() .. :193 notice_mon_on() -- blocks the
+    // mention_map/spot_monsters announcements for the whole mapping pass.
+    const { notice_mon_off, notice_mon_on } = await import('./hack.js');
+    notice_mon_off();
     // C ref: wizcmds.c:181-195 — `save_Hconf = HConfusion, save_Hhallu =
     // HHallucination; HConfusion = HHallucination = 0L; ...; do_mapping();
     // ...restore`.  The mapping pass therefore redraws every square with
@@ -4354,7 +4393,11 @@ export async function wiz_map_extcmd() {
     const saved = slots.map(([o, k]) => o[k]);
     for (const [o, k] of slots) o[k] = typeof o[k] === 'boolean' ? false : 0;
     try {
-        for (const t of (game.level?.traps || [])) t.tseen = 1;
+        // C ref: wizcmds.c:185-188 `t->tseen = 1; map_trap(t, TRUE);` — the trap
+        // glyph is drawn over whatever stands there, the hero included (nothing
+        // re-runs newsym() on his square afterwards).
+        const { map_trap: map_trap_cell } = await import('./detect.js');
+        for (const t of (game.level?.traps || [])) { t.tseen = 1; map_trap_cell(t, true); }
         // C ref: wizcmds.c:189-191 `map_engraving(ep, TRUE)` — maps and shows the
         // engraving glyph; it never sets ep->erevealed (only seeing or feeling
         // the square does), so a later out-of-sight redraw still shows floor.
@@ -4370,6 +4413,7 @@ export async function wiz_map_extcmd() {
         }
         await do_mapping();
     } finally {
+        notice_mon_on();
         slots.forEach(([o, k], i) => { o[k] = saved[i]; });
     }
     return 0;   /* ECMD_OK — no time passes */

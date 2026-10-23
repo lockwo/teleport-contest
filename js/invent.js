@@ -86,7 +86,7 @@ import {
 } from './mkobj.js';
 
 import { getpos, getpos_menu, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
-import { observe_object as disco_observe_object, build_discoveries_rows, discover_object } from './o_init.js';
+import { observe_object as disco_observe_object, build_discoveries_rows, discoveries_title, discover_object } from './o_init.js';
 import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx, little_to_big } from './makemon.js';
 import { MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING } from './const.js';
 import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates_silver,
@@ -2437,11 +2437,11 @@ export function renderWindowScreen(lines, opts = {}) {
 // full-screen NHW_TEXT window with a "--More--" footer.  The discovery state
 // (objects[].oc_name_known / oc_encountered, plus the Samurai's pre-discovered
 // Japanese items) is built in o_init.js::build_discoveries_rows.
-function discoveriesRows() {
-    const classRows = build_discoveries_rows(disp_artifact_discoveries().rows);
+async function discoveriesRows() {
+    const classRows = await build_discoveries_rows(disp_artifact_discoveries().rows);
     if (!classRows) return null;
     const rows = [
-        { text: 'Discoveries, by order of discovery within each class' },
+        { text: discoveries_title() },
         { text: '' },
     ];
     for (const r of classRows)
@@ -2451,7 +2451,7 @@ function discoveriesRows() {
 }
 
 export async function dodiscovered() {
-    const rows = discoveriesRows();
+    const rows = await discoveriesRows();
     if (!rows) {
         game._pending_message = note_topl('You haven\'t discovered anything yet.');
         return ECMD_OK;
@@ -7568,7 +7568,6 @@ export async function hitfloor(otmp, verbosely) {
     // being swallowed all short-circuit to dropy(): no message, no break test.
     if (IS_SOFT(hereTyp) || u.uinwater || u.uswallow) {
         otmp.owornmask = 0;
-        otmp.how_lost = LOST_THROWN;
         await dropy(otmp);
         return;
     }
@@ -7606,7 +7605,6 @@ export async function hitfloor(otmp, verbosely) {
     }
     // C ref: dothrow.c:646 `dropz(obj, TRUE)` — flooreffects, container impact
     // damage, zombie disturbance and (in a shop) sellobj() all live there.
-    otmp.how_lost = LOST_THROWN;
     await dropz(otmp, u.ux, u.uy, true);
 }
 // C ref: trap.c t_at(u.ux, u.uy).
@@ -12630,13 +12628,28 @@ export function mergable(otmp, obj) {
             && (is_rider_pm(otmp.corpsenm)
                 || monster_by_pmidx(otmp.corpsenm)?.mcls === 46 /* S_TROLL */)))
         return false;
+    /* allow candle merging only if their ages are close (begin_burn's 25) */
+    if ((obj.otyp === TALLOW_CANDLE || obj.otyp === WAX_CANDLE)
+        && Math.trunc(obj.age / 25) !== Math.trunc(otmp.age / 25))
+        return false;
+    /* burning potions of oil never merge */
+    if (obj.otyp === POT_OIL && obj.lamplit) return false;
     /* don't merge surcharged item with base-cost item */
     if (obj.unpaid && !same_price(obj, otmp)) return false;
     /* some additional information is always incompatible */
     if (has_omonst(obj) || has_omid(obj) || has_omonst(otmp) || has_omid(otmp)) return false;
-    if (safe_oname(obj) && safe_oname(otmp) && safe_oname(obj) !== safe_oname(otmp)) return false;
+    /* if they have names, make sure they're the same (a nameless corpse
+       never merges with a named one: the length test is not gated on both
+       names being non-empty for CORPSE) */
+    const objnamelth = safe_oname(obj).length, otmpnamelth = safe_oname(otmp).length;
+    if ((objnamelth !== otmpnamelth && ((objnamelth && otmpnamelth) || obj.otyp === CORPSE))
+        || (objnamelth && otmpnamelth && safe_oname(obj) !== safe_oname(otmp)))
+        return false;
     if (has_omailcmd(obj) !== has_omailcmd(otmp) || OMAILCMD(obj) !== OMAILCMD(otmp)) return false;
+    /* wished or bones mail: spe keeps the two flavors apart, so o_id parity too */
+    if (obj.otyp === SCR_MAIL_OTYP && obj.spe > 0 && (obj.o_id % 2) !== (otmp.o_id % 2)) return false;
     if (obj.oartifact !== otmp.oartifact) return false;
+    if ((obj.known | 0) !== (otmp.known | 0) && (Blind_for_wear() || Hallucination_hero())) return false;
     return true;
 }
 
