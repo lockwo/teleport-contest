@@ -537,10 +537,10 @@ export async function monflee(mtmp, fleetime, first, fleemsg) {
             && mtmp.m_ap_type !== M_AP_FURNITURE
             && mtmp.m_ap_type !== M_AP_OBJECT) {
             if (!mtmp.mcanmove || !base_mmove(mtmp)) {
-                await emitU(`${Adjmonnam_mm(mtmp, 'immobile')} seems to flinch.`);
+                await emitU(`${Adjmonnam_mm(mtmp, 'immobile')} seems to flinch.`, mtmp);
             } else if (flees_light(mtmp)) {
                 if (game.u?.Unaware) {
-                    await emitU(`${Monnam(mtmp)} is frightened.`);
+                    await emitU(`${Monnam(mtmp)} is frightened.`, mtmp);
                 } else if (rn2(10) || Deaf_hero()) {
                     /* via flees_light(): uwep (Sunsword) or uarm (gold DS) */
                     const uwep = game.uwep, uarm = game.uarm;
@@ -549,12 +549,12 @@ export async function monflee(mtmp, fleetime, first, fleemsg) {
                     const lsrc = (uwep && artifact_light(uwep)) ? bare_artifactname(uwep)
                         : (uarm && artifact_light(uarm)) ? yname(uarm)
                         : '[its imagination?]';
-                    await emitU(`${Monnam(mtmp)} flees from the painful light of ${lsrc}.`);
+                    await emitU(`${Monnam(mtmp)} flees from the painful light of ${lsrc}.`, mtmp);
                 } else {
                     await emitU('"Bright light!"');
                 }
             } else {
-                await emitU(`${Monnam(mtmp)} turns to flee.`);
+                await emitU(`${Monnam(mtmp)} turns to flee.`, mtmp);
             }
         }
 
@@ -1691,7 +1691,7 @@ async function pri_move(priest) {
         if (monnear(priest, u.ux, u.uy)) {
             if (await mattacku(priest, priest.data)) { /* hero died */ }
             return 0;
-        } else if ((game.level?.at(u.ux, u.uy)?.roomno ?? 0) === temple) {
+        } else if ((u.urooms || []).includes(temple)) {  // strchr(u.urooms, temple)
             /* chase player if inside temple & can see him */
             if (priest.mcansee && m_canseeu(priest)) { ggx = u.ux; ggy = u.uy; }
             avoid = false;

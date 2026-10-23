@@ -4088,14 +4088,18 @@ function mtown1_object(otyp, mx, my, { spe = null, uncursedBuc = false,
     if (spe != null) otmp.spe = spe;
     if (uncursedBuc) { unbless(otmp); uncurse(otmp); }
     if (quan != null) { otmp.quan = quan; otmp.owt = weight(otmp); }
-    return otmp;
+    // C ref: sp_lev.c:2423 create_object() tail — stackobj() merges the new
+    // object into an identical pile already on the square.
+    return splev_finish_object(otmp);
 }
 
 // des.object("boulder"/"rock") with no coordinate: random DRY spot inside the
 // last des.map()'s own box (bigrm_get_location_dry, not the whole level).
+// C ref: create_object() ends with stackobj(), so two rock stacks landing on
+// one square are ONE pile (the rubble loop makes 10-19 rocks on a big map).
 function mtown1_object_random(otyp) {
     const c = bigrm_get_location_dry();
-    return mksobj_at(otyp, c.x, c.y, true, true);
+    return splev_finish_object(mksobj_at(otyp, c.x, c.y, true, true));
 }
 
 // des.object({id="corpse", montype=...}) with no coordinate.
@@ -4104,7 +4108,7 @@ function mtown1_corpse_random(montype) {
     const otmp = mksobj_at(CORPSE, c.x, c.y, true, true);
     const pmidx = name_to_pmidx(montype);
     if (pmidx >= 0) set_corpsenm(otmp, pmidx);
-    return otmp;
+    return splev_finish_object(otmp);
 }
 
 // selection.area(x1,y1,x2,y2) as an absolute-coordinate point Set, matching

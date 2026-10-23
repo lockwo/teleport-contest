@@ -395,7 +395,7 @@ export function vobj_at(x, y) {
 // boulder).  A pile-top object glyph carries MG_OBJPILE, which the tty draws in
 // reverse video when iflags.hilite_pile (and use_inverse) are set.  `top` must
 // be the topmost object at its tile (as returned by vobj_at).
-function obj_is_piletop(top) {
+export function obj_is_piletop(top) {
     if (!top || top.where !== OBJ_FLOOR) return false;
     const objs = game.level?.objects;
     if (!objs) return false;
@@ -2054,6 +2054,18 @@ export function remembered_glyph_sig(loc) {
         !!r.darkroom, r.objotyp || 0, r.hallucotyp || 0, r.corpsenm ?? null]);
 }
 
+// Value identity of what the cell currently DISPLAYS, standing in for C's
+// `glyph_at(x, y)` integer comparison (hack.c moverock: `glyph_at(sx, sy) !=
+// oldglyph`).  gbuf's glyphinfo.glyph is not maintained by this port's
+// char-cell model, so the drawn symbol/colour/attributes are compared instead:
+// a hallucinated boulder is redrawn as a different random object glyph.
+export function displayed_glyph_sig(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc) return null;
+    return JSON.stringify([loc.disp_ch, loc.disp_color, !!loc.disp_decgfx, loc.disp_attr | 0,
+        !!loc.disp_dark, !!loc.disp_monster, !!loc.disp_warning]);
+}
+
 // C ref: display.c:3357 seenv_matrix[3][3] — shared with vision.c.
 const SEENV_MATRIX_D = [
     [SV2, SV1, SV0],
@@ -2271,7 +2283,51 @@ function display_sensed_monster(x, y, mon, see_it) {
     if (M_AP_TYPE(mon) === M_AP_NOTHING || mimic_sensed(mon)) mon.meverseen = 1;
 }
 
+// C ref: display.c show_glyph() `a11y.glyph_updates` (mention_map): the glyph
+// buffer here is the live display cell, so the old-glyph test is made around
+// newsym_core() and the announcement is queued (newsym() is synchronous; the
+// queue drains before the next topline message or key read, as notice_mon's).
+const DISP_FIELDS = ['disp_ch', 'disp_color', 'disp_decgfx', 'disp_attr', 'disp_dark',
+                     'disp_monster', 'disp_warning', 'disp_hstatue'];
+function snapDisp(loc) {
+    const s = {};
+    for (const f of DISP_FIELDS) s[f] = loc[f];
+    return s;
+}
+export function applyDisp(loc, snap) { for (const f of DISP_FIELDS) loc[f] = snap[f]; }
+
 export function newsym(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!game.flags?.mention_map || game.a11y?.mon_notices_blocked
+        || game._inDocrt || game.program_state?.gameover
+        || game.program_state?.in_getlev || game.program_state?.stopprint
+        || !hooks.mentionMap || !loc) {
+        newsym_core(x, y);
+        if (loc) loc._dispHero = game.u?.ux === x && game.u?.uy === y;
+        return;
+    }
+    const sigOf = (l) => `${l.disp_ch}|${l.disp_color}|${l.disp_decgfx}|${l.disp_attr}|${l.disp_monster}|${l.disp_dark}`;
+    const before = sigOf(loc);
+    /* old glyph GLYPH_NOTHING/GLYPH_UNEXPLORED: a never-drawn or blank cell */
+    const oldUnexplored = loc.disp_ch === undefined || loc.disp_ch === ' ';
+    /* glyph_is_monster(oldglyph) includes the hero's own glyph */
+    const oldMonster = !!loc.disp_monster || !!loc._dispHero;
+    const pending = !!loc._gchg;
+    const snapBefore = snapDisp(loc);
+    newsym_core(x, y);
+    loc._dispHero = game.u?.ux === x && game.u?.uy === y;
+    /* C printed each announcement inside newsym(), so the --More-- screen shows
+       only the cells drawn up to that point: log later changes to undo them
+       while an earlier queued announcement is on screen (hack.js flush). */
+    if (game._noticeQueue?.some((n) => n.a11y) && sigOf(loc) !== before)
+        (game._lagLog ||= []).push({ loc, qlen: game._noticeQueue.length,
+                                     before: snapBefore, after: snapDisp(loc) });
+    if (_suppress_map_output() || !(pending || sigOf(loc) !== before)) return;
+    const text = hooks.mentionMap(x, y, oldUnexplored, oldMonster);
+    if (text) (game._noticeQueue ||= []).push({ text, x, y, a11y: true });
+}
+
+function newsym_core(x, y) {
     // C ref: display.c:925 — don't try to produce map output when the level is
     // in a state of flux (mklev, save, restore).
     if (_suppress_map_output()) return;
@@ -2657,6 +2713,18 @@ export function unmap_object(x, y) {
 // C ref: display.c docrt — recompute the live glyph for every cell so the
 // monster/object/terrain stack and hero are all redrawn from current state.
 export async function docrt() {
+    // C ref: display.c docrt_flags() `program_state.in_docrt` -- show_glyph()'s
+    // mention_map announcements are suppressed for the whole redraw.
+    const was = game._inDocrt;
+    game._inDocrt = true;
+    try {
+        await docrt_live();
+    } finally {
+        game._inDocrt = was;
+    }
+}
+
+async function docrt_live() {
     if (!game.level) return;
     // C ref: display.c:1747 docrt_flags -> cls(), and cls() (display.c:2196)
     // opens with `display_nhwindow(WIN_MESSAGE, FALSE)` — pending toplines are
@@ -3541,9 +3609,15 @@ function _renderStatus() {
                    conditions in fieldorder, which no order array has). */
                 if (idx === BL_VERS && fields[i + 1] === BL_FLUSH) {
                     const vstart = STATUS_COLS - lth[BL_VERS];
-                    for (; x < vstart; x++)
-                        if (cells[x - 1] && cells[x - 1].ch !== ' ')
-                            _putStatusField(cells, ' ', x, 0);
+                    /* `dat[x - 1]` is the status window's persistent text: a
+                       cell this render has not drawn still holds the earlier
+                       render's character (e.g. the 'd' of a longer "Shield"
+                       under a shorter "Naked"), which must be blanked too. */
+                    const dgrid = game.nhDisplay?.grid?.[(game.nhDisplay.rows ?? 24) - nrows + row];
+                    for (; x < vstart; x++) {
+                        const dch = cells[x - 1] ? cells[x - 1].ch : (dgrid?.[x - 1]?.ch || ' ');
+                        if (dch !== ' ') _putStatusField(cells, ' ', x, 0);
+                    }
                 }
                 let text = val[idx];
                 if (hlOn) {
@@ -4020,7 +4094,12 @@ function _buildScreenOutput() {
         // C ref: tty_yn_function() sends its prompt through custompline(
         // SUPPRESS_HISTORY) -> tty_putstr -> show_topl(), which skips
         // update_topl()'s word-wrap: topl_putsym() hard-wraps at column CO-1.
-        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(msg) : wrap_topl(msg);
+        // The prompt is `query [yn] (n) ` WITH its trailing space (_pending_message is
+        // trimmed): an 80-char prompt wraps its last char onto row 1, which tty then
+        // clears, so row 1 is a message row (blank) there.
+        const promptText = (game._toplPromptFull && game._toplPromptFull.trimEnd() === msg)
+            ? game._toplPromptFull : msg;
+        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : wrap_topl(msg);
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
             for (let c = 0; c < Math.min(ln.length, display.cols); c++)
@@ -4038,9 +4117,6 @@ function _buildScreenOutput() {
             const sy = _mapRowOnScreen(y);
             if (sy < 0 || sy < msgRows) continue;
             for (let x = 1; x < COLNO; x++) {
-                if (game.u?.uinwater && !Is_waterlevel(game.u.uz)
-                    && (Math.abs(x - game.u.ux) > 1 || Math.abs(y - game.u.uy) > 1
-                        || !(is_pool_or_lava_d(x, y) || is_ice_d(x, y)))) continue;
                 if (clipping && (x <= clipx || x >= clipxmax)) continue;
                 const loc = _displayed_loc(x, y);
                 if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
@@ -5295,6 +5371,7 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = false) {
         if (!doprev) {
             game._pending_message = full.trimEnd();
             game._toplPromptMsg = game._pending_message;
+            game._toplPromptFull = full;
         }
         await flush_screen(1);
         game._modal_screen = 'topl';
@@ -6371,7 +6448,7 @@ export async function under_water(mode) {
         for (y = _uw_lasty - 1; y <= _uw_lasty + 1; y++)
             for (x = _uw_lastx - 1; x <= _uw_lastx + 1; x++)
                 if (isok(x, y))
-                    show_glyph(x, y, GLYPH_UNEXPLORED);
+                    show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
     }
 
     /* C TODO? should this honor Xray radius rather than force radius 1? */
@@ -6380,7 +6457,7 @@ export async function under_water(mode) {
         for (y = uy - 1; y <= uy + 1; y++)
             if (isok(x, y) && (is_pool_or_lava_d(x, y) || is_ice_d(x, y))) {
                 if (Blind() && !(x === ux && y === uy))
-                    show_glyph(x, y, GLYPH_UNEXPLORED);
+                    show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
                 else
                     newsym(x, y);
             }

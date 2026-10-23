@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
-         unmap_object, see_monsters, You_feel, status_hold, You_see, You_hear } from './display.js';
+         unmap_object, see_monsters, set_mimic_blocking, You_feel, status_hold, You_see, You_hear } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
@@ -1151,6 +1151,8 @@ async function peffect_see_invisible(otmp) {
         uprops().HSee_invisible = (HProp('HSee_invisible') | 0) | FROMOUTSIDE;
     else
         uprops().HSee_invisible = itimeout_incr(HProp('HSee_invisible'), rn1(100, 750));
+    set_mimic_blocking(); /* do special mimic handling */
+    see_monsters();       /* see invisible monsters */
     newsym(game.u.ux, game.u.uy);
     if (msg && !Blind()) {
         await update_topl('You can see through yourself, but you are visible!');

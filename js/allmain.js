@@ -1514,7 +1514,7 @@ function ring_costs_nutrition(ring, otherRing) {
 // below — uhitm.js's overexertion() imports it to stay faithful.
 export async function gethungry() {
     const u = game.u;
-    if (!u || u.uinvulnerable) return;
+    if (!u || u.uinvulnerable || game.iflags?.debug_hunger) return;
     const consume = Unaware() ? (rn2(10) === 0) : true;
     if (consume && youmonst_eats() && !Slow_digestion())
         u.uhunger = (u.uhunger ?? 900) - 1;

@@ -1329,8 +1329,11 @@ async function flush_screen_(mode) {
 }
 
 // C ref: dig.c:194 is_digging() — is the hero's occupation the dig() below?
+// This port runs each occupation off its own module-level flag and never clears
+// game.occupation when the occupation ends (dig() returning 0, stop_occupation),
+// so the flag is the live half of C's `go.occupation == dig`.
 export function is_digging() {
-    return game.occupation === dig;
+    return !!game._dig_occupation && game.occupation === dig;
 }
 
 // C ref: dig.c:203 BY_YOU / BY_OBJECT.  BY_OBJECT is a null madeby.

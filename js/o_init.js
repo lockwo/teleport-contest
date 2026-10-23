@@ -644,48 +644,86 @@ const DISCO_INV_ORDER = () => [
     6 /*TOOL*/, GEM_CLASS, 14 /*ROCK*/, 15 /*BALL*/, 16 /*CHAIN*/, VENOM_CLASS,
 ];
 
-// Build the discoveries text rows (default 'o' sort: by order of discovery
-// within each class — which for a fresh game equals object order).  Returns
-// null when nothing is discovered (caller prints the "haven't discovered…"
-// message).  C ref: o_init.c dodiscovered().
-export function build_discoveries_rows(artiRows = []) {
+// Build the discoveries text rows.  Returns null when nothing is discovered
+// (caller prints the "haven't discovered…" message).  C ref: o_init.c
+// dodiscovered(): classes come from flags.inv_order (+ venom), and
+// sortdiscoveries ('o' discovery order, 's' sortloot, 'c' alphabetized within
+// each class, 'a' alphabetized across classes) decides headers and order.
+export async function build_discoveries_rows(artiRows = []) {
     getBases();
+    const flags = (game.flags = game.flags || {});
+    if (!flags.discosort || disco_order_let.indexOf(flags.discosort) < 0)
+        flags.discosort = 'o';
+    const alphabyclass = flags.discosort === 'c';
+    const alphabetized = flags.discosort === 'a' || alphabyclass;
+    const lootsort = flags.discosort === 's';
     const rows = [];
     let ct = 0;
     /* C ref: o_init.c dodiscovered() — "unique objects" (relics) and known
        artifacts are pseudo-classes shown ahead of the real classes. */
-    let dis = 0;
+    let dis = 0, uniq_ct = 0;
     for (const uidx of uniq_objs) {
         if (objects[uidx].oc_name_known
             || (objects[uidx].oc_encountered && uidx !== AMULET_OF_YENDOR)) {
             if (!dis++)
                 rows.push({ text: 'Unique items or Relics', header: true });
+            ++uniq_ct;
             ++ct;
             rows.push({ text: disco_fmt_uniq(uidx, '') });
         }
     }
+    let arti_ct = 0;
     for (const row of artiRows) {
         ++ct;
+        ++arti_ct;
         rows.push(row.startsWith(' ') ? { text: row } : { text: row, header: true });
     }
-    for (const oclass of DISCO_INV_ORDER()) {
+    const classes = (flags.inv_order || DISCO_INV_ORDER()).slice();
+    if (!classes.includes(VENOM_CLASS)) classes.push(VENOM_CLASS);
+    let sorted_lines = [];
+    const flushSorted = () => {
+        /* disco_output_sorted(): qsort, then drop the sortloot key */
+        sorted_lines.sort(discovered_cmp);
+        for (const p of sorted_lines)
+            rows.push({ text: lootsort ? p[0] + p.slice(7) : p });
+        sorted_lines = [];
+    };
+    for (const oclass of classes) {
         let printedHeader = false;
         for (const i of discoveryOrder.get(oclass) || []) {
             if (!interesting_to_discover(i)) continue;
             ct++;
             if (!printedHeader) {
-                rows.push({ text: className(oclass), header: true });
                 printedHeader = true;
+                if ((alphabyclass || lootsort) && sorted_lines.length)
+                    flushSorted();
+                if (!alphabetized || alphabyclass)
+                    rows.push({ text: className(oclass), header: true });
             }
-            const prefix = objects[i].oc_encountered ? '  ' : '* ';
+            let buf = objects[i].oc_encountered ? '  ' : '* ';
+            if (lootsort) buf += await sortloot_descr(i, '');
             // C ref: o_init.c disco_append_typename() — append_price_quote() is
             // NOT gated on iflags.pricequotes here (only objnam.c's doname is),
             // so the discoveries list always shows any shop price the hero has
             // been quoted for this type.
-            rows.push({ text: prefix + disco_typename(i) + append_price_quote(i) });
+            buf = buf + disco_typename(i) + append_price_quote(i);
+            if (!alphabetized && !lootsort) rows.push({ text: buf });
+            else sorted_lines.push(buf);
         }
     }
-    return ct ? rows : null;
+    if (!ct) return null;
+    if (sorted_lines.length) {
+        if ((uniq_ct || arti_ct) && alphabetized && !alphabyclass)
+            rows.push({ text: 'Discovered items', header: true });
+        flushSorted();
+    }
+    return rows;
+}
+
+// C ref: o_init.c dodiscovered() window title: "Discoveries, <order>".
+export function discoveries_title() {
+    const p = disco_order_let.indexOf(game.flags?.discosort);
+    return `Discoveries, ${disco_orders_descr[p < 0 ? 0 : p]}`;
 }
 
 const DISCO_CLASS_NAMES = [

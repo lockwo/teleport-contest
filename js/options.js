@@ -1512,6 +1512,10 @@ function set_boolean(name, value, result) {
     case 'monpolycontrol': result.iflags.mon_polycontrol = value; break;
     case 'montelecontrol': result.iflags.mon_telecontrol = value; break;
     case 'travel_debug': result.iflags.trav_debug = value; break;
+    // C: optlist.h &iflags.debug_hunger / debug_mongen / debug_overwrite_stairs.
+    case 'debug_hunger': result.iflags.debug_hunger = value; break;
+    case 'debug_mongen': result.iflags.debug_mongen = value; break;
+    case 'debug_overwrite_stairs': result.iflags.debug_overwrite_stairs = value; break;
     case 'wizmgender': result.iflags.wizmgender = value; break;
     case 'wizweight': result.iflags.wizweight = value; break;
     case 'tutorial':
