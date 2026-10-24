@@ -17,7 +17,7 @@ import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
-import { surface, ceiling as ceiling_dg, has_ceiling } from './dungeon.js';
+import { surface, ceiling as ceiling_dg, has_ceiling, single_level_branch } from './dungeon.js';
 import { mmove_of } from './mon.js';
 import { touch_artifact_monster, touch_artifact_hero_flags, the_artifact_name,
     confers_luck, set_artifact_intrinsic_core, disp_artifact_discoveries, discover_artifact,
@@ -4783,6 +4783,8 @@ export async function Blindf_on(obj) {
         // flags.verbose defaults TRUE in these sessions.  update_topl (C pline)
         // accumulates after the "You are now wearing ..." line.
         if (game.flags?.verbose !== false) await update_topl("You can't see any more.");
+        /* C ref: do_wear.c:1475 — set ball&chain variables before the hero goes blind */
+        if (game.u?.uball) (await import('./ball.js')).set_bc(0);
         await (await import('./potion.js')).toggle_blindness();
     }
 }
@@ -4831,6 +4833,8 @@ export async function Blindf_off(obj) {
         } else {
             changed = true;   /* !was_blind */
             await update_topl("You can't see anything now!");
+            /* C ref: do_wear.c:1522 — set ball&chain variables before the hero goes blind */
+            if (game.u?.uball) (await import('./ball.js')).set_bc(0);
         }
     } else if (was_blind) {
         // gulp_blnd_check() (covered by mouth) is false here.
@@ -7415,6 +7419,7 @@ export async function throwit(otmp, wep_mask) {
     // C ref: dothrow.c:1695 throwit_mon_hit() — sets notonhead, snuffs a lit
     // candle, runs thitmonst() and the shopkeeper hot-pursuit check; TRUE means
     // a shopkeeper caught the object.
+    (game.iflags = game.iflags || {}).returning_missile = returning_missile ? otmp : null;
     if (await DT.throwit_mon_hit(otmp, land.mon)) return ECMD_TIME;
     if (!game.thrownobj) {
         /* missile has already been handled */
@@ -7503,7 +7508,6 @@ export async function throwit(otmp, wep_mask) {
         await DT.breakmsg(otmp, cansee(land.x, land.y));
         otmp.owornmask = 0;
         if (await DT.breakobj(otmp, land.x, land.y, true, true)) {
-            newsym(land.x, land.y);
             return ECMD_TIME;
         }
     }
@@ -12074,7 +12078,12 @@ function stairs_description(sway, stcase = true) {
     const known_branch = !!(sway.tolev && sway.tolev.dnum !== uz.dnum && sway.u_traversed);
     if (!known_branch) {
         let out = `${stairs} ${updown}`;
-        if (sway.u_traversed) out += ` to level ${depth_of_level(sway.tolev)}`;
+        if (sway.u_traversed) {
+            // C: the quest and Fort Ludios report their own level number, not depth().
+            const specialdepth = sway.tolev.dnum === game.quest_dnum
+                || single_level_branch(sway.tolev);
+            out += ` to level ${specialdepth ? sway.tolev.dlevel : depth_of_level(sway.tolev)}`;
+        }
         return out;
     }
     if (uz.dnum === 0 && uz.dlevel === 1 && sway.up && !game.u?.uhave?.amulet) {
@@ -12563,6 +12572,23 @@ export function Stone_resistance_hero() {
     return !!(u.formprops?.Stone_resistance || (p.Stone_resistance | 0) > 0
         || (p.HStone_resistance | 0) > 0 || (p.EStone_resistance | 0) > 0
         || (p.StoneResistance | 0) > 0 || u.Stone_resistance);
+}
+// youprop.h Breathless / Amphibious: magical breathing (intrinsic or worn) plus
+// the current form's M1_BREATHLESS / M1_AMPHIBIOUS bit.
+function Magical_breathing_hero() {
+    const u = game.u || {};
+    const p = u.uprops || {};
+    return !!(p.Magical_breathing || p.HMagical_breathing || p.EMagical_breathing
+              || u.formprops?.Magical_breathing
+              || worn_extrinsic(52 /* MAGICAL_BREATHING */));
+}
+export function Breathless_hero() {
+    return Magical_breathing_hero()
+        || (mflags1_of(youmonst_data()) & 0x400 /* M1_BREATHLESS */) !== 0;
+}
+export function Amphibious_hero() {
+    return Magical_breathing_hero()
+        || (mflags1_of(youmonst_data()) & 0x200 /* M1_AMPHIBIOUS */) !== 0;
 }
 export function will_feel_cockatrice(otmp, force_touch) {
     return !!((Blind_for_wear() || force_touch) && !game.uarmg && !Stone_resistance_hero()

@@ -42,7 +42,7 @@ import { rn2, rnd, d } from './rng.js';
 import { Cold_resistance } from './zap.js';
 import { finish_meating, monnear } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
-import { m_at, newsym, map_invisible, unmap_object, canseemon_shared,
+import { m_at, newsym, map_invisible, unmap_object, canseemon_shared, tp_sensemon,
          update_topl, shieldeff, You_feel } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE,
@@ -96,7 +96,7 @@ import { S_NYMPH } from './symbols.js';
 import { bare_artifactname, is_art, ART_STORMBRINGER } from './artifact.js';
 import { is_weptool, simple_typename, is_plural, otense,
          near_capacity, update_inventory, distant_far, distant_doname,
-         mergable, stackobj, Free_action, Slow_digestion } from './invent.js';
+         mergable, stackobj, Free_action, Slow_digestion, Amphibious_hero } from './invent.js';
 import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
 import { engr_at, wipe_engr_at, u_wipe_engr, sengr_at, del_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac, bypass_obj } from './worn.js';
@@ -640,8 +640,8 @@ export async function attack_checks(mtmp, wep = null) {
     }
 
     // uhitm.c:253-277 — an undetected hider (hides-under species or eel) the
-    // hero can't otherwise see: reveal it, then (without telepathy/Detect_
-    // monsters, neither modeled) announce it and consume the turn.
+    // hero can't otherwise see: reveal it, then (unless sensed by telepathy/
+    // Detect_monsters) announce it and consume the turn.
     if (mtmp.mundetected && !canseemon(mtmp) && !glyphWarning
         && (hides_under_pm(mtmp.data) || mtmp.data?.mcls === S_EEL_MCLS)) {
         mtmp.mundetected = 0;
@@ -651,29 +651,35 @@ export async function attack_checks(mtmp, wep = null) {
             seemimicLocal(mtmp);
             return false;
         }
-        const { pline } = await import('./display.js');
-        const { l_monnam } = await import('./do_name.js');
-        const { is_pool } = await import('./dbridge.js');
-        const lmonbuf = l_monnam(mtmp);
-        const notseen = lmonbuf === 'it';
-        if (!Blind() && game.u?.uhallu) {
-            await pline(`A ${mtmp.mtame ? 'tame' : 'wild'} ${notseen ? 'creature' : lmonbuf} ${notseen ? 'is present' : 'appears'}!`);
-        } else if (Blind() || (is_pool(mtmp.mx, mtmp.my) && !game.u?.uinwater)) {
-            await pline("Wait!  There's a hidden monster there!");
-        } else {
-            const { vobj_at } = await import('./display.js');
-            const obj = vobj_at(mtmp.mx, mtmp.my);       // svl.level.objects[x][y]
-            if (obj) {
-                const { obj_doname } = await import('./invent.js');
-                await pline(`Wait!  There's ${notseen ? 'something' : an(lmonbuf)} hiding under ${await obj_doname(obj)}!`);
+        const dm = game.u?.uprops || {};
+        const detecting = !!((dm.Detect_monsters ?? 0) || (dm.HDetect_monsters ?? 0)
+                             || (dm.EDetect_monsters ?? 0));
+        // uhitm.c:261 — a hider the hero senses by telepathy/detection is revealed
+        // silently and attacked this same turn.
+        if (!tp_sensemon(mtmp) && !detecting) {
+            const { pline } = await import('./display.js');
+            const { l_monnam } = await import('./do_name.js');
+            const { is_pool } = await import('./dbridge.js');
+            const lmonbuf = l_monnam(mtmp);
+            const notseen = lmonbuf === 'it';
+            if (!Blind() && game.u?.uhallu) {
+                await pline(`A ${mtmp.mtame ? 'tame' : 'wild'} ${notseen ? 'creature' : lmonbuf} ${notseen ? 'is present' : 'appears'}!`);
+            } else if (Blind() || (is_pool(mtmp.mx, mtmp.my) && !game.u?.uinwater)) {
+                await pline("Wait!  There's a hidden monster there!");
+            } else {
+                const { vobj_at } = await import('./display.js');
+                const obj = vobj_at(mtmp.mx, mtmp.my);       // svl.level.objects[x][y]
+                if (obj) {
+                    const { obj_doname } = await import('./invent.js');
+                    await pline(`Wait!  There's ${notseen ? 'something' : an(lmonbuf)} hiding under ${await obj_doname(obj)}!`);
+                }
             }
+            return true;
         }
-        return true;
     }
 
     // uhitm.c:281-285 — a sensed (telepathy) hider/mimic wakes/un-hides even
-    // without a physical reveal.  sensemon() is always false here, so this
-    // never fires yet (no telepathy modeled).
+    // without a physical reveal.
     if ((mtmp.mundetected || mtmp.m_ap_type) && sensemon(mtmp)) {
         mtmp.mundetected = 0;
         await wakeupAttack(mtmp, true);
@@ -1863,6 +1869,18 @@ export async function killed(mon, opts) {
     if (mon.mtame && !mon.isminion && mon.edog)
         mon.edog.killed_by_u = 1;
 
+    // C ref: mon.c:3528 — a thrown object that killed the hero's engulfer goes
+    // into the engulfer's inventory so it is dropped with the rest when the hero
+    // is expelled; throwit()/thitmonst() then see thrownobj == 0 and skip the
+    // landing-site breaktest()/mulch rolls.
+    if (wasinside && game.thrownobj && game.thrownobj !== game.u?.uball
+        && game.thrownobj.oclass !== POTION_CLASS
+        && game.thrownobj !== game.iflags?.returning_missile) {
+        const { mpickobj } = await import('./makemon.js');
+        mpickobj(mon, game.thrownobj);
+        game.thrownobj = null;
+    }
+
     // C ref: mon.c:3546 xkilled() — `if (gs.stoned) monstone(mtmp); else
     // mondead(mtmp);`.  A stoned kill leaves a statue (or rocks) and skips the
     // treasure/corpse block (`goto cleanup`), but still awards experience.
@@ -2064,7 +2082,7 @@ export async function killed(mon, opts) {
         // C ref: mon.c:3641-3642 — "monster is gone, corpse or other object
         // might now be visible": newsym() BEFORE the cleanup block's luck and
         // alignment penalties (an XKILL_NOCORPSE kill goto's past it).
-        if (x > 0 && y > 0) newsym(x, y);
+        if (x > 0 && y >= 0) newsym(x, y);
     }
 
     // C ref: mon.c:3638 xkilled() "Punish bad behavior", between the corpse
@@ -2250,7 +2268,8 @@ export function experience(mtmp, nk = 0) {
         else if (t2 === AD_DRLI || t2 === AD_STON || t2 === AD_SLIM) tmp += 50;
         else if (t2 !== AD_PHYS) tmp += m_lev;
         if (a.damd * a.damn > 23) tmp += m_lev; // extra heavy-damage bonus
-        // AD_WRAP/S_EEL term not reachable for these monsters.
+        // exper.c:125 — an eel's drowning attack is worth a level to a hero who cannot breathe water.
+        if (t2 === AD_WRAP && data.mcls === S_EEL_MCLS && !Amphibious_hero()) tmp += 1000;
     }
 
     // extra_nasty(ptr) == (mflags2 & M2_NASTY) (mondata.h:120) — was missing

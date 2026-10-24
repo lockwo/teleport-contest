@@ -272,6 +272,7 @@ export async function intemple(roomno) {
             const mtmp = makemon(monster_by_pmidx(name_to_pmidx('ghost')),
                                  u.ux, u.uy, MM_NOMSG_);
             if (mtmp) {
+                await (await import('./makemon.js')).makemon_appears_msg(mtmp, u.ux, u.uy, MM_NOMSG_);
                 const ngen = game.mvitals?.[mtmp.data?.pmidx]?.born ?? 0;
                 const { canspotmon } = await import('./uhitm.js');
                 if (canspotmon(mtmp))

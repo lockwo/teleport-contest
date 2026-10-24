@@ -364,15 +364,15 @@ export async function drag_ball(x, y, allow_drag = true) {
     // ── drag: ────────────────────────────────────────────────────────────────
     const { near_capacity, inventoryArray } = await import('./invent.js');
     if (near_capacity() > SLT_ENCUMBER && dist2(x, y, u.ux, u.uy) <= 2) {
-        const { update_topl } = await import('./display.js');
+        const { pline } = await import('./display.js');
         // C: `gi.invent ? "carry all that and also " : ""`.  The hero's pack is
         // game.invent / game.gi.invent (invent.js inventoryArray()), never
         // game.u.invent — reading the latter made this read "You cannot drag
         // the heavy iron ball." for a hero who is by definition carrying enough
         // to be over SLT_ENCUMBER.
         const has_invent = inventoryArray().length > 0;
-        await update_topl(`You cannot ${has_invent ? 'carry all that and also ' : ''}drag the heavy iron ball.`);
-        nomul0();
+        await pline(`You cannot ${has_invent ? 'carry all that and also ' : ''}drag the heavy iron ball.`);
+        await nomul0();
         return null;
     }
 
@@ -391,17 +391,17 @@ export async function drag_ball(x, y, allow_drag = true) {
              || !IS_POOL_AT(uball.ox, uball.oy)
              || at(uball.ox, uball.oy)?.typ === POOL))
         || (chainTrap && (is_pit(chainTrap.ttyp) || is_hole(chainTrap.ttyp)))) {
-        const { update_topl } = await import('./display.js');
+        const { pline } = await import('./display.js');
         // C ref: ball.c — a levitating hero is not yanked: it only feels a tug
         // (and the pit becomes seen), then FALLS THROUGH to the drag code below.
         if (game.u?.uprops?.Levitation) {
             await You_feel('a tug from the iron ball.');
             if (chainTrap) chainTrap.tseen = 1;
         } else {
-            await update_topl('You are jerked back by the iron ball!');
+            await pline('You are jerked back by the iron ball!');
             u.ux = uchain.ox; u.uy = uchain.oy;
             newsym(u.ux0 ?? u.ux, u.uy0 ?? u.uy);
-            nomul0();
+            await nomul0();
             bc_control = BC_BALL;
             await move_bc(1, bc_control, ballx, bally, chainx, chainy);
             ballx = uchain.ox; bally = uchain.oy;
@@ -437,13 +437,9 @@ export async function drag_ball(x, y, allow_drag = true) {
 }
 
 // C ref: hack.c nomul(0) — stop any multi-turn action without setting a delay.
-// Kept local so ball.js doesn't have to import the whole command module; the
-// occupation must stay armed (see LESSONS: nomul(0) leaves go.occupation set).
-function nomul0() {
-    const g = game;
-    if ((g.multi ?? 0) < 0) return;
-    g.multi = 0;
-    g.multi_reason = null;
+async function nomul0() {
+    const { nomul } = await import('./hack.js');
+    nomul(0);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

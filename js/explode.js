@@ -551,7 +551,6 @@ export async function explode(x, y, type, dam, olet, expltype) {
         if (inside_engulfer) noise = Math.floor((noise + 3) / 4);
         await wake_nearto(x, y, noise);
     }
-    newsym(x, y);
 }
 
 // C ref: hack.c uhim()/uhis().

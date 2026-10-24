@@ -333,6 +333,7 @@ function maybe_observe_near_object(x, y) {
     const obj = vobj_at(x, y);
     if (!obj || obj.dknown || !obj_is_generic(obj)) return;
     if (game.u?.uhallu) return; // C ref: map_object's !Hallucination guard
+    if (!cansee(x, y)) return; // C ref: map_object's `cansee(x, y)` guard (felt, remembered or detected objects are not observed)
     // C ref: display.c _map_location() — map_object() only runs when
     // !covers_objects(x, y); a pool/lava square hides what lies beneath.
     if (covers_objects(game.level?.at(x, y))) return;
@@ -2446,7 +2447,8 @@ function newsym_core(x, y) {
         // potion/gem/spellbook) becomes specific once the hero is close enough
         // to see it up close.  observe_object() sets dknown so obj_color() then
         // returns the real appearance color instead of the generic gray.
-        maybe_observe_near_object(x, y);
+        // (Only the arms below that run _map_location() reach map_object(): a gas
+        // cloud, warning glyph or remembered 'I' draws without observing.)
         // C ref: display.c newsym:970 — seeing the square reveals any engraving
         // on it, whatever the terrain and whatever is drawn on top.
         {
@@ -2504,6 +2506,7 @@ function newsym_core(x, y) {
         // a telepathically sensed monster shows even on a square whose own
         // occupant the hero cannot make out (invisible, hiding).
         if (see_it || detected) {
+            maybe_observe_near_object(x, y);     // _map_location(x, y, 0) -> map_object()
             // Remember the background (not the monster — monsters move).
             const bg = background_glyph(loc, x, y);   // _map_location(x, y, FALSE)
             if (game.level?.flags?.hero_memory) {
@@ -2580,6 +2583,7 @@ function newsym_core(x, y) {
             // sight, until the monster itself is actually seen there.
             map_invisible(x, y);
         } else {
+            maybe_observe_near_object(x, y);     // _map_location(x, y, 1) -> map_object()
             // Remember the background (not the monster — monsters move).
             const bg = background_glyph(loc, x, y);   // _map_location(x, y, 1)
             if (game.level?.flags?.hero_memory) {
@@ -2587,6 +2591,16 @@ function newsym_core(x, y) {
             }
             update_lastseentyp_d(x, y); // _map_location(x, y, 1) -> update_lastseentyp()
             show_bg_glyph(x, y, bg);
+            // C ref: display.c _map_location() tail — `if (show && !Blind &&
+            // (reg = visible_region_at(x, y))) show_region()`, with no ACCESSIBLE
+            // test: a gas cloud covers even a wall square the hero can see.
+            if (!Blind()) {
+                const reg = visible_region_at(x, y);
+                if (reg) {
+                    const rg = show_region(reg);
+                    show_glyph_cell(x, y, rg.ch, rg.color, false);
+                }
+            }
         }
     } else {
         // Can't physically see <x,y>.  C ref: display.c newsym "Can't see the
@@ -5233,6 +5247,15 @@ export async function update_topl(bp) {
     }
 }
 
+// C ref: pline.c vpline():266-274 — every You_hear()/You_feel()/You_see() is a
+// pline(), which runs vision_recalc() and flush_screen() (bot()/timebot()) before
+// the message is drawn.
+async function pline_flush() {
+    pline_vision_flush();
+    if (game._noticeQueue?.length) await hooks.flushNotices();
+    await botl_flush();
+}
+
 // C ref: youprop.h Deaf = (HDeaf || EDeaf || u.uroleplay.deaf).  The port
 // stores the timed intrinsic in u.uprops.HDeaf; worn/legacy sources land on
 // u.uprops.EDeaf / u.uprops.Deaf / u.Deaf.
@@ -5252,17 +5275,20 @@ export async function You_hear(line) {
     if ((Deaf_hero() && !unaware) || game.flags?.acoustics === false) return;
     const prefix = game.u?.uinwater ? 'You barely hear '
         : unaware ? 'You dream that you hear ' : 'You hear ';
+    await pline_flush();
     await update_topl(prefix + line);
 }
 
 // C ref: pline.c:388 You_feel() — "You dream that you feel " while Unaware.
 export async function You_feel(line) {
+    await pline_flush();
     await update_topl((Unaware() ? 'You dream that you feel ' : 'You feel ') + line);
 }
 
 // C ref: pline.c:455 You_see() — "You dream that you see " while Unaware,
 // "You sense " while Blind, else "You see ".
 export async function You_see(line) {
+    await pline_flush();
     await update_topl((Unaware() ? 'You dream that you see '
         : Blind() ? 'You sense ' : 'You see ') + line);
 }

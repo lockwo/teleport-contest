@@ -508,7 +508,8 @@ const TIMED_PROPS = [
     // expire.  Entries without a C switch arm still need their countdown.
     timed_uprop('FIRE_RES', 'HFire_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EFire_resistance && !(p.HFire_resistance & ~TIMEOUT))
+        if (!p.EFire_resistance && !(p.HFire_resistance & ~TIMEOUT)
+            && !game.u?.formprops?.Fire_resistance /* FROMFORM */)
             await pline('Your temporary ability to survive burning has ended.');
     }),
     timed_uprop('COLD_RES', 'HCold_resistance'),
@@ -519,7 +520,8 @@ const TIMED_PROPS = [
     timed_uprop('ACID_RES', 'HAcid_resistance', async () => {
         const p = game.u?.uprops || {};
         if (!p.EAcid_resistance && !((game.u?.uprops_extrinsic || {})[7 /* ACID_RES */] | 0)
-            && !(p.HAcid_resistance & ~TIMEOUT)) {
+            && !(p.HAcid_resistance & ~TIMEOUT)
+            && !game.u?.formprops?.Acid_resistance /* youprop.h: resists_acid(&youmonst) */) {
             /* timeout.c:812 — extend while eating an acidic corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_ACID_RES_T)) {
                 p.HAcid_resistance = (p.HAcid_resistance & ~TIMEOUT) | 1;
@@ -531,7 +533,8 @@ const TIMED_PROPS = [
     }),
     timed_uprop('STONE_RES', 'HStone_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EStone_resistance && !(p.HStone_resistance & ~TIMEOUT)) {
+        if (!p.EStone_resistance && !(p.HStone_resistance & ~TIMEOUT)
+            && !game.u?.formprops?.Stone_resistance /* FROMFORM, e.g. a green slime hero */) {
             /* timeout.c:827 — extend while eating a stoning corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_STONE_RES_T)) {
                 p.HStone_resistance = (p.HStone_resistance & ~TIMEOUT) | 1;

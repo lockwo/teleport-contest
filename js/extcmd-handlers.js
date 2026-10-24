@@ -92,7 +92,7 @@ import { doextversion, doversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
 import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
-import { obj_resists, dozap, wishcmdassist, wish_history_add } from './zap.js';
+import { obj_resists, dozap, wishcmdassist, wish_history_add, wish_history_first, wish_history_menu } from './zap.js';
 import { timed_prop, wiz_timeout_queue } from './timeout.js';
 import { dobugreport } from './report.js';
 import { docast, dowizcast } from './spell.js';
@@ -1556,7 +1556,15 @@ export async function makewish() {
         const prompt = (cmdassist && tries > 0)
             ? 'For what do you wish (enter \'help\' for assistance)?'
             : 'For what do you wish?';
-        let buf = mungspaces(await getlin_top(prompt));
+        let buf;
+        if (game.iflags?.menu_requested && wish_history_first() && tries === 0) {
+            /* zap.c:6334 — the 'm' prefix shows the menu of previous wishes */
+            const picked = { value: '' };
+            await wish_history_menu(picked);
+            buf = mungspaces(picked.value);
+        } else {
+            buf = mungspaces(await getlin_top(prompt));
+        }
         if (buf.length && buf[0] === '\x1b') {
             buf = '';
         } else if (strcmpi_eq(buf, 'help')) {
