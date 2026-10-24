@@ -560,8 +560,10 @@ async function is_valid_travelpt_(x, y) {
 // gloc_filter_floodfill() is meaningless without it.
 function selection_force_newsyms_(sel) {
     if (!sel) return;
-    for (let y = 0; y < sel.hei; y++)
-        for (let x = 1; x < sel.wid; x++)
+    /* C ref: selvar.c:806 — x is the OUTER loop, so the hallucinated glyphs'
+       display-RNG draws are taken column by column. */
+    for (let x = 1; x < sel.wid; x++)
+        for (let y = 0; y < sel.hei; y++)
             if (selection_getpoint(x, y, sel)) newsym(x, y);
 }
 let selection_flood_check_func = null;

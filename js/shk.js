@@ -27,7 +27,7 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
 import { arti_cost } from './artifact.js';
 import { get_obj_location as real_get_obj_location } from './light.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
-import { monster_by_pmidx, mpickobj, add_to_minv, makemon, enexto_spawn } from './makemon.js';
+import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg, enexto_spawn } from './makemon.js';
 import { rn2, rnd } from './rng.js';
 import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
@@ -1551,7 +1551,7 @@ const KEYSTONE_KOP = 179, KOP_SERGEANT = 180, KOP_LIEUTENANT = 181,
 function mvitals_gone(mndx) {
     return !!(game.mvitals?.[mndx]?.mvflags & G_GONE);
 }
-export function makekops(mm) {
+export async function makekops(mm) {
     const k_mndx = [KEYSTONE_KOP, KOP_SERGEANT, KOP_LIEUTENANT, KOP_KAPTAIN];
     let cnt = Math.abs(depth_of_level(game.u?.uz)) + rnd(5);
     const k_cnt = [cnt, Math.trunc(cnt / 3) + 1, Math.trunc(cnt / 6),
@@ -1566,7 +1566,8 @@ export function makekops(mm) {
             if (!spot) continue;
             mm.x = spot.x;
             mm.y = spot.y;
-            makemon(ptr, mm.x, mm.y, MM_NOMSG);
+            const kop = makemon(ptr, mm.x, mm.y, MM_NOMSG);
+            if (kop) await makemon_appears_msg(kop, mm.x, mm.y, MM_NOMSG);
         }
     }
 }
@@ -1588,12 +1589,12 @@ export async function call_kops(shkp, nearshop) {
     const st = choose_stairs(true);
     if (nearshop) {
         if (game.flags?.verbose !== false) await update_topl('The Keystone Kops appear!');
-        makekops({ x: game.u.ux, y: game.u.uy });
+        await makekops({ x: game.u.ux, y: game.u.uy });
         return;
     }
     if (game.flags?.verbose !== false) await update_topl('The Keystone Kops are after you!');
-    if (st) makekops({ x: st.x, y: st.y });
-    makekops({ x: shkp.mx, y: shkp.my });
+    if (st) await makekops({ x: st.x, y: st.y });
+    await makekops({ x: shkp.mx, y: shkp.my });
 }
 
 // ── shk.c:214 .. :1200 ──────────────────────────────────────────────────────

@@ -918,10 +918,7 @@ async function lesshungry_eat(num) {
 // The port stores intrinsics by name and extrinsics on the worn object, so
 // Hunger also has to look at the ring slots (objects[].oc_oprop HUNGER).
 const RIN_HUNGER_OTYP = 184, AMULET_OF_STRANGULATION_OTYP = 203;
-function u_Breathless() {
-    const p = game.u?.uprops;
-    return !!(p?.Breathless || p?.HBreathless || p?.EBreathless);
-}
+function u_Breathless() { return _invent.Breathless_hero(); }
 function u_Hunger() {
     const p = game.u?.uprops;
     return !!(p?.Hunger || p?.HHunger || p?.EHunger)
@@ -1923,9 +1920,7 @@ const DOMESTIC_NAMES = new Set([
 ]);
 
 function stone_resistance_eat() {
-    const props = game.u?.uprops || {};
-    return !!(game.Stone_resistance || props.Stone_resistance
-        || props.HStone_resistance || props.EStone_resistance
+    return !!(game.Stone_resistance || _invent?.Stone_resistance_hero()
         || ((_invent?.youmonst_data_pub()?.mresists || 0) & 0x80));
 }
 // C mondata.c poly_when_stoned(): any non-stone golem can become a stone golem
@@ -2465,7 +2460,7 @@ async function eatcorpse(otmp) {
         if (!retcode) consume_oeaten(otmp, 2);
     } else if ((corpse_mon_name(mnum) === 'cockatrice'
                 || corpse_mon_name(mnum) === 'chickatrice')
-               && (u?.uprops?.Stone_resistance || u?.uhallu)) {
+               && (_invent.Stone_resistance_hero() || u?.uhallu)) {
         await update_topl('This tastes just like chicken!');
     } else if (corpse_mon_name(mnum) === 'floating eye' && hero_is_pm('raven')) {
         await update_topl('You peck the eyeball with delight.');
@@ -3379,7 +3374,7 @@ export async function consume_tin(mesg) {
         which = 0;              /* 0 => plural, 1 => as-is, 2 => "the" prefix */
         const nm = corpse_mon_name(mnum);
         if ((nm === 'cockatrice' || nm === 'chickatrice')
-            && (u?.uprops?.Stone_resistance || Halluc)) {
+            && (_invent.Stone_resistance_hero() || Halluc)) {
             what = 'chicken';
             which = 1;          /* suppress pluralization */
         } else if (Halluc) {
@@ -3975,7 +3970,7 @@ export async function edibility_prompts(otmp) {
         || otmp.otyp === GLOB_OF_GREEN_SLIME) {
         /* These checks must match those in eatcorpse() */
         stoneorslime = (ismnum(mnum) && flesh_petrifies(mnum)
-                        && !u?.uprops?.Stone_resistance);
+                        && !_invent.Stone_resistance_hero());
 
         if (corpse_mon_name(mnum) === 'green slime'
             || otmp.otyp === GLOB_OF_GREEN_SLIME)

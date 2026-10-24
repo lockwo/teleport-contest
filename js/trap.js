@@ -81,7 +81,7 @@ import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx } from './makemo
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
-         is_swimmer_flag, can_teleport_flag, strongmonst_flag } from './monflags_data.js';
+         is_swimmer_flag, can_teleport_flag, strongmonst_flag, is_whirly, flaming } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
 import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
@@ -175,14 +175,13 @@ export function into_vs_onto(traptype) {
 // below note where C's TRAP_HIDDEN_IMMUNE / monster branches are collapsed
 // because they cannot change that answer.
 //
-// gy.youmonst.data is the ROLE monster (u_init.c:991 `u.umonnum = urole.mnum`),
-// which is MZ_HUMAN for all 13 roles (monsters.h:3349 &c) and carries none of
-// amorphous/is_whirly/unsolid/breathless/webmaker/flaming/is_floater/is_flyer/
-// is_clinger.  That is what lets the BEAR_TRAP, SLP_GAS_TRAP and WEB pm tests
-// collapse; a gnome or dwarf hero is STILL MZ_HUMAN here, so this must NOT be
-// "corrected" to test the hero's race.
+// gy.youmonst.data is the ROLE monster (u_init.c:991 `u.umonnum = urole.mnum`)
+// until the hero polymorphs; the pm tests below read the hero's CURRENT form
+// (youmonst_data_pub()), which is a role monster (MZ_HUMAN, no relevant flags)
+// when unpolymorphed and e.g. a flying/clinging/small form after polymorph.
 export function immune_to_trap(mon, ttype) {
     const is_you = (mon === game.u);
+    const pm = is_you ? youmonst_data_pub() : mon?.data;
 
     switch (ttype) {
     case ARROW_TRAP:
@@ -191,8 +190,9 @@ export function immune_to_trap(mon, ttype) {
         return TRAP_NOT_IMMUNE;
     case BEAR_TRAP:
         // C: msize <= MZ_SMALL (monflag.h:178-180: MZ_SMALL 1, MZ_HUMAN 2) or
-        // amorphous/whirly/unsolid -> CLEARLY_IMMUNE; a role monster is none of
-        // those, so the hero always falls through to the ground-trap group.
+        // amorphous/whirly/unsolid -> CLEARLY_IMMUNE; otherwise the ground-trap group.
+        if ((pm?.msize ?? 2) <= 1 || amorphous_flag(pm) || is_whirly(pm) || unsolid_flag(pm))
+            return TRAP_CLEARLY_IMMUNE;
         /* FALLTHROUGH */
     case SQKY_BOARD:
     case LANDMINE:
@@ -206,14 +206,19 @@ export function immune_to_trap(mon, ttype) {
             return TRAP_NOT_IMMUNE;
         if (In_sokoban(game.u?.uz) && ttype === ROLLING_BOULDER_TRAP)
             return TRAP_CLEARLY_IMMUNE;
+        if (pm?.mcls === 5 /* S_EYE */ || pm?.mcls === 25 /* S_LIGHT */
+            || (mflags1_of(pm) & M1_FLY) !== 0
+            || ((mflags1_of(pm) & M1_CLING) !== 0 && has_ceiling_fu(game.u?.uz)))
+            return TRAP_CLEARLY_IMMUNE;
         if (is_you && (Levitation_fu() || Flying_fu()))
             return TRAP_CLEARLY_IMMUNE;
         return TRAP_NOT_IMMUNE;
     case SLP_GAS_TRAP:
-        // C: breathless(pm) -> CLEARLY_IMMUNE (false for a role monster), else
-        // is_you && Sleep_resistance -> HIDDEN_IMMUNE, else NOT_IMMUNE.  Both
-        // reachable results still make the gate ask, so an elf's intrinsic
-        // sleep resistance is deliberately not consulted here.
+        // C: breathless(pm) -> CLEARLY_IMMUNE, else is_you && Sleep_resistance ->
+        // HIDDEN_IMMUNE, else NOT_IMMUNE.  Both reachable results still make the
+        // gate ask, so an elf's intrinsic sleep resistance is deliberately not
+        // consulted here.
+        if ((mflags1_of(pm) & M1_BREATHLESS) !== 0) return TRAP_CLEARLY_IMMUNE;
         return TRAP_NOT_IMMUNE;
     case LEVEL_TELEP:
     case TELEP_TRAP:
@@ -228,8 +233,11 @@ export function immune_to_trap(mon, ttype) {
         // C: only the hero is affected; a monster is CLEARLY_IMMUNE.
         return is_you ? TRAP_NOT_IMMUNE : TRAP_CLEARLY_IMMUNE;
     case WEB:
-        // C: webmaker/amorphous/whirly/flaming/unsolid/gelatinous cube ->
-        // CLEARLY_IMMUNE; none apply to a role monster.
+        // C: webmaker/amorphous/whirly/flaming/unsolid/gelatinous cube -> CLEARLY_IMMUNE.
+        if (pm?.name === 'cave spider' || pm?.name === 'giant spider'
+            || amorphous_flag(pm) || is_whirly(pm) || flaming(pm) || unsolid_flag(pm)
+            || pm?.name === 'gelatinous cube')
+            return TRAP_CLEARLY_IMMUNE;
         return TRAP_NOT_IMMUNE;
     case ANTI_MAGIC:
         // C hero arms: Antimagic -> NOT_IMMUNE, u.uenmax == 0 -> HIDDEN_IMMUNE,
@@ -2762,6 +2770,7 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
     // cant_revive() rewrites unique/were/zombie corpsenm; a trap statue is
     // built straight from rndmonst_adj(), so it is always revivable as itself.
     const mon = makemon(mptr, x, y, NO_MINVENT | MM_NOMSG);
+    if (mon) await (await import('./makemon.js')).makemon_appears_msg(mon, x, y, NO_MINVENT | MM_NOMSG);
     if (!mon) {
         if (fail_reason)
             fail_reason.v = unique_corpstat(mptr) ? AS_MON_IS_UNIQUE : AS_NO_MON;

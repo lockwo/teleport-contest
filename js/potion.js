@@ -264,6 +264,8 @@ async function make_blinded(xtime, talk) {
             await update_topl(Hallucination()
                 ? 'Oh, bummer!  Everything is dark!  Help!'
                 : 'A cloud of darkness falls upon you.');
+        /* C ref: potion.c:307 — before the hero goes blind, set the ball&chain variables. */
+        if (game.u?.uball) (await import('./ball.js')).set_bc(0);
     } else if (!old && xtime) {
         if (talk) await blind_toggle_msg(false);
     }

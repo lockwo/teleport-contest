@@ -24,7 +24,7 @@ import { depth, distmin } from './hacklib.js';
 import { clear_area_cells } from './vision.js';
 import { nexttodoor, inside_room } from './mkroom.js';
 import { makemon, name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel } from './makemon.js';
-import { x_monnam, canspotmon, monflee } from './uhitm.js';
+import { x_monnam, canspotmon } from './uhitm.js';
 import { somegold } from './steal.js';
 import { create_gas_cloud } from './region.js';
 import { monster_detect, nomul } from './hack.js';
@@ -438,9 +438,10 @@ export async function drinkfountain() {
             // live monster on the level.  RNG-free, but an mflee monster takes
             // a completely different m_move branch, so skipping the loop
             // rewrites the rest of the level's monster stream.
+            const { monflee: monflee_full } = await import('./monmove.js');
             for (const mtmp of (game.level?.monsters || [])) {
                 if (!mtmp || mtmp.mhp <= 0 || mtmp.mdead) continue;
-                monflee(mtmp, 0, false, false);
+                await monflee_full(mtmp, 0, false, false);
             }
             break;
         case 30: /* Gushing forth in this room */

@@ -239,8 +239,7 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
 
     // C ref: teleport.c:1688 — a relocated engulfer carries the hero along
     // (redrawing the swallowed view); a mere holder is released if no longer
-    // adjacent.  maybe_unhide_at() is inert here: no hider sits at the
-    // destination.
+    // adjacent.
     if (game.u?.ustuck === mtmp) {
         if (game.u.uswallow) {
             const { u_on_newpos } = await import('./do.js');
@@ -258,6 +257,13 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         }
     }
 
+    // C ref: teleport.c:1700 — a hider that lands where it has nothing to hide
+    // under (a Plane-of-Water bubble puts its monsters down before its objects)
+    // comes out of hiding.
+    if (mtmp.mundetected) {
+        const { maybe_unhide_at } = await import('./monmove.js');
+        await maybe_unhide_at(x, y);
+    }
     newsym(x, y);
     set_apparxy(mtmp);
 

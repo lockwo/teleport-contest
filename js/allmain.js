@@ -2184,10 +2184,14 @@ export async function moveloop_core() {
     // the next command boundary, showing "You finish eating <corpse>.").
     if (g._eat_occupation) {
         const { eatfood_step } = await import('./eat.js');
-        const busy = await eatfood_step();
+        /* C ref: allmain.c:483 — `svc.context.move = 1;` precedes the occupation
+           call, so end.c savelife() (a lifesaved choke / polyself system shock
+           inside the meal) leaves context.move = 0 and the monsters' phase of
+           this iteration is skipped. */
         g.context = g.context || {};
         g.context.move = 1;
-        g._pendingTurn = true;
+        const busy = await eatfood_step();
+        g._pendingTurn = !!g.context.move;
         if (!busy) g._eat_occupation = null;
         // C ref: allmain.c:501-508 — after one eatfood() occupation step,
         // monster_nearby() interrupts the meal when a hostile is adjacent.
@@ -2198,6 +2202,7 @@ export async function moveloop_core() {
             // C's You("stop eating ...") appends to it rather than replacing it.
             await (await import('./hack.js')).stop_occupation(true);
             g._eat_occupation = null;
+            g._pendingTurn = !!g.context.move;   // stop_occupation() may finish the meal (savelife)
         }
         return;
     }

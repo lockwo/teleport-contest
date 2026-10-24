@@ -736,7 +736,7 @@ export function vision_recalc(control = 0) {
     // jsmain.js): a direct `import` here reorders ESM evaluation and TDZ-traps
     // mkobj.js through u_init.js.
     const _vfr = game.vision_full_recalc;
-    if (!rogue) hooks.lightsources?.(next);
+    hooks.lightsources?.(next);   // C ref: vision.c:703, also on the Rogue level
     game.vision_full_recalc = _vfr;
 
     // Compute IN_SIGHT from COULD_SEE + lighting
@@ -753,7 +753,7 @@ export function vision_recalc(control = 0) {
     // monster is redrawn (one display-RNG draw each while hallucinating).
     const blind = control !== 2 && !u.uswallow && Blind();
 
-    for (let row = 0; row < ROWNO && !blind && !rogue; row++) {
+    for (let row = 0; row < ROWNO && !blind; row++) {
         const dy = Math.sign(uy - row);
         for (let col = next_rmin[row]; col <= next_rmax[row]; col++) {
             if (!(next[row][col] & COULD_SEE)) continue;

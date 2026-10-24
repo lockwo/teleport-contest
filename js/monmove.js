@@ -1971,6 +1971,9 @@ export async function hideunder(mtmp) {
         if (seeit) { seenobj = 'the water'; seenlocomo = 'dive'; }
     } else if (hides_under_pm(ptr) && OBJ_AT(x, y)
                && can_hide_under_obj_at(x, y)
+               /* pets won't hide under a cursed item or an item of any BUC state
+                  that shares a pile with one or more cursed items */
+               && (!mtmp.mtame || !cursed_object_at(x, y))
                && !(IS_POOL(terrainTyp(x, y)) || IS_LAVA(terrainTyp(x, y)))) {
         if (seeit) seenobj = ansimpleoname_topobj(x, y);
         /* cockatrice-corpse skip loop omitted (no petrifying corpse here) */
@@ -7085,6 +7088,9 @@ const WEAPON_ODIR = {
     79: 4, 80: 4, 81: 4,                                  // quarterstaff/aklys/flail: B
     82: 0,                                                 // bullwhip: 0 (P_WHIP -> lash)
     83: 0, 84: 0, 85: 0, 86: 0, 87: 0, 88: 0,             // bow..crossbow launchers: 0
+    // WEPTOOL() passes its strike mode in the `hitbon` slot, which BITS() takes as oc_dir.
+    259: 4, 260: 4,                                       // pick-axe/grappling hook: B
+    261: 1,                                               // unicorn horn: P
 };
 
 // C ref: mhitu.c mswings_verb(mwep, bash) — strike-type verb selection.

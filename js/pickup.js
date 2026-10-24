@@ -1537,7 +1537,7 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
     if (otmp) {
         if (passed_info) passed_info.value = 1;
         const c = await y_n(
-            `Do you want to remove the saddle from ${mon_nam(mtmp)}?`, 'ynq', 'n');
+            `Do you want to remove the saddle from ${(await uh_()).x_monnam(mtmp, 1 /* ARTICLE_THE */, null, 0x08 /* SUPPRESS_SADDLE */, false)}?`, 'ynq', 'n');
         if (c === 'y') {
             if (nolimbs_hero()) {
                 await pline("You can't do that without limbs.");
@@ -1545,14 +1545,14 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
             }
             if (otmp.cursed) {
                 await pline('You can\'t.  The saddle seems to be stuck to '
-                            + `${mon_nam(mtmp)}.`);
+                            + `${(await uh_()).mon_nam(mtmp)}.`);
                 return 1;   /* the attempt costs you time */
             }
             obj_extract_self(otmp);
             mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) & ~otmp.owornmask;
             otmp.owornmask = 0;
             if (game.flags?.verbose !== false)
-                await pline(`You take ${the(xname(otmp))} off of ${mon_nam(mtmp)}.`);
+                await pline(`You take ${the(xname(otmp))} off of ${(await uh_()).mon_nam(mtmp)}.`);
             await hold_another_object(otmp, 'You drop %s!', doname(otmp), null);
             timepassed = rnd(3);
             if (prev_loot) prev_loot.value = true;
@@ -1566,9 +1566,10 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
     }
     return timepassed;
 }
-function mon_nam(mtmp) {
-    return `the ${mtmp?.data?.name || mtmp?.name || 'monster'}`;
-}
+/* uhitm.js's mon_nam()/Monnam()/x_monnam() (blind => "it", hallucination, names).
+   Loaded lazily: uhitm.js sits above this module in the import graph. */
+let uhitm_mod = null;
+async function uh_() { return uhitm_mod || (uhitm_mod = await import('./uhitm.js')); }
 
 /* pickup.c:2488 mbag_explodes() — odds 1/1, 2/2, 3/4, 4/8, 5/16, ... */
 export function mbag_explodes(obj, depthin) {
@@ -1681,7 +1682,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
         if (livecat) {
             livecat.mpeaceful = 1;
             if (givemsg)
-                await pline(`${upstart(mon_nam(livecat))} inside the box is still alive!`);
+                await pline(`${(await uh_()).Monnam(livecat)} inside the box is still alive!`);
             livecat.mname = sc;
             if (deadcat) { obj_extract_self(deadcat); obfree(deadcat, null); }
             box.owt = weight(box);

@@ -3610,10 +3610,8 @@ async function qf_mktrap_at(cx, cy) {
     const c = { x: cx, y: cy };
     let kind;
     kind = mktrap_random_kind();
-    const dungeon = game.dungeons?.[game.u?.uz?.dnum ?? 0];
-    const canFallThru = (game.u?.uz?.dlevel ?? 1)
-        < (dungeon?.num_dunlevs ?? 99);
-    if (is_hole(kind) && !canFallThru) kind = ROCKTRAP;
+    // C ref: mklev.c mktrap() `if (is_hole(kind) && !Can_fall_thru(&u.uz))`
+    if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
     const trap = await maketrap(c.x, c.y, kind);
     kind = trap ? trap.ttyp : NO_TRAP;
     // C ref: sp_lev.c create_trap() -> mktrap(..., mktrap_flags, ...) — a

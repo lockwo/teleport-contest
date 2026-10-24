@@ -557,7 +557,7 @@ async function seffect_scare_monster(sobj) {
     const confused = Confused();
     let ct = 0;
     const { DEADMONSTER } = await import('./mon.js');
-    const { monflee } = await import('./uhitm.js');
+    const { monflee } = await import('./monmove.js');
 
     for (const mtmp of fmonOrder()) {
         if (DEADMONSTER(mtmp)) continue;
@@ -566,7 +566,7 @@ async function seffect_scare_monster(sobj) {
                 mtmp.mflee = 0; mtmp.mfrozen = 0; mtmp.msleeping = 0;
                 mtmp.mcanmove = 1;
             } else if (!resist(mtmp, sobj.oclass, 0, false)) {
-                monflee(mtmp, 0, false, false);
+                await monflee(mtmp, 0, false, false);
             }
             if (!mtmp.mtame) ct++; // pets don't laugh at you
         }
@@ -812,6 +812,7 @@ export async function punish(sobj) {
     place_object(uball, u.ux, u.uy);
     place_object(uchain, u.ux, u.uy);
     newsym(u.ux, u.uy);                 // placebc_core()'s newsym
+    if (Blind()) (await import('./ball.js')).set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
     newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
 }
 

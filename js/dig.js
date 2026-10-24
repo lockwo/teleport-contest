@@ -1682,14 +1682,17 @@ export async function dig() {
             }
 
             if (Is_earthlevel(u.uz) && !rn2(3)) {
-                const { makemon, name_to_pmidx, monster_by_pmidx }
+                const { makemon, makemon_appears_msg, name_to_pmidx, monster_by_pmidx }
                     = await import('./makemon.js');
                 /* C: mndx = rn2(2) ? PM_EARTH_ELEMENTAL : PM_XORN — the rn2(2)
                    is drawn BEFORE makemon()'s own draws. */
                 const nm = rn2(2) ? 'earth elemental' : 'xorn';
                 const mdat = monster_by_pmidx(name_to_pmidx(nm));
-                if (makemon(mdat, dpx, dpy, MM_NOMSG))
+                const emon = makemon(mdat, dpx, dpy, MM_NOMSG);
+                if (emon) {
+                    await makemon_appears_msg(emon, dpx, dpy, MM_NOMSG);
                     await pline('The debris from your digging comes to life!');
+                }
             }
             if (IS_DOOR(lev.typ) && (lev.doormask & D_TRAPPED)) {
                 lev.doormask = D_NODOOR;
@@ -2250,18 +2253,20 @@ export async function dig_up_grave(cc) {
         if (!Blind())
             await pline(`${Hallucination() ? 'Dude!  The living dead'
                         : "The grave's owner is very upset"}!`);
-        const { mkclass, makemon } = await import('./makemon.js');
+        const { mkclass, makemon, makemon_appears_msg } = await import('./makemon.js');
         const S_ZOMBIE = 52;
-        makemon(mkclass(S_ZOMBIE, 0), dig_x, dig_y, MM_NOMSG);
+        const zmon = makemon(mkclass(S_ZOMBIE, 0), dig_x, dig_y, MM_NOMSG);
+        if (zmon) await makemon_appears_msg(zmon, dig_x, dig_y, MM_NOMSG);
         break;
     }
     case 3: {
         if (!Blind())
             await pline(`${Hallucination() ? 'I want my mummy'
                         : "You've disturbed a tomb"}!`);
-        const { mkclass, makemon } = await import('./makemon.js');
+        const { mkclass, makemon, makemon_appears_msg } = await import('./makemon.js');
         const S_MUMMY = 39;
-        makemon(mkclass(S_MUMMY, 0), dig_x, dig_y, MM_NOMSG);
+        const mmon = makemon(mkclass(S_MUMMY, 0), dig_x, dig_y, MM_NOMSG);
+        if (mmon) await makemon_appears_msg(mmon, dig_x, dig_y, MM_NOMSG);
         break;
     }
     default:

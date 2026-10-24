@@ -1888,24 +1888,10 @@ export async function dog_move(mtmp, after) {
         const sx = Math.sign(omx - u.ux), sy = Math.sign(omy - u.uy);
         let cx = u.ux + sx, cy = u.uy + sy;
         if (!leash_goodpos(mtmp, cx, cy)) {
-            // C ref: xytodir/DIR_LEFT..DIR_RIGHT2 — the 8 compass directions in
-            // mkroom.h order, scanned outward from the straight-back direction.
-            const DIRS = [[0, -1], [1, -1], [1, 0], [1, 1],
-                          [0, 1], [-1, 1], [-1, 0], [-1, -1]];
-            const base = DIRS.findIndex(([dx, dy]) => dx === sx && dy === sy);
-            let found = false;
-            for (let off = -1; off <= 1 && !found; off++) {
-                if (off === 0) continue;
-                const d = DIRS[((base + off) % 8 + 8) % 8];
-                const tx = u.ux + d[0], ty = u.uy + d[1];
-                if (leash_goodpos(mtmp, tx, ty)) { cx = tx; cy = ty; found = true; }
-            }
-            for (let off = -2; off <= 2 && !found; off += 4) {
-                const d = DIRS[((base + off) % 8 + 8) % 8];
-                const tx = u.ux + d[0], ty = u.uy + d[1];
-                if (leash_goodpos(mtmp, tx, ty)) { cx = tx; cy = ty; found = true; }
-            }
-            if (!found) { cx = mtmp.mx; cy = mtmp.my; }
+            // C ref: dogmove.c:1334-1343 — the fallback scans call dirtocoord(),
+            // which yields the RAW xdir/ydir offset (not hero + offset), so those
+            // goodpos() probes land at ~<0,0> and always fail: the pet stays put.
+            cx = mtmp.mx; cy = mtmp.my;
         }
         mtmp.mx = cx; mtmp.my = cy;
         newsym(cx, cy);

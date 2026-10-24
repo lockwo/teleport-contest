@@ -335,6 +335,7 @@ export async function release_camera_demon(obj, x, y) {
         const idx = name_to_pmidx(rn2(3) ? 'homunculus' : 'imp');
         const mtmp = (idx >= 0) ? makemon(monster_by_pmidx(idx), x, y, MM_NOMSG) : null;
         if (mtmp) {
+            await (await import('./makemon.js')).makemon_appears_msg(mtmp, x, y, MM_NOMSG);
             const U = await import('./uhitm.js');
             if (U.canspotmon(mtmp)) {
                 // C: Hallucination ? An(rndmonnam(NULL)) : "The picture-painting demon"

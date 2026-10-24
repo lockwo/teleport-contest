@@ -362,6 +362,8 @@ export async function growl(mtmp) {
     // below runs either way.
     if (canseemon_shared(mtmp) || !Deaf_hero())
         await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+    // C ref: growl() — `if (gc.context.run) nomul(0);` after the message.
+    if (game.context?.run) (await import('./hack.js')).nomul(0);
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
 }
@@ -394,6 +396,8 @@ export async function yelp(mtmp) {
     }
     if (!verb) return;
     await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+    // C ref: yelp() — `if (gc.context.run) nomul(0);` after the message.
+    if (game.context?.run) (await import('./hack.js')).nomul(0);
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 12);
 }

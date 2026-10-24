@@ -326,7 +326,7 @@ async function use_stethoscope(obj) {
 
     const mtmp = m_at(rx, ry);
     if (mtmp) {
-        const mnm = x_monnam(mtmp, /*ARTICLE_A*/ 2, null, 0, false);
+        const mnm = x_monnam(mtmp, /*ARTICLE_A*/ 2, null, 0x03 /* SUPPRESS_IT | SUPPRESS_INVISIBLE */, false);
         const spotted = _uhitm.canspotmon(mtmp);
         if (mtmp.mundetected) {
             // C ref: apply.c:418 — the "hidden there" line is gated on
@@ -1665,7 +1665,7 @@ function find_poleable_mon(pos, min_range, max_range) {
 // thing is ONE input boundary for the player.  invent.js dofire() models the
 // same cmdq_add_ec pair this way.
 async function reapply_after_wield(obj, command = doapply) {
-    const { moveloop_turn } = await import('./allmain.js');
+    const { moveloop_turn, moveloop_input_redraw } = await import('./allmain.js');
     game.context = game.context || {};
     game.context.move = 0;
     // C ref: cmd.c rhack(). The wield returned ECMD_TIME from a command
@@ -1684,6 +1684,13 @@ async function reapply_after_wield(obj, command = doapply) {
         || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
         await _display.flush_screen(1);
     if (game._cmdqAbandonRetry) return ECMD_OK;
+    // C ref: the queued command is the next moveloop_core() iteration, whose
+    // once-per-input redraw (a hallucinating hero's see_monsters()/see_objects()
+    // display-RNG draws) runs after the monster phase and before rhack().  When
+    // the queue was abandoned (the hero died/was interrupted during the wield
+    // turn) the caller's own iteration head runs that redraw instead; doing it
+    // here too would draw the display RNG twice.
+    await moveloop_input_redraw();
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     return await command();
@@ -3186,7 +3193,7 @@ export async function use_mirror(obj) {
         if (do_react) {
             if (vis)
                 await A.display.pline(`${A.do_name.Monnam(mtmp)} is frightened by its reflection.`);
-            A.uhitm.monflee(mtmp, d(2, 4), false, false);
+            await (await import('./monmove.js')).monflee(mtmp, d(2, 4), false, false);
         }
     } else if (!A.vision.Blind()) {
         if (mtmp.minvis && !ap_See_invisible()) {

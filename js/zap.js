@@ -6926,9 +6926,12 @@ export async function wishcmdassist(triesleft) {
 // makewish() calls compile to nothing.  The DEBUG flag is modelled explicitly
 // rather than assumed off.
 const MAX_WISH_HISTORY_Z = 20;
-const DEBUG_BUILD_Z = false; /* config.h DEBUG; the recorder build is release */
+const DEBUG_BUILD_Z = true; /* patchlevel.h:36 defines DEBUG for this build (the recorded session shows the wish-history menu) */
 const wish_history = new Array(MAX_WISH_HISTORY_Z).fill(null);
 let wish_history_idx = 0;
+
+/* C ref: zap.c makewish() tests `wish_history[0]` (slot 0 filled == history non-empty). */
+export function wish_history_first() { return wish_history[0]; }
 
 export function wish_history_add(buf) {
     if (!DEBUG_BUILD_Z)
@@ -6970,32 +6973,23 @@ export function wish_history_flush() {
 export async function wish_history_menu(buf) {
     if (!DEBUG_BUILD_Z)
         return;
-    const wt = await import('./wintty.js');
-    const { MENU_BEHAVE_STANDARD, MENU_ITEMFLAGS_NONE } = await import('./const.js');
-    const { ATR_NONE, NO_COLOR } = await import('./terminal.js');
-    let i, idx;
+    const { extcmd_end_menu, extcmd_select_menu } = await import('./extcmd-handlers.js');
+    const items = [], backref = {};
+    let accel = 0;
 
-    const win = wt.tty_create_nhwindow(NHW_MENU);
-    wt.tty_start_menu(win, MENU_BEHAVE_STANDARD);
-
-    for (i = MAX_WISH_HISTORY_Z - 1; i >= 0; i--) {
-        idx = (wish_history_idx + i) % MAX_WISH_HISTORY_Z;
+    for (let i = MAX_WISH_HISTORY_Z - 1; i >= 0; i--) {
+        const idx = (wish_history_idx + i) % MAX_WISH_HISTORY_Z;
         if (wish_history[idx]) {
-            wt.tty_add_menu(win, null, { a_int: i + 1 }, '\0', 0, ATR_NONE,
-                            NO_COLOR, wish_history[idx], MENU_ITEMFLAGS_NONE);
+            /* a '\0' accelerator: tty hands out a, b, c... in order */
+            const sel = String.fromCharCode(97 + accel++);
+            items.push({ sel, text: wish_history[idx] });
+            backref[sel] = idx;
         }
     }
 
-    wt.tty_end_menu(win, 'Wish what?');
-    const picks = [];
-    const npick = await wt.tty_select_menu(win, PICK_ONE, picks);
-    wt.tty_destroy_nhwindow(win);
-    if (npick > 0) {
-        i = picks[0]?.item?.a_int;
-        i--;
-        idx = (wish_history_idx + i) % MAX_WISH_HISTORY_Z;
-
-        if (wish_history[idx])
-            buf.value = wish_history[idx];
-    }
+    const picked = await extcmd_select_menu(extcmd_end_menu(items, 'Wish what?'));
+    /* destroy_nhwindow() -> erase_menu_or_text(): docrt() the map back */
+    await (await import('./invent.js')).dismiss_invent_screen();
+    if (picked != null && backref[picked] != null)
+        buf.value = wish_history[backref[picked]];
 }
