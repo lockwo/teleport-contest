@@ -747,7 +747,10 @@ export function map_trap(trap, show) {
         loc.mapped_trap_ttyp = trap.ttyp;
         loc.invisMon = false; /* levl[x][y].glyph replaced: the remembered 'I' is gone */
     }
-    if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec);
+    if (show) {
+        show_glyph_cell(x, y, g.ch, g.color, g.dec);
+        loc.disp_trap = true;
+    }
 }
 
 // C ref: display.c map_object(obj, show).  The generic-object upgrade and the

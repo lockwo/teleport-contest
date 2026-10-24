@@ -118,11 +118,11 @@ async function tower_create_trap_random_at(mx, my) {
         kind = ROCKTRAP;
     const t = await maketrap(x, y, kind);
     // C ref: mklev.c:2104 — reads the trap maketrap() actually placed.
-    if ((t ? t.ttyp : kind) === WEB) {
+    if (t && t.ttyp === WEB) {
         const spider = name_to_pmidx('giant spider');
         if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
     }
-    rnd(4);                                          // mktrap victim check
+    if (t) rnd(4);                                   // mktrap victim check (kind = NO_TRAP when maketrap fails)
 }
 
 // Main executor.  C ref: makemaz("tower3") -> load_special.  Unlike tower1/2

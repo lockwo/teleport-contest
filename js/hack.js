@@ -24,7 +24,7 @@ import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, ge
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON } from './const.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, terrain_glyph, displayed_doormask, You_feel } from './display.js';
+import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
@@ -1909,7 +1909,8 @@ function look_at_object_here(x, y, describing = false) {
         if (describing && (remembered?.objotyp || remembered?.hallucotyp)
             && remembered.ch === loc.disp_ch)
             return look_at_object(x, y, { kind: 'object', obj: null,
-                otyp: remembered.objotyp || remembered.hallucotyp, corpsenm: remembered.corpsenm, x, y });
+                otyp: remembered.objotyp ? remembered_glyph_otyp(remembered) : remembered.hallucotyp,
+                corpsenm: remembered.corpsenm, x, y });
         return null;
     }
     // C dispatches on the DISPLAYED glyph: an object lying on a square whose
@@ -1928,7 +1929,8 @@ function look_at_object_here(x, y, describing = false) {
         // pile has since been changed by a monster out of sight) and
         // object_from_map() looks for a matching sobj_at(), else mksobj()s one.
         if (hrem?.objotyp && hrem.ch === loc.disp_ch)
-            return look_at_object(x, y, { kind: 'object', obj: null, otyp: hrem.objotyp,
+            return look_at_object(x, y, { kind: 'object', obj: null,
+                                          otyp: remembered_glyph_otyp(hrem),
                                           corpsenm: hrem.corpsenm, x, y });
         return null;
     }
@@ -1938,7 +1940,8 @@ function look_at_object_here(x, y, describing = false) {
     // finds no matching sobj_at() and mksobj()s a stand-in of the glyph's type.
     if (describing && !game.u?.uhallu && hrem?.objotyp && hrem.ch === loc.disp_ch
         && hrem.objotyp !== obj.otyp)
-        return look_at_object(x, y, { kind: 'object', obj: null, otyp: hrem.objotyp,
+        return look_at_object(x, y, { kind: 'object', obj: null,
+                                      otyp: remembered_glyph_otyp(hrem),
                                       corpsenm: hrem.corpsenm, x, y });
     // C ref: display.h generic_obj_to_glyph() — an undescribed potion/gem/
     // spellbook is shown as its class's generic object, so lookat() fabricates
@@ -4158,7 +4161,7 @@ async function do_look_traps(nearby) {
             const tg = trap_glyph(t);
             // The displayed symbol; the hero (not stored in the map memory) is
             // drawn as '@'.
-            const cover = (x === u.ux && y === u.uy) ? '@'
+            const cover = (x === u.ux && y === u.uy && canspotself()) ? '@'
                 : (loc && loc.disp_ch)
                     ? (loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch)
                     : ' ';
@@ -4229,7 +4232,7 @@ async function do_look_engrs(nearby) {
             // map memory) covers when standing on the cell; otherwise the map
             // memory's display char is the top glyph.
             let coverChar, coverDropped = false;
-            if (x === u.ux && y === u.uy) {
+            if (x === u.ux && y === u.uy && canspotself()) {
                 coverChar = '@'; // player-monster symbol (non-polymorphed hero)
             } else {
                 // The encglyph() escape is decoded by tty's text window into the
@@ -4292,8 +4295,9 @@ async function do_look_all(nearby, do_mons) {
             const loc = game.level?.at(x, y);
             let lookbuf = '', sym = '';
             if (do_mons) {
-                if (x === u.ux && y === u.uy) {
-                    // canspotself: hero visible on their own square.
+                if (x === u.ux && y === u.uy && canspotself()) {
+                    // canspotself: hero visible on their own square (an unseen
+                    // hero's square shows terrain, so glyph_is_monster() fails).
                     lookbuf = self_lookat();
                     // encglyph(glyph_at(u.ux,u.uy)): the hero's displayed
                     // symbol ('&' while polymorphed into a vrock, not '@').

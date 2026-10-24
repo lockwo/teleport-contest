@@ -3,6 +3,7 @@
 // the gameplay sessions are ported here.
 
 import { game } from './gstate.js';
+import { nh_delay_output_tick } from './nomux_capture.js';
 import { ok_to_quest } from './questok.js';
 import { s_suffix } from './hacklib.js';
 import { hard_helmet } from './do_wear.js';
@@ -66,7 +67,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
          Is_airlevel, Is_rogue_level, SDOOR, SCORR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
-         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
+         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, PLNMSG_ENVELOPED_IN_GAS } from './const.js';
 import { is_pool, is_ice, is_lava, is_moat } from './dbridge.js';
 import { in_rooms } from './shkroom.js';
 import { create_gas_cloud } from './region.js';
@@ -2685,6 +2686,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                 else if (!mon) unmap_invisible_zap(sx, sy);
                 if (ZAP_POS(typ) || (isok(lsx, lsy) && cansee(lsx, lsy)))
                     drawBeam(sx, sy);
+                nh_delay_output_tick(); /* C: nh_delay_output(); wait a little */
             }
 
             /* hit() and miss() need bhitpos to match the target */
@@ -2846,7 +2848,7 @@ export async function zap_over_floor(x, y, type, shopdamage = null,
                movement and gas regions don't understand each other */
             if (!on_water_level) {
                 await create_gas_cloud(x, y, rnd(5), 0); /* 1..5, no damg */
-                if (game.iflags?.last_msg === 'PLNMSG_ENVELOPED_IN_GAS')
+                if (game.last_msg === PLNMSG_ENVELOPED_IN_GAS)
                     msggiven = true;
             }
 

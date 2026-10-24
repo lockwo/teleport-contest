@@ -548,27 +548,6 @@ export async function attrcurse() {
     return 0;
 }
 
-// C ref: ball.c punish(otmp) with a null otmp (js/read.js owns the identical
-// scroll-of-punishment copy; pray.c is the other caller).
-async function punish() {
-    const u = game.u;
-    await update_topl('You are being punished for your misbehavior!');
-    if (u.uball) {
-        await update_topl('Your iron ball gets heavier.');
-        u.uball.owt += WT_IRON_BALL_INCR;
-        return;
-    }
-    const uchain = mkobj(CHAIN_CLASS, true);
-    uchain.owornmask = W_CHAIN;
-    u.uchain = uchain;
-    const uball = mkobj(BALL_CLASS, true);
-    uball.owornmask = W_BALL;
-    u.uball = uball;
-    place_object(uball, u.ux, u.uy);
-    place_object(uchain, u.ux, u.uy);
-    newsym(u.ux, u.uy);
-}
-
 // C ref: pray.c angrygods(resp_god) — the god rejects the prayer.
 async function angrygods(resp_god) {
     const u = game.u;
@@ -613,7 +592,7 @@ async function angrygods(resp_god) {
     case 6:
         if (!u.uball) {
             await gods_angry(resp_god);
-            await punish();
+            await (await import('./read.js')).punish(null);
             break;
         }
         /* FALLTHRU */

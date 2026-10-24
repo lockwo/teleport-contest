@@ -307,8 +307,12 @@ async function bones_getlev(blob) {
         o.o_id = next_ident();
     };
     for (const o of level.objects || []) stamp_obj(o);
-    // restmon(): one next_ident() per monster, then its minvent objects.
-    for (const m of level.monsters || []) {
+    // restmon(): one next_ident() per monster, then its minvent objects.  C's
+    // restmonchn() walks the saved fmon chain head (newest) first and relinks it
+    // in that same order, so the walk is the reverse of this port's
+    // creation-ordered level.monsters array (fmonOrder()).
+    const chain_order = [...(level.monsters || [])].reverse();
+    for (const m of chain_order) {
         m.m_id = next_ident();
         if (Array.isArray(m.minvent)) for (const o of m.minvent) stamp_obj(o);
     }
@@ -341,7 +345,7 @@ async function bones_getlev(blob) {
             inside_shop: (x, y) => (room_at(x, y)?.rtype ?? 0) >= SHOPBASE,
             tended_shop: (x, y) => !!room_at(x, y)?.resident?.isshk,
         };
-        for (const m of level.monsters || []) await resetobjs(m.minvent, true, deps);
+        for (const m of [...(level.monsters || [])].reverse()) await resetobjs(m.minvent, true, deps);
         await resetobjs(level.objects, true, deps);
         await resetobjs(level.buriedobjlist, true, deps);
     }
@@ -356,7 +360,9 @@ async function bones_getlev(blob) {
         const { peace_minded_bigrm, set_malign, monster_by_pmidx } = await import('./makemon.js');
         const S_UNICORN = 'u';
         const ual = Math.sign(game.u?.ualign?.type ?? 0);
-        for (const m of level.monsters || []) {
+        // getlev()'s `for (mtmp = fmon; ...)`: chain order (see restmon above),
+        // which fixes WHICH monster gets each peace_minded() draw pair.
+        for (const m of [...(level.monsters || [])].reverse()) {
             const ptr = m.data || monster_by_pmidx(m.mnum);
             if (!ptr) continue;
             if (!m.isshk) {

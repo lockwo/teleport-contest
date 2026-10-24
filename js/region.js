@@ -14,6 +14,7 @@
 // ttl aged by the turns spent away.
 
 import { game } from './gstate.js';
+import { PLNMSG_ENVELOPED_IN_GAS } from './const.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
          M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES } from './const.js';
@@ -384,6 +385,7 @@ async function make_gas_cloud(cloud, damage, insideCloud) {
     if (!game._in_mklev && !insideCloud && is_hero_inside_gas_cloud()) {
         const { update_topl } = await import('./display.js');
         await update_topl(`You are enveloped in a cloud of ${damage ? 'noxious gas' : 'steam'}!`);
+        game.last_msg = PLNMSG_ENVELOPED_IN_GAS; /* C: iflags.last_msg, after the You() */
     }
 }
 
