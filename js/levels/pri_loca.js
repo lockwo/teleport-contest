@@ -463,8 +463,8 @@ function pri_create_roamer(name, mx, my, peaceful) {
 // &tm).  An explicit coord costs no get_location draw; a bare des.trap() runs
 // get_location(DRY)'s rn2(xsize)/rn2(ysize) loop first, rejecting stairs and
 // ladders.  Then the type is rolled (retry until not NO_TRAP), maketrap runs,
-// and mklev.c:2137's victim check rnd(4) is drawn unconditionally (level
-// difficulty here is far above 4, so it never fires).
+// and mklev.c:2137's victim check rnd(4) is drawn whenever maketrap placed a trap
+// (level difficulty here is far above 4, so it never fires).
 //
 // mktrapflags is MKTRAP_MAZEFLAG ONLY.  lspo_trap() sets
 // `tmptrap.spider_on_web = TRUE` at sp_lev.c:4405 before parsing any argument
@@ -502,11 +502,13 @@ export async function pri_create_trap(ttyp, mx, my) {
         && !Can_fall_thru(game.u?.uz)) kind = 3 /* ROCKTRAP */;
     const t = await maketrap(x, y, kind);
     // C ref: mklev.c:2104 — reads the trap maketrap() actually placed.
-    if ((t ? t.ttyp : kind) === 18 /* WEB */) {
+    if (t && t.ttyp === 18 /* WEB */) {
         const spider = name_to_pmidx('giant spider');
         if (spider >= 0) makemon(monster_by_pmidx(spider), x, y, 0);
     }
-    rnd(4);                                      // mktrap victim check mklev.c:2137
+    // C: kind = t ? t->ttyp : NO_TRAP; an unplaceable trap (stairs/furniture/
+    // pool under the random spot) skips the victim gate and its rnd(4).
+    if (t) rnd(4);                               // mktrap victim check mklev.c:2137
 }
 
 export async function makemaz_pri_loca() {

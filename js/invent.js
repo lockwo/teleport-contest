@@ -12,7 +12,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, object_glyph, flash_obj_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -101,7 +101,8 @@ import { FREE_ACTION as FREE_ACTION_PROP, SLOW_DIGESTION as SLOW_DIGESTION_PROP 
 import { MELT_ICE_AWAY, COST_NOCONTENTS } from './const.js';
 import { MINV_ALL, engulfing_u } from './const.js';
 import { spot_time_left, obj_split_timers } from './timeout.js';
-import { obj_sheds_light, obj_split_light_source, obj_merge_light_sources as merge_light_sources } from './light.js';
+import { obj_sheds_light, obj_split_light_source, obj_merge_light_sources as merge_light_sources,
+         show_transient_light, transient_light_cleanup } from './light.js';
 import { waterbody_name as waterbody_name_for_ice } from './cmd.js';
 import { BRK_FROM_INV } from './const.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -6561,6 +6562,13 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         const typ = loc?.typ ?? 0;
         // C ref: zap.c:3897 bhit() — a "wall of water"/lava wall stops items.
         if (typ === WATER || typ === LAVAWALL) break;
+        // C ref: zap.c:3902 bhit() — a lit candle/lamp in flight temporarily
+        // lights the squares it passes over (vision recalc + flush_screen), so
+        // the hero remembers whatever the light reveals.
+        if (obj?.lamplit && !Blind_for_wear()) {
+            game.bhitpos = { x: bx, y: by }; /* C: gb.bhitpos, read by show_transient_light */
+            await show_transient_light(obj, bx, by);
+        }
         // C ref: zap.c:3906 — iron bars block anything big enough and break
         // some things; `!rn2(5)` (the always_hit roll) is only drawn once the
         // missile has left the hero's square.  obj may be gone afterwards.
@@ -6659,6 +6667,8 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
     // the missile runs into is remembered as an 'I' (before result = mtmp).
     if (mon_in_path && cansee(bx, by) && !(await import('./uhitm.js')).canspotmon(hitmon))
         map_invisible(bx, by);
+    // C ref: zap.c:4136 bhit_done: — drop the transient light and redo vision.
+    await transient_light_cleanup();
     return { x: bx, y: by, mon: hitmon, gone: !objp.obj, flash, stuck };
 }
 
@@ -7525,6 +7535,10 @@ export async function throwit(otmp, wep_mask) {
         (await import('./steal.js')).mpickobj(land.mon, otmp); /* may merge and free obj */
         return ECMD_TIME;
     }
+    // C ref: dothrow.c:1817 `(void) snuff_candle(obj)` — a lit candle that
+    // lands (rather than hitting a monster) is snuffed: "The candle's flame is
+    // extinguished."
+    await (await import('./apply.js')).snuff_candle(otmp);
     // C ref: dothrow.c:1818 — `if (!mon && ship_object(obj, bhitpos.x,
     // bhitpos.y, FALSE))`: the missile landed on a hole/trap door/down stairs
     // and rides it to the level below instead of resting here.
@@ -12286,6 +12300,8 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
         const mtmp = game.u.ustuck;
         const { mon_nam } = await import('./do_name.js');
         const { mbodypart } = await import('./monmove.js');
+        // C: fbuf is built once (one mon_nam, one hallucinatory name); the
+        // message reuses &fbuf[12].
         const where = `${s_suffix(mon_nam(mtmp))} ${mbodypart(mtmp, STOMACH)}`;
         const blind = Blind_for_wear();
         await update_topl(`You ${blind ? 'try' : 'look around'} to ${verb} what is lying in ${where}.`);
@@ -12294,7 +12310,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
             for (const o of minv)
                 if (o.otyp === CORPSE) await feel_cockatrice(o, false);
             await display_minventory(mtmp, MINV_ALL | PICK_NONE,
-                                     `Contents of ${s_suffix(mon_nam(mtmp))} ${mbodypart(mtmp, STOMACH)}`);
+                                     `${blind ? 'You feel' : `Contents of ${where}`}:`);
         } else {
             await update_topl(`You ${verb} no objects here.`);
         }
@@ -13163,7 +13179,9 @@ export async function display_minventory(mon, dflags, title) {
     const minv = Array.isArray(mon?.minvent) ? mon.minvent : [];
     const have_any = do_all ? (minv.length > 0 || incl_hero)
         : !!(mon?.misc_worn_check || minv.some((o) => (o.owornmask | 0) & 0x100));
-    const ttl = title || `${s_suffix(noit_Monnam(mon))} ${do_all ? 'possessions' : 'armament'}:`;
+    // C: the default title is always formatted (noit_Monnam draws a hallucinatory name) even when the caller passes one.
+    const dflt = `${s_suffix(noit_Monnam(mon))} ${do_all ? 'possessions' : 'armament'}:`;
+    const ttl = title || dflt;
     if (!have_any) { invdisp_nothing(ttl, '(none)'); return null; }
     const objs = do_all ? minv : minv.filter(worn_wield_only);
     const rows = [[ttl, '']];   /* tty_end_menu: prompt line then a blank */
@@ -13188,6 +13206,7 @@ export async function display_minventory(mon, dflags, title) {
         const { dmgtype } = await import('./monattk_data.js');
         const { self_lookat } = await import('./hack.js');
         if (objs.length) rows.push([`${dmgtype(mon.data, AD_DGST) ? 'Swallowed' : 'Engulfed'} Creatures`]);
+        youmonst_menu_glyph();
         const heroLine = `${CONTAINED_SYM} - ${an(self_lookat())}`;
         if (objs.length) rows[rows.length - 1].push(heroLine); else rows.push([null, heroLine]);
     }

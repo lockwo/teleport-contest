@@ -15,6 +15,7 @@ import { mksobj, mksobj_at, mkobj_at, objects, weight, CORPSE } from './mkobj.js
 import { set_tin_variety, HEALTHY_TIN } from './eat.js';
 import { makemon, mkclass, mpickobj, name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { make_engr_at } from './engrave.js';
+import { m_at } from './display.js';
 import { shtypes, get_shop_item, VEGETARIAN_CLASS } from './shtypes.js';
 import { Is_special } from './dungeon.js';
 import { obj_resists } from './zap.js';
@@ -265,14 +266,6 @@ function mkveggy_at(sx, sy) {
     return obj;
 }
 
-// C ref: rm.h MON_AT — a live monster occupies <x,y>.
-function MON_AT(x, y) {
-    for (const m of game.level?.monsters || []) {
-        if (m.mx === x && m.my === y && (m.mhp == null || m.mhp > 0)) return true;
-    }
-    return false;
-}
-
 // C ref: shknam.c mkshobj_at() — make an object of the appropriate type for a
 // shop square.  shp is a shtypes[] entry; shp_indx its index.
 function mkshobj_at(shp, shp_indx, sx, sy, mkspecl) {
@@ -283,7 +276,7 @@ function mkshobj_at(shp, shp_indx, sx, sy, mkspecl) {
         return;
     }
 
-    if (rn2(100) < depth(game.u?.uz) && !MON_AT(sx, sy)) {
+    if (rn2(100) < depth(game.u?.uz) && !m_at(sx, sy)) {
         const ptr = mkclass(S_MIMIC, 0);
         if (ptr) {
             const m = makemon(ptr, sx, sy, 0 /*NO_MM_FLAGS*/);
@@ -342,8 +335,7 @@ function shkinit(shp, sroom) {
     // C ref: shknam.c shkinit() `if (MON_AT(sx, sy)) (void) rloc(m_at(sx, sy),
     // RLOC_NOMSG); /* insurance */`.
     {
-        const occ = (game.level?.monsters || []).find((m) => m.mx === sx && m.my === sy
-                                                      && !(m.mhp <= 0));
+        const occ = m_at(sx, sy);
         if (occ) hooks.rloc_mklev?.(occ);
     }
 

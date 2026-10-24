@@ -2215,7 +2215,10 @@ async function ap_enexto(cc, xx, yy, mdat) {
 async function ap_get_adjacent_loc(prompt, emsg, x, y, cc) {
     const A = await ap_load();
     const dir = await A.cmd.getdir(prompt);
-    if (!dir) return false;
+    if (!dir) {
+        await A.display.pline('Never mind.');
+        return false;
+    }
     const new_x = x + dir.dx, new_y = y + dir.dy;
     if (!ap_isok(new_x, new_y)) {
         if (emsg) await A.display.pline(emsg);

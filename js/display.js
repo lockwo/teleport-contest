@@ -156,6 +156,20 @@ export function obj_is_generic(otmp) {
         || (otyp >= FIRST_SPELL && otyp <= LAST_SPELL);
 }
 
+// C ref: display.h generic_obj_to_glyph() — the REMEMBERED object glyph of an
+// object the hero has not seen up close (!dknown potion/gem/spellbook) is the
+// class's generic object, not its type: object_from_map() then finds no
+// matching sobj_at()/buried object and mksobj()s a stand-in.  This port stores
+// the real type in remembered_glyph.objotyp and flags the generic glyph by its
+// gray colour (obj_color()), so recover the stand-in's otyp (the class) here.
+export function remembered_glyph_otyp(rg) {
+    const o = objects[rg.objotyp];
+    if (o && rg.color === GENERIC_OBJ_COLOR
+        && obj_is_generic({ otyp: rg.objotyp, oclass: o.oclass, dknown: 0 }))
+        return o.oclass;
+    return rg.objotyp;
+}
+
 function obj_color(otmp) {
     if (!otmp) return NO_COLOR;
     if (otmp.oclass === COIN_CLASS) return CLR_YELLOW;
@@ -443,7 +457,10 @@ export function bg_attr(bg) {
 function show_bg_glyph(x, y, bg) {
     show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, bg_attr(bg));
     const loc = game.level?.at(x, y);
-    if (loc) loc.disp_hstatue = !!bg.hstatue;
+    if (loc) {
+        loc.disp_hstatue = !!bg.hstatue;
+        loc.disp_trap = !!bg.trap;
+    }
 }
 
 // The long worm whose TAIL segment stands on (x,y), if any.  C ref: worm.c
@@ -1431,6 +1448,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.disp_warning = false;
     loc.disp_monster = false;
     loc.disp_hstatue = false;
+    loc.disp_trap = false;
     loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
        dark-room floor (S_darkroom, CLR_BLACK) is stored with its lit colour,
@@ -1535,8 +1553,8 @@ const trap_defsym = {
 export function trap_glyph(trap) {
     const d = trap_defsym[trap.ttyp];
     // Unknown ttyp: fall back to the arrow-trap sym/color (defsyms[] default).
-    if (!d) return { ch: '^', color: CLR_CYAN, dec: false };
-    return { ch: d.ch, color: d.color, dec: false };
+    if (!d) return { ch: '^', color: CLR_CYAN, dec: false, trap: true };
+    return { ch: d.ch, color: d.color, dec: false, trap: true };
 }
 
 // C ref: getpos.c getpos() else-branch — the matching[] build loop.  For every
@@ -1870,8 +1888,10 @@ export function see_objects() {
     }
 }
 
-// C ref: display.c see_traps() — newsym() every square currently DISPLAYING a
-// trap glyph (a trap under an object or a monster is not redrawn).
+// C ref: display.c see_traps() — newsym() every square whose glyph_at() is a
+// trap glyph (a trap under an object or a monster is not redrawn).  The glyph
+// kind is tracked (disp_trap), not inferred from the character: a hallucinated
+// amulet glyph '"' is the same character as a web.
 export function see_traps() {
     const traps = game.level?.traps || [];
     for (let i = traps.length - 1; i >= 0; i--) {
@@ -1879,8 +1899,7 @@ export function see_traps() {
         if (!trap) continue;
         const loc = game.level?.at(trap.tx, trap.ty);
         if (!loc || !trap.tseen) continue;
-        const tg = trap_glyph(trap);
-        if (loc.disp_ch === tg.ch) newsym(trap.tx, trap.ty);
+        if (loc.disp_trap) newsym(trap.tx, trap.ty);
     }
 }
 
@@ -2288,7 +2307,7 @@ function display_sensed_monster(x, y, mon, see_it) {
 // newsym_core() and the announcement is queued (newsym() is synchronous; the
 // queue drains before the next topline message or key read, as notice_mon's).
 const DISP_FIELDS = ['disp_ch', 'disp_color', 'disp_decgfx', 'disp_attr', 'disp_dark',
-                     'disp_monster', 'disp_warning', 'disp_hstatue'];
+                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap'];
 function snapDisp(loc) {
     const s = {};
     for (const f of DISP_FIELDS) s[f] = loc[f];
@@ -5726,6 +5745,13 @@ function what_obj(otyp) { return Hallucination_u() ? random_object(NUM_OBJECTS_D
 function mon_to_glyph(mon) {
     return what_mon(monsndx_d(mon.data))
         + ((!mon.female) ? GLYPH_MON_MALE_OFF : GLYPH_MON_FEM_OFF);
+}
+// C ref: pickup.c query_objlist() `mon_to_glyph(&gy.youmonst, rn2_on_display_rng)`
+// for the engulfed-hero menu row: one random-species display-RNG draw while
+// Hallucinating (the tty menu never shows the glyph, only the draw matters).
+export function youmonst_menu_glyph() {
+    const u = game.u || {};
+    return what_mon(u.umonnum | 0) + (!Ugender() ? GLYPH_MON_MALE_OFF : GLYPH_MON_FEM_OFF);
 }
 function detected_mon_to_glyph(mon) {
     return what_mon(monsndx_d(mon.data))

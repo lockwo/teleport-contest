@@ -5,6 +5,7 @@
 // Contestants should add: search, kick, eat, drink, read, zap,
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
+import { worm_cross } from './worm.js';
 import { game, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
@@ -841,8 +842,13 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy) {
     // C ref: hack.c:1153-1172 — a tight diagonal between two rock/boulder-in-
     // Sokoban squares that cant_squeeze_thru() refuses (mode != DO_MOVE: no
     // message, return FALSE).
-    if (x !== u.ux && y !== u.uy && bad_rock_hero(u.ux, y) && bad_rock_hero(x, u.uy)
-        && cant_squeeze_thru_hero()) return false;
+    if (x !== u.ux && y !== u.uy && bad_rock_hero(u.ux, y) && bad_rock_hero(x, u.uy)) {
+        if (cant_squeeze_thru_hero()) return false;
+    } else if (x !== u.ux && y !== u.uy && worm_cross(u.ux, u.uy, x, y)) {
+        /* C ref: hack.c:1173 `else if (dx && dy && worm_cross(ux, uy, x, y))` —
+           consecutive long worm segments sit on <ux,y> and <x,uy>. */
+        return false;
+    }
     // C ref: hack.c:1180-1199 — "Pick travel path that does not require
     // crossing a trap.  Avoid water and lava using the usual running rules."
     // This sits in test_move() for every mode but DO_MOVE, so TEST_MOVE refuses
@@ -1626,6 +1632,11 @@ export async function rhack(key) {
         // C ref: cmd.c 'e' (#eat) -> eat.c doeat().  Eats carried/floor food
         // (ECMD_TIME when a bite is taken).
         game.context.move = (await doeat()) ? 1 : 0;
+        // C ref: cmd.c rhack():3814-3816 — doeat() returning ECMD_OK/CANCEL
+        // runs reset_cmd_vars(), whose `gm.multi = 0` cancels the multi = -1
+        // savelife() left when floorfood()'s feel_cockatrice() killed and
+        // revived the hero; the pending nomovemsg is never announced.
+        if (!game.context.move) game.multi = 0;
     } else if (ch === 'o') {
         // C ref: cmd.c doopen -> lock.c doopen_indir(0,0): open an adjacent
         // door (reads a direction).  Sets the turn flag from doopen's result.

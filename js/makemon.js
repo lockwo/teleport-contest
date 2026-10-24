@@ -46,7 +46,7 @@ import {
     M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
     NC_VIA_WAND_OR_SPELL, OBJ_FREE, OBJ_FLOOR, OBJ_MINVENT,
-    IS_WATERWALL, LOST_NONE, LOST_THROWN, LOST_DROPPED, LOST_STOLEN } from './const.js';
+    IS_WATERWALL, LOST_NONE, LOST_THROWN, LOST_DROPPED, LOST_STOLEN, I_SPECIAL } from './const.js';
 // set_mimic_sym() needs the room/trap/vision helpers.  These modules sit below
 // makemon.js in the import graph except vision.js, which imports two function
 // declarations from here — a cycle that resolves cleanly because both sides are
@@ -3247,6 +3247,9 @@ export function newcham(mtmp, mdat) {
         // real gap for the later runtime newcham() callers (mon.js/zap.js/
         // mhitm.js/uhitm.js) that may already be wearing armor.
         mhim(mtmp); mhis(mtmp);
+        // C ref: mon.c:5489 newcham() -> check_gear_next_turn(mtmp): the new
+        // form re-assesses its gear (m_dowear) on its next move.
+        mtmp.misc_worn_check = (mtmp.misc_worn_check | 0) | I_SPECIAL;
         newcham_worm(mtmp, mdat);
         // C ref: mon.c newcham() — `meverseen = 0; newsym()` so the new form
         // is what the map shows.

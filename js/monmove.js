@@ -3367,7 +3367,6 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
                 const { seetrap } = await import('./trap.js');
                 seetrap(trap);
             }
-            newsym(mtmp.mx, mtmp.my);
         }
         return Trap_Effect_Finished;
     }
