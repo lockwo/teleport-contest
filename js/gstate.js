@@ -3,8 +3,24 @@
 
 export let game = {};
 
+// C ref: decl.c uball/uchain.  ball.js, read.js (punish) and the other writers keep them on game.u;
+// many modules read them as game.uball/game.uchain (zap.js bhito, steed.js, insight.js, invent.js,
+// monmove.js, ...).  Forward the bare names to game.u so every reader sees the one live pair
+// (before this, a punished hero's ball and chain were invisible to all of those readers).
+function installBallChainAliases(g) {
+    for (const k of ['uball', 'uchain']) {
+        Object.defineProperty(g, k, {
+            configurable: true, enumerable: false,
+            get() { return this.u ? (this.u[k] ?? null) : null; },
+            set(v) { if (this.u) this.u[k] = v; },
+        });
+    }
+    return g;
+}
+installBallChainAliases(game);
+
 export function resetGame() {
-    game = {};
+    game = installBallChainAliases({});
     return game;
 }
 
@@ -36,4 +52,4 @@ export function svc_context_run() {
 // `lightsources` here; js/vision.js calls it from vision_recalc().  js/invent.js
 // registers `merged` for js/mkobj.js container insertion.  Unlike `game`, this
 // object survives resetGame().
-export const hooks = { lightsources: null, merged: null, noticeQueue: null, flushNotices: null, mentionMap: null };
+export const hooks = { lightsources: null, merged: null, noticeQueue: null, flushNotices: null, classify_terrain: null, mentionMap: null };

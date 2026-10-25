@@ -3463,6 +3463,8 @@ export async function sleep_monst(mon, amt, how) {
         return false;
     }
     if (mon.mcanmove) {
+        const { finish_meating } = await import('./dogmove.js');
+        finish_meating(mon); /* terminate any meal-in-progress */
         amt += (mon.mfrozen || 0);
         if (amt > 0) { mon.mcanmove = 0; mon.mfrozen = Math.min(amt, 127); }
         else mon.msleeping = 1;

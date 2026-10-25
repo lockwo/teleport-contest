@@ -1088,12 +1088,12 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
             case AD_COLD:
                 if (mm_resists_cold(magr)) {
                     if (mm_can_see_mon(magr))
-                        await emitMMmsg(`${Monnam(magr)} is mildly chilly.`);
+                        await emitMMmsg(`${Monnam(magr)} is mildly chilly.`, magr);
                     tmp = 0;
                     break;
                 }
                 if (mm_can_see_mon(magr))
-                    await emitMMmsg(`${Monnam(magr)} is suddenly very cold!`);
+                    await emitMMmsg(`${Monnam(magr)} is suddenly very cold!`, magr);
                 healmon(mdef, Math.floor(tmp / 2), Math.floor(tmp / 2));
                 // mhitm.c:1407 — a jelly healed past its level's worth of hit
                 // points splits (clone_mon: enexto's ring scan + a fresh m_id).
@@ -1113,22 +1113,22 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
             case AD_FIRE:
                 if (mm_resists_fire(magr)) {
                     if (mm_can_see_mon(magr))
-                        await emitMMmsg(`${Monnam(magr)} is mildly warmed.`);
+                        await emitMMmsg(`${Monnam(magr)} is mildly warmed.`, magr);
                     tmp = 0;
                     break;
                 }
                 if (mm_can_see_mon(magr))
-                    await emitMMmsg(`${Monnam(magr)} is suddenly very hot!`);
+                    await emitMMmsg(`${Monnam(magr)} is suddenly very hot!`, magr);
                 break;
             case AD_ELEC:
                 if (mm_resists_elec(magr)) {
                     if (mm_can_see_mon(magr))
-                        await emitMMmsg(`${Monnam(magr)} is mildly tingled.`);
+                        await emitMMmsg(`${Monnam(magr)} is mildly tingled.`, magr);
                     tmp = 0;
                     break;
                 }
                 if (mm_can_see_mon(magr))
-                    await emitMMmsg(`${Monnam(magr)} is jolted with electricity!`);
+                    await emitMMmsg(`${Monnam(magr)} is jolted with electricity!`, magr);
                 break;
             default:
                 tmp = 0;
@@ -1210,7 +1210,7 @@ export async function mdisplacem(magr, mdef, quietly) {
             if (!quietly && mm_can_see_mon(magr)) {
                 if (vis)
                     await emitMMmsg(`${Monnam(magr)} tries to move ${mon_nam(mdef)} out of ${is_rider(pa) ? 'the' : mhis(magr)} way.`);
-                await emitMMmsg(`${Monnam(magr)} turns to stone!`);
+                await emitMMmsg(`${Monnam(magr)} turns to stone!`, magr);
             }
             await monstone_mm(magr);
             if (!DEADMONSTER(magr))
@@ -1403,7 +1403,7 @@ export async function mattackm(magr, mdef) {
         {
             /* C ref: mhitm.c:342-348 */
             if (game.last_msg === PLNMSG_HIDE_UNDER && mdef.m_id === game.last_hider)
-                await emitMMmsg(`${Monnam(mdef)} emerges from hiding.`);
+                await emitMMmsg(`${Monnam(mdef)} emerges from hiding.`, mdef);
             else if (mdef.m_id === game.last_hider)
                 await emitMMmsg(`You notice ${mon_nam(mdef)}.`);
             else
@@ -1735,7 +1735,7 @@ export async function gazemm(magr, mdef, mattk) {
                 return M_ATTK_MISS;
             }
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is turned to stone!`);
+                await emitMMmsg(`${Monnam(magr)} is turned to stone!`, magr);
             await monstone_mm(magr);
             if (!DEADMONSTER(magr))
                 return M_ATTK_MISS;
@@ -2103,7 +2103,7 @@ export async function xdrainenergym(mon, givemsg) {
         && (attacktype_at(mon, AT_MAGC) || attacktype_at(mon, AT_BREA))) {
         mon.mspec_used = (mon.mspec_used | 0) + d(2, 2);
         if (givemsg)
-            await emitMMmsg(`${Monnam(mon)} seems lethargic.`);
+            await emitMMmsg(`${Monnam(mon)} seems lethargic.`, mon);
     }
 }
 

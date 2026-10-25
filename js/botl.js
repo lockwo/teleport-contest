@@ -17,7 +17,7 @@
 // bot() runs, and bot() SKIPS while u.uhp == -1 (dosave()'s "game over"
 // sentinel).  Nothing here tries to improve on that.
 
-import { game } from './gstate.js';
+import { game, hooks, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import {
     ANY_INT, ANY_UINT, ANY_LONG, ANY_ULONG, ANY_STR, ANY_MASK32,
@@ -53,12 +53,10 @@ import { endgamelevelname } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { clr2colorname, query_color, query_attr } from './coloratt.js';
-import { pline, impossible } from './display.js';
+import { pline, impossible, status_hold } from './display.js';
 import { pmname_of_pmidx } from './makemon.js';
-import {
-    tty_create_nhwindow, tty_destroy_nhwindow, tty_start_menu, tty_add_menu,
-    tty_end_menu, tty_select_menu, tty_putstr, tty_display_nhwindow,
-} from './wintty.js';
+import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading,
+         end_menu, select_menu, nul_glyphinfo } from './windows.js';
 import { status_version } from './version.js';
 import { hooked_tty_getlin } from './extcmd-handlers.js';
 import { OPT_MENU_DRIVER } from './options.js';
@@ -278,14 +276,11 @@ export function status_version_str(indent) {
     return status_version('', 0, indent);
 }
 
-/* C ref: hack.c classify_terrain() — computes the #terrainstatus pseudo-type
-   for the hero's CURRENT square and stores it in game.iflags.terrain_typ.
-   Unlike C (which only recomputes on change and uses the result to decide
-   whether to request a status redraw), this is called fresh on every render
-   by terrain_status() below, matching this file's existing weapon_status()/
-   armor_status() "rebuilt live every frame" design — no dirty-flag/redraw-
-   suppression semantics to get wrong. */
-function classify_terrain() {
+/* C ref: hack.c classify_terrain() — classifies the terrain under the hero
+   (the hero's square is always seen, so levl typ stands in for
+   svl.lastseentyp[u.ux][u.uy]) into iflags.terrain_typ, and requests a status
+   update when that changed unless the hero is running. */
+export function classify_terrain() {
     const u = game.u || {};
     const loc = game.level?.at(u.ux, u.uy);
     let typ = loc?.typ;
@@ -322,20 +317,42 @@ function classify_terrain() {
         }
     }
     game.iflags = game.iflags || {};
-    game.iflags.terrain_typ = typ;
+    if (typ !== game.iflags.terrain_typ) {
+        /* terrain at hero's spot is different */
+        const old = classify_terrain_typ();
+        game.iflags.terrain_typ = typ;
+        /* request a status update unless hero is running */
+        if (game.flags?.terrainstatus) {
+            if (!svc_context_run()) {
+                game.botl = true;
+            } else if (!game.botl && !game.botlx) {
+                /* blstats keeps the description bot() last published */
+                status_hold('terrain', old === MAX_TYPE ? '' : (terrain_descr[old] || ''));
+            }
+        }
+    }
 }
+
+hooks.classify_terrain = classify_terrain;
 
 function classify_terrain_typ() {
     const t = game.iflags?.terrain_typ;
     return (t === undefined || t === null) ? MAX_TYPE : t;
 }
 
-/* C ref: botl.c bot1() terrain_descr[classify_terrain_typ()] — the
-   #terrainstatus botl field. */
+/* C ref: botl.c bot_via_windowport() — `if (iflags.terrain_typ == MAX_TYPE)
+   classify_terrain(); i = iflags.terrain_typ;` the #terrainstatus botl field.
+   iflags.terrain_typ is only brought up to date at C's own call sites
+   (switch_terrain(), end_running(), goto_level(), the option toggle), so a
+   hero that ran onto new terrain still shows the old description until the
+   next bot(). */
 export function terrain_status() {
-    classify_terrain();
+    if (classify_terrain_typ() === MAX_TYPE)
+        classify_terrain();
     const i = classify_terrain_typ();
-    return i === MAX_TYPE ? '' : (terrain_descr[i] || '');
+    const live = i === MAX_TYPE ? '' : (terrain_descr[i] || '');
+    const held = game._statusHold;
+    return held && 'terrain' in held ? held.terrain : live;
 }
 
 /* C ref: pray.c critically_low_hp(only_if_injured) — private copy (pray.js has
@@ -1325,9 +1342,8 @@ export function bot_via_windowport() {
         ? (_transient ? _transient.armor : armor_status()) : '';
 
     if (game.flags?.terrainstatus) {
-        if (classify_terrain_typ() === MAX_TYPE) {
-            /* C calls classify_terrain() to fill iflags.terrain_typ */
-        }
+        if (classify_terrain_typ() === MAX_TYPE)
+            classify_terrain();
         i = classify_terrain_typ();
         if (gb.blstats[idx][BL_TERRAIN].a.a_int !== i) {
             gb.blstats[idx][BL_TERRAIN].val = terrain_descr[i];
@@ -2535,61 +2551,13 @@ export function all_options_statushilites(sbuf) {
 }
 
 /* ==================================================================== */
-/*  windows.c wrappers over the port's tty_* window layer               */
-/*                                                                      */
-/*  The port has no windows.c abstraction (each module drives wintty.js  */
-/*  directly), so botl.c's menu code gets these thin shims.  They are    */
-/*  async because tty_select_menu()/tty_getlin() are.                    */
+/*  windows.c menu API: the shared js/windows.js (create_nhwindow,       */
+/*  start_menu, add_menu, add_menu_str, add_menu_heading, end_menu,      */
+/*  select_menu); the NHW_TEXT putstr/display_nhwindow below.            */
 /* ==================================================================== */
 
-/* C ref: decl.c nul_glyphinfo */
-const nul_glyphinfo = { glyph: 0, ttychar: ' ', gm: {} };
-
-function create_nhwindow(type) {
-    return OPT_MENU_DRIVER.select ? { type, items: [], query: '', lines: [] }
-                                 : tty_create_nhwindow(type);
-}
-function destroy_nhwindow(win) {
-    if (typeof win !== 'object') return tty_destroy_nhwindow(win);
-}
-function start_menu(win, mbehavior) {
-    if (typeof win === 'object') { win.items = []; win.behave = mbehavior; }
-    else return tty_start_menu(win, mbehavior);
-}
-function add_menu(win, gi, identifier, ch, gch, attr, clr, str, itemflags) {
-    if (typeof win === 'object') {
-        win.items.push({ any: identifier, accel: ch, gacc: gch, attr, clr,
-                         str, itemflags,
-                         selectable: Object.values(identifier).some(Boolean) });
-    } else return tty_add_menu(win, gi, identifier, ch, gch, attr, clr, str, itemflags);
-}
-/* C ref: windows.c add_menu_str() / add_menu_heading() — a non-selectable
-   line, the heading form with ATR_SUBTITLE and MENU_ITEMFLAGS_SKIPINVERT. */
-function add_menu_str(win, str) {
-    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, ATR_NONE,
-                    NO_COLOR, str, MENU_ITEMFLAGS_NONE);
-}
-function add_menu_heading(win, str) {
-    return add_menu(win, nul_glyphinfo, zeroany(), 0, 0, game.iflags?.menu_headings?.attr ?? ATR_INVERSE,
-                    NO_COLOR, str, MENU_ITEMFLAGS_SKIPINVERT);
-}
-function end_menu(win, prompt) {
-    if (typeof win === 'object') win.query = prompt;
-    else return tty_end_menu(win, prompt);
-}
-async function select_menu(win, how, picks) {
-    if (typeof win !== 'object') return tty_select_menu(win, how, picks);
-    const got = await OPT_MENU_DRIVER.select(win, how);
-    if (!got) return -1;
-    for (const item of got) picks.push({ item, count: -1 });
-    return got.length;
-}
-function putstr(win, attr, str) {
-    if (typeof win === 'object') win.lines.push({ attr, str });
-    else return tty_putstr(win, attr, str);
-}
-async function display_nhwindow(win, blocking) {
-    if (typeof win !== 'object') return tty_display_nhwindow(win, blocking);
+function putstr(win, attr, str) { win.lines.push({ attr, str }); }
+async function display_nhwindow(win, _blocking) {
     const { display_text_window } = await import('./pager.js');
     return display_text_window(win.lines.map((line) => ({ text: line.str, attr: line.attr })));
 }

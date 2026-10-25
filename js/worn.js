@@ -8,7 +8,7 @@
 // find_mac() is a term of every to-hit roll, and which_armor() gates muse.c's
 // item choices.
 import { game } from './gstate.js';
-import { newsym, canseemon_shared as canseemon_wn } from './display.js';
+import { newsym, set_msg_mon, canseemon_shared as canseemon_wn } from './display.js';
 import { objects, is_flimsy } from './mkobj.js';
 import {
     mflags1_of, humanoid,
@@ -526,6 +526,7 @@ export async function print_m_dowear(pending) {
             if (/^a /i.test(newarm)) newarm = newarm.replace(/^a /i, 'another ');
             else if (/^an /i.test(newarm)) newarm = newarm.replace(/^an /i, 'another ');
         }
+        set_msg_mon(mon);
         await pline(`${Monnam(mon)}${buf} puts on ${newarm}.`);
         if (autocurse)
             await pline(`${s_suffix(Monnam(mon))} ${objects[best.otyp]?.name} glows ${hcolor_wn('black')} for a moment.`);

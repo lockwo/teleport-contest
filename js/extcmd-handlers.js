@@ -17,11 +17,11 @@ import {
     obj_doname, floor_object_name, classOrder, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
     addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
-    wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, useup, xname,
+    wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, menu_page_pending, useup, xname,
     doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
     dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
     doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
-    dotakeoff, doprring, doprtool, doprwep, doprgold, dovspell, dopramulet,
+    dotakeoff, doprring, doprtool, doprwep, doprgold, dopramulet,
     doprarm, near_capacity,
 } from './invent.js';
 import { pluslvl, losexp, rank_of } from './exper.js';
@@ -71,7 +71,7 @@ import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
          ck_bag, is_worn_by_type, menu_class_present,
          PICK_ANY, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES, WORN_TYPES, CHOOSE_ALL,
          BUCX_TYPES, JUSTPICKED } from './pickup.js';
-import { MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
+import { AUTOUNLOCK_FORCE, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
@@ -95,7 +95,7 @@ import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
 import { obj_resists, dozap, wishcmdassist, wish_history_add, wish_history_first, wish_history_menu } from './zap.js';
 import { timed_prop, wiz_timeout_queue } from './timeout.js';
 import { dobugreport } from './report.js';
-import { docast, dowizcast } from './spell.js';
+import { docast, dowizcast, dovspell } from './spell.js';
 import { dodown, doup } from './do.js';
 import { doengrave } from './engrave.js';
 import { dotogglepickup } from './options.js';
@@ -455,11 +455,17 @@ export async function hooked_tty_getlin(query, hook) {
         const disp = game.nhDisplay;
         // flush_screen() here rebuilds the whole model screen, status rows
         // included; the real tty leaves them alone, so put them back.
-        let kept = null;
-        if (!hook && disp?.grid) {
+        let kept = null, keptFrom = 0;
+        if (query === 'Search for:' && disp?.grid) {
+            // process_menu_window() MENU_SEARCH: a menu window is up, and tty's flush_screen() only updates
+            // the map window's cursor, it never repaints the map over the menu.  Keep every row.
+            game.bot_disabled = true;
+            kept = disp.grid.map((row) => row.map((cell) => ({ ...cell })));
+        } else if (!hook && disp?.grid) {
             game.bot_disabled = true;
             kept = [];
-            for (let r = disp.rows - StatusRows(); r < disp.rows; r++)
+            keptFrom = disp.rows - StatusRows();
+            for (let r = keptFrom; r < disp.rows; r++)
                 kept.push(disp.grid[r].map((cell) => ({ ...cell })));
         }
         pline_vision_flush();
@@ -467,7 +473,7 @@ export async function hooked_tty_getlin(query, hook) {
         game.bot_disabled = old_bot_disabled;
         if (kept)
             for (let i = 0; i < kept.length; i++)
-                kept[i].forEach((cell, c) => Object.assign(disp.grid[disp.rows - kept.length + i][c], cell));
+                kept[i].forEach((cell, c) => Object.assign(disp.grid[keptFrom + i][c], cell));
     }
     // C ref: getline.c:67 — the prompt is a SUPPRESS_HISTORY line, which
     // remember_topl()s whatever was on the top line.
@@ -660,32 +666,6 @@ export function extcmd_end_menu(items, promptStr) {
     return { flat, pages, npages, maxrow, fullscreen: maxrow >= rows };
 }
 
-// C ref: win/tty/wintty.c process_menu_window() page paint + dmore().  The
-// morestr sits on the row just past the page's last entry, indented one column,
-// with the cursor parked immediately after it.
-function render_extcmd_page(m, idx) {
-    const page = m.pages[idx];
-    if (m.fullscreen) {
-        renderWindowScreen(page, {
-            menu: true,
-            footer: m.npages > 1 ? `(${idx + 1} of ${m.npages})` : '(end) ',
-            footerRow: page.length,
-            footerCol: 1,
-            modal: 'extcmdwin',
-        });
-        return;
-    }
-    // Only a single-page menu can be an overlay (npages > 1 forces maxrow to
-    // the screen height), so renderMenuLines' "(end)" footer is always right.
-    renderMenuLines(page, null);   // null: cursor parks after "(end)", as tty does
-    // C ref: wintty.c erase_menu_or_text() — the previous (full-screen) menu was
-    // torn down by docrt(), whose cls() blanked the status window and only set
-    // disp.botlx; no bot() runs before this overlay is drawn, so rows 22-23
-    // stay blank until the command finishes.
-    if (m.statusBlank) blank_status_rows(game.nhDisplay);
-    game._modal_screen = 'extcmdwin';
-}
-
 // C ref: win/tty/getline.c xwaitforspace() — read until the key is listed in
 // `s`; '\n'/'\r' break with morc still 0 and ESC forces morc = '\033'.  Any
 // other key is a tty_nhbell() and another read, with no redraw in between (so
@@ -701,69 +681,23 @@ async function xwaitforspace(s) {
 }
 
 // C ref: win/tty/wintty.c process_menu_window()/tty_select_menu() for one
-// PICK_ONE round.  Returns the picked entry's accelerator, or null when the
-// menu was cancelled or committed with nothing selected (C's n == -1 / n == 0,
-// which extcmd_via_menu() handles identically).
+// PICK_ONE round, through the shared select_command_menu().  Returns the picked
+// entry's accelerator (and records its page in m.lastPage), or null when the menu
+// was cancelled or committed with nothing selected (C's n == -1 / n == 0, which
+// extcmd_via_menu() handles identically).
 export async function extcmd_select_menu(m) {
-    // tty_display_nhwindow(): an unacknowledged top line is --More--'d before
-    // the menu paints over it.
-    if (game._toplin === 1) {
-        await topl_more();
-        game._toplin = 0;
-    }
+    await menu_page_pending();
     game._pending_message = '';
-    let curr_page = 0, counting = false, count = 0, reset_count = true;
-    for (;;) {
-        if (reset_count) { counting = false; count = 0; } else reset_count = true;
-        render_extcmd_page(m, curr_page);
-        const page = m.pages[curr_page];
-        const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
-        const morc = await xwaitforspace(sels + ' 0123456789\x1b\n\r'
-                                        + DEFAULT_MENU_CMDS);
-        // An explicit menu choice is never re-read as a menu command; with no
-        // menu_* rebinding map_menu_cmd() is the identity for everything else.
-        if (sels.indexOf(morc) >= 0) { m.lastPage = curr_page; return morc; }
-        if (morc >= '0' && morc <= '9') {
-            count = count * 10 + (morc.charCodeAt(0) - 48);
-            if (count !== 0) { counting = true; reset_count = false; }
-            continue;
-        }
-        switch (morc) {
-        case '\x1b':                            // cancel, or just stop a count
-            if (!counting) return null;
-            break;
-        case '\0':                              // commit
-            return null;
-        case ' ':
-        case MENU_NEXT_PAGE:
-            if (curr_page !== m.npages - 1) curr_page++;
-            else if (morc === ' ') return null; // ' ' finishes, '>' does not
-            break;
-        case MENU_PREVIOUS_PAGE:
-            if (curr_page !== 0) curr_page--;
-            break;
-        case MENU_FIRST_PAGE:
-            curr_page = 0;
-            break;
-        case MENU_LAST_PAGE:
-            curr_page = m.npages - 1;
-            break;
-        case MENU_SEARCH: {
-            const tmpbuf = await hooked_tty_getlin('Search for:', null);
-            if (!tmpbuf || tmpbuf[0] === '\x1b') break;
-            const searchbuf = '*' + tmpbuf + '*';
-            // PICK_ONE finishes on the first hit, matched against the whole
-            // rendered entry (accelerator prefix included), not just the page.
-            for (const it of m.flat)
-                if (it.sel && pmatchi(searchbuf, it.text)) return it.sel;
-            break;
-        }
-        default:
-            // MENU_SELECT_*/MENU_INVERT_* are PICK_ANY-only, and nothing is
-            // ever selected here for MENU_UNSELECT_* to clear.
-            break;
-        }
-    }
+    // extcmd_end_menu() baked "<accel> - " into the text of every selectable line.
+    const entries = m.flat.map((ln) => (ln.sel
+        ? { text: ln.text.slice(ln.sel.length + 3),
+            item: { value: ln.sel, sel: ln.sel, selected: false, count: -1 } }
+        : { text: ln.text, attr: ln.attr }));
+    const committed = await select_command_menu(entries, { how: PICK_ONE, blankStatus: !!m.statusBlank });
+    const at = committed ? entries.findIndex((e) => e.item?.selected) : -1;
+    if (at < 0) return null;
+    m.lastPage = Math.floor(at / Math.min(52, (game.nhDisplay?.rows ?? 24) - 1));
+    return entries[at].item.value;
 }
 
 // C ref: cmd.c extcmd_via_menu().
@@ -823,10 +757,19 @@ async function extcmd_via_menu() {
 
         const m = extcmd_end_menu(items, 'Extended Command: ' + cbuf);
         m.statusBlank = statusBlank;
-        const picked = await extcmd_select_menu(m);
-        // destroy_nhwindow() -> erase_menu_or_text(): a full-screen menu
-        // docrt()s the map back before the chosen command runs.
-        await dismiss_invent_screen();
+        // windows.c select_menu() holds gb.bot_disabled across the selection
+        // AND the dismissal's docrt().
+        const old_bot_disabled = game.bot_disabled;
+        game.bot_disabled = true;
+        let picked;
+        try {
+            picked = await extcmd_select_menu(m);
+            // destroy_nhwindow() -> erase_menu_or_text(): a full-screen menu
+            // docrt()s the map back before the chosen command runs.
+            await dismiss_invent_screen();
+        } finally {
+            game.bot_disabled = old_bot_disabled;
+        }
         statusBlank = statusBlank || !!m.fullscreen;   // docorner() of a later overlay doesn't repaint it
         if (picked == null) {
             // C leaves cbuf alone here, so a cancelled sub-menu returns to the
@@ -1704,49 +1647,6 @@ export async function wiz_polyself() {
 // NHW_MENU, then dispatches the chosen sub-action (unmodelled ones are no-ops).
 // C ref: do_name.c docallcmd + win/tty/wintty.c tty_display_nhwindow
 // (H2344_BROKEN corner-menu offx) + process_menu_window item/morestr layout.
-
-// Render a tty corner-overlay menu to the grid: title (inverse) on row 0,
-// a blank separator, the item lines, then the "(end)" morestr with the
-// cursor parked after it.  Columns left of offx keep the pre-existing
-// screen content (the map shows through).  C ref: process_menu_window.
-function render_corner_menu(disp, title, items) {
-    if (!disp?.setCell) return null;
-    const cols = disp.cols || 80;
-
-    // maxcols mirrors tty_end_menu: max(str.length + 2) over all rendered
-    // lines (items are "ch - text"; the title and blank line included).
-    const lines = [];
-    lines.push({ text: title, attr: menuHeadAttr() });   // menu prompt (title)
-    lines.push({ text: '' });                           // blank separator
-    for (const it of items) lines.push({ text: `${it.ch} - ${it.desc}` });
-
-    let maxcols = 0;
-    for (const l of lines) maxcols = Math.max(maxcols, l.text.length + 2);
-
-    // C: offx = min(min(82, cols/2), cols - maxcol - 1).  (H2344_BROKEN)
-    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcols - 1);
-    if (offx < 0) offx = 0;
-    // Items render at column offx+1 (a leading space sits at offx).
-    const textCol = offx + 1;
-
-    const blankCols = (row) => {
-        for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
-    };
-    // The message window (row 0) is cleared in full when the menu is raised.
-    for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
-
-    for (let i = 0; i < lines.length; i++) {
-        blankCols(i);
-        if (lines[i].text) disp.putstr(textCol, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
-    }
-    // morestr "(end) " on the row after the last line (single-page menu).
-    const moreRow = lines.length;
-    blankCols(moreRow);
-    disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
-    // C dmore: cursor parked at offx + strlen("(end) ") + 2 = textCol + 6.
-    disp.setCursor(textCol + 6, moreRow);
-    return offx;
-}
 
 // C ref: dungeon.c query_annotation(lev) — ask the user to annotate level lev
 // (null = the current level).  The annotation text lives in
@@ -2799,25 +2699,53 @@ function autokey_unlock() {
 }
 
 // C ref: lock.c pick_lock() — autounlock box branch (rx/container supplied, so
-// no direction prompt).  Default AUTOUNLOCK_APPLY_KEY prompts "Unlock it with
+// no direction prompt; `pick` is Null, i.e. lock.c's dummypick, when only
+// AUTOUNLOCK_UNTRAP is set and no key is carried).  AUTOUNLOCK_UNTRAP offers
+// "Check <box> for a trap?" first; AUTOUNLOCK_APPLY_KEY prompts "Unlock it with
 // <yname(tool)>?"; on 'y' it starts the lock-picking occupation.  Success
 // chance (box branch): LOCK_PICK 4*DEX+25*rogue, SKELETON_KEY 75+DEX,
 // CREDIT_CARD DEX+20*rogue, halved if cursed.  Returns 1 (PICKLOCK_DID_
-// SOMETHING) on 'y', else 0 (PICKLOCK_DID_NOTHING, no time passes).
+// SOMETHING) on 'y', 0 (PICKLOCK_DID_NOTHING, no time passes), or -1
+// (PICKLOCK_LEARNED_SOMETHING: every box declined).
 async function pick_lock_box(pick, box) {
-    const picktyp = pick.otyp;
+    const picktyp = pick ? pick.otyp : STRANGE_OBJECT;
     // C ref: lock.c pick_lock():380 — resume an interrupted attempt first.
-    const resumed = await (await import('./cmd.js')).pick_lock_resume(pick);
-    if (resumed !== null) return resumed;
-    // C ref: lock.c:560 yname(pick) -- "your lock pick", "your credit card named Fido".
-    const { yname } = await import('./invent.js');
-    const toolname = yname(pick);
+    if (pick) {
+        const resumed = await (await import('./cmd.js')).pick_lock_resume(pick);
+        if (resumed !== null) return resumed;
+    }
+    const { yname, ysimple_name, ynq } = await import('./invent.js');
+    const autounlock = game.flags?.autounlock ?? 2;
     // ynq(): the "Hmmm... turns out to be locked." topline is still pending, so
-    // it is paged with --More-- before the prompt is drawn.
+    // it is paged with --More-- before the first prompt is drawn.
     game._yn_need_more = true;
-    const c = await y_n(`Unlock it with ${toolname}?`, 'ynq\x1b', 'q');
-    if (c !== 'y')
-        return 0; // PICKLOCK_DID_NOTHING (c == 'q'/'n'/ESC)
+    let c;
+    if ((autounlock & 1) /* AUTOUNLOCK_UNTRAP */
+        && await (await import('./trap.js')).could_untrap(false, true)
+        && (c = box.tknown ? (box.otrapped ? 'y' : 'n')
+                           : await ynq(loot_safe_qbuf('Check ', ' for a trap?', box, yname, ysimple_name, 'this'))) !== 'n') {
+        if (c === 'q')
+            return 0; // PICKLOCK_DID_NOTHING
+        return await (await import('./trap.js')).untrap_container(box); // even if no trap found
+    } else if (autounlock & 2) { // AUTOUNLOCK_APPLY_KEY
+        if (c !== undefined) game._yn_need_more = false; // the answered 'n' is not a pending message
+        c = 'q';
+        if (pick) {
+            // C ref: lock.c:560 yname(pick) -- "your lock pick", "your credit card named Fido".
+            c = await y_n(`Unlock it with ${yname(pick)}?`, 'ynq\x1b', 'q');
+        }
+        if (c !== 'y')
+            return 0; // PICKLOCK_DID_NOTHING (c == 'q'/'n'/ESC)
+    } else {
+        // "There is <a box> here; <verb> <it|its lock>?"  (the box is locked here)
+        const it = picktyp !== LOCK_PICK;
+        const verb = it ? 'unlock' : 'pick';
+        box.lknown = 1;
+        if (c !== undefined) game._yn_need_more = false;
+        c = await ynq(loot_safe_qbuf('There is ', ` here; ${verb} ${it ? 'it' : 'its lock'}?`, box, obj_doname, ansimpleoname, 'a box'));
+        if (c !== 'y')
+            return c === 'q' ? 0 : -1; // 'n': decided against all boxes (PICKLOCK_LEARNED_SOMETHING)
+    }
 
     const isRogue = (game.urole?.mnum === PM_ROGUE);
     let ch;
@@ -2843,22 +2771,32 @@ async function pick_lock_box(pick, box) {
     return 1; // PICKLOCK_DID_SOMETHING — a turn elapses
 }
 
-// C ref: pickup.c doloot_core():2088 do_loot_cont() — one container: locked ->
-// announce the lock, then attempt the default autounlock (AUTOUNLOCK_APPLY_KEY):
-// pick an unlocking tool and run pick_lock(); unlocked -> use_container().
-async function do_loot_one(box, more_containers) {
+// C ref: pickup.c do_loot_cont():2088 — one container: locked -> announce the
+// lock, then act on flags.autounlock: pick an unlocking tool (AUTOUNLOCK_APPLY_KEY)
+// and/or offer the trap check (AUTOUNLOCK_UNTRAP) via pick_lock(), or queue
+// #force (AUTOUNLOCK_FORCE) for a lone container; unlocked -> use_container().
+async function do_loot_one(box, more_containers, ccount = 1) {
     if (box.olocked) {
         const name = box_basename(box.otyp);
         if (box.lknown) await pline(`The ${name} is locked.`);
         else await pline(`Hmmm, the ${name} turns out to be locked.`);
         box.lknown = 1;
-        // flags.autounlock defaults to AUTOUNLOCK_APPLY_KEY: find an unlocking
-        // tool (autokey) and, if one is carried, attempt pick_lock() at the
-        // hero's square (coords supplied -> no direction prompt).
-        const unlocktool = autokey_unlock();
-        if (unlocktool) {
-            const r = await pick_lock_box(unlocktool, box);
-            return r ? 1 : 0;
+        const autounlock = game.flags?.autounlock ?? 2;
+        if (autounlock) {
+            // if both the untrap and apply_key bits are set, the untrap attempt is
+            // made first but unlocktool is set up in case "check for trap?" is declined
+            let unlocktool = null;
+            if (((autounlock & 2) && (unlocktool = autokey_unlock())) || (autounlock & 1)) {
+                const r = await pick_lock_box(unlocktool, box);
+                return r ? 1 : 0;
+            }
+            if ((autounlock & AUTOUNLOCK_FORCE) && ccount === 1 && u_have_forceable_weapon()) {
+                // single container, and we could #force it open: doforce asks for confirmation
+                const { cmdq_add_ec } = await import('./cmd.js');
+                const { CQ_CANNED } = await import('./const.js');
+                cmdq_add_ec(CQ_CANNED, 'doforce');
+                game._pickup.abort_looting = true;
+            }
         }
         // no unlocking tool -> nothing further; no time passes.
         return 0;
@@ -2962,7 +2900,7 @@ async function doloot_core() {
                 } else if (picks.length > 0) {
                     const n = picks.length;
                     for (let i = 0; i < n; i++)
-                        timepassed |= await do_loot_one(picks[i].obj, i + 1 < n);
+                        timepassed |= await do_loot_one(picks[i].obj, i + 1 < n, boxes.length);
                     c = 'y';
                 }
                 // confirmed with nothing picked (picks === []): c stays -1, C
@@ -3914,12 +3852,14 @@ async function do_reqmenu_extcmd() {
     return res === 1 ? 1 : 0;
 }
 
-// C ref: hack.c dotravel_target() — invent.js's own ECMD_TIME is 3. No
-// raw-key call site exists (Ctrl+_ has no dispatch arm), so the translation
-// is read from dotravel_target()'s own return convention.
+// C ref: hack.c dotravel_target() — invent.js's own ECMD_TIME is 3. The walk's
+// elapsed turns (the first forced one included) were taken inline by hack.js
+// travel_walk()/travel_adjacent_step(), exactly as for dotravel_extcmd() below:
+// a blocked later step costs no turn in C, so only a helpless hero's leftover
+// context.move may reach moveloop_core().
 async function dotravel_target_extcmd() {
     const res = await dotravel_target();
-    return res === 3 ? 1 : 0;
+    return (res === 3 && game.context?.move) ? 1 : 0;
 }
 
 // C ref: cmd.c:1606 do_run() (the #run prefix, 'G') — never ported before
@@ -4002,10 +3942,26 @@ async function dotakeoff_extcmd() {
 }
 
 // C ref: cmd.c:4343 dotherecmdmenu() — lives in cmd.js; own ECMD_TIME(1)
-// already matches doextcmd()'s convention, so this is a pure pass-through.
+// already matches doextcmd()'s convention.  there_cmd_menu() returns ECMD_OK
+// with the chosen action (or, for an empty menu, the plain move toward the
+// spot) queued on CQ_CANNED by act_on_act(); rhack() pops and runs it in a NEW
+// moveloop_core() iteration, so the hero's step/turn happens here as in
+// doherecmdmenu() above and ^A repeats the chosen command, not #therecmdmenu.
 async function dotherecmdmenu_extcmd() {
     const { dotherecmdmenu } = await import('./cmd.js');
-    return await dotherecmdmenu();
+    const res = await dotherecmdmenu();
+    if (res !== 0) return res;
+    const { cmdq_pop } = await import('./invent.js');
+    const { cmdq_peek } = await import('./cmd.js');
+    const { CQ_CANNED, CMDQ_EXTCMD } = await import('./const.js');
+    const head = cmdq_peek(CQ_CANNED);
+    const fn = head && head.typ === CMDQ_EXTCMD ? HANDLERS[head.ec_entry?.ef_txt] : null;
+    if (!fn) return res;
+    cmdq_pop(CQ_CANNED);
+    const { moveloop_input_redraw } = await import('./allmain.js');
+    await moveloop_input_redraw();
+    game._ext_tlist = head.ec_entry.ef_txt;
+    return await fn();
 }
 
 // C ref: dothrow.c dothrow() — mirrors js/cmd.js's 't' key translation
@@ -4272,7 +4228,6 @@ async function wizmondiff_extcmd() {
 // dropped.  With no HANDLERS entry the menu never drew AND the dismissing key
 // fell through to rhack() as a fresh command.
 async function doherecmdmenu() {
-    const disp = game?.nhDisplay;
     const u = game.u;
     const x = u.ux, y = u.uy;
     const typ = game.level?.at?.(x, y)?.typ | 0;
@@ -4334,14 +4289,13 @@ async function doherecmdmenu() {
 
     // C ref: cmd.c:4880 — K==0 falls through to a move/travel, never a menu.
     if (!items.length) return 0;
-    render_corner_menu(disp, 'What do you want to do?', items);
-    let picked = null;
-    for (;;) {
-        const key = await nhgetch();
-        if (key === 27 || key === 32 || key === 13 || key === 10) break;
-        picked = items.find((it) => it.ch === String.fromCharCode(key));
-        if (picked) break;
-    }
+    /* cmd.c there_cmd_menu_common(): a PICK_ONE select_menu(); tty's menu
+       loop owns paging, counts and MENU_SEARCH. */
+    const entries = [{ text: 'What do you want to do?', attr: menuHeadAttr() }, { text: '' },
+        ...items.map((it) => ({ text: it.desc, item: { value: it, sel: it.ch, selected: false, count: -1 } }))];
+    const committed = await select_command_menu(entries, { how: 1 /* PICK_ONE */ });
+    await dismiss_invent_screen();
+    const picked = committed ? entries.find((e) => e.item?.selected)?.item.value ?? null : null;
     /* C ref: cmd.c:4658 act_on_act() queues the chosen command (plus canned
        answers) and rhack() runs it next; a dismissed menu costs no time. */
     if (!picked) return 0;
@@ -4360,6 +4314,10 @@ async function doherecmdmenu() {
        warning redraw (display-RNG draws) comes first. */
     const { moveloop_input_redraw } = await import('./allmain.js');
     await moveloop_input_redraw();
+    /* C ref: cmd.c rhack() — the command act_on_act() queued on CQ_CANNED runs
+       as its own rhack(), which clears CQ_REPEAT and records ITSELF; so ^A
+       repeats the chosen command, not #herecmdmenu. */
+    game._ext_tlist = picked.cmd;
     return await fn();
 }
 

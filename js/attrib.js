@@ -302,6 +302,9 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         if (await adjattrib(typ, -loss, 1))
             await poisontell(typ, true);
     }
+    if (game.program_state?.gameover) {
+        return; /* C: losehp()'s done() never returns */
+    }
     if ((u.uhp | 0) < 1) {
         // C ref: attrib.c:405 — done(strstri(pkiller,"poison") ? DIED : POISONING).
         const { done, DIED } = await import('./end.js');

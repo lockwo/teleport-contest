@@ -8,7 +8,7 @@ import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
+         object_glyph, corr_glyph_cell, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
 import { engr_at } from './engrave.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
@@ -694,6 +694,13 @@ function back_to_glyph(x, y) {
 // plus the "out of sight lit corridors and rooms the hero doesn't remember as
 // lit" correction.  js/display.js terrain_background_glyph() is back_to_glyph only
 // and omits that correction, which is why this is spelled out here.
+// The S_litcorr cell is CLR_WHITE (display.c reset_glyphmap bump), not defsyms' CLR_GRAY,
+// so "glyph == cmap_to_glyph(S_litcorr)" is a comparison against corr_glyph_cell(true).
+function is_litcorr_cell(c) {
+    const lit = corr_glyph_cell(true);
+    return c.ch === lit.ch && c.color === lit.color && !!c.dec === !!lit.dec;
+}
+
 function magic_map_background(x, y, show) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
@@ -709,9 +716,8 @@ function magic_map_background(x, y, show) {
                 ? { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
                     dec: false, darkroom: true }
                 : { ch: ' ', color: NO_COLOR, dec: false };
-        } else if (loc.typ === CORR && g.ch === defsyms[S_litcorr].sym
-                   && g.color === defsyms[S_litcorr].color) {
-            g = { ch: defsyms[S_corr].sym, color: defsyms[S_corr].color, dec: false };
+        } else if (loc.typ === CORR && is_litcorr_cell(g)) {
+            g = corr_glyph_cell(false);
         }
     }
     // C ref: display.c:251-253 magic_map_background() — only overwrite the
@@ -1830,11 +1836,10 @@ export function reveal_terrain_getglyph(x, y, swallowed, default_glyph, which_su
             glyph = { kind: 'cmap', sym: defsyms[S_room].sym,
                       cell: { ch: defsyms[S_room].sym, color: defsyms[S_room].color,
                               dec: false } };
-        else if (glyph.sym === defsyms[S_litcorr].sym
-                 && glyph.cell && glyph.cell.color === defsyms[S_litcorr].color)
-            glyph = { kind: 'cmap', sym: defsyms[S_corr].sym,
-                      cell: { ch: defsyms[S_corr].sym, color: defsyms[S_corr].color,
-                              dec: false } };
+        else if (glyph.cell && is_litcorr_cell(glyph.cell)) {
+            const dark = corr_glyph_cell(false);
+            glyph = { kind: 'cmap', sym: dark.ch, cell: dark };
+        }
     }
     return glyph;
 }

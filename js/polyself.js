@@ -9,7 +9,7 @@
 // to wiz_polyself, matching that file's existing wiz_genesis/create_particular
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
 import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, You_feel } from './display.js';
@@ -357,6 +357,7 @@ export function Stone_resistance_u() {
     return fromform('Stone_resistance')
         || uprop_any('Stone_resistance', 'HStone_resistance', 'EStone_resistance', 'StoneResistance');
 }
+hooks.Stone_resistance_u = Stone_resistance_u;
 function Sick_resistance_u() {
     return fromform('Sick_resistance')
         || uprop_any('Sick_resistance', 'HSick_resistance', 'ESick_resistance');

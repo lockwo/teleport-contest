@@ -405,6 +405,9 @@ function buildKeymap() {
             map.set(lc & 0x1f, moveMarker);                       // rush (Ctrl)
         }
     }
+    /* cmd.c reset_commands(): number_pad modes with MSDOS compatibility bind
+       M-0 to #inventtype (cmdbind_add(M('0'), dotypeinv)). */
+    if (Cmd_pcHack_compat()) map.set(metaKey('0'), byTxt('inventtype'));
     return map;
 }
 
@@ -648,22 +651,17 @@ export async function dohelp() {
     maxcol = Math.max(maxcol, '(end) '.length);
     let offx = Math.max(10, COLS - maxcol - 1);
     if (offx < 0) offx = 0;
+    // tty_display_nhwindow(): `|| !iflags.menu_overlay` forces full screen.
+    if ((game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false) offx = 0;
 
-    // Read one PICK_ONE selection.  A matching accelerator selects and ends the
-    // menu; <esc>/<return>/<space> exit with no pick; other keys ring the bell
-    // (re-read).  dohelp runs the chosen handler once and returns (no loop).
-    let picked = -1;
-    for (;;) {
-        renderHelpMenu(offx, lines);
-        game._modal_screen = 'menu';
-        const c = await nhgetch();
-        delete game._modal_screen;
-        if (c === 27 || c === 13 || c === 10 || c === 32) break; // cancel / no pick
-        const ch = String.fromCharCode(c);
-        const idx = items.findIndex((it) => it.accel === ch);
-        if (idx >= 0) { picked = idx; break; }
-        // else: unknown accelerator, re-render and re-read
-    }
+    // C ref: pager.c dohelp() select_menu(PICK_ONE) -> process_menu_window():
+    // accelerators pick, ':' searches ("Search for:"), <esc>/<return>/<space>
+    // leave with no pick, other keys ring the bell.
+    const menuItems = items.map((it) => ({ ch: it.accel, str: `${it.accel} - ${it.text}` }));
+    game._modal_screen = 'menu';
+    const sel = await menu_select_pick_one(menuItems, () => renderHelpMenu(offx, lines));
+    delete game._modal_screen;
+    const picked = sel ? items.findIndex((it) => it.accel === sel) : -1;
 
     if (picked >= 0 && items[picked].fn) {
         // C ref: pager.c dohelp() — destroy_nhwindow(tmpwin) runs BEFORE the
@@ -692,7 +690,7 @@ function renderHelpMenu(offx, lines) {
     const d = disp();
     if (!d?.setCell) return;
     d.clearScreen();          // blanks the grid incl. the message line (row 0)
-    render_map_to_grid();     // map rows 1-21 + status rows 22-23 underneath
+    if (offx > 0) render_map_to_grid();   // map rows 1-21 + status rows 22-23 underneath
 
     for (let r = 0; r < lines.length; r++) {
         for (let c = offx; c < COLS; c++) d.setCell(c, r, ' ', NO_COLOR, 0);
@@ -787,10 +785,15 @@ export async function menu_select_pick_one(items, render) {
     resp += ' ' + '0123456789\x1b\n\r' + DEFAULT_MENU_CMDS;
 
     let counting = false, count = 0, reset_count = true;
+    // C ref: getline.c hooked_tty_getlin() ends with clear_nhwindow(WIN_MESSAGE), which wipes the menu's own
+    // title row; process_menu_window()'s non-redraw arm only parks the cursor again, so a "Search for:" that
+    // picked nothing leaves row 0 blank until something repaints the page.
+    let blankTop = false;
     for (;;) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
 
         render(items);
+        if (blankTop) { const d = game.nhDisplay; for (let x = 0; x < d.cols; x++) d.setCell(x, 0, ' ', 0, 0); }
         const raw = await xwaitforspace(resp);
 
         // MENU_EXPLICIT_CHOICE: a selector/group key keeps its own meaning even
@@ -827,6 +830,7 @@ export async function menu_select_pick_one(items, render) {
         if (!explicit && morc === MENU_SEARCH) {
             const picked = await menu_search_pick_one(items);
             if (picked) return picked;
+            blankTop = true;
             continue;
         }
 

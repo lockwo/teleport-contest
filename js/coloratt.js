@@ -32,9 +32,9 @@ import {
 } from './const.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { game } from './gstate.js';
-import { match_str2clr, match_str2attr, add_menu_coloring_parsed,
-         create_nhwindow, destroy_nhwindow, start_menu, add_menu,
-         end_menu, select_menu } from './options.js';
+import { match_str2clr, match_str2attr, add_menu_coloring_parsed } from './options.js';
+import { create_nhwindow, destroy_nhwindow, start_menu, add_menu,
+         end_menu, select_menu } from './windows.js';
 import { tty_procs } from './wintty.js';
 
 // C ref: include/wintype.h:128-134 ATR_*.  Deliberately NOT imported from
@@ -389,7 +389,7 @@ export async function query_attr(prompt, dflt_attr) {
             /* PICK_ANY, with one preselected entry (ATR_NONE) which
                should be excluded if any other choices were picked */
             for (i = 0; i < pick_cnt; ++i) {
-                j = picks[i].a_int - 1;
+                j = picks[i].item.a_int - 1;
                 if (attrnames[j].attr !== ATR_NONE || pick_cnt === 1) {
                     switch (attrnames[j].attr) {
                     case ATR_NONE:
@@ -418,11 +418,11 @@ export async function query_attr(prompt, dflt_attr) {
             }
         } else {
             /* PICK_ONE, but might get 0 or 2 due to preselected entry */
-            j = picks[0].a_int - 1;
+            j = picks[0].item.a_int - 1;
             /* pick_cnt==2: explicitly picked something other than the
                preselected entry */
             if (pick_cnt === 2 && attrnames[j].attr === dflt_attr)
-                j = picks[1].a_int - 1;
+                j = picks[1].item.a_int - 1;
             k = attrnames[j].attr;
         }
         return k;
@@ -464,11 +464,11 @@ export async function query_color(prompt, dflt_color) {
     basic_menu_colors(false);
 
     if (pick_cnt > 0) {
-        i = colornames[picks[0].a_int - 1].color;
+        i = colornames[picks[0].item.a_int - 1].color;
         /* pick_cnt==2: explicitly picked something other than the
            preselected entry */
         if (pick_cnt === 2 && i === NO_COLOR)
-            i = colornames[picks[1].a_int - 1].color;
+            i = colornames[picks[1].item.a_int - 1].color;
         return i;
     } else if (pick_cnt === 0) {
         /* pick_cnt==0: explicitly picking preselected entry toggled it off */

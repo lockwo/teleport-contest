@@ -6,7 +6,7 @@
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
 import { worm_cross } from './worm.js';
-import { game, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
 import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
@@ -15,7 +15,7 @@ import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js'
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
          glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
-         dodiscovered, doattributes, dovspell,
+         dodiscovered, doattributes,
          attr_window_advance, disco_window_advance, dowieldquiver, dowield, doswapweapon, dothrow, dofire, dotravel, dotravel_target, dodrop, doddrop,
          dopickup, dowear, dotakeoff, doputon, doremring, dopay, floor_object_name,
          doprgold, doprwep, doprarm, doprring, dopramulet, doprinuse,
@@ -32,7 +32,7 @@ import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
 import { dodrink } from './potion.js';
 import { dozap } from './zap.js';
-import { docast } from './spell.js';
+import { docast, dovspell } from './spell.js';
 import { doread } from './read.js';
 import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, tty_putstr_text, pg_glyph_at } from './pager.js';
 import { rnl, rn2, rnd } from './rng.js';
@@ -46,7 +46,8 @@ import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
          flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trapname,
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
-         launch_obj, ROLL, LAUNCH_KNOWN, Levitation_fu, Flying_fu, u_locomotion } from './trap.js';
+         launch_obj, ROLL, LAUNCH_KNOWN, Levitation_fu, Flying_fu, u_locomotion,
+         could_untrap, untrap_at } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
 import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
 import { menuHeadAttr } from './menuattr.js';
@@ -89,8 +90,8 @@ import { dokick } from './dokick.js';
 import { setuwep } from './wield.js';
 import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key } from './artifact.js';
 import { lock_action, reset_pick } from './lock.js';
-import { weapon_descr } from './weapon.js';
-import { rloco } from './teleport.js';
+import { weapon_descr, is_pick } from './weapon.js';
+import { rloco, dotele } from './teleport.js';
 import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value, add_damage } from './shk.js';
 import { in_rooms, shop_keeper, Stealth } from './shkroom.js';
 import { autopick_testobj, container_at, safe_qbuf } from './pickup.js';
@@ -122,6 +123,7 @@ import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_gly
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE } from './terminal.js';
+import { create_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu } from './windows.js';
 
 // C ref: hack.c maybe_smudge_engr() — when the hero walks/rushes from (x1,y1)
 // to (x2,y2) and can reach the floor, any non-headstone engraving at the old
@@ -1310,6 +1312,9 @@ export async function rhack(key) {
     // silently rested on <space>, eating a turn/RNG draw C never took).
     if (game.context._prefix_seen
         && npBound !== false
+        && (commandName != null
+            || (game.keybind?.[ch] ?? numpad_cmd().binds.get(key & 0xff)) != null
+            || (key === 32 && !!game.flags?.rest_on_space))
         && !game._modal_screen && !isMovementKey(ch)
         && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
         && key !== 13
@@ -1469,8 +1474,16 @@ export async function rhack(key) {
         // l #loot, u #untrap, N #name, ^N #annotate); rhack runs their
         // ef_funct directly, exactly as doextcmd() would.  A BIND= line can
         // put any such command on any key, which lands here too.
-        const res = await run_extcmd_by_name(npExt || bindExt);
-        game.context.move = res === 1 ? 1 : 0;
+        // C ref: cmd.c rhack() `!can_do_extcmd(tlist)` -- a WIZMODECMD outside
+        // wizard mode prints "Unavailable command '%s'." and takes no time.
+        const bound = npExt || bindExt;
+        const bent = extcmdlist.find((e) => e.ef_txt === bound);
+        if (bent && !(await can_do_extcmd(bent))) {
+            game.context.move = 0;
+        } else {
+            const res = await run_extcmd_by_name(bound);
+            game.context.move = res === 1 ? 1 : 0;
+        }
     } else if (npBad) {
         // C ref: cmd.c rhack() bad_command — cmdbind_get() found no binding
         // (with number_pad on, y/b/Y/H/J/K/L/U/B and ^J are all unbound).
@@ -1733,13 +1746,9 @@ export async function rhack(key) {
             const res = await dotele_wizard();
             game.context.move = res === 1 ? 1 : 0;
         } else {
-            // C ref: teleport.c dotelecmd() — ^T is NOT a WIZMODECMD, so outside
-            // wizard mode it runs dotele(FALSE).  A hero with neither the
-            // Teleportation intrinsic nor the teleport-away spell is turned away
-            // with a message and no game time; it is not an unknown command.
-            // (The seen-teleport-trap arm of dotele(), which offers to jump in,
-            // needs trap-triggered teleports this port does not model.)
-            game.context.move = (await dotele_nonwizard()) ? 1 : 0;
+            // C ref: teleport.c dotelecmd(): outside wizard mode it is just
+            // dotele(FALSE) (teleport.js carries the full port).
+            game.context.move = (await dotele(false)) ? 1 : 0;
         }
     } else if (key === 22) { // ^V — wizard-mode level teleport (do.c/teleport.c)
         // C ref: cmd.c:1970 { C('v'), "wizlevelport", ..., WIZMODECMD }.  The
@@ -1982,8 +1991,11 @@ export async function rhack(key) {
         await dotravel();
         game.context.move = 0;
     } else if (key === 31) { // ^_ -- #retravel (cmd.c:1831 C('_'), dotravel_target)
-        // invent.js's dotravel_target() answers ECMD_TIME as 3.
-        game.context.move = (await dotravel_target()) === 3 ? 1 : 0;
+        // invent.js's dotravel_target() answers ECMD_TIME as 3.  Like #travel
+        // above, travel_walk()/travel_adjacent_step() took every elapsed turn
+        // (the first forced one included) inline, so only a helpless hero's
+        // leftover context.move may reach moveloop_core().
+        game.context.move = ((await dotravel_target()) === 3 && game.context.move) ? 1 : 0;
     } else if (ch === ';') {
         // C ref: cmd.c ';' "glance" -> pager.c do_look(1): quick farlook.
         // Cursor-positioning loop + look-at description; no game time passes.
@@ -2426,6 +2438,7 @@ async function find_trap(trap) {
             show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr, hg.keepColor);
         }
     }
+    set_msg_xy(trap.tx, trap.ty); // detect.c:1955
     await update_topl(`You find ${an(trapname(trap.ttyp, false))}.`);
     if (cleared) {
         // C: display_nhwindow(WIN_MAP, TRUE) blocks on the cleared frame
@@ -2484,6 +2497,7 @@ export async function dosearch0(aflag) {
                 // flags the status line so this find's message publishes it.
                 nomul(0);
                 feel_location(x, y);
+                set_msg_xy(x, y); // detect.c:2050
                 await update_topl('You find a hidden door.');
             } else if (loc.typ === SCORR) {
                 if (rnl(7 - fund)) continue;
@@ -2492,6 +2506,7 @@ export async function dosearch0(aflag) {
                 exercise(A_WIS, true);
                 nomul(0);
                 feel_newsym(x, y); /* C: make sure it shows up (feel_location when Blind) */
+                set_msg_xy(x, y); // detect.c:2060
                 await update_topl('You find a hidden passage.');
             } else {
                 const mtmp = m_at(x, y);
@@ -2656,38 +2671,6 @@ export async function b_trapped(item, hasBodypart) {
 // The ^D kick command now lives in js/dokick.js (a full port of dokick.c:
 // kick_dumb/kick_ouch/kick_door plus kick_nondoor and dokick's pre-direction
 // refusals, which this file only covered in part).
-
-// C ref: teleport.c dotele(break_the_rules=FALSE) — the plain (non-wizard)
-// ^T. Returns 1 when a game turn elapses. A hero with neither the
-// Teleportation intrinsic (at role minimum XL) nor a live teleport-away
-// spell is told so; ^T is a valid command, so "Unknown command" (the old
-// behavior) was wrong. NOT PORTED: the seen-teleport-trap/level-teleport-trap
-// offers atop dotele(), and the actual tele() relocation (rn2 placement
-// rolls belong to teleport.c) for a hero who CAN teleport.
-const SPE_TELEPORT_AWAY_CMD = 400; // mkobj.js objects[] row
-const PM_WIZARD_CMD = 12;          // roles[].mnum
-async function dotele_nonwizard() {
-    const u = game.u;
-    const Teleportation = ((u.uprops?.Teleportation || 0) > 0)
-        || ((u.HTeleportation || 0) > 0);
-    const lvlreq = (game.urole?.mnum === PM_WIZARD_CMD) ? 8 : 12;
-    if (!Teleportation || (u.ulevel || 1) < lvlreq) {
-        // known_spell(SPE_TELEPORT_AWAY): spe_Unknown when it isn't in the book
-        // at all, otherwise a freshness level; only a fresh one can be cast.
-        const slot = (game.spl_book || []).find(
-            (sp) => sp && sp.sp_id === SPE_TELEPORT_AWAY_CMD);
-        const inbook = !!slot;
-        const fresh = inbook && (slot.sp_know || 0) > 0;
-        const confused = (u.uprops?.Confusion || 0) > 0;
-        if (!(fresh && !confused)) {
-            await pline(`You ${!Teleportation
-                ? (inbook ? "can't cast that spell" : "don't know that spell")
-                : 'are not able to teleport at will'}.`);
-            return 0;
-        }
-    }
-    return 1;
-}
 
 // C ref: cmd.c getdir():4116 — every successful prompt ends with `if
 // (!u.dz) confdir(FALSE)`, so a Confused hero pays an rn2(5) on EVERY
@@ -3047,6 +3030,7 @@ export async function doopen_indir(x, y) {
         case D_ISOPEN: mesg = ' is already open'; break;
         default:       mesg = ' is locked'; locked = true; break; // D_LOCKED
         }
+        set_msg_xy(cx, cy); // lock.c:874
         await pline(`This door${mesg}.`);
         // C ref: lock.c doopen_indir() — a locked door with flags.autounlock
         // (default AUTOUNLOCK_APPLY_KEY) and a lock pick / key in inventory
@@ -3083,6 +3067,7 @@ export async function doopen_indir(x, y) {
         // so the move loop's end-of-turn vision_recalc reveals the room beyond
         // the now-open doorway).  NOT a direct vision_recalc: the reveal must
         // happen AFTER this turn's monster moves, matching C.
+        set_msg_xy(cx, cy); // lock.c:905
         await pline('The door opens.');
         if (door.doormask & D_TRAPPED) {
             // C ref: lock.c:908 — b_trapped("door", FINGER) BEFORE the doormask
@@ -3099,6 +3084,7 @@ export async function doopen_indir(x, y) {
         recalc_block_point(cx, cy);
     } else {
         await exercise(A_STR, true); // -> rn2(19)
+        set_msg_xy(cx, cy); // lock.c:918
         await pline('The door resists!');
     }
     return 1; // ECMD_TIME
@@ -3332,9 +3318,21 @@ export async function pick_lock_resume(pick) {
 async function pick_lock_door(pick, cx, cy, door) {
     const resumed = await pick_lock_resume(pick);
     if (resumed !== null) return resumed;
+    // C ref: lock.c:605 — AUTOUNLOCK_UNTRAP: offer to check the door for a trap
+    // before the unlock prompt; 'y' ends the attempt (even if no trap is found),
+    // 'q' abandons it, 'n' falls through to "Unlock it with <tool>?".
+    game._yn_need_more = true;
+    if (((game.flags?.autounlock ?? 2) & 1) && await could_untrap(false, false)) {
+        const t = await y_n('Check this door for a trap?', 'ynq\x1b', 'q');
+        if (t !== 'n') {
+            if (t === 'q') return PICKLOCK_DID_NOTHING;
+            await untrap_at(cx, cy, false, true);
+            return PICKLOCK_DID_SOMETHING; /* even if no trap found */
+        }
+        game._yn_need_more = false; /* the answered prompt is not a pending message */
+    }
     /* C ref: lock.c:486 yname(pick) — "your osaku" for a Samurai, "your credit card named Fido" */
     const toolname = (await import('./invent.js')).yname(pick);
-    game._yn_need_more = true;
     const c = await y_n(`Unlock it with ${toolname}?`, 'ynq\x1b', 'q');
     if (c !== 'y') return 0;
 
@@ -3953,6 +3951,7 @@ async function domove_core(dx, dy, attemptTracked) {
             if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy))
                 await mention_diagonal_door(newx, newy);
             game.context.move = 0;
+            nomul(0); // C ref: hack.c:2843-2847 `if (!door_opened) { move = 0; nomul(0); }`
             return;
         }
         // C ref: hack.c:2843 test_move(DO_MOVE) also runs when a safe pet
@@ -4496,6 +4495,14 @@ async function domove_core(dx, dy, attemptTracked) {
             // "You cannot pass through the bars." under mention_walls.
             if (game.flags?.mention_walls)
                 await update_topl('You cannot pass through the bars.');
+        } else if (game.flags?.autodig && !svc_context_run() && !game.context.nopick
+                   && game.uwep && is_pick(game.uwep)) {
+            /* C ref: hack.c:1042 — MRKR: automatic digging when walking into
+               rock/a wall/a drawbridge span while wielding a digging tool.  The
+               failed test_move() below still clears context.move (the dig is
+               an occupation that runs before the next command). */
+            const { use_pick_axe2 } = await import('./dig.js');
+            await use_pick_axe2(game.uwep);
         } else if (is_db_wall(newx, newy)) {
             await pline('That drawbridge is up!');
         } else if (hero_passes_walls() && In_sokoban(u.uz)) {
@@ -4610,6 +4617,10 @@ async function domove_core(dx, dy, attemptTracked) {
     // the object under a hallucinating hero.
     newsym(oldx, oldy);
     vision_recalc(1);
+    // C printed mention_map's announcements from inside newsym(), i.e. here,
+    // before the turn's time/status update; this port queues them (newsym() is
+    // synchronous), so print them now rather than at the next key read.
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     if (oldx !== u.ux || oldy !== u.uy) await invocation_message(); // hack.c:2974
 
     // C ref: hack.c domove_core() -> spoteffects(TRUE): pickup(1) runs before
@@ -5636,9 +5647,8 @@ async function domove_fight_web(x, y) {
 // With autopickup on it lifts matching floor objects (prinv "<letter> -
 // <name>." lines). Travel (run == 8) doesn't auto-stop but pickup still
 // fires; we exclude only the mid-action teleport case (context.mv with no
-// context.run), which C skips via "gm.multi && !run". Exported so steed.js's
-// dismount_steed_bychoice() can invoke the same pickup(1) tail C's
-// float_down() runs once the hero lands on the dismount square.
+// context.run), which C skips via "gm.multi && !run". Exported so do.js's
+// float_down() can invoke the same pickup(1) tail.
 export async function pickup_after_move(x, y) {
     const ctx = game.context || {};
     // C ref: pickup.c pickup():667 -- `if (autopickup && gm.multi < 0 && unconscious()) { iflags.prev_decor = STONE; return 0; }`:
@@ -6274,16 +6284,9 @@ function cmd_mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 function cmd_impossible(...args) {
     if (game.debugImpossible) console.warn('impossible:', ...args);
 }
-function cmd_create_nhwindow(_type) { return 1; }
 function cmd_destroy_nhwindow(_win) {}
 function cmd_display_nhwindow(_win, _blocking) {}
 function cmd_clear_nhwindow(_win) {}
-function cmd_start_menu(_win, _behave) {}
-function cmd_end_menu(_win, _query) {}
-function cmd_add_menu(_win, _glyph, _any, _accel, _grp, _attr, _clr, _txt, _f) {}
-function cmd_add_menu_str(_win, _str) {}
-function cmd_add_menu_heading(_win, _str) {}
-function cmd_select_menu(_win, _how, _picks) { return 0; }
 function cmd_putstr(_win, _attr, _str) {}
 function cmd_getlin(_query, out) { if (out) out.buf = '\x1b'; return; }
 function cmd_nhbell() {}
@@ -7185,7 +7188,17 @@ export async function doextlist() {
             for (const line of doc_extcmd_flagstr(null)) push(line);
 
         const m = extlist_paginate(flat);
+        /* windows.c select_menu() holds gb.bot_disabled across the selection
+           and the dismissal's docrt(): the status rows stay blank until the
+           next bot(). */
+        const old_bot_disabled = game.bot_disabled;
+        game.bot_disabled = true;
         const picked = await extlist_select_menu(m);
+        /* tty_select_menu() ends with tty_dismiss_nhwindow(), which erases
+           the menu (docrt for a full-screen one) and clears cw->active, so a
+           search prompt or the next redisplay pass starts over the map. */
+        await dismiss_invent_screen();
+        game.bot_disabled = old_bot_disabled;
         if (picked === 'a') { /* toggle show/hide non-autocomplete */
             menumode = 1 - menumode;
             redisplay = true;
@@ -7215,12 +7228,8 @@ export async function doextlist() {
             search = false;
         }
     }
-    // C ref: destroy_nhwindow(menuwin) runs once, AFTER the while(redisplay)
-    // loop — the window is created once and reused (start_menu()/end_menu())
-    // across every redisplay pass, so its erase_menu_or_text()/docrt() redraw
-    // (and the display-PRNG draws that involves) must fire only this once,
-    // not on every internal toggle.
-    await dismiss_invent_screen();
+    /* destroy_nhwindow(menuwin): cw->active is already 0 after the last
+       select_menu()'s dismissal, so nothing more is erased. */
     return ECMD_OK;
 }
 
@@ -7738,7 +7747,7 @@ export function get_changed_key_binds(sbuf) {
     const keys = new Array(256).fill(0);
 
     if (!sbuf)
-        win = cmd_create_nhwindow(/*NHW_TEXT*/ 2);
+        win = create_nhwindow(/*NHW_TEXT*/ 2);
 
     /* commands bound to a different key */
     while (bind) {
@@ -7794,8 +7803,8 @@ export async function handler_rebind_keys_add(keyfirst) {
             return;
     }
 
-    win = cmd_create_nhwindow(/*NHW_MENU*/ 3);
-    cmd_start_menu(win, 0);
+    win = create_nhwindow(/*NHW_MENU*/ 3);
+    start_menu(win, 0);
 
     if (key) {
         const bind = cmdbind_get(key);
@@ -7806,14 +7815,14 @@ export async function handler_rebind_keys_add(keyfirst) {
         } else {
             buf = `Key '${cmd_key2txt(key)}' is not bound to anything.`;
         }
-        cmd_add_menu_str(win, buf);
-        cmd_add_menu_str(win, '');
+        add_menu_str(win, buf);
+        add_menu_str(win, '');
     }
 
-    cmd_add_menu(win, null, { a_int: -1 }, 0, 0, 0, 0,
+    add_menu(win, null, { a_int: -1 }, 0, 0, 0, NO_COLOR,
                  'nothing: unbind the key', 0);
 
-    cmd_add_menu_str(win, '');
+    add_menu_str(win, '');
 
     for (i = 0; i < extcmdlist_length; i++) {
         ec = extcmdlist[i];
@@ -7822,14 +7831,14 @@ export async function handler_rebind_keys_add(keyfirst) {
             continue;
 
         buf = `${ec.ef_txt}: ${ec.ef_desc}`;
-        cmd_add_menu(win, null, { a_int: i + 1 }, 0, 0, 0, 0, buf, 0);
+        add_menu(win, null, { a_int: i + 1 }, 0, 0, 0, NO_COLOR, buf, 0);
     }
     if (key)
         buf = `Bind '${cmd_key2txt(key)}' to what command?`;
     else
         buf = 'Bind what command?';
-    cmd_end_menu(win, buf);
-    npick = cmd_select_menu(win, /*PICK_ONE*/ 1, picks);
+    end_menu(win, buf);
+    npick = await select_menu(win, /*PICK_ONE*/ 1, picks);
     cmd_destroy_nhwindow(win);
     if (npick > 0) {
         let prevcmd;
@@ -7938,19 +7947,19 @@ export async function handler_rebind_keys() {
     for (;;) {   /* C label 'redo_rebind:' */
         const picks = [];
 
-        win = cmd_create_nhwindow(/*NHW_MENU*/ 3);
-        cmd_start_menu(win, 0);
+        win = create_nhwindow(/*NHW_MENU*/ 3);
+        start_menu(win, 0);
 
-        cmd_add_menu(win, null, { a_int: 1 }, 0, 0, 0, 0,
+        add_menu(win, null, { a_int: 1 }, 0, 0, 0, NO_COLOR,
                      'bind key to a command', 0);
-        cmd_add_menu(win, null, { a_int: 2 }, 0, 0, 0, 0,
+        add_menu(win, null, { a_int: 2 }, 0, 0, 0, NO_COLOR,
                      'bind command to a key', 0);
         if (cmd_count_bind_keys()) {
-            cmd_add_menu(win, null, { a_int: 3 }, 0, 0, 0, 0,
+            add_menu(win, null, { a_int: 3 }, 0, 0, 0, NO_COLOR,
                          'view changed key binds', 0);
         }
-        cmd_end_menu(win, 'Do what?');
-        npick = cmd_select_menu(win, /*PICK_ONE*/ 1, picks);
+        end_menu(win, 'Do what?');
+        npick = await select_menu(win, /*PICK_ONE*/ 1, picks);
         cmd_destroy_nhwindow(win);
         if (npick > 0) {
             i = picks[0].item.a_int;
@@ -7992,15 +8001,15 @@ function cmd_count_bind_keys() {
 }
 
 // C ref: cmd.c:2449 handler_change_autocompletions().
-export function handler_change_autocompletions() {
+export async function handler_change_autocompletions() {
     let win;
     let i, n;
     const picks = [];
     let ec;
     let buf;
 
-    win = cmd_create_nhwindow(/*NHW_MENU*/ 3);
-    cmd_start_menu(win, 0);
+    win = create_nhwindow(/*NHW_MENU*/ 3);
+    start_menu(win, 0);
 
     for (i = 0; i < extcmdlist_length; i++) {
         ec = extcmdlist[i];
@@ -8012,13 +8021,13 @@ export function handler_change_autocompletions() {
 
         buf = `${(ec.flags & AUTOCOMP_ADJ) ? '*' : ' '} ${ec.ef_txt}: `
             + `${ec.ef_desc}`;
-        cmd_add_menu(win, null, { a_int: i + 1 }, 0, 0, 0, 0, buf,
+        add_menu(win, null, { a_int: i + 1 }, 0, 0, 0, NO_COLOR, buf,
                      (ec.flags & AUTOCOMPLETE)
                      ? /*MENU_ITEMFLAGS_SELECTED*/ 1 : 0);
     }
 
-    cmd_end_menu(win, 'Which commands autocomplete?');
-    n = cmd_select_menu(win, /*PICK_ANY*/ 2, picks);
+    end_menu(win, 'Which commands autocomplete?');
+    n = await select_menu(win, /*PICK_ANY*/ 2, picks);
     if (n >= 0) {
         let j;
 
@@ -8563,7 +8572,7 @@ export function help_dir(sym, spkey, msg) {
        leaves buf empty here; nhUse(prefixhandling) is all that remains. */
     void prefixhandling;
 
-    win = cmd_create_nhwindow(/*NHW_TEXT*/ 2);
+    win = create_nhwindow(/*NHW_TEXT*/ 2);
     if (!win)
         return false;
 
@@ -8668,7 +8677,7 @@ export async function dotherecmdmenu() {
             ch = await there_cmd_menu(x, y, iflags.getdir_click);
         cc.x = cc.y = -1;
         iflags.getdir_click = 0;
-        return (ch && ch !== '\x1b') ? ECMD_TIME : ECMD_OK;
+        return (ch && ch !== '\0' && ch !== '\x1b') ? ECMD_TIME : ECMD_OK;
     }
 
     dir = await getdir(null);
@@ -8683,7 +8692,7 @@ export async function dotherecmdmenu() {
     else
         ch = await here_cmd_menu();
 
-    return (ch && ch !== '\x1b') ? ECMD_TIME : ECMD_OK;
+    return (ch && ch !== '\0' && ch !== '\x1b') ? ECMD_TIME : ECMD_OK;
 }
 
 // C ref: cmd.c:4378 enum menucmd — the [t]herecmdmenu actions.
@@ -8703,7 +8712,7 @@ const MCMD_NOTHING = 0, MCMD_OPEN_DOOR = 1, MCMD_LOCK_DOOR = 2,
 // C ref: cmd.c:4421 mcmd_addmenu(win, act, txt).
 export function mcmd_addmenu(win, act, txt) {
     /* TODO: fixed letters for the menu entries? */
-    cmd_add_menu(win, null, { a_int: act }, 0, 0, 0, 0, txt, 0);
+    add_menu(win, null, { a_int: act }, 0, 0, 0, NO_COLOR, txt, 0);
 }
 
 // C ref: cmd.c:4435 there_cmd_menu_self(win, x, y, act) — command menu entries
@@ -9118,8 +9127,8 @@ export async function there_cmd_menu(x, y, mod) {
     const dx = x - u.ux, dy = y - u.uy;
     const actref = { val: MCMD_NOTHING };
 
-    win = cmd_create_nhwindow(/*NHW_MENU*/ 3);
-    cmd_start_menu(win, 0);
+    win = create_nhwindow(/*NHW_MENU*/ 3);
+    start_menu(win, 0);
 
     if (cmd_u_at(x, y))
         K += await there_cmd_menu_self(win, x, y, actref);
@@ -9149,8 +9158,8 @@ export async function there_cmd_menu(x, y, mod) {
         act_on_act(actref.val, dx, dy);
         return '\0';
     } else {
-        cmd_end_menu(win, 'What do you want to do?');
-        npick = cmd_select_menu(win, /*PICK_ONE*/ 1, picks);
+        end_menu(win, 'What do you want to do?');
+        npick = await select_menu(win, /*PICK_ONE*/ 1, picks);
         ch = '\x1b';
     }
     cmd_destroy_nhwindow(win);
@@ -9501,7 +9510,7 @@ export function yn_menuable_resp(resp) {
 
 // C ref: cmd.c:5402 yn_func_menu_opt(win, key, text, def).
 export function yn_func_menu_opt(win, key, text, def) {
-    cmd_add_menu(win, null, { a_char: key }, key, 0, 0, /*NO_COLOR*/ 0, text,
+    add_menu(win, null, { a_char: key }, key, 0, 0, NO_COLOR, text,
                  (def === key) ? /*MENU_ITEMFLAGS_SELECTED*/ 1 : 0);
 }
 
@@ -9510,11 +9519,11 @@ export function yn_func_menu_opt(win, key, text, def) {
 // char* out-param, modelled as { val }.
 export async function yn_function_menu(query, resp, def, res) {
     if (yn_menuable_resp(resp)) {
-        const win = cmd_create_nhwindow(/*NHW_MENU*/ 3);
+        const win = create_nhwindow(/*NHW_MENU*/ 3);
         const sel = [];
         let n;
 
-        cmd_start_menu(win, 0);
+        start_menu(win, 0);
         if (resp === rightleftchars) {
             yn_func_menu_opt(win, 'r', 'Right', def);
             yn_func_menu_opt(win, 'l', 'Left', def);
@@ -9529,8 +9538,8 @@ export async function yn_function_menu(query, resp, def, res) {
             yn_func_menu_opt(win, 'a', 'All', def);
         if (resp === ynqchars || resp === ynaqchars || resp === hidespinchars)
             yn_func_menu_opt(win, 'q', 'Quit', def);
-        cmd_end_menu(win, query);
-        n = cmd_select_menu(win, /*PICK_ONE*/ 1, sel);
+        end_menu(win, query);
+        n = await select_menu(win, /*PICK_ONE*/ 1, sel);
         cmd_destroy_nhwindow(win);
         if (n > 0) {
             res.val = sel[0].item.a_char;

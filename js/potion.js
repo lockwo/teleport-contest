@@ -622,7 +622,7 @@ export async function potionbreathe_hero(obj) {
             game.nomovemsg = 'You can move again.';       // potion.c:2045
             exercise(A_DEX, false);
         } else {
-            await update_topl('You stiffen momentarily.');
+            await pline('You stiffen momentarily.');
         }
         break;
     case POT_SLEEPING:
@@ -641,7 +641,7 @@ export async function potionbreathe_hero(obj) {
             game.nomovemsg = 'You can move again.';
             exercise(A_DEX, false);                      // attrib.c:509 rn2(2)
         } else {
-            await update_topl('You yawn.');
+            await pline('You yawn.');
         }
         break;
     case POT_SPEED:
@@ -757,9 +757,9 @@ async function peffect_oil(otmp) {
         }
         await (await import('./timeout.js')).burn_away_slime();
     } else if (otmp.cursed) {
-        pline_sync('This tastes like castor oil.');
+        await pline('This tastes like castor oil.');
     } else {
-        pline_sync('That was smooth!');
+        await pline('That was smooth!');
     }
     exercise(A_WIS, good_for_you);
 }
@@ -767,26 +767,12 @@ async function peffect_oil(otmp) {
 // (fire elemental / red dragon / salamander …); a non-polymorphed hero never is.
 function likes_fire_hero() { return false; }
 
-// pline is async (sets the pending message); for the synchronous peffect bodies
-// we only need to stash the message, so call the setter directly.  C's vpline()
-// always leaves toplin == NEED_MORE (topl.c); without marking that here too, a
-// LATER update_topl() call (this turn's own dopotion() "peculiar feeling"
-// pline, or simply next turn's first message) sees nothing pending and
-// silently overwrites this message instead of paging it with --More-- first.
-function pline_sync(msg) { game._pending_message = msg; game._toplin = 1; game._toplinSoft = msg; }
-function pline_append_sync(msg) {
-    game._pending_message = game._pending_message
-        ? `${game._pending_message}  ${msg}`
-        : msg;
-    game._toplin = 1;
-}
-
 // C ref: potion.c peffect_booze — ordinary booze confuses, heals one point,
 // provides a little nutrition, and is deliberately not self-identifying.
 async function peffect_booze(otmp) {
     const u = game.u;
     game.potion_unkn = (game.potion_unkn || 0) + 1;
-    pline_sync(`Ooph!  This tastes like ${otmp.odiluted ? 'watered down ' : ''}${Hallucination() ? 'dandelion wine' : 'liquid fire'}!`);
+    await pline(`Ooph!  This tastes like ${otmp.odiluted ? 'watered down ' : ''}${Hallucination() ? 'dandelion wine' : 'liquid fire'}!`);
     if (!otmp.blessed) {
         make_confused(itimeout_incr(u?.uprops?.Confusion,
                                     d(2 + (u.uhs ?? 1 /* NOT_HUNGRY */), 8)), false);
@@ -796,7 +782,7 @@ async function peffect_booze(otmp) {
     await newuhs(false);
     exercise(A_WIS, false);
     if (otmp.cursed) {
-        pline_append_sync('You pass out.');
+        await pline('You pass out.');
         game.multi = -rnd(15);
         game.nomovemsg = 'You awake with a headache.';
     }
@@ -806,14 +792,14 @@ async function peffect_booze(otmp) {
 // When not already confused (and not hallucinating) prints "Huh, What?  Where
 // am I?"; then make_confused(itimeout_incr(HConfusion, rn1(7, 16 - 8*bcsign))).
 // For a cursed potion bcsign == -1 so the duration is rn1(7,24) (== rn2(7)+24).
-function peffect_confusion(otmp) {
+async function peffect_confusion(otmp) {
     const u = game.u;
     if (!Confusion()) {
         if (Hallucination()) {
-            pline_sync('What a trippy feeling!');
+            await pline('What a trippy feeling!');
             game.potion_unkn = (game.potion_unkn || 0) + 1;
         } else {
-            pline_sync('Huh, What?  Where am I?');
+            await pline('Huh, What?  Where am I?');
         }
     } else {
         game.potion_nothing = (game.potion_nothing || 0) + 1;
@@ -825,19 +811,19 @@ function peffect_confusion(otmp) {
 // C ref: potion.c peffect_paralysis().  The negative multi count makes the
 // move loop run each helpless turn without reading input; ordinary per-turn
 // monster, hunger, regeneration, and timeout work still runs in C order.
-function peffect_paralysis(otmp) {
+async function peffect_paralysis(otmp) {
     if (Free_action()) {
-        pline_sync('You stiffen momentarily.');
+        await pline('You stiffen momentarily.');
         return;
     }
     // Is_airlevel/Is_waterlevel share the "motionlessly suspended" arm with
     // Levitation; neither level is reachable before the Planes.
     if (Levitation())
-        pline_sync('You are motionlessly suspended.');
+        await pline('You are motionlessly suspended.');
     else if (game.u?.usteed)
-        pline_sync('You are frozen in place!');
+        await pline('You are frozen in place!');
     else
-        pline_sync(`Your ${makeplural(body_part(FOOT))} are frozen to the ${
+        await pline(`Your ${makeplural(body_part(FOOT))} are frozen to the ${
             surface(game.u.ux, game.u.uy)}!`);
     nomul(-rn1(10, 25 - 12 * bcsign(otmp)));
     game.multi_reason = 'frozen by a potion';
@@ -848,11 +834,11 @@ function peffect_paralysis(otmp) {
 // C ref: potion.c peffect_sleeping().  Sleep resistance / free action turn the
 // draught into a yawn WITHOUT drawing rn1(10, ...) — the roll is inside the
 // else arm, so the guard steers the PRNG, not just the message.
-function peffect_sleeping(otmp) {
+async function peffect_sleeping(otmp) {
     if (Sleep_resistance() || Free_action()) {
-        pline_sync('You yawn.');
+        await pline('You yawn.');
     } else {
-        pline_sync('You suddenly fall asleep!');
+        await pline('You suddenly fall asleep!');
         // fall_asleep(-rn1(10, 25 - 12*bcsign), TRUE)
         // C ref: timeout.c fall_asleep() — nomul(how_long) applies its own
         // `multi < nval` guard, but the reason/usleep/nomovemsg stores below it
@@ -865,7 +851,7 @@ function peffect_sleeping(otmp) {
 }
 
 async function peffect_healing(otmp) {
-    pline_sync('You feel better.');
+    await pline('You feel better.');
     await healup(8 + d(4 + 2 * bcsign(otmp), 4), otmp.cursed ? 0 : 1,
                  !!otmp.blessed, !otmp.cursed);
     await exercise(A_CON, true);
@@ -895,7 +881,7 @@ async function peffect_extra_healing(otmp) {
 
 // C ref: potion.c peffect_full_healing().
 async function peffect_full_healing(otmp) {
-    pline_sync('You feel completely healed.');
+    await pline('You feel completely healed.');
     await healup(400, 4 + 4 * bcsign(otmp), !otmp.cursed, true);
     const u = game.u;
     if (otmp.blessed && (u?.ulevel | 0) < (u?.ulevelmax | 0)) {
@@ -957,13 +943,13 @@ import { Blind_telepat } from './youprop.js';
 async function peffect_restore_ability(otmp) {
     game.potion_unkn = (game.potion_unkn || 0) + 1;
     if (otmp.cursed) {
-        pline_sync('Ulch!  This makes you feel mediocre!');
+        await pline('Ulch!  This makes you feel mediocre!');
         return;
     }
     const { unfixable_trouble_count } = await import('./apply.js');
     const feeling = !otmp.blessed ? 'good'
         : unfixable_trouble_count(false) ? 'better' : 'great';
-    pline_sync(`Wow!  This makes you feel ${feeling}!`);
+    await pline(`Wow!  This makes you feel ${feeling}!`);
     let i = rn2(A_MAX);                                   // potion.c:663
     for (let ii = 0; ii < A_MAX; ii++) {
         const lim = amax_of(i);
@@ -1011,7 +997,7 @@ async function peffect_hallucination(otmp) {
 async function peffect_water(otmp) {
     const u = game.u;
     if (!otmp.blessed && !otmp.cursed) {
-        pline_sync(`This tastes like ${hliquid('water')}.`);
+        await pline(`This tastes like ${hliquid('water')}.`);
         u.uhunger = (u.uhunger ?? 900) + rnd(10);          // potion.c:722
         await newuhs(false);
         return;
@@ -1135,11 +1121,11 @@ async function peffect_see_invisible(otmp) {
 
     game.potion_unkn = (game.potion_unkn || 0) + 1;
     if (otmp.cursed) {
-        pline_sync(`Yecch!  This tastes ${Hallucination() ? 'overripe' : 'rotten'}.`);
+        await pline(`Yecch!  This tastes ${Hallucination() ? 'overripe' : 'rotten'}.`);
     } else if (Hallucination()) {
-        pline_sync(`This tastes like 10% real ${otmp.odiluted ? 'reconstituted ' : ''}${fruitname(true)} all-natural beverage.`);
+        await pline(`This tastes like 10% real ${otmp.odiluted ? 'reconstituted ' : ''}${fruitname(true)} all-natural beverage.`);
     } else {
-        pline_sync(`This tastes like ${otmp.odiluted ? 'reconstituted ' : ''}${fruitname(true)}.`);
+        await pline(`This tastes like ${otmp.odiluted ? 'reconstituted ' : ''}${fruitname(true)}.`);
     }
     if (otmp.otyp === POT_FRUIT_JUICE) {
         const u = game.u;
@@ -1165,7 +1151,7 @@ async function peffect_see_invisible(otmp) {
 // C ref: potion.c peffect_gain_ability().
 async function peffect_gain_ability(otmp) {
     if (otmp.cursed) {
-        pline_sync('Ulch!  That potion tasted foul!');
+        await pline('Ulch!  That potion tasted foul!');
         game.potion_unkn = (game.potion_unkn || 0) + 1;
     } else if (Fixed_abil()) {
         game.potion_nothing = (game.potion_nothing || 0) + 1;
@@ -1419,10 +1405,10 @@ export async function peffects(otmp) {
         await peffect_see_invisible(otmp);
         break;
     case POT_PARALYSIS:
-        peffect_paralysis(otmp);
+        await peffect_paralysis(otmp);
         break;
     case POT_SLEEPING:
-        peffect_sleeping(otmp);
+        await peffect_sleeping(otmp);
         break;
     case POT_MONSTER_DETECTION:
     case SPE_DETECT_MONSTERS:
@@ -1436,7 +1422,7 @@ export async function peffects(otmp) {
         await peffect_sickness(otmp);
         break;
     case POT_CONFUSION:
-        peffect_confusion(otmp);
+        await peffect_confusion(otmp);
         break;
     case POT_GAIN_ABILITY:
         await peffect_gain_ability(otmp);

@@ -1102,7 +1102,7 @@ function weaponInsight(youAre, youHave, enlLine, final = 0) {
         buf += ' and two weapons';
         also3 = true;
     }
-    if (pfx) enlLine(pfx, 'is', sfx, '');
+    if (pfx) enlLine(pfx, final ? 'was' : 'is', sfx, '');
     else if (hav) youHave(buf);
     else youAre(buf);
 
@@ -1110,7 +1110,7 @@ function weaponInsight(youAre, youHave, enlLine, final = 0) {
     if (wtype2 !== wtype) {
         const skName2 = weaponSkillName(uswapwep) || 'no skill';
         const sklvlbuf2 = skillLevelNameLc(sklvl2);
-        let verb = 'is';
+        let verb = final ? 'was' : 'is';
         pfx = ''; sfx = ''; buf = '';
         if (twoskl < sklvl2) {
             pfx = `Your skill in ${skName2} `;
@@ -1125,7 +1125,7 @@ function weaponInsight(youAre, youHave, enlLine, final = 0) {
             if (also3) {
                 pfx = 'You also ';
                 sfx = ` ${buf}`; buf = '';
-                verb = hav2 ? 'have' : 'are';
+                verb = hav2 ? (final ? 'had' : 'have') : (final ? 'were' : 'are');
             }
         }
         if (pfx) enlLine(pfx, verb, sfx, '');

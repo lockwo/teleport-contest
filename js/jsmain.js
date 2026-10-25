@@ -16,7 +16,7 @@ import { pushKey, nhgetch } from './input.js';
 import { NetHackPanic } from './panic.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
-import { flush_screen, warmupBotlStatusFns } from './display.js';
+import { flush_screen, warmupBotlStatusFns, remember_topl, yn_prompt_history, key2txt } from './display.js';
 import { has_innate } from './exper.js';
 import { GameDisplay } from './game_display.js';
 import {
@@ -803,14 +803,24 @@ export class NethackGame {
         const MH_HUMAN = 0x0008;
         const role = sel.role >= 0 ? roles[sel.role] : null;
         // role facet-switch only appears on non-role menus (added first by C).
-        if (kind !== 'role')
-            out.push({ sel: '?', text: `Pick${sel.role >= 0 ? ' another' : ''} role first`,
+        const fmask = game.rfilter?.mask | 0;
+        if (kind !== 'role') {
+            // C ref: role_menu_extra(RS_ROLE): the filter leaves only the chosen role.
+            let onlyRole = true;
+            for (let i = 0; roles[i]; i++)
+                if (i !== sel.role && !game.rfilter?.roles?.[i]) { onlyRole = false; break; }
+            if (onlyRole) out.push({ text: '    filter forces role' });
+            else out.push({ sel: '?', text: `Pick${sel.role >= 0 ? ' another' : ''} role first`,
                 act: { k: 'switch', facet: 'role' } });
+        }
         // race
         if (kind !== 'race') {
             let forced = null;
             if (role && (role.allow & ROLE_RACEMASK) === MH_HUMAN)
                 forced = { by: 'role', val: 'human' };
+            else if (role && sel.race >= 0
+                     && ((role.allow & ROLE_RACEMASK) & ~fmask) === races[sel.race].selfmask)
+                forced = { by: 'filter', val: 'race' };
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
             else out.push({ sel: '/', text: `Pick${sel.race >= 0 ? ' another' : ''} race first`,
                 act: { k: 'switch', facet: 'race' } });
@@ -822,6 +832,8 @@ export class NethackGame {
                 const m = role.allow & ROLE_GENDMASK;
                 if (m === ROLE_MALE) forced = { by: 'role', val: 'male' };
                 else if (m === ROLE_FEMALE) forced = { by: 'role', val: 'female' };
+                else if (sel.gender >= 0 && (m & ~fmask) === genders[sel.gender].allow)
+                    forced = { by: 'filter', val: 'gender' };
             }
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
             else out.push({ sel: '"', text: `Pick${sel.gender >= 0 ? ' another' : ''} gender first`,
@@ -842,6 +854,9 @@ export class NethackGame {
                 else if (m === ROLE_NEUTRAL) forced = { by: 'race', val: 'neutral' };
                 else if (m === ROLE_CHAOTIC) forced = { by: 'race', val: 'chaotic' };
             }
+            if (!forced && sel.align >= 0
+                && (ROLE_ALIGNMASK & ~fmask) === aligns[sel.align].allow)
+                forced = { by: 'filter', val: 'alignment' };
             if (forced) out.push({ text: `    ${forced.by} forces ${forced.val}` });
             else out.push({ sel: '[', text: `Pick${sel.align >= 0 ? ' another' : ''} alignment first`,
                 act: { k: 'switch', facet: 'align' } });
@@ -863,6 +878,28 @@ export class NethackGame {
     _renderRenameScreen(name, row) {
         const disp = game.nhDisplay;
         if (!disp?.clearScreen) return;
+        // C ref: tty_destroy_nhwindow() -> erase_menu_or_text() for the "Is this ok?" menu: a corner menu
+        // (offx > 0, the y/a pick) wipes only its own columns, so the startup banner and the first
+        // "Who are you?" line stay under the new prompt; a full-screen menu wipes everything (below).
+        if (this._prevChargenMenu && this._prevChargenMenu.offx > 0) {
+            this._eraseChargenMenu(disp);
+            this._renameOverBase = true;
+        }
+        if (this._renameOverBase) {
+            // C ref: tty_askname() writes "Who are you? " and echoes each typed character (backspace is
+            // "\b \b") with NO cl_end, so whatever the BASE window already had on that row (the previous
+            // name of an earlier rename) survives past the cells typed so far.
+            if (!this._renameBase) { this._renameBase = disp.grid[row].map((cell) => ({ ...cell })); this._renameMax = 0; }
+            this._renameMax = Math.max(this._renameMax, (name || '').length);
+            this._renameBase.forEach((cell, c) => Object.assign(disp.grid[row][c], cell));
+            if (this._asknameRetry && row > 0)
+                disp.putstr(0, row - 1, 'Enter a name for your character...', NO_COLOR);
+            disp.putstr(0, row, 'Who are you? ', NO_COLOR);
+            for (let i = 0; i < this._renameMax; i++)
+                disp.putstr(13 + i, row, i < name.length ? name[i] : ' ', NO_COLOR);
+            disp.setCursor(Math.min(13 + (name || '').length, 79), row);
+            return;
+        }
         this._bannerOnScreen = false;
         disp.clearScreen();
         if (this._asknameRetry && row > 0)
@@ -914,6 +951,8 @@ export class NethackGame {
             }
         } while (!name.length);
         game.plname = name;
+        this._renameOverBase = false;
+        this._renameBase = null;
         // Remember a rename line so a following confirmation menu overlays it.
         this._renameTextRow = renameRow >= 0 ? renameRow : null;
         // C: "since we let user pick an arbitrary name now, he/she can pick
@@ -1099,11 +1138,25 @@ export class NethackGame {
 
             // Filtering menu (multi-select unacceptable roles/races/&c).
             if (act.k === 'filter') {
-                await this._filterMenu(sel);
-                // After (re)filtering, C restarts the role pick from scratch.
-                sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
-                prompt = this._advanceForcedFacets(sel);
-                this._renderManualPrompt(sel);
+                // C ref: role.c genl_player_setup() RS_filter arms + reset_role_filtering(): the menu
+                // returns n < 0 on <escape> (nothing changes), else (n >= 0, even with nothing ticked)
+                // the filter is replaced and role/race/gender/alignment are all cleared.  The role
+                // menu always restarts at the role pick; a race/gender/alignment menu restarts at the
+                // role only when the new filter is non-empty (n > 0), otherwise it is shown again.
+                const stage = prompt;
+                const n = await this._filterMenu(sel);
+                if (n >= 0) sel.role = sel.race = sel.gender = sel.align = ROLE_NONE;
+                if (stage === 'role' || n > 0) {
+                    prompt = this._advanceForcedFacets(sel);
+                    this._renderManualPrompt(sel);
+                } else {
+                    if (stage === 'race') sel.race = ROLE_NONE;
+                    else if (stage === 'gender') sel.gender = ROLE_NONE;
+                    else if (stage === 'align') sel.align = ROLE_NONE;
+                    rigid_role_checks(sel);
+                    if (sel.role < 0) sel.role = ROLE_NONE;
+                    this._renderManualPrompt(sel, stage);
+                }
                 continue;
             }
 
@@ -1216,22 +1269,35 @@ export class NethackGame {
         items.push({ header: 'Unacceptable roles' });
         for (let i = 0; roles[i]; i++)
             items.push({ sel: this._roleSelectorChar(i), text: this._roleMenuLabel(i, -1),
-                kind: 'role', idx: i, selected: false });
+                kind: 'role', idx: i,
+                selected: !(ok_role(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
+                            && ok_race(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
+                            && ok_gend(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
+                            && ok_align(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)) });
         items.push({ blank: true });
         items.push({ header: 'Unacceptable races' });
         for (let i = 0; races[i]; i++)
             items.push({ sel: races[i].noun[0].toUpperCase(), text: races[i].noun,
-                kind: 'race', idx: i, selected: false });
+                kind: 'race', idx: i,
+                selected: !(ok_race(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)
+                            && ok_role(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)
+                            && ok_align(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)) });
         items.push({ blank: true });
         items.push({ header: 'Unacceptable genders' });
         for (let i = 0; i < genders.length; i++)
             items.push({ sel: genders[i].adj[0].toUpperCase(), text: genders[i].adj,
-                kind: 'gender', idx: i, selected: false });
+                kind: 'gender', idx: i,
+                selected: !(ok_gend(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)
+                            && ok_role(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)
+                            && ok_race(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)) });
         items.push({ blank: true });
         items.push({ header: 'Unacceptable alignments' });
         for (let i = 0; i < aligns.length; i++)
             items.push({ sel: aligns[i].adj[0].toUpperCase(), text: aligns[i].adj,
-                kind: 'align', idx: i, selected: false });
+                kind: 'align', idx: i,
+                selected: !(ok_align(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)
+                            && ok_role(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)
+                            && ok_race(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)) });
 
         // Prepend title + blank (end_menu).
         const prompt = 'Pick all that apply'
@@ -1243,11 +1309,16 @@ export class NethackGame {
         const npages = Math.ceil(all.length / lmax);
 
         let page = 0;
-        const render = () => {
+        const render = (fresh) => {
             disp.clearScreen();
             this._bannerOnScreen = false;
             const start = page * lmax;
             const end = Math.min(start + lmax, all.length);
+            // C ref: wintty.c process_menu_window() draws a selected entry's marker as
+            // '*' (all selected) when a page is painted; only an in-place toggle
+            // (set_item_state) writes '+'.
+            if (fresh) for (let i = start; i < end; i++)
+                if (all[i].kind) all[i].mark = all[i].selected ? '*' : '-';
             let r = 0;
             for (let i = start; i < end; i++, r++) {
                 const it = all[i];
@@ -1257,7 +1328,7 @@ export class NethackGame {
                 if (it.title) text = it.title;
                 else if (it.header) text = it.header;
                 else if (it.blank) text = '';
-                else text = `${it.sel} ${it.selected ? '+' : '-'} ${it.text}`;
+                else text = `${it.sel} ${it.mark ?? (it.selected ? '*' : '-')} ${it.text}`;
                 // Leading space at col 0, text at col 1.
                 if (text) disp.putstr(1, r, text, NO_COLOR, it.title ? ATR_INVERSE : 0);
             }
@@ -1267,23 +1338,26 @@ export class NethackGame {
             disp.putstr(1, r, morestr, NO_COLOR);
             disp.setCursor(1 + morestr.replace(/ $/, '').length, r);
         };
-        render();
+        render(true);
 
         for (;;) {
             const ch = await this._readPromptKey();
-            if (ch === 'q' || ch === '\x1b') break; // cancel (no filter change)
+            if (ch === 'q' || ch === '\x1b') { this._prevChargenMenu = { offx: 0, rows: 23 }; return -1; } // cancel (select_menu n < 0): no filter change
             if (ch === '\r' || ch === '\n') break;  // confirm
             if (ch === ' ' || ch === '>') {          // next page
                 if (page < npages - 1) page++; else break;
-                render();
+                render(true);
                 continue;
             }
-            if (ch === '<') { if (page > 0) page--; render(); continue; }
+            if (ch === '<') { if (page > 0) page--; render(true); continue; }
             // Toggle a selectable entry by its selector letter.
             const it = all.find(x => x.sel === ch);
-            if (it) { it.selected = !it.selected; render(); }
+            if (it) { it.selected = !it.selected; it.mark = it.selected ? '+' : '-'; render(false); }
         }
 
+        // The filter menu was a full-screen (offx == 0) window: destroying it wipes the screen, so the next
+        // chargen menu (_eraseChargenMenu) must clear it instead of overlaying the old text.
+        this._prevChargenMenu = { offx: 0, rows: 23 };
         // Apply the new filter: clear and set from the selected entries.
         const sel2 = all.filter(x => x.selected);
         game.rfilter = { roles: [], mask: 0 };
@@ -1293,7 +1367,7 @@ export class NethackGame {
             else if (it.kind === 'gender') game.rfilter.mask |= genders[it.idx].allow;
             else if (it.kind === 'align') game.rfilter.mask |= aligns[it.idx].allow;
         }
-        return sel2.length > 0;
+        return sel2.length;
     }
 
     // C ref: role.c genl_player_setup() makepicks loop.  Facet order is role ->
@@ -1387,7 +1461,12 @@ export class NethackGame {
                                                     sel.gender, sel.align).trim();
             for (;;) {
                 this._renderStartupScreen(game.plname || '', prompt);
-                pick4u = (await this._readPromptKey()).toLowerCase();
+                const rawKey = await this._readPromptKey();
+                // C ref: tty_yn_function() clean_up: gt.toplines = "<prompt> <key2txt(answer)>"; the next
+                // prompt/message remember_topl()s it into the ^P ring.
+                remember_topl();
+                yn_prompt_history(`${prompt} `, key2txt(rawKey.charCodeAt(0)));
+                pick4u = rawKey.toLowerCase();
                 if (pick4u === '\x1b' || pick4u === 'q') return; /* [q] */
                 if (pick4u === ' ' || pick4u === '\n' || pick4u === '\r')
                     pick4u = 'y'; /* default */

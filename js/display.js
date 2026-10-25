@@ -1174,12 +1174,7 @@ export function terrain_glyph(loc, x, y) {
         // corridor symbol (always true: both '#'), to give a visible
         // difference.  CLR_GRAY emits no tty escape (records as NO_COLOR=8),
         // CLR_WHITE records as bright white (15).  lit_corridor defaults off.
-        const litcorr = !!(loc.waslit || (game.flags && game.flags.lit_corridor));
-        const ov = symOverrideChar(litcorr ? 'S_litcorr' : 'S_corr');
-        if (ov) return { ch: ov, color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
-        return useDECgraphics('S_corr') && !decFull
-            ? { ch: 'a', color: litcorr ? CLR_WHITE : NO_COLOR, dec: true }
-            : { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
+        return corr_glyph_cell(!!(loc.waslit || (game.flags && game.flags.lit_corridor)));
     }
     case SDOOR:
         // Secret door shows as the wall it hides in, via wall_angle.
@@ -1402,6 +1397,39 @@ export function meta_glyph(loc) {
     }
 }
 
+// C ref: display.c reset_glyphmap() cmap B arm + wintty.c tty_print_glyph() — with
+// color off, lava drawn with the pool/water symbol (MG_BW_LAVA), ice drawn with the
+// floor symbol (MG_BW_ICE) and a sink drawn with the fountain symbol (MG_BW_SINK)
+// are printed ATR_INVERSE (use_inverse).  The flag follows the glyph, so it is
+// derived here from the displayed character instead of being baked in when the
+// cell was first seen (toggling `color` redraws from map memory).
+function bw_terrain_attr(loc, x, y, ch) {
+    if (game.flags?.use_inverse === false) return 0;
+    let typ = loc.typ;
+    if (typ === DRAWBRIDGE_UP)
+        typ = (loc.drawbridgemask & DB_UNDER) === DB_LAVA ? LAVAPOOL
+            : (loc.drawbridgemask & DB_UNDER) === DB_ICE ? ICE : typ;
+    const dec = useDECgraphics();
+    const decFull = useDECgraphics('S_pool');
+    const pool = symOverrideChar('S_pool') || (decFull ? '`' : '}');
+    const water = symOverrideChar('S_water') || (decFull ? '`' : '}');
+    switch (typ) {
+    case LAVAPOOL: case LAVAWALL:
+        return (ch === terrain_glyph(loc, x, y).ch && (ch === pool || ch === water))
+            ? ATR_INVERSE : 0;
+    case ICE: {
+        const room = symOverrideChar('S_room') || (dec ? '~' : '.');
+        const dark = symOverrideChar('S_darkroom') || (dec ? '~' : '.');
+        return (ch === terrain_glyph(loc, x, y).ch && (ch === room || ch === dark))
+            ? ATR_INVERSE : 0;
+    }
+    case SINK:
+        return (ch === terrain_glyph(loc, x, y).ch
+                && ch === (symOverrideChar('S_fountain') || '{')) ? ATR_INVERSE : 0;
+    default: return 0;
+    }
+}
+
 // ── show_glyph_cell ──
 export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr = 0, keepColor = false, dark = false) {
     const loc = game.level?.at(x, y);
@@ -1433,6 +1461,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
         attr = 0;
         color = NO_COLOR;
     }
+    if (!attr && game.iflags?.use_color === false) attr = bw_terrain_attr(loc, x, y, ch);
     // C ref: display.c show_glyph() sets gbuf[y][x].gnew whenever the glyph
     // differs from the stored one, and flush_screen() clears it only by writing
     // the cell: a glyph that changed and changed back between two flushes is
@@ -1685,6 +1714,13 @@ const GP_DEC_DEFAULT_CH = new Map([
     [DRAWBRIDGE_DOWN, _gpDefCh('S_hodbridge')],
 ]);
 
+const GP_META_DEFAULT_CH = new Map([
+    [POOL, _gpDefCh('S_pool')], [MOAT, _gpDefCh('S_pool')],
+    [WATER, _gpDefCh('S_water')], [LAVAPOOL, _gpDefCh('S_lava')],
+    [LAVAWALL, _gpDefCh('S_lavawall')], [TREE, _gpDefCh('S_tree')],
+    [IRONBARS, _gpDefCh('S_bars')],
+]);
+
 // C ref: getpos.c getpos() else-branch feature search — scans outward from
 // the cursor (just past the current spot to the bottom-right, then wrapping
 // from the top-left back to the current spot) for a map cell whose
@@ -1705,7 +1741,11 @@ export function getpos_find_feature(ch, cx, cy) {
         // so fall back to the type's own default char via GP_DEC_DEFAULT_CH.
         const typ = (loc.typ === DRAWBRIDGE_UP)
             ? db_under_typ_d(loc.drawbridgemask) : loc.typ;
-        const matchCh = tg.dec ? GP_DEC_DEFAULT_CH.get(typ) : tg.ch;
+        // The meta symbols (pool/lava diamond, tree, bars, ...) reach the recorder's
+        // terminal as a bare backtick/letter that the symset's real nhsym never
+        // equals, so only the type's default symbol is typeable.
+        const matchCh = GP_META_DEFAULT_CH.get(typ)
+            ?? (tg.dec ? GP_DEC_DEFAULT_CH.get(typ) : tg.ch);
         // C ref: getpos.c matching[] also holds defsyms[sidx].sym, so a staircase
         // drawn with a symset char (Rogue level's '%') still answers '<' / '>'.
         const stairCh = (loc.typ === STAIRS || loc.typ === LADDER)
@@ -1725,7 +1765,7 @@ export function getpos_find_feature(ch, cx, cy) {
         // C getpos.c:1085 only matches a trap through the glyph shown or
         // remembered here (glyph_is_cmap), so an object lying on the trap
         // (remembered object glyph) hides it from the search.
-        if (trap?.tseen && !remembered?.objotyp && !remembered?.pile
+        if (trap?.tseen && !remembered?.objotyp && !remembered?.pile && !loc.invisMon
             && (trap_glyph(trap).ch === ch
                 /* C: `c == '^' && is_cmap_trap(sidx)` also matches webs etc. */
                 || ch === '^')) return true;
@@ -5101,6 +5141,15 @@ export async function Norep(msg) {
     await update_topl(msg);
 }
 
+// C ref: pline.c:138 pline_mon(mtmp, ...) — the set_msg_xy(mtmp->mx, mtmp->my)
+// half: the next message is about that monster's square, so accessiblemsg
+// prefixes it with the direction ("(3south,4east): ").  Callers keep their
+// own pline()/update_topl() call right after it.
+export function set_msg_mon(mtmp) {
+    if (mtmp && mtmp !== game.youmonst)
+        (game.a11y || (game.a11y = {})).msg_loc = { x: mtmp.mx, y: mtmp.my };
+}
+
 export async function update_topl(bp) {
     bp = await a11y_location_prefix(bp);
     if (msgtype_suppressed(bp)) return;
@@ -6700,6 +6749,9 @@ export function reglyph_darkroom() {
                     lev.glyph = cmap_to_glyph(S_darkroom);
             }
         }
+    /* The live map keeps remembered squares as `remembered_glyph` records, not
+       numeric levl[x][y].glyph, so the same re-derivation runs on those too. */
+    reglyph_remembered_darkroom();
     /* C then aliases gs.showsyms[S_darkroom]; js/symbols.js owns showsyms and
        cannot be imported here (it pulls in js/options.js, which imports this
        file), so the symbol alias is left to that module. */
@@ -6953,6 +7005,15 @@ export function clear_glyph_buffer() {
 // C ref: display.c:2287 back_to_glyph(x, y) — the glyph of a background.  rm's
 // `horizontal` field distinguishes horizontal from vertical doors/bridges, and
 // the `ladder` (doormask) field decides up vs down for stairwells.
+// C ref: display.c back_to_glyph() CORR arm — the S_litcorr (CLR_WHITE) or S_corr cell.
+export function corr_glyph_cell(litcorr) {
+    const ov = symOverrideChar(litcorr ? 'S_litcorr' : 'S_corr');
+    if (ov) return { ch: ov, color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
+    return useDECgraphics('S_corr') && !useDECgraphics('S_pool')
+        ? { ch: 'a', color: litcorr ? CLR_WHITE : NO_COLOR, dec: true }
+        : { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
+}
+
 export function back_to_glyph(x, y) {
     let idx, bypass_glyph = NO_GLYPH;
     const ptr = game.level?.at(x, y);

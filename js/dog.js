@@ -12,7 +12,7 @@ import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
 import { goodpos_onscary } from './teleport.js';
-import { m_at } from './display.js';
+import { m_at, set_msg_mon } from './display.js';
 
 // C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
 // row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
@@ -1246,9 +1246,11 @@ export async function keepdogs(pets_only) {
                 const { mdrop_special_objs } = await import('./steal.js');
                 await mdrop_special_objs(mtmp);
             } else if (mtmp.meating || mtmp.mtrapped) {
-                if (await canseemon_shared(mtmp))
+                if (await canseemon_shared(mtmp)) {
+                    set_msg_mon(mtmp);
                     await pline(`${await Monnam_shared(mtmp)} is still `
                                 + `${mtmp.meating ? 'eating' : 'trapped'}.`);
+                }
                 stay_behind = true;
             } else if (mon_has_amulet(mtmp)) {
                 if (await canseemon_shared(mtmp))
@@ -1461,10 +1463,12 @@ export async function wary_dog(mtmp, was_dead) {
             if (haseyes(game.youmonst?.data)) {
                 if (haseyes(mtmp.data)) {
                     const { body_part } = await import('./invent.js');
+                    set_msg_mon(mtmp);
                     await pline(`${await Monnam_shared(mtmp)} `
                         + `${mtmp.mpeaceful ? 'seems unable' : 'refuses'}`
                         + ` to look you in the ${body_part(1 /*EYE*/)}.`);
                 } else {
+                    set_msg_mon(mtmp);
                     await pline(`${await Monnam_shared(mtmp)} avoids your gaze.`);
                 }
             }

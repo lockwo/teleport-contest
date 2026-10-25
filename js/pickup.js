@@ -48,7 +48,7 @@ import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
          M2_ROCKTHROW, hides_under_flag } from './monflags_data.js';
 import { makesingular } from './plural.js';
 import { costly_spot } from './shk.js';
-import { hliquid } from './dungeon.js';
+import { hliquid, surface } from './dungeon.js';
 import { In_sokoban } from './const.js';
 import { can_reach_floor } from './engrave.js';
 
@@ -2060,9 +2060,11 @@ export async function tipcontainer(box, targetbox = null) {
 
     const srcheld = carried(box);
     const dstheld = !!(targetbox && carried(targetbox));
-    const highdrop = !can_reach_floor(true);
-    const altarizing = IS_ALTAR(game.level?.at?.(ox, oy)?.typ);
+    let highdrop = !can_reach_floor(true);
+    let altarizing = IS_ALTAR(game.level?.at?.(ox, oy)?.typ);
     const cursed_mbag = Is_mbag(box) && box.cursed;
+    const maybeshopgoods = !carried(box) && costly_spot(box.ox, box.oy);
+    if (u.uswallow) highdrop = altarizing = false;
     let terse = !(highdrop || altarizing || costly_spot(box.ox, box.oy));
     let loss = 0;
     box.cknown = 1;
@@ -2088,6 +2090,11 @@ export async function tipcontainer(box, targetbox = null) {
             terse = false;   /* abbreviated drop format no longer applies */
             continue;
         }
+        if (maybeshopgoods) {
+            const { addtobill } = await import('./shk.js');
+            await addtobill(otmp, false, false, true);
+            game.iflags.suppress_price = (game.iflags.suppress_price || 0) + 1; /* doname formatting */
+        }
         if (targetbox) {
             if (Is_mbag(targetbox) && mbag_explodes(otmp, 0)) {
                 await pline(`As ${doname(otmp)} ${otense(otmp, 'tumble')}`
@@ -2097,24 +2104,34 @@ export async function tipcontainer(box, targetbox = null) {
                 break;
             }
             add_to_container(targetbox, otmp);
+        } else if (highdrop) {
+            otmp.how_lost = LOST_DROPPED;
+            /* might break or fall down stairs; handles altars itself */
+            await (await import('./invent.js')).hitfloor(otmp, true);
         } else {
             // C ref: pickup.c tipcontainer():3811 — the altar branch calls
             // doaltarobj() itself (revealing BUC) and skips the generic drop
             // message; either way it then falls through to dropy() for the
             // real floor placement, so this must NOT also go through
             // js/invent.js's dropx() (which would run the altar check again).
+            const { PLNMSG_OBJNAM_ONLY } = await import('./const.js');
             if (altarizing) {
                 const DOm = await import('./do.js');
                 await DOm.doaltarobj(otmp);
             } else if (!terse) {
                 await pline(`${upstart(doname(otmp))} ${otense(otmp, 'drop')}`
-                            + ' to the floor.');
+                            + ` to the ${surface(ox, oy)}.`);
             } else {
                 await pline(`${doname(otmp)}${nobj ? ',' : '.'}`);
+                game.last_msg = PLNMSG_OBJNAM_ONLY;
             }
             otmp.how_lost = LOST_DROPPED;
             await dropy(otmp);
+            if (game.last_msg !== PLNMSG_OBJNAM_ONLY)
+                terse = false; /* terse formatting has been interrupted */
         }
+        if (maybeshopgoods)
+            game.iflags.suppress_price--; /* reset */
     }
     if (loss)
         await pline(`You owe ${loss} ${currency(loss)} for lost merchandise.`);

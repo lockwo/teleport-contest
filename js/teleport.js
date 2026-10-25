@@ -13,11 +13,13 @@ import { acurr_eff } from './attrib.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
-import { newsym, m_at, update_topl, y_n, You_feel } from './display.js';
+import { set_msg_mon, newsym, m_at, update_topl, y_n, You_feel } from './display.js';
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
-import { youmonst_data } from './invent.js';
+import { youmonst_data, worn_extrinsic, near_capacity } from './invent.js';
+import { known_spell, spelleffects } from './spell.js';
+import { morehungry } from './eat.js';
 import { hero_liquid_goodpos } from './trap.js';
 import { In_hell } from './dungeon.js';
 import { In_endgame } from './const.js';
@@ -513,10 +515,10 @@ import {
     MAGIC_PORTAL, HOLE, TRAPDOOR, NO_TRAP, MIGR_RANDOM, MIGR_PORTAL,
     UTOTYPE_PORTAL, UTOTYPE_ATSTAIRS, VAULT, SHOPBASE,
     ECMD_OK, ECMD_TIME, FORCETRAP, NHW_MENU, PICK_ONE,
-    A_STR, A_WIS,
+    A_STR, A_WIS, EXT_ENCUMBER,
     is_pit, is_hole, is_xport, IS_ALTAR, ZAP_POS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { CORPSE, SCR_SCARE_MONSTER } from './mkobj.js';
-import { M1_NOEYES, M2_LORD, M2_PRINCE } from './monflags_data.js';
+import { M1_NOEYES, M2_LORD, M2_PRINCE, M1_TPORT } from './monflags_data.js';
 import { within_bounded_area } from './rect.js';
 import { in_out_region } from './region.js';
 import { see_monsters, see_nearby_objects } from './display.js';
@@ -1115,7 +1117,7 @@ export async function dotele(break_the_rules) {
         await update_topl('You shudder for a moment.');
         return 0;
     }
-    if (!trap) morehungry_(100);
+    if (!trap) await morehungry_(100);
     return 1;
 }
 
@@ -1323,9 +1325,11 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
             if (Is_stronghold_()) {
                 assign_level_(tolevel, valley_level_());
             } else if (Is_botlevel_()) {
-                if (in_sight && trap.tseen)
+                if (in_sight && trap.tseen) {
+                    set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} avoids the `
                         + `${(tt === HOLE) ? 'hole' : 'trap'}.`);
+                }
                 return Trap_Effect_Finished;
             } else {
                 assign_level_(tolevel, trap.dst);
@@ -1337,6 +1341,7 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
                                   || await is_home_elemental_(mtmp.data)
                                   || rn2(7))) {
                 if (in_sight && mtmp.data?.mcls !== S_ELEMENTAL_MCLS) {
+                    set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} seems to shimmer for a moment.`);
                     const { seetrap } = await import('./trap.js');
                     seetrap(trap);
@@ -1354,8 +1359,10 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
                    onscary(0,0,) is true for the Wizard, Riders, lawful
                    minions, Angels, and a shk/priest inside his own room */
                 || (tt === NO_TRAP && onscary(0, 0, mtmp))) {
-                if (in_sight)
+                if (in_sight) {
+                    set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} seems very disoriented for a moment.`);
+                }
                 return Trap_Effect_Finished;
             }
             if (tt === NO_TRAP) {
@@ -1364,8 +1371,10 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
             } else {
                 nlev = random_teleport_level_();
                 if (nlev === depth_(game.u.uz)) {
-                    if (in_sight)
+                    if (in_sight) {
+                        set_msg_mon(mtmp);
                         await update_topl(`${Monnam(mtmp)} shudders for a moment.`);
+                    }
                     return Trap_Effect_Finished;
                 }
                 get_level_(tolevel, nlev);
@@ -1377,6 +1386,7 @@ export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
         }
 
         if (in_sight) {
+            set_msg_mon(mtmp);
             await update_topl(`Suddenly, ${mon_nam(mtmp)} `
                 + `${(tt === HOLE) ? 'falls into a hole'
                    : (tt === TRAPDOOR) ? 'falls through a trap door'
@@ -1576,7 +1586,7 @@ function Levitation_() { return HProp_tp('HLevitation') > 0 || HProp_tp('ELevita
 function Flying_() { return HProp_tp('HFlying') > 0 || HProp_tp('EFlying') > 0; }
 function Passes_walls_() { return !!game.u?.formprops?.Passes_walls || HProp_tp('HPasses_walls') > 0; }
 function Punished_() { return !!game.u?.uball; }
-function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0; }
+function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0 || worn_extrinsic(TELEPORT_PROP); }
 function HTeleportation_() { return HProp_tp('HTeleportation'); }
 function ETeleportation_() { return HProp_tp('ETeleportation'); }
 function setHTeleportation_(v) { if (game.u?.uprops) game.u.uprops.HTeleportation = v; }
@@ -1683,19 +1693,20 @@ async function next_to_u_() {
 }
 function u_locomotion_(def) { return def; }
 // C ref: eat.c morehungry(num) — js/fountain.js:50, private.  No RNG.
-function morehungry_(num) { const u = game.u; if (u) u.uhunger = (u.uhunger | 0) - num; }
+async function morehungry_(num) { await morehungry(num); }
 // C ref: spell.c known_spell / spelleffects / role.h Role_if / mondata.h
 // can_teleport / objects[].oc_level / attrib.c exercise / invent.c
 // check_capacity.
 /* mkobj.js objects[] row 400 == SPE_TELEPORT_AWAY (js/cmd.js:2076 agrees). */
 const SPE_TELEPORT_AWAY_TP = 400;
+const TELEPORT_PROP = 46;   /* prop.h TELEPORT */
 const spe_Unknown_TP = 0, spe_Fresh_TP = 1;   /* spell.h:22-23 */
 const A_STR_TP = A_STR, A_WIS_TP = A_WIS;
-function known_spell_(_otyp) { return spe_Unknown_TP; }
+function known_spell_(otyp) { return known_spell(otyp); }
 /* objects.h:1391 SPELL("teleport away", ..., level 6) -> energy 5*6 == 30. */
 function spellev_(_otyp) { return 6; }
 function Role_if_wizard_() { return (game.urole?.name?.m || '') === 'Wizard'; }
-function can_teleport_(_ptr) { return false; }
+function can_teleport_(ptr) { return (mflags1_of_(ptr) & M1_TPORT) !== 0; }
 function ACURR_tp(i) { return acurr_eff(i); }
 function exercise_(i, inc) {
     if (i === A_INT || i === A_CHA || (game.u?.Upolyd && i !== A_WIS)) return;
@@ -1705,8 +1716,16 @@ function exercise_(i, inc) {
         aexe[i] = (aexe[i] ?? 0) + (inc ? (rn2(19) > acurr ? 1 : 0) : -rn2(2));
     }
 }
-async function check_capacity_(_str) { return false; }
-async function spelleffects_(_otyp, _atme, _nomsg) { return 0; }
+/* C ref: hack.c check_capacity(str): refuse from "extremely burdened" up. */
+async function check_capacity_(str) {
+    if (near_capacity() >= EXT_ENCUMBER) {
+        if (str) await update_topl(str);
+        else await update_topl("You can't do that while carrying so much stuff.");
+        return true;
+    }
+    return false;
+}
+async function spelleffects_(otyp, atme, force) { return await spelleffects(otyp, atme, force); }
 // C ref: teleport.c rloc_pos_ok — the live port above is module-private under
 // the same name; this indirection exists only so control_mon_tele() reads like C.
 function rloc_pos_ok_(x, y, mtmp) { return rloc_pos_ok(x, y, mtmp); }

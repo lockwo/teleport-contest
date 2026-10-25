@@ -25,7 +25,7 @@ import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
 import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
          canseemon_shared, y_n } from './display.js';
-import { m_at } from './display.js';
+import { m_at, Hallucination_u } from './display.js';
 import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
 import { is_pool, is_lava } from './dbridge.js';
@@ -33,7 +33,7 @@ import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { surface } from './dungeon.js';
-import { hliquid, mon_nam } from './do_name.js';
+import { hliquid, mon_nam, mon_pmname } from './do_name.js';
 import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
 import { t_at } from './mkroom.js';
 import { mon_mintrap } from './monmove.js';
@@ -44,12 +44,12 @@ import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
          D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
          SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN,
-         M_AP_FURNITURE, M_AP_OBJECT, LEG, I_SPECIAL } from './const.js';
+         M_AP_FURNITURE, M_AP_OBJECT, LEG, I_SPECIAL, has_mgivenname } from './const.js';
 import { greatest_erosion } from './weapon.js';
 
 import { Maybe_Half_Phys } from './zap.js';
 import { losehp_do } from './do.js';
-import { pickup_after_move, getdir, test_move_quiet } from './cmd.js';
+import { getdir, test_move_quiet } from './cmd.js';
 
 // C ref: steed.c doride()/kick_steed() call the SHARED cmd.c getdir(); this
 // file used to carry a cut-down copy that ignored the command queue, the
@@ -387,112 +387,13 @@ function landing_spot(reason, forceit) {
     return found ? spot : null;
 }
 
-// C ref: steed.c dismount_steed(DISMOUNT_BYCHOICE) — voluntary #ride dismount.
-// landing_spot() chooses cc; the steed is placed back on the map grid at the
-// hero's current square and the hero relocates to cc (C: place_monster(steed,
-// u.ux,u.uy) then teleds(cc)).  The now-grounded pony resumes normal pet
-// movement this turn (handled by the standard movemon/dochug path; here we just
-// run the steed's own dochug to reproduce its post-dismount move, matching the
-// recorded obj_resists/dog_move stream).
-async function dismount_steed_bychoice() {
-    const u = game.u;
-    const mtmp = u.usteed;
-    if (!mtmp) return;
-
-    const cc = landing_spot(DISMOUNT_BYCHOICE, 0); // RNG: rn2(viable) tie-breaks
-    if (!cc) {
-        await pline("You can't.  There isn't anywhere for you to stand.");
-        return;
-    }
-
-    // C ref: steed.c dismount_steed() — when the steed has no given name,
-    //   pline("You've been through the dungeon on %s with no name.",
-    //         an(pmname(mtmp->data, Mgender(mtmp))));
-    // pmname is the bare species name (no "saddled" adjective, no article),
-    // and an() prepends a/an.  x_monnam(.,ARTICLE_A) yields "a <species>" from
-    // mtmp.data.name (the species), which for the recorded steed is "pony".
-    // Route through update_topl so a following pet-combat message (the grounded
-    // steed attacking an adjacent hostile on the same turn) pages this line with
-    // a --More-- exactly as C's topl buffer does.
-    {
-        const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
-        if (!given) {
-            const species = (mtmp?.data?.name || 'monster');
-            const an = (/^[aeiou]/i.test(species) ? 'an ' : 'a ') + species;
-            await update_topl(`You've been through the dungeon on ${an} with no name.`);
-        } else {
-            // C: You("dismount %s.", mon_nam(mtmp));
-            await update_topl(`You dismount ${mon_nam(mtmp)}.`);
-        }
-    }
-
-    // Release the steed.
-    u.usteed = null;
-    u.ugallop = 0;
-
-    // place_monster(steed, u.ux, u.uy): steed grounds at the hero's square and
-    // rejoins the map grid (clear the ridden flag).
-    mtmp.mridden = false;
-    mtmp.mx = u.ux;
-    mtmp.my = u.uy;
-    const ux0 = u.ux, uy0 = u.uy;
-
-    // teleds(cc): the hero steps off onto the landing square.
-    u.ux0 = ux0; u.uy0 = uy0;
-    u.ux = cc.x; u.uy = cc.y;
-
-    // C ref: steed.c:766 `if (sobj_at(BOULDER, cc.x, cc.y)) sokoban_guilt();`
-    // — dismounting onto a boulder's square lets the hero squeeze past it,
-    // same Sokoban cheat as could_move_onto_boulder().
-    {
-        const { sobj_at } = await import('./invent.js');
-        const { BOULDER } = await import('./mkobj.js');
-        if (sobj_at(BOULDER, cc.x, cc.y) && game.level?.flags?.sokoban_rules) {
-            u.uconduct = u.uconduct || {};
-            u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-            u.uluck = (u.uluck || 0) - 1;          // C: change_luck(-1), clamped
-            if (u.uluck < -10) u.uluck = -10;
-        }
-    }
-
-    // The now-grounded pony (mridden cleared) is a normal pet again; the move
-    // loop's movemon()/dochug() pass for this hero command drives its move (and
-    // its dog_move obj_resists / choice rolls), so we do NOT step it here.
-
-    // Redraw the squares involved.
-    newsym(ux0, uy0);
-    newsym(u.ux, u.uy);
-    newsym(mtmp.mx, mtmp.my);
-    // C ref: dismount_steed -> teleds(cc, ALLOW_DRAG) tail sets
-    // vision_full_recalc=1 + vision_recalc(0): relocating the hero to the
-    // landing square recomputes line-of-sight (e.g. the west wall of the room
-    // the hero steps into).
-    game.vision_full_recalc = 1;
-    vision_recalc(0);
-
-    // C ref: steed.c dismount_steed() -> float_down(0L, W_SADDLE) -> its tail
-    // "if (!Is_airlevel && !Is_waterlevel && !u.uswallow && on_level(...))
-    // pickup(1)": once grounded, the hero's landing square is examined exactly
-    // like the tail of any other move.  Any objects there that autopickup
-    // leaves behind (or, with it off, all of them) are announced via
-    // look_here() -- "Things that are here:" for a pile -- chaining onto the
-    // still-pending dismount pline with a --More-- the same way update_topl()
-    // pages any two same-turn messages that don't fit on one line.
-    await pickup_after_move(u.ux, u.uy);
-}
-
 // C ref: steed.c:576 dismount_steed(reason) — the general port: every
 // DISMOUNT_* reason, its own message/fall-damage/wounded-legs handling,
 // landing-spot selection (including the forceit enexto() retry), steed
 // relocation (including a water/lava death check) or repositioning around an
 // engulfer, the Sokoban boulder-squeeze guilt check, re-trapping the steed in
 // the hero's former trap, and the tail float_down(0,W_SADDLE) bookkeeping.
-// DISMOUNT_BYCHOICE delegates to the already-tested dismount_steed_bychoice()
-// above rather than re-deriving its exact (recorded-session-verified)
-// behavior here.
 export async function dismount_steed(reason) {
-    if (reason === DISMOUNT_BYCHOICE) return await dismount_steed_bychoice();
-
     const u = game.u;
     const save_utrap = u.utrap;
     let repair_leg_damage = !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
@@ -515,6 +416,8 @@ export async function dismount_steed(reason) {
     let verb = u_locomotion_std('fall');
     u.usteed = mtmp;
 
+    /* Check the reason for dismounting */
+    const otmp = which_armor(mtmp, W_SADDLE);
     switch (reason) {
     case DISMOUNT_THROWN:
         verb = 'are thrown';
@@ -535,10 +438,32 @@ export async function dismount_steed(reason) {
         if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
         break;
     case DISMOUNT_ENGULFED:
-    case DISMOUNT_BONES:
-    case DISMOUNT_GENERIC:
-    default:
+        /* caller displays message */
         break;
+    case DISMOUNT_BONES:
+        /* hero has just died... */
+        break;
+    case DISMOUNT_GENERIC:
+        /* no messages, just make it so */
+        break;
+    case DISMOUNT_BYCHOICE:
+    default:
+        if (otmp && otmp.cursed) {
+            await pline(`You can't.  The saddle ${otmp.bknown ? 'is' : 'seems to be'} cursed.`);
+            otmp.bknown = 1;
+            return;
+        }
+        if (!have_spot) {
+            await pline("You can't.  There isn't anywhere for you to stand.");
+            return;
+        }
+        if (!has_mgivenname(mtmp)) {
+            const { an } = await import('./objnam.js');
+            await pline(`You've been through the dungeon on ${an(mon_pmname(mtmp))} with no name.`);
+            if (Hallucination_u())
+                await pline('It felt good to get out of the rain.');
+        } else
+            await pline(`You dismount ${mon_nam(mtmp)}.`);
     }
 
     // While riding, Wounded_legs refers to the steed's legs; heal_legs() must
@@ -659,8 +584,7 @@ function nonliving_steed(ptr) {
 function throws_rocks_std(ptr) { return !!ptr?.throws_rocks; }
 // C ref: mon.c place_monster(mon,x,y) — dog.js/vault.js keep private copies;
 // this is steed.c's own call site, so it gets one here too.  Also clears the
-// port-local `mridden` flag (mirroring dismount_steed_bychoice()'s own inline
-// `mtmp.mridden = false`): this port renders/looks up a ridden steed as
+// port-local `mridden` flag: this port renders/looks up a ridden steed as
 // colocated with, and hidden behind, the hero (see mount_steed()'s own
 // comment on mridden); putting it back on the map grid must undo that or
 // the square keeps rendering as bare terrain instead of the steed's glyph.
@@ -708,10 +632,7 @@ export async function doride() {
     const u = game.u;
 
     if (u.usteed) {
-        // C ref: steed.c doride() -> dismount_steed(DISMOUNT_BYCHOICE).  A
-        // voluntary dismount: pick a landing spot, ground the steed at the
-        // hero's square, step the hero off, and let the steed take its turn.
-        await dismount_steed_bychoice();
+        await dismount_steed(DISMOUNT_BYCHOICE);
         return 1;
     }
 

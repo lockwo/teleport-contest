@@ -127,7 +127,7 @@ import { mon_msize, mon_cwt, monster_by_pmidx, makemon, makemon_appears_msg, add
 import { level_difficulty } from './dungeon.js';
 // polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
 const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
-import { flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel } from './display.js';
+import { set_msg_mon, flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel } from './display.js';
 import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs } from './worm.js';
 import { mdig_tunnel, may_dig, in_town, holetime } from './dig.js';
 import { picking_lock } from './lock.js';
@@ -611,7 +611,7 @@ async function disturb(mtmp) {
 async function wake_msg(mtmp, interesting) {
     if (mtmp.msleeping && canseemon_mm(mtmp))
         await emitU(`${Monnam(mtmp)} wakes up${interesting ? '!' : '.'}`
-                    + (mtmp.data?.pmidx === PM_FLESH_GOLEM_WM ? " It's alive!" : ''));
+                    + (mtmp.data?.pmidx === PM_FLESH_GOLEM_WM ? " It's alive!" : ''), mtmp);
 }
 const PM_FLESH_GOLEM_WM = _name_to_pmidx_cf('flesh golem');
 
@@ -1486,13 +1486,14 @@ export async function mon_yells(mtmp, msg) {
     if (Deaf_hero()) {
         if (canspotmon(mtmp)) {
             const { makeplural } = await import('./plural.js');
+            set_msg_mon(mtmp);
             await update_topl(`${Amonnam_mm(mtmp)} angrily ${nolimbs(mtmp.data) ? 'shakes' : 'waves'} `
                 + `${mhis(mtmp)} ${nolimbs(mtmp.data) ? mbodypart(mtmp, HEAD)
                                                       : makeplural(mbodypart(mtmp, ARM))}!`);
         }
         return;
     }
-    if (canspotmon(mtmp)) await update_topl(`${Amonnam_mm(mtmp)} yells:`);
+    if (canspotmon(mtmp)) { set_msg_mon(mtmp); await update_topl(`${Amonnam_mm(mtmp)} yells:`); }
     else await You_hear('someone yell:');
     /* verbalize1(shout) */
     await update_topl(`"${msg}"`);
@@ -1840,6 +1841,7 @@ async function maybe_spin_web(mtmp) {
                 // already-capitalised "The <mon>" is the same string here.
                 // C: pline() -> update_topl(), so an unacknowledged topline gets
                 // its --More-- before this replaces it.
+                set_msg_mon(mtmp);
                 await update_topl(`${canspotmon(mtmp) ? Monnam(mtmp) : 'Something'} spins a web.`);
                 trap.tseen = 1;
             }
@@ -1916,24 +1918,38 @@ function ansimpleoname_topobj(x, y) {
 }
 
 // C ref: mon.c maybe_unhide_at(x,y) — called right after a monster's position is
-// committed (before mintrap/door handling in postmov).  If the monster AT (x,y)
-// was mundetected but can no longer stay hidden there (a hides_under species with
-// no valid object on the new square, or trapped, or an eel that surfaced onto dry
-// land), immediately re-run hideunder() to reset mundetected to FALSE.  This must
-// happen BEFORE the later "re-hide?" gate (`mundetected || (!helpless && rn2(5))`)
-// so that gate's OR correctly falls through to its rn2(5) term instead of
-// short-circuiting on a stale mundetected=TRUE.  hideunder() itself consumes no
-// RNG (only its caller's gate rolls); the hero (u_at) branch isn't modeled here,
-// matching hideunder()'s own scope in this port.
-export async function maybe_unhide_at(x, y) {
-    const m = m_at(x, y);
-    if (!m || !m.mundetected) return;
-    const ptr = m.data;
-    const noLongerHidden =
-        (hides_under_pm(ptr)
-         && (!OBJ_AT(x, y) || m.mtrapped || !can_hide_under_obj_at(x, y)))
-        || (ptr?.mcls === S_EEL && !IS_POOL(terrainTyp(x, y)));
-    if (noLongerHidden) await hideunder(m);
+// committed (before mintrap/door handling in postmov) and by delobj_core() /
+// obj_extract_self() when a floor object goes away.  If the monster or hero AT
+// (x,y) was undetected but can no longer stay hidden there (a hides_under
+// species with no valid object on the square, or trapped, or an eel out of
+// water), re-run hideunder() to reset the flag.  This must happen BEFORE the
+// later "re-hide?" gate (`mundetected || (!helpless && rn2(5))`) so that gate's
+// OR correctly falls through to its rn2(5) term instead of short-circuiting on
+// a stale mundetected=TRUE.
+//
+// Synchronous: in every case this tests for, hideunder() cannot succeed in
+// hiding (it is the very condition under which hiding fails), so the one
+// asynchronous part of hideunder(), its "You see ... hide under ..." message,
+// is unreachable and the shared hideunder_decide()/hideunder_settle() halves
+// carry out everything C does.
+export function maybe_unhide_at(x, y) {
+    let mtmp, undetected, trapped;
+    if ((mtmp = m_at(x, y))) {
+        undetected = mtmp.mundetected;
+        trapped = mtmp.mtrapped;
+    } else if (u_at(x, y)) {
+        mtmp = game.u;
+        undetected = game.u.uundetected;
+        trapped = game.u.utrap;
+    } else {
+        return;
+    }
+    const ptr = (mtmp === game.u) ? youmonst_data_mm() : mtmp.data;
+    if (undetected
+        && ((hides_under_pm(ptr)
+             && (!OBJ_AT(x, y) || trapped || !can_hide_under_obj_at(x, y)))
+            || (ptr?.mcls === S_EEL && !IS_POOL(terrainTyp(x, y)))))
+        hideunder_settle(mtmp, hideunder_decide(mtmp));
 }
 
 // C ref: mon.c:4726 hideunder(mtmp) — a just-moved concealing monster re-hides
@@ -1941,11 +1957,11 @@ export async function maybe_unhide_at(x, y) {
 // mundetected, and if the hero can see the monster announce
 // "You see the <mon> <locomotion> under <object>." then newsym() so the
 // now-hidden monster disappears from the map.  Consumes NO RNG.
-// The `is_u` (hero polymorphed into a hider) arm is not modelled.
-export async function hideunder(mtmp) {
-    // hero arm (is_u): u.uundetected from the hero's own square, no messages, no RNG
+// hideunder_decide() is the whole decision (synchronous); hideunder() adds the
+// asynchronous announcement.
+function hideunder_decide(mtmp) {
     if (mtmp === game.u || (game.youmonst && mtmp === game.youmonst))
-        return await hideunder_hero();
+        return { undetected: hideunder_hero_decide() };
     const ptr = mtmp.data;
     const x = mtmp.mx, y = mtmp.my;
     // C ref: mon.c:4732 `int seeit = gi.in_mklev ? 0 : canseemon(mtmp);` —
@@ -1962,10 +1978,7 @@ export async function hideunder(mtmp) {
     } else if (ptr?.mcls === S_EEL) {
         // C ref: mon.c:4742 — "aquatic creatures only hide under water, not
         // under objects; they don't do so on the Plane of Water or when hero is
-        // also under water unless some obstacle blocks line-of-sight".  This
-        // arm used to be an empty stub, so an eel never re-hid: it stayed
-        // visible on the map and mon.c:1291's per-turn eel re-hide check
-        // (mon.js movemon_singlemon) could never take its early return.
+        // also under water unless some obstacle blocks line-of-sight".
         undetected = is_pool_at(x, y) && !Is_waterlevel(game.u?.uz)
                      && (!Underwater() || !couldsee(x, y));
         if (seeit) { seenobj = 'the water'; seenlocomo = 'dive'; }
@@ -1976,66 +1989,88 @@ export async function hideunder(mtmp) {
                && (!mtmp.mtame || !cursed_object_at(x, y))
                && !(IS_POOL(terrainTyp(x, y)) || IS_LAVA(terrainTyp(x, y)))) {
         if (seeit) seenobj = ansimpleoname_topobj(x, y);
-        /* cockatrice-corpse skip loop omitted (no petrifying corpse here) */
-        undetected = true;
+        /* most monsters won't hide under a cockatrice corpse but they can hide
+           under a pile containing more than just such corpses */
+        const pile = objectsAt(x, y).reverse();    /* top of pile first */
+        let i = 0;
+        if (!resists_ston_mon(mtmp))
+            while (i < pile.length && pile[i].otyp === CORPSE
+                   && corpse_touch_petrifies(pile[i].corpsenm)) i++;
+        undetected = i < pile.length;
     }
 
     // C ref: mon.c:4790 `if (seeit) seenmon = y_monnam(mtmp);` — evaluated
     // whenever the hero sees the monster, hidden or not; a hallucinating hero
     // pays its rndmonnam() display-RNG draws even when no message follows.
     const seenmon = seeit ? y_monnam(mtmp) : null;
+    return { undetected, seenmon, seenobj, seenlocomo };
+}
+
+// C ref: mon.c:4796-4806 — commit the decision: mundetected, then newsym() when
+// the state changed.
+function hideunder_settle(mtmp, d) {
+    const { undetected } = d;
+    if (mtmp === game.u || (game.youmonst && mtmp === game.youmonst)) {
+        const u = game.u;
+        const oldundetctd = !!u.uundetected;
+        u.uundetected = undetected ? 1 : 0;
+        /* C ref: mon.c:4800 `if (undetected != oldundetctd) newsym(x, y);` */
+        if (undetected !== oldundetctd) newsym(u.ux, u.uy);
+        return undetected;
+    }
     const oldundet = !!mtmp.mundetected;
+    mtmp.mundetected = undetected ? 1 : 0;
+    if (undetected !== oldundet) newsym(mtmp.mx, mtmp.my);
+    return undetected;
+}
+
+export async function hideunder(mtmp) {
+    const d = hideunder_decide(mtmp);
+    const { undetected, seenmon, seenobj, seenlocomo } = d;
     // C ref: mon.c hideunder() emits You_see() BEFORE its trailing newsym().  In
     // C the screen shown at the message's --More-- still holds the monster glyph
     // because the tty buffer isn't rewritten until newsym() runs; the JS renderer
     // rebuilds each frame from monster state, so we must likewise defer flipping
     // mtmp.mundetected until AFTER the message so the monster is still drawn on
     // the captured --More-- frame, then hide it with newsym().  (No RNG here.)
-    if (undetected && seenmon && seenobj) {
+    if (mtmp !== game.u && !(game.youmonst && mtmp === game.youmonst)
+        && undetected && seenmon && seenobj) {
         // C: `if (!locomo) locomo = locomotion(mtmp->data, "hide");` — the eel
         // arm has already set it to "dive".
-        const locomo = seenlocomo || locomotion(ptr, 'hide');
+        const locomo = seenlocomo || locomotion(mtmp.data, 'hide');
         await You_see(`${seenmon} ${locomo} under ${seenobj}.`);
         game.last_msg = PLNMSG_HIDE_UNDER;
         game.last_hider = mtmp.m_id;
     }
-    mtmp.mundetected = undetected ? 1 : 0;
-    if (undetected !== oldundet) newsym(x, y);
-    return undetected;
+    return hideunder_settle(mtmp, d);
 }
 // C ref: mon.c hideunder() with mtmp == &youmonst.  Called from hack.c domove_core() after every
 // move (`if (hides_under(youmonst.data) || mlet == S_EEL || u.dx || u.dy)`) and from teleds().
-async function hideunder_hero() {
+function hideunder_hero_decide() {
     const u = game.u;
     const x = u.ux, y = u.uy;
-    const ptr = (await import('./invent.js')).youmonst_data();
+    const ptr = youmonst_data_mm();
     const t = t_at(x, y);
     let undetected = false;
     if (u.utrap || (t && !is_pit(t.ttyp))) {
         /* can't hide while trapped or on/in/under any non-pit trap */
     } else if (ptr?.mcls === S_EEL) {
-        const { couldsee } = await import('./vision.js');
         undetected = is_pool_at(x, y) && !Is_waterlevel(u.uz)
                      && (!Underwater() || !couldsee(x, y));
     } else if (hides_under_pm(ptr) && OBJ_AT(x, y) && can_hide_under_obj_at(x, y)
                && !(IS_POOL(terrainTyp(x, y)) || IS_LAVA(terrainTyp(x, y)))) {
         /* skip a top of pile made only of cockatrice corpses unless Stone_resistance */
-        const { objects_at } = await import('./invent.js');
-        const { Stone_resistance_u } = await import('./polyself.js');
-        const pile = objects_at(x, y);
+        const pile = objectsAt(x, y).reverse();    /* top of pile first */
         let i = 0;
-        if (!Stone_resistance_u())
+        if (!hooks.Stone_resistance_u())
             while (i < pile.length && pile[i].otyp === CORPSE
                    && corpse_touch_petrifies(pile[i].corpsenm)) i++;
         undetected = i < pile.length;
     }
-    const oldundetctd = !!u.uundetected;
-    u.uundetected = undetected ? 1 : 0;
-    /* C ref: mon.c:4800 `if (undetected != oldundetctd) newsym(x, y);` */
-    if (undetected !== oldundetctd) newsym(x, y);
     return undetected;
 }
 hooks.hideunder = hideunder;
+hooks.maybe_unhide_at = maybe_unhide_at;
 
 // C ref: trap.c floor_trigger(ttyp) — traps that only fire on a creature
 // landing ON them from the floor (not flyers/floaters).  MAGIC_TRAP and the
@@ -3465,7 +3500,7 @@ function deltrap_local(trap) {
 export async function mb_trapped(mtmp, canseeit) {
     if (game.flags?.verbose !== false) {
         if (canseeit && !game.u?.Unaware) {
-            await emitU('KABOOM!!  You see a door explode.');
+            await emitU('KABOOM!!  You see a door explode.', mtmp);
         } else if (!Deaf_hero()) {
             await You_hear(`a ${mdistu(mtmp) > 7 * 7 ? 'distant' : 'nearby'} explosion.`);
         }
@@ -3524,14 +3559,14 @@ async function m_move_door(mtmp, ptr, can_open, can_unlock, can_tunnel) {
         if (verbose && canseemon_mm(mtmp)) {
             const PM_FOG_CLOUD = 106, S_LIGHT = 25;  // this port's mons[] indices
             const flows = monsndx_of(ptr) === PM_FOG_CLOUD || ptr?.mcls === S_LIGHT;
-            await emitU(`${YMonnam(mtmp)} ${flows ? 'flows' : 'oozes'} under the door.`);
+            await emitU(`${YMonnam(mtmp)} ${flows ? 'flows' : 'oozes'} under the door.`, mtmp);
         }
     } else if ((here.doormask & D_LOCKED) !== 0 && can_unlock) {
         UnblockDoor(!btrapped ? D_ISOPEN : D_NODOOR);
         if (btrapped) {
             if (await mb_trapped(mtmp, canseeit)) return true;
         } else if (verbose) {
-            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} unlocks and opens a door.`);
+            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} unlocks and opens a door.`, mtmp);
             else if (canseeit) await You_see('a door unlock and open.');
             else if (!Deaf) await You_hear('a door unlock and open.');
         }
@@ -3540,7 +3575,7 @@ async function m_move_door(mtmp, ptr, can_open, can_unlock, can_tunnel) {
         if (btrapped) {
             if (await mb_trapped(mtmp, canseeit)) return true;
         } else if (verbose) {
-            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} opens a door.`);
+            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} opens a door.`, mtmp);
             else if (canseeit) await You_see('a door open.');
             else if (!Deaf) await You_hear('a door open.');
         }
@@ -3552,7 +3587,7 @@ async function m_move_door(mtmp, ptr, can_open, can_unlock, can_tunnel) {
         if (btrapped) {
             if (await mb_trapped(mtmp, canseeit)) return true;
         } else if (verbose) {
-            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} smashes down a door.`);
+            if (canseeit && canspotmon(mtmp)) await emitU(`${Monnam(mtmp)} smashes down a door.`, mtmp);
             else if (canseeit) await You_see('a door crash open.');
             else if (!Deaf) await You_hear('a door crash open.');
         }
@@ -3574,7 +3609,7 @@ async function m_move_bars(mtmp, ptr) {
         && (dmgtype(ptr, AD_RUST) || dmgtype(ptr, AD_CORR)
             || metallivorous(ptr))) {
         if (canseemon_mm(mtmp))
-            await emitU(`${Monnam(mtmp)} eats through the iron bars.`);
+            await emitU(`${Monnam(mtmp)} eats through the iron bars.`, mtmp);
         await dissolve_bars(mtmp.mx, mtmp.my);
         return true;
     }
@@ -4186,6 +4221,8 @@ export async function m_move(mtmp) {
         // record track history (most-recent first, length MTSZ)
         mtmp.mtrack = [{ x: omx, y: omy }, ...mtrack].slice(0, MTSZ);
         mtmp.mx = nix; mtmp.my = niy;
+        // C ref: monmove.c:2053 — msg_mon_movement() right after place_monster().
+        await msg_mon_movement(mtmp, omx, omy);
         // C ref: monmove.c:2057 — a long worm inserts a segment on the square
         // its head just left (and grows or drops its tail end).
         if (mtmp.wormno)
@@ -4692,6 +4729,7 @@ export async function dochug(mtmp) {
             } else {
                 mtmp.minvis = 0;
                 mtmp.perminvis = 0;
+                if (canseemon_mm(mtmp)) set_msg_mon(mtmp); // monmove.c:817
                 await pline(`${Amonnam_mm(mtmp)} gets angry!`);
                 mtmp.mpeaceful = 0;
                 (await import('./makemon.js')).set_malign(mtmp);
@@ -5408,7 +5446,7 @@ function objPileAt(mx, my) {
 // the five indestructible items return early without rolling, so every other
 // meal burns an rn2(100) here and then dies anyway (`chance < 0` never holds).
 // Skipping it dropped one draw per devoured object from the stream.
-function delobj_local(otmp) {
+async function delobj_local(otmp) {
     if (obj_resists(otmp, 0, 0)) {
         otmp.in_use = 0;
         return;
@@ -5420,8 +5458,14 @@ function delobj_local(otmp) {
         if (ix >= 0) { arr.splice(ix, 1); update_map = true; }
     }
     otmp.where = OBJ_FREE;
-    // C ref: invent.c:1458 — a floor object's square is redrawn once it's gone.
-    if (update_map) newsym(otmp.ox, otmp.oy);
+    // C ref: invent.c:1456-1459 delobj_core() — a floor object's square is
+    // redrawn once it's gone, and a hides-under monster that was hiding beneath
+    // the last object there (a pet that moved onto food and ate it) is forced
+    // out of hiding first.
+    if (update_map) {
+        await maybe_unhide_at(otmp.ox, otmp.oy);
+        newsym(otmp.ox, otmp.oy);
+    }
 }
 // obj_extract_self(otmp) + mpickobj: the object leaves the floor and joins
 // mtmp's minvent (engulfed by a gelatinous cube), matching mpickstuff's own
@@ -5455,7 +5499,7 @@ export async function m_consume_obj(mtmp, otmp) {
     if (otmp === game.uball) {
         const { unpunish } = await import('./read.js');
         unpunish();
-        delobj_local(otmp);
+        await delobj_local(otmp);
     } else if (otmp === game.uchain) {
         const { unpunish } = await import('./read.js');
         unpunish(); /* frees uchain */
@@ -5478,7 +5522,7 @@ export async function m_consume_obj(mtmp, otmp) {
         const heal = ofood && fcn === _name_to_pmidx_cf('nurse');
         const eyes = otyp === CARROT_OTYP;
         const mstone = mstoning_obj(otmp);
-        delobj_local(otmp); /* munch */
+        await delobj_local(otmp); /* munch */
         if (poly || slimer) {
             const ptr = slimer ? monster_by_pmidx(_name_to_pmidx_cf('green slime')) : null;
             await mv_newcham(mtmp, ptr, vis ? NC_SHOW_MSG : 0);
@@ -5540,6 +5584,7 @@ async function meatmetal(mtmp) {
             if (isRustMon && otmp.oerodeproof) {
                 if (vis && verbose) {
                     const { floor_object_name } = await import('./invent.js');
+                    set_msg_mon(mtmp);
                     await pline(`${Monnam(mtmp)} eats ${floor_object_name(otmp)}!`);
                 }
                 otmp.oerodeproof = 0;
@@ -5552,6 +5597,7 @@ async function meatmetal(mtmp) {
                 if (cansee(mtmp.mx, mtmp.my)) {
                     if (verbose) {
                         const { floor_object_name } = await import('./invent.js');
+                        set_msg_mon(mtmp);
                         await pline(`${Monnam(mtmp)} eats ${floor_object_name(otmp)}!`);
                     }
                 } else if (verbose) {
@@ -5617,8 +5663,10 @@ async function meatobj(mtmp) {
                 // !verbose (its dknown side effect), and a far scroll reads
                 // "a scroll", not "a scroll labeled ...".
                 const otmpname = distant_name_pub(otmp, obj_doname);
-                if (verbose)
+                if (verbose) {
+                    set_msg_mon(mtmp);
                     await pline(`${Monnam(mtmp)} eats ${otmpname}!`);
+                }
                 /* give this one even if !verbose */
                 if (otmp.oclass === SCROLL_CLASS && objdescr_is(otmp, 'YUM YUM'))
                     await pline(`Yum${otmp.blessed ? '!' : '.'}`);
@@ -5687,6 +5735,7 @@ async function meatcorpse(mtmp) {
         if (cansee(x, y) && canseemon_mm(mtmp)) {
             if (verbose) {
                 const { distant_doname, distant_far } = await import('./invent.js');
+                set_msg_mon(mtmp);
                 await pline(`${Monnam(mtmp)} eats `
                     + `${distant_doname(meal, distant_far(meal, x, y))}!`);
             }
@@ -5873,7 +5922,7 @@ async function mpickstuff(mtmp) {
             if (cansee(mtmp.mx, mtmp.my) && game.flags?.verbose) {
                 const { distant_doname, distant_far } = await import('./invent.js');
                 const _far = distant_far(otmp, mtmp.mx, mtmp.my);
-                await update_topl(`${Monnam(mtmp)} picks up ${distant_doname(otmp, _far)}.`);
+                await pline_mon(mtmp, `${Monnam(mtmp)} picks up ${distant_doname(otmp, _far)}.`);
             }
             // C ref: mon.c:1901 obj_extract_self(otmp3) -> remove_object(), which
             // also re-checks boulder vision: a giant lifting a boulder stops it
@@ -6985,7 +7034,7 @@ export async function mon_wield_item(mon) {
                     await update_topl(`Since ${s_suffix(mon_nam(mon))} weapon${(mw_tmp.quan ?? 1) !== 1 ? 's' : ''} ${welded_buf},`);
                     await update_topl(`${mon_nam(mon)} cannot wield that ${xname(obj)}.`);
                 } else {
-                    await update_topl(`${Monnam(mon)} tries to wield ${obj_doname(obj)}.`);
+                    await pline_mon(mon, `${Monnam(mon)} tries to wield ${obj_doname(obj)}.`);
                     await update_topl(`${Yname2(mw_tmp)} ${welded_buf}!`);   // weapon.c:878
                 }
                 mw_tmp.bknown = 1;
@@ -7002,11 +7051,11 @@ export async function mon_wield_item(mon) {
             // multi-object stack like a demon's carried daggers reads "5
             // daggers", not "a dagger"), so use the real invent.js naming
             // rather than the single-item mshot_xname/an_name pair.
-            await update_topl(`${Monnam(mon)} wields ${obj_doname(obj)}${exclaim ? '!' : '.'}`);
+            await pline_mon(mon, `${Monnam(mon)} wields ${obj_doname(obj)}${exclaim ? '!' : '.'}`);
             // C ref: weapon.c:895-897 — a tethered throw-and-return weapon.
             const arw = autoreturn_weapon(obj);
             if (arw && arw.tethered)
-                await update_topl(`${Monnam(mon)} secures the tether on the ${xname(obj)}.`);
+                await pline_mon(mon, `${Monnam(mon)} secures the tether on ${(await import('./objnam.js')).the(xname(obj))}.`);
             // C ref: weapon.c:906 — a cursed weapon welds itself on wielding.
             if (obj.cursed) {
                 let mon_hand = mbodypart(mon, HAND);
@@ -7367,7 +7416,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
                 const { miss } = await import('./zap.js');
                 await miss(mshot_xname(otmp), mtmp);
             } else if (verbose && !game.mtarget) {
-                await pline_mon(mtmp, 'It is missed.');
+                await update_topl('It is missed.');
             }
         }
         if (!range) {              // last square: the missile drops on the spot
@@ -7403,9 +7452,9 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         const who = (game.flags?.verbose !== false) ? mon_nam(mtmp) : 'it';
         const how = harmless
             ? ` but passes harmlessly through ${mhim(mtmp)}.` : exclam(damage);
-        await pline_mon(mtmp, `${The_mm(onm)} ${vtense_mm(onm, 'hit')} ${who}${how}`);
+        await update_topl(`${The_mm(onm)} ${vtense_mm(onm, 'hit')} ${who}${how}`);
     } else if (verbose && !game.mtarget) {
-        await pline_mon(mtmp, `${Monnam_spot(mtmp)} is hit${exclam(damage)}`);
+        await update_topl(`${Monnam_spot(mtmp)} is hit${exclam(damage)}`);
     }
     // C ref: mthrowu.c:427-442 — a POISONED missile (a dart a dart-trap poisoned,
     // which a monster can then pick up and throw) rolls rn2(30): usually +rnd(6)
@@ -7413,11 +7462,11 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     if (otmp.opoisoned && is_poisonable_mm(otmp)) {
         if (resists_poison_mon(mtmp)) {
             if (vis)
-                await pline_mon(mtmp, `The poison doesn't seem to affect ${mon_nam(mtmp)}.`);
+                await update_topl(`The poison doesn't seem to affect ${mon_nam(mtmp)}.`);
         } else if (rn2(30)) {
             damage += rnd(6);
         } else {
-            if (vis) await pline_mon(mtmp, 'The poison was deadly...');
+            if (vis) await update_topl('The poison was deadly...');
             damage = mtmp.mhp;
         }
     }
@@ -7427,9 +7476,9 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         const flesh = !noncorporeal(mtmp.data) && !amorphous(mtmp.data);
         if (vis) {
             const nm = flesh ? `${s_suffix(mon_nam(mtmp))} flesh` : mon_nam(mtmp);
-            await pline_mon(mtmp, `The silver sears ${nm}!`);
+            await update_topl(`The silver sears ${nm}!`);
         } else if (verbose && !game.mtarget) {
-            await pline_mon(mtmp, `${flesh ? 'Its flesh' : 'It'} is seared!`);
+            await update_topl(`${flesh ? 'Its flesh' : 'It'} is seared!`);
         }
     }
     // C ref: mthrowu.c:432-441 — an acid venom that connects burns a spotted target
@@ -7437,11 +7486,11 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     if (otmp.otyp === ACID_VENOM && cansee(mtmp.mx, mtmp.my)) {
         if (resists_acid(mtmp)) {
             if (vis || (verbose && !game.mtarget))
-                await pline_mon(mtmp, `${Monnam_spot(mtmp)} is unaffected.`);
+                await update_topl(`${Monnam_spot(mtmp)} is unaffected.`);
         } else if (vis) {
-            await pline_mon(mtmp, `The ${hliquid('acid')} burns ${mon_nam(mtmp)}!`);
+            await update_topl(`The ${hliquid('acid')} burns ${mon_nam(mtmp)}!`);
         } else if (verbose && !game.mtarget) {
-            await pline_mon(mtmp, 'It is burned!');
+            await update_topl('It is burned!');
         }
     }
     // C ref: mthrowu.c:444-449 — a thrown cockatrice/chickatrice egg petrifies
@@ -7461,7 +7510,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
             // (m_detach() -> mon_leaving_level() already newsym()'d the square;
             // C's ohitmon() calls no newsym of its own.)
             if (vis || (verbose && !game.mtarget))
-                await pline_mon(mtmp, `${Monnam_spot(mtmp)} is `
+                await update_topl(`${Monnam_spot(mtmp)} is `
                     + `${(nonliving_mm(mtmp) || is_vampshifter(mtmp)
                           || !canspotmon(mtmp)) ? 'destroyed' : 'killed'}!`);
             // svc.context.mon_moving is set for a monster's throw, so C takes the
@@ -7479,7 +7528,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         if (vis && mtmp.mcansee) {
             const what = (otmp.oclass === VENOM_CLASS) ? 'the venom'
                 : (otmp.otyp === CREAM_PIE_OTYP) ? 'the pie' : `the ${mshot_basename(otmp)}`;
-            await pline_mon(mtmp, `${Monnam(mtmp)} is blinded by ${what}.`);
+            await update_topl(`${Monnam(mtmp)} is blinded by ${what}.`);
         }
         mtmp.mcansee = 0;
         mtmp.mblinded = Math.min((mtmp.mblinded || 0) + rnd(25) + 20, 127);
@@ -8525,6 +8574,7 @@ async function thrwmu(mtmp, mdat) {
         // The verb was hardcoded to "throws", so a gnome loosing an arrow from a
         // wielded bow read "The gnome throws an arrow!" instead of "shoots".
         const verb = ammo_and_launcher(otmp, MON_WEP(mtmp)) ? 'shoots' : 'throws';
+        (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my); // mthrowu.c:290
         await update_topl(`${Monnam(mtmp)} ${verb} ${onm}!`);
         // C ref: mthrowu.c:288,294 — m_shot.s / m_shot.o only for a seen thrower.
         game.m_shot = { o: otmp.otyp, n: 0, i: 0, s: verb === 'shoots' };
@@ -8621,6 +8671,9 @@ async function hitmu(mtmp, mdat, mattk) {
     if ((is_undead(mdat) || is_vampshifter(mtmp)) && midnight())
         mhm.damage += d(mattk.damn | 0, mattk.damd | 0); /* extra dmg */
     await mhitm_adtyping(mtmp, mattk, mhm);
+    if (game.program_state?.gameover) {
+        return mhm.hitflags; /* C: a fatal poisoned()/losehp()'s done() never returns */
+    }
 
     // mhitu.c:1193 — knockback (AD_PHYS claw/kick/butt/weap only; the rn2(3) and
     // rn2(chance=6) gate rolls always fire first).
@@ -9596,20 +9649,13 @@ export async function msg_mon_movement(mtmp, omx, omy) {
         const close = !n2u && (mv_distu(nix, niy) <= (BOLT_LIM * BOLT_LIM));
         const closer = !n2u && (mv_distu(nix, niy) <= mv_distu(omx, omy));
 
-        await pline_xy_mv(nix, niy, `${Monnam(mtmp)} `
+        await emitU(`${Monnam(mtmp)} `
             + `${vtense_mm(null, locomotion(mtmp.data, 'move'))}`
             + `${n2u ? ' next to you'
                 : (close && closer) ? ' closer'
                 : (close && !closer) ? ' further away'
-                : ' in the distance'}.`);
+                : ' in the distance'}.`, mtmp);
     }
-}
-
-// C ref: pline.c pline_xy(x, y, ...) — js/pline.js:286 exports it; reached
-// lazily so pline.js stays out of this file's static graph.
-async function pline_xy_mv(x, y, msg) {
-    const { pline_xy } = await import('./pline.js');
-    await pline_xy(x, y, msg);
 }
 
 // C ref: monmove.c:394 bee_eat_jelly(mon, obj) — "killer bee 'mon' is on a spot
@@ -9628,7 +9674,7 @@ export async function bee_eat_jelly(mon, obj) {
         m_delay = obj.blessed ? 3 : !obj.cursed ? 5 : 7;
         if ((obj.quan | 0) > 1) obj = splitobj(obj, 1);
         if (canseemon_mm(mon))
-            await emitU(`${Monnam(mon)} eats ${mv_an(mv_xname(obj))}.`);
+            await emitU(`${Monnam(mon)} eats ${mv_an(mv_xname(obj))}.`, mon);
         mv_delobj(obj);
 
         const qb = monster_by_pmidx(MV_PM_QUEEN_BEE);
@@ -9706,7 +9752,7 @@ export function m_arrival(mon) {
 //     || !rn2(10)`, and rnd(15) for each one that is hit.
 export async function mind_blast(mtmp) {
     if (canseemon_mm(mtmp))
-        await emitU(`${Monnam(mtmp)} concentrates.`);
+        await emitU(`${Monnam(mtmp)} concentrates.`, mtmp);
     if (mdistu(mtmp) > BOLT_LIM * BOLT_LIM) {
         await emitU('You sense a faint wave of psychic energy.');
         return;
@@ -9799,7 +9845,7 @@ function mv_wakeup(mtmp, via_attack) {
 export async function itsstuck(mtmp) {
     if (mv_sticks(game.youmonst?.data) && mtmp === game.u?.ustuck
         && !game.u?.uswallow) {
-        await emitU(`${Monnam(mtmp)} cannot escape from you!`);
+        await emitU(`${Monnam(mtmp)} cannot escape from you!`, mtmp);
         return true;
     }
     return false;

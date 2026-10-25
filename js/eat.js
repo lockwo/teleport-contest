@@ -790,7 +790,12 @@ export async function newuhs(incr) {
             }
         }
         // C eat.c:3480,3499: hunger also ends running, even without an occupation.
-        if (newhs === HUNGRY || newhs === WEAK) hooks.end_running(true);
+        // The deferred flush (allmain.js) shows the message first, so a --More-- it raises still
+        // sees the status line as it was; end_running() (disp.time_botl) follows the message.
+        if (newhs === HUNGRY || newhs === WEAK) {
+            if (deferred) game._hunger_msgs.push({ end_running: true });
+            else hooks.end_running(true);
+        }
         // C: the status line only catches up (botl) after the messages above
         // have been shown, so a --More-- raised by them still shows the old
         // hunger word; moveloop applies the deferred value after its flush.
@@ -858,7 +863,7 @@ export async function paranoid_ynq(be_paranoid, prompt, accept_q) {
         // `cw->flags &= ~(WIN_STOP | WIN_NOSTOP)`.  So the pending warning is
         // paged with --More-- UNLESS the previous --More-- was dismissed with
         // ESC (WIN_STOP), in which case the query simply replaces it.
-        game._yn_need_more = (game._toplin === 1) && !game._winStop;
+        game._yn_need_more = (game._toplin === 1 || game._yn_need_more) && !game._winStop;
         game._winStop = false;
         c = await y_n(prompt, accept_q ? 'ynq\x1b' : 'yn\x1b', 'n');
     }

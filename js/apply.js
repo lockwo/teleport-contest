@@ -1761,21 +1761,27 @@ export async function use_pole(obj, autohit) {
         cc.x = picked.x; cc.y = picked.y;
     }
 
+    // C ref: apply.c use_pole() returns ECMD_FAIL for each of these refusals: no turn, like ECMD_OK, but
+    // rhack() runs reset_cmd_vars(TRUE) and clears CQ_REPEAT (a following ^A has nothing to repeat).
     const d = distu_sq(cc.x, cc.y);
     if (d > max_range) {
         await _display.update_topl('Too far!');
+        game.context._getobj_cancelled = true;
         return ECMD_OK;
     } else if (d < min_range) {
         if (autohit && cc.x === u.ux && cc.y === u.uy)
             await _display.update_topl("Don't know what to hit.");
         else
             await _display.update_topl('Too close!');
+        game.context._getobj_cancelled = true;
         return ECMD_OK;
     } else if (!_vision.cansee(cc.x, cc.y) && !poleable_at(cc.x, cc.y)) {
         await _display.update_topl("You won't hit anything if you can't see that spot.");
+        game.context._getobj_cancelled = true;
         return ECMD_OK;
     } else if (!_vision.couldsee(cc.x, cc.y)) {
         await _display.update_topl("You can't reach that spot from here.");
+        game.context._getobj_cancelled = true;
         return ECMD_OK;
     }
 
@@ -1797,6 +1803,7 @@ export async function use_pole(obj, autohit) {
 
         if (snickersnee_used_dist_attk(obj)) {
             await _display.pline("The blade doesn't reach there!");
+            game.context._getobj_cancelled = true; /* ECMD_FAIL */
             return ECMD_OK;
         }
 
@@ -2749,10 +2756,11 @@ export async function o_unleash(otmp) {
 export async function m_unleash(mtmp, feedback) {
     const A = await ap_load();
     if (feedback) {
-        if (A.uhitm.canspotmon(mtmp) && cansee_mon_ap(mtmp))
+        if (A.uhitm.canspotmon(mtmp) && cansee_mon_ap(mtmp)) {
+            A.display.set_msg_mon(mtmp);
             await A.display.pline(`${A.do_name.Monnam(mtmp)} pulls free of ${
                 A.do_name.mhis(mtmp)} leash!`);
-        else
+        } else
             await A.display.pline('Your leash falls slack.');
     }
     const otmp = get_mleash(mtmp);
@@ -2977,6 +2985,7 @@ export async function check_leash(x, y) {
                     if (!ap_DEADMONSTER(mtmp) && u.uconduct)
                         u.uconduct.killer = save_pacifism;
                 } else {
+                    A.display.set_msg_mon(mtmp);
                     await A.display.pline(`${A.do_name.Monnam(mtmp)} is choked by the leash!`);
                     /* tameness eventually drops to 1 here (never 0) */
                     if (mtmp.mtame && rn2(mtmp.mtame))
@@ -3172,7 +3181,7 @@ export async function use_mirror(obj) {
         } else {
             await A.display.pline(`It steals your ${mirror}!`);
         }
-        setnotworn_ap(obj); /* in case mirror was wielded */
+        A.invent.setnotworn(obj); /* in case mirror was wielded */
         A.invent.freeinv(obj);
         A.makemon.mpickobj(mtmp, obj);
         if (!await A.teleport.tele_restrict(mtmp))
@@ -3217,7 +3226,6 @@ function ap_paralyze_monst(mon, amt) {
     mon.mfrozen = amt;
 }
 // C ref: invent.c setnotworn(obj) — js/invent.js's copy is private.
-function setnotworn_ap(obj) { if (obj) obj.owornmask = 0; }
 
 // C ref: include/timeout.h TIMER_OBJECT / FIG_TRANSFORM, include/trap.h
 // TT_BURIEDBALL (verified against js/const.js's own values).
@@ -4498,7 +4506,7 @@ export async function use_royal_jelly(optr) {
     }
 
     /* useup_jelly: not useup() because we've already done freeinv() */
-    setnotworn_ap(obj);
+    A.invent.setnotworn(obj);
     A.invent.obfree(obj, null);
     optr.obj = null;
     return ECMD_TIME;

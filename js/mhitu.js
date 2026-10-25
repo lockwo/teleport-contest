@@ -592,7 +592,7 @@ export async function expels(mtmp, mdat, message) {
             await emitU('You get regurgitated!');
         } else if (enfolds(mdat)) {
             const { Monnam } = await import('./uhitm.js');
-            await emitU(`${Monnam(mtmp)} unfolds and you are released!`);
+            await emitU(`${Monnam(mtmp)} unfolds and you are released!`, mtmp);
         } else {
             const { mon_nam } = await import('./uhitm.js');
             const attk = (mattk_list(mtmp) || []).find(
@@ -1095,7 +1095,7 @@ export async function gazemu(mtmp, mattk) {
                 break;
             }
             if (useeit)
-                await emitU(`${Monnam(mtmp)} is turned to stone!`);
+                await emitU(`${Monnam(mtmp)} is turned to stone!`, mtmp);
             game.stoned = true;
             const { killed } = await import('./uhitm.js');
             await killed(mtmp);
@@ -1131,9 +1131,10 @@ export async function gazemu(mtmp, mattk) {
             } else {
                 const conf = d(3, 4);
                 mtmp.mspec_used = (mtmp.mspec_used | 0) + (conf + rn2(6));
-                await emitU(!Confusion()
-                    ? `${s_suffix(Monnam(mtmp))} gaze confuses you!`
-                    : 'You are getting more and more confused.');
+                if (!Confusion())
+                    await emitU(`${s_suffix(Monnam(mtmp))} gaze confuses you!`, mtmp);
+                else
+                    await emitU('You are getting more and more confused.');
                 await make_confused_u(HConfusion() + conf);
                 await (await import('./hack.js')).stop_occupation();
             }
@@ -1147,7 +1148,7 @@ export async function gazemu(mtmp, mattk) {
             } else {
                 const stun = d(2, 6);
                 mtmp.mspec_used = (mtmp.mspec_used | 0) + (stun + rn2(6));
-                await emitU(`${Monnam(mtmp)} stares piercingly at you!`);
+                await emitU(`${Monnam(mtmp)} stares piercingly at you!`, mtmp);
                 await make_stunned_u(HStun() + stun, true);
                 await (await import('./hack.js')).stop_occupation();
             }
@@ -1183,7 +1184,7 @@ export async function gazemu(mtmp, mattk) {
             } else {
                 let dmg = d(2, 6);
                 const orig_dmg = dmg, lev = mtmp.m_lev | 0;
-                await emitU(`${Monnam(mtmp)} attacks you with a fiery gaze!`);
+                await emitU(`${Monnam(mtmp)} attacks you with a fiery gaze!`, mtmp);
                 await (await import('./hack.js')).stop_occupation();
                 if (Fire_resistance()) {
                     await emitU("The fire doesn't feel hot!");
@@ -1215,7 +1216,7 @@ export async function gazemu(mtmp, mattk) {
         if (Hallucination() && rn2(3)) react = rn2(GAZE_REACTIONS.length);
         const qual = !rn2(3) ? '' : already ? 'quite '
             : (!rn2(2) ? 'a bit ' : 'somewhat ');
-        await emitU(`${Monnam(mtmp)} looks ${qual}${GAZE_REACTIONS[react]}.`);
+        await emitU(`${Monnam(mtmp)} looks ${qual}${GAZE_REACTIONS[react]}.`, mtmp);
     }
     return M_ATTK_MISS;
 }
@@ -1355,11 +1356,11 @@ export async function doseduce(mon) {
     const { cloak_simple_name, suit_simple_name, helm_simple_name } = await import('./do_wear.js');
     if (mon.mcan || mon.mspec_used) {
         await emitU(`${Monnam(mon)} acts as though ${mhe(mon)} has got a ${
-            mon.mcan ? 'severe ' : ''}headache.`);
+            mon.mcan ? 'severe ' : ''}headache.`, mon);
         return 0;
     }
     if (unresponsive()) {
-        await emitU(`${Monnam(mon)} seems dismayed at your lack of response.`);
+        await emitU(`${Monnam(mon)} seems dismayed at your lack of response.`, mon);
         return 0;
     }
     const seewho = canseemon_shared(mon);
@@ -1470,7 +1471,7 @@ export async function doseduce(mon) {
         if (!Deaf())
             await emitU(`"You're such a ${game.flags?.female ? 'sweet lady' : 'nice guy'}; I wish..."`);
         else if (seewho)
-            await emitU(`${Monnam(mon)} appears to sigh.`);
+            await emitU(`${Monnam(mon)} appears to sigh.`, mon);
         if (!await tele_restrict(mon)) await rloc(mon, RLOC_MSG);
         return 1;
     }
@@ -1578,7 +1579,7 @@ export async function doseduce(mon) {
         await emitU(`${noit_Monnam(mon)} demands that you pay ${
             noit_mhim(mon)}, but you refuse...`);
     } else if (youmonst_data()?.name === 'leprechaun') {
-        await emitU(`${noit_Monnam(mon)} tries to take your gold, but fails...`);
+        await emitU(`${noit_Monnam(mon)} tries to take your gold, but fails...`, mon);
     } else {
         const { money_cnt_invent, money2mon } = await import('./shk.js');
         const { currency } = await import('./invent.js');
@@ -1589,7 +1590,7 @@ export async function doseduce(mon) {
         if (!cost) {
             await emitU(Deaf() ? 'No charge.' : '"It\'s on the house!"');
         } else {
-            await emitU(`${noit_Monnam(mon)} takes ${cost} ${currency(cost)} for services rendered!`);
+            await emitU(`${noit_Monnam(mon)} takes ${cost} ${currency(cost)} for services rendered!`, mon);
             await money2mon(mon, cost);
             game.botl = true;
         }
@@ -1619,7 +1620,7 @@ export async function assess_dmg(mtmp, tmp) {
     mtmp.mhp = (mtmp.mhp | 0) - tmp;
     if (mtmp.mhp <= 0) {
         const { Monnam, killed } = await import('./uhitm.js');
-        await emitU(`${Monnam(mtmp)} dies!`);
+        await emitU(`${Monnam(mtmp)} dies!`, mtmp);
         await killed(mtmp, { nomsg: true });
         if (!DEADMONSTER(mtmp)) return M_ATTK_HIT;
         return M_ATTK_AGR_DIED;
@@ -1713,9 +1714,9 @@ export async function passiveum(olduasmon, mtmp, mattk) {
     case AD_ACID:
         if (!rn2(2)) {
             await emitU(`${Monnam(mtmp)} is splashed by ${
-                !Upolyd() ? '' : 'your '}${hliquid('acid')}!`);
+                !Upolyd() ? '' : 'your '}${hliquid('acid')}!`, mtmp);
             if (mres(MR_ACID)) {
-                await emitU(`${Monnam(mtmp)} is not affected.`);
+                await emitU(`${Monnam(mtmp)} is not affected.`, mtmp);
                 tmp = 0;
             }
         } else {
@@ -1737,7 +1738,7 @@ export async function passiveum(olduasmon, mtmp, mattk) {
         if (!mres(MR_STONE)
             && (protector === 0
                 || (protector !== ~0 && (wornitems & protector) !== protector))) {
-            await emitU(`${Monnam(mtmp)} turns to stone!`);
+            await emitU(`${Monnam(mtmp)} turns to stone!`, mtmp);
             const { killed } = await import('./uhitm.js');
             game.stoned = true;
             await killed(mtmp, { nomsg: true });
@@ -1775,24 +1776,24 @@ export async function passiveum(olduasmon, mtmp, mattk) {
                     if (Blind()) {
                         await emitU('As a blind floating eye, you cannot defend yourself.');
                     } else {
-                        await emitU(`${Monnam(mtmp)} is frozen by your gaze!`);
+                        await emitU(`${Monnam(mtmp)} is frozen by your gaze!`, mtmp);
                         paralyze_monst(mtmp, tmp);
                         return M_ATTK_AGR_DONE;
                     }
                 }
             } else {
-                await emitU(`${Monnam(mtmp)} is frozen by you.`);
+                await emitU(`${Monnam(mtmp)} is frozen by you.`, mtmp);
                 paralyze_monst(mtmp, tmp);
                 return M_ATTK_AGR_DONE;
             }
             return M_ATTK_HIT;
         case AD_COLD:
             if (mres(MR_COLD_L)) {
-                await emitU(`${Monnam(mtmp)} is mildly chilly.`);
+                await emitU(`${Monnam(mtmp)} is mildly chilly.`, mtmp);
                 tmp = 0;
                 break;
             }
-            await emitU(`${Monnam(mtmp)} is suddenly very cold!`);
+            await emitU(`${Monnam(mtmp)} is suddenly very cold!`, mtmp);
             {
                 const u = game.u || {};
                 hold_botl_hp();     // C: this HP gain never sets disp.botl
@@ -1815,19 +1816,19 @@ export async function passiveum(olduasmon, mtmp, mattk) {
             break;
         case AD_FIRE:
             if (mres(MR_FIRE)) {
-                await emitU(`${Monnam(mtmp)} is mildly warm.`);
+                await emitU(`${Monnam(mtmp)} is mildly warm.`, mtmp);
                 tmp = 0;
                 break;
             }
-            await emitU(`${Monnam(mtmp)} is suddenly very hot!`);
+            await emitU(`${Monnam(mtmp)} is suddenly very hot!`, mtmp);
             break;
         case AD_ELEC:
             if (mres(MR_ELEC)) {
-                await emitU(`${Monnam(mtmp)} is slightly tingled.`);
+                await emitU(`${Monnam(mtmp)} is slightly tingled.`, mtmp);
                 tmp = 0;
                 break;
             }
-            await emitU(`${Monnam(mtmp)} is jolted with your electricity!`);
+            await emitU(`${Monnam(mtmp)} is jolted with your electricity!`, mtmp);
             break;
         default:
             tmp = 0;

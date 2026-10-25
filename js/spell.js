@@ -35,6 +35,7 @@ import { DEADMONSTER } from './mon.js';
 import { resists_elec, can_chant } from './mondata.js';
 import { has_innate } from './exper.js';
 import { invocation_pos } from './trap.js';
+import { create_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, nul_glyphinfo } from './windows.js';
 
 // C ref: objclass.h obj_material_types — is_metallic() = material in [IRON,MITHRIL].
 const MAT_IRON = 11, MAT_MITHRIL = 17;
@@ -109,11 +110,8 @@ function spellid(i) { return spl_book()[i]?.sp_id ?? NO_SPELL; }
 function spellev(i) { return spl_book()[i]?.sp_lev ?? 0; }
 function spellknow(i) { return spl_book()[i]?.sp_know ?? 0; }
 
-// Index-based accessors for the dovspell view menu (invent.js).
+// Index-based accessor for extcmd-handlers.js.
 export function spellid_at(i) { return spellid(i); }
-export function spellknow_at(i) { return spellknow(i); }
-export function percent_success_at(i) { return percent_success(i); }
-export function spellretention_at(i) { return spellretention(i); }
 
 // C ref: spell.c age_spells() — every move-loop pass decrements each known
 // spell's retention by one (decrnknow).  Consumes no RNG.
@@ -1240,77 +1238,20 @@ function spellet(i) {
 export { spellid, spellev, spellknow };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// The rest of spell.c.  INERT BY DESIGN: nothing above this line, and nothing
-// anywhere else in js/, calls any of it.  Each function is a translation of
-// its C counterpart so a wiring pass can land one call site at a time under
-// measurement.  Three notes for that pass:
-//
-//  * js/invent.js dovspell() (js/invent.js:2465) is a LIVE, REDUCED copy of
-//    dospellmenu()'s SPELLMENU_VIEW case: it renders the tty geometry inline
-//    and ignores gs.spl_orderindx and the [sort spells] submenu entirely.
-//    Wiring dospellmenu() must REPLACE that renderer, never add a second
-//    caller (the duplicate-shadow trap).
-//  * js/read.js forget() (js/read.js:625) already probes `spell.losespells`
-//    and calls it the moment it exists, so the scroll-of-amnesia path becomes
-//    live with this commit.  That is the one non-inert edge here, and it moves
-//    TOWARD C: C's forget() calls losespells() before the rnd() that sizes
-//    drain_weapon_skill().
-//  * learn() is NOT re-translated: js/spell.js learn_step() above IS the
-//    faithful learn() port (renamed because allmain.js drives it as the
-//    studying occupation rather than through a go.occupation function pointer).
+// The rest of spell.c: dovspell(), dospellmenu(), spellsortmenu(), the sort
+// helpers and the remaining spell.c entry points.  js/read.js forget() probes
+// `spell.losespells`, and learn() is NOT re-translated: js/spell.js
+// learn_step() above IS the faithful learn() port (renamed because allmain.js
+// drives it as the studying occupation rather than through a go.occupation
+// function pointer).
 // ═══════════════════════════════════════════════════════════════════════════
 
-// C ref: windows.c menu-window primitives. Keep the C item identifiers in the
-// builder, then use the same tty selection and dismissal path as other menus.
-const ATR_NONE = 0, ATR_INVERSE = 7; // C ref: include/color.h ATR_*
+// C ref: windows.c menu-window primitives (js/windows.js).
+const ATR_NONE = 0;                  // C ref: include/color.h ATR_*
 const NO_COLOR = 8;                  // C ref: include/color.h
 const PICK_NONE = 0, PICK_ONE = 1;   // C ref: include/wintype.h
+const NHW_MENU = 4, MENU_BEHAVE_STANDARD = 0;
 const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1;
-function create_nhwindow_menu() { return { items: [], prompt: '' }; }
-function start_menu(win) { win.items.length = 0; }
-function add_menu(win, a_int, ch, gch, attr, clr, str, itemflags) {
-    win.items.push({ a_int, ch, gch, attr, clr, str, itemflags });
-}
-function add_menu_heading(win, str) {
-    win.items.push({ a_int: 0, ch: 0, attr: ATR_INVERSE, clr: NO_COLOR,
-                     str, itemflags: MENU_ITEMFLAGS_NONE, heading: true });
-}
-function add_menu_str(win, str) {
-    win.items.push({ a_int: 0, ch: 0, attr: ATR_NONE, clr: NO_COLOR,
-                     str, itemflags: MENU_ITEMFLAGS_NONE, plain: true });
-}
-function end_menu(win, prompt) { win.prompt = prompt ?? ''; }
-async function select_menu(win, how) {
-    // C ref: windows.c select_menu() — bot() is disabled for the whole menu,
-    // including the docrt()+flush_screen(1) of its dismissal.
-    const old_bot_disabled = game.bot_disabled;
-    game.bot_disabled = true;
-    try { return await select_menu_inner(win, how); }
-    finally { game.bot_disabled = old_bot_disabled; }
-}
-async function select_menu_inner(win, how) {
-    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
-    const { ATR_INVERSE: inverse } = await import('./terminal.js');
-    const entries = [
-        ...(win.prompt ? [{ text: win.prompt, attr: inverse }, { text: '', attr: 0 }] : []),
-        ...win.items.map((it) => ({
-            text: it.str,
-            attr: it.attr === ATR_INVERSE ? inverse : 0,
-            item: it.a_int ? {
-                value: it.a_int,
-                sel: it.ch || undefined,
-                selected: !!(it.itemflags & MENU_ITEMFLAGS_SELECTED),
-                count: -1,
-            } : undefined,
-        })),
-    ];
-    const committed = await select_command_menu(entries, { how });
-    const selected = committed
-        ? entries.filter((e) => e.item?.selected).map((e) => ({ item: e.item.value, count: e.item.count }))
-        : [];
-    await dismiss_invent_screen();
-    return selected;
-}
 
 // ── C ref: display.c tmp_at() / display.h cmap_to_glyph() / zapdir_to_glyph()
 // and windows.c nh_delay_output().  The temporary-glyph animation layer has no
@@ -1619,20 +1560,20 @@ export function book_substitution(old_obj, new_obj) {
 export async function dowizcast() {
     let i, n;
 
-    const win = create_nhwindow_menu();
-    start_menu(win);
+    const win = create_nhwindow(NHW_MENU);
+    start_menu(win, MENU_BEHAVE_STANDARD);
 
     for (i = 0; i < MAXSPELL; i++) {
         n = (SPE_DIG + i);
         if (n >= SPE_BLANK_PAPER)
             break;
-        add_menu(win, n, 0, 0, ATR_NONE, NO_COLOR,
+        add_menu(win, nul_glyphinfo, { a_int: n }, 0, 0, ATR_NONE, NO_COLOR,
                  objects[n]?.name || '', MENU_ITEMFLAGS_NONE);
     }
     end_menu(win, 'Cast which spell?');
-    const selected = await select_menu(win, PICK_ONE);
-    if (selected.length > 0) {
-        i = selected[0].item;
+    const selected = [];
+    if (await select_menu(win, PICK_ONE, selected) > 0) {
+        i = selected[0].item.a_int;
         return await spelleffects(i, false, true);
     }
     return ECMD_OK;
@@ -2226,8 +2167,8 @@ export async function spellsortmenu() {
     let let_, i, n, choice;
     const clr = NO_COLOR;
 
-    const tmpwin = create_nhwindow_menu();
-    start_menu(tmpwin);
+    const tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
 
     for (i = 0; i < spl_sortchoices.length; i++) {
         if (i === SORTRETAINORDER) {
@@ -2237,19 +2178,19 @@ export async function spellsortmenu() {
         } else {
             let_ = String.fromCharCode(97 + i);
         }
-        add_menu(tmpwin, i + 1, let_, 0, ATR_NONE, clr, spl_sortchoices[i],
+        add_menu(tmpwin, nul_glyphinfo, { a_int: i + 1 }, let_, 0, ATR_NONE, clr, spl_sortchoices[i],
                  (i === spl_sortmode()) ? MENU_ITEMFLAGS_SELECTED
                                         : MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, 'View known spells list sorted');
 
-    const selected = await select_menu(tmpwin, PICK_ONE);
-    n = selected.length;
+    const selected = [];
+    n = await select_menu(tmpwin, PICK_ONE, selected);
     if (n > 0) {
-        choice = selected[0].item - 1;
+        choice = selected[0].item.a_int - 1;
         /* skip preselected entry if we have more than one item chosen */
         if (n > 1 && choice === spl_sortmode())
-            choice = selected[1].item - 1;
+            choice = selected[1].item.a_int - 1;
         game.spl_sortmode = choice;
         return true;
     }
@@ -2278,8 +2219,8 @@ export async function dospellmenu(prompt, splaction, spell_no) {
     const clr = NO_COLOR;
     const wizard = !!game.flags?.debug;
 
-    const tmpwin = create_nhwindow_menu();
-    start_menu(tmpwin);
+    const tmpwin = create_nhwindow(NHW_MENU);
+    start_menu(tmpwin, MENU_BEHAVE_STANDARD);
 
     /*
      * The correct spacing of the columns when not using tab separation
@@ -2321,7 +2262,7 @@ export async function dospellmenu(prompt, splaction, spell_no) {
                every other column uses the sort-order index splnum. */
             buf += `${sep}${sp_padl(spellknow(i), 6)}`;
 
-        add_menu(tmpwin, splnum + 1 /* must be non-zero */, spellet(splnum), 0,
+        add_menu(tmpwin, nul_glyphinfo, { a_int: splnum + 1 /* must be non-zero */ }, spellet(splnum), 0,
                  ATR_NONE, clr, buf,
                  (splnum === splaction) ? MENU_ITEMFLAGS_SELECTED
                                         : MENU_ITEMFLAGS_NONE);
@@ -2333,19 +2274,19 @@ export async function dospellmenu(prompt, splaction, spell_no) {
             how = PICK_NONE;
         } else {
             /* more than 1 spell, add an extra menu entry */
-            add_menu(tmpwin, SPELLMENU_SORT + 1, '+', 0, ATR_NONE, clr,
+            add_menu(tmpwin, nul_glyphinfo, { a_int: SPELLMENU_SORT + 1 }, '+', 0, ATR_NONE, clr,
                      '[sort spells]', MENU_ITEMFLAGS_NONE);
         }
     }
     end_menu(tmpwin, prompt);
 
-    const selected = await select_menu(tmpwin, how);
-    n = selected.length;
+    const selected = [];
+    n = await select_menu(tmpwin, how, selected);
     if (n > 0) {
-        spell_no.value = selected[0].item - 1;
+        spell_no.value = selected[0].item.a_int - 1;
         /* menu selection for `PICK_ONE' does not de-select a preselection */
         if (n > 1 && spell_no.value === splaction)
-            spell_no.value = selected[1].item - 1;
+            spell_no.value = selected[1].item.a_int - 1;
         /* default selection of the preselected spell means that the user
            chose not to swap it with anything */
         if (spell_no.value === splaction)
@@ -2358,6 +2299,36 @@ export async function dospellmenu(prompt, splaction, spell_no) {
         return true;
     }
     return false;
+}
+
+// C ref: spell.c:2021 dovspell() -- the '+' command: view the known spells,
+// sort them, or swap two casting letters.
+export async function dovspell() {
+    const splnum = { value: 0 }, othnum = { value: 0 };
+
+    if (spellid(0) === NO_SPELL) {
+        await pline("You don't know any spells right now.");
+    } else {
+        while (await dospellmenu('Currently known spells',
+                                 SPELLMENU_VIEW, splnum)) {
+            if (splnum.value === SPELLMENU_SORT) {
+                if (await spellsortmenu())
+                    sortspells();
+            } else {
+                const qbuf = `Reordering spells; swap '${spellet(splnum.value)}' with`;
+                if (!await dospellmenu(qbuf, splnum.value, othnum))
+                    break;
+
+                const book = spl_book();
+                const spl_tmp = book[splnum.value];
+                book[splnum.value] = book[othnum.value];
+                book[othnum.value] = spl_tmp;
+            }
+        }
+    }
+    delete game.spl_orderindx;
+    game.spl_sortmode = SORTBY_LETTER; /* 0 */
+    return 0; /* ECMD_OK */
 }
 
 // C ref: spell.c:2058 show_spells() — lists spells for endgame dumplog

@@ -27,7 +27,7 @@ import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Shock_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { shieldeff, Hallucination_u as Hallucination, You_feel, You_hear } from './display.js';
+import { set_msg_mon, shieldeff, Hallucination_u as Hallucination, You_feel, You_hear } from './display.js';
 import { Blind } from './vision.js';
 import { youmonst_data_pub, Free_action, worn_extrinsic } from './invent.js';
 import { enexto_gpflags, In_W_tower as In_W_tower_tp } from './teleport.js';
@@ -178,6 +178,7 @@ async function cursetxt(mtmp, undirected) {
             point_msg = 'and curses at your displaced image';
         else point_msg = 'at you, then curses';
         const { update_topl } = await import('./display.js');
+        set_msg_mon(mtmp);
         await update_topl(`${Monnam(mtmp)} points ${point_msg}.`);
     } else if (!((game.moves | 0) % 4) || !rn2(4)) {
         // Norep("You hear a mumbled curse.") — Deaf hero hears nothing, and
@@ -225,6 +226,7 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         const { update_topl } = await import('./display.js');
         const { Monnam } = await import('./uhitm.js');
         const { is_waterwall } = await import('./dbridge.js');
+        set_msg_mon(mtmp);
         await update_topl(`${canseemon_shared(mtmp) ? Monnam(mtmp) : 'Something'} casts a spell at ${
             is_waterwall(mtmp.mux, mtmp.muy) ? 'empty water' : 'thin air'}!`);
         return M_ATTK_MISS;
@@ -256,6 +258,7 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
                       && !(mtmp.mux === game.u?.ux && mtmp.muy === game.u?.uy))
                      ? ' at your displaced image'
                      : ' at you');
+            set_msg_mon(mtmp);
             await update_topl(`${who} casts a spell${at}!`);
         }
     }
@@ -499,6 +502,7 @@ export async function m_cure_self(mtmp, dmg) {
         if (canseemon_shared(mtmp)) {
             const { update_topl } = await import('./display.js');
             const { Monnam } = await import('./uhitm.js');
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} looks better.`);
         }
         const { healmon: heal } = await import('./mon.js');
@@ -669,6 +673,7 @@ export async function mcast_disappear(mtmp) {
         const { canseemon_shared } = await import('./display.js');
         if (canseemon_shared(mtmp)) {
             const { Monnam } = await import('./uhitm.js');
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} suddenly `
                 + `${!See_invisible() ? 'disappears' : 'becomes transparent'}!`);
         }
@@ -980,6 +985,7 @@ export async function buzzmu(mtmp, mattk) {
         const { canseemon_shared, update_topl } = await import('./display.js');
         if (canseemon_shared(mtmp)) {
             const { Monnam } = await import('./uhitm.js');
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} zaps you with a `
                 + `${(await import('./zap.js')).flash_str(BZ_OFS_AD(mattk.adtyp), false)}!`);
         }

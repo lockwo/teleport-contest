@@ -2,6 +2,7 @@
 // C ref: options.c — handles OPTIONS=, BIND=, etc.
 
 import { game } from './gstate.js';
+import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, putstr } from './windows.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR } from './terminal.js';
 import { ere_compile } from './pickup.js';
@@ -1455,6 +1456,15 @@ function nmcpy(src, maxlen) {
 // The boolean option names our engine reads under a different field than the C
 // option name.  Everything else lands on result.flags[<C option name>], which
 // is the stable key the number_pad / status-line / autopickup lanes read.
+// C ref: options.c optfn_boolean() from the 'O' menu: the same storage set_boolean()
+// uses for an rc line, applied straight onto game.flags / game.iflags.
+export function set_boolean_ingame(name, value) {
+    const result = { flags: {}, iflags: {} };
+    set_boolean(name, value, result);
+    game.flags = Object.assign(game.flags || {}, result.flags);
+    game.iflags = Object.assign(game.iflags || {}, result.iflags);
+}
+
 function set_boolean(name, value, result) {
     switch (name) {
     case 'autopickup': result.flags.pickup = value; break;      // C: flags.pickup
@@ -1571,6 +1581,8 @@ function optfn_boolean(o, negated, opts, op, result) {
     if (o.name === 'pauper') set_boolean('nudist', !negated, result);
     else if (o.name === 'ascii_map') result.iflags.wc_tiled_map = negated;
     else if (o.name === 'tiled_map') result.iflags.wc_ascii_map = negated;
+    else if (o.name === 'hilite_pet' && !negated && !result.iflags.wc2_petattr)
+        result.iflags.wc2_petattr = ATR_INVERSE; /* options.c opt_hilite_pet */
     else if (o.name === 'idlecheckpoint') {
         /* #ifndef IDLECHECKPOINT: pline() before window init is raw_print() */
         raw_print("There is no underlying support for 'idlecheckpoint' compiled in.");
@@ -2506,6 +2518,25 @@ function optfn_statuslines(o, negated, opts, op, result, error = config_error_ad
 // getlin response through the same optfn_statuslines() setter used by the
 // config parser.  Returns null when the prompt was ESCaped (the caller then
 // skips preference_update), else whether the value was accepted.
+// C ref: options.c doset()/doset_simple_menu() compound option without a
+// handler: `getlin("Set %s to what?")`, ESC skips, else
+// parseoptions("<name>:<answer>", FALSE, FALSE).  Complaints become plines.
+// Returns null when the prompt was ESCaped, else true.
+export async function handler_compound_getlin(name) {
+    let abuf = await getlin(`Set ${name} to what?`);
+    if (abuf[0] === '\x1b') return null;
+    const result = { flags: {}, iflags: {}, msgtypes: [], menucolors: [],
+                     status_hilites: [], conds: {}, apelist: [] };
+    const errors = [];
+    inGameErrors = errors;
+    try {
+        reset_duplicate_opt_detection();
+        parseoptions(`${name}:${abuf}`, false, result);
+    } finally { inGameErrors = null; }
+    for (const message of errors) await OPT_MENU_DRIVER.error(message);
+    return true;
+}
+
 export async function handler_statuslines() {
     const answer = await getlin('Set statuslines to what?');
     if (answer[0] === '\x1b') return null;
@@ -4848,14 +4879,10 @@ function panic(msg) {
 }
 
 // ---------------------------------------------------------------------------
-// A menu collector for the handler_*() ports below.
-//
-// C ref: the windowport menu API (create_nhwindow(), start_menu(), add_menu(),
-// end_menu(), select_menu(), destroy_nhwindow()).  js/ has no windowport
-// abstraction -- every ported menu drives frozen/terminal.js directly, see
-// js/doset.js -- so these build the exact item list C would have built and
-// hand it to OPT_MENU_DRIVER.  With no driver installed select_menu() reports
-// -1, "player hit ESC", which is the one answer that changes nothing.
+// The handler_*() ports below build their menus with the shared windows.js
+// window-port menu API (create_nhwindow(), start_menu(), add_menu(),
+// end_menu(), select_menu(), destroy_nhwindow()), which draws and reads them
+// through select_command_menu() like every other menu in the port.
 
 const NHW_MENU = 4, NHW_TEXT = 5;                 /* wintype.h */
 const PICK_NONE = 0, PICK_ONE = 1, PICK_ANY = 2;  /* wintype.h */
@@ -4863,39 +4890,9 @@ const MENU_BEHAVE_STANDARD = 0;                   /* wintype.h */
 const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1,
       MENU_ITEMFLAGS_SKIPINVERT = 0x2;
 
-// Install `select` (win, how) -> array of picked `any` values, or null/-1 for
-// ESC; `getlin` (prompt) -> string ('\033' for ESC) to drive these for real.
-export const OPT_MENU_DRIVER = { select: null, getlin: null, error: null };
-
-function create_nhwindow(type) {
-    return { type, items: [], query: '', lines: [] };
-}
-function destroy_nhwindow(_win) { }
-function start_menu(win, behave) { win.items.length = 0; win.behave = behave; }
-function add_menu(win, _glyphinfo, any, accel, gacc, attr, clr, str, itemflags) {
-    win.items.push({ any, accel, gacc, attr, clr, str, itemflags,
-                     selectable: any !== null && any !== undefined });
-}
-function add_menu_str(win, str) {
-    win.items.push({ any: null, str, selectable: false });
-}
-function add_menu_heading(win, str) {
-    win.items.push({ any: null, str, heading: true, selectable: false });
-}
-function end_menu(win, query) { win.query = query; }
-function putstr(win, _attr, str) { win.lines.push(str); }
-
-// Returns C's select_menu() count: >0 picked, 0 picked-nothing-but-confirmed,
-// -1 cancelled.  `picks` is the menu_item** out-param.
-async function select_menu(win, how, picks) {
-    if (!OPT_MENU_DRIVER.select) return -1;
-    const got = await OPT_MENU_DRIVER.select(win, how);
-    if (!got || got === -1) return -1;
-    for (const g of got) picks.push(g);
-    return picks.length;
-}
-
-export { create_nhwindow, destroy_nhwindow, start_menu, add_menu, end_menu, select_menu };
+// Install `getlin` (prompt) -> string ('\033' for ESC) and `error` (message) to
+// drive the handlers' text prompts and config-error lines for real.
+export const OPT_MENU_DRIVER = { getlin: null, error: null };
 
 // C ref: getlin() -- returns the typed line, or "\033" when ESC'd.
 async function getlin(prompt) {
@@ -5057,9 +5054,9 @@ export async function handler_menustyle() {
     end_menu(tmpwin, 'Select menustyle:');
     n = await select_menu(tmpwin, PICK_ONE, style_pick);
     if (n > 0) {
-        i = style_pick[0].a_int - 1;
+        i = style_pick[0].item.a_int - 1;
         /* if there are two picks, use the one that wasn't pre-selected */
-        if (n > 1 && i === old_menu_style) i = style_pick[1].a_int - 1;
+        if (n > 1 && i === old_menu_style) i = style_pick[1].item.a_int - 1;
         game.flags.menustyle = MENUTYPE[i][0][0];
     }
     destroy_nhwindow(tmpwin);
@@ -5109,9 +5106,9 @@ export async function handler_align_misc(optidx) {
     if (await select_menu(tmpwin, PICK_ONE, window_pick) > 0) {
         game.iflags = game.iflags || {};
         if (optidx === 'align_message')
-            game.iflags.wc_align_message = window_pick[0].a_int;
+            game.iflags.wc_align_message = window_pick[0].item.a_int;
         else
-            game.iflags.wc_align_status = window_pick[0].a_int;
+            game.iflags.wc_align_status = window_pick[0].item.a_int;
     }
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
@@ -5146,7 +5143,7 @@ export async function handler_autounlock(optidx, giveMessages) {
     if (n > 0) {
         let newflags = 0;
 
-        for (i = 0; i < n; ++i) newflags |= (1 << (window_pick[i].a_int - 1));
+        for (i = 0; i < n; ++i) newflags |= (1 << (window_pick[i].item.a_int - 1));
         game.flags.autounlock = newflags;
     } else if (n === 0) { /* nothing was picked but menu wasn't cancelled */
         /* something that was preselected got unselected, leaving nothing;
@@ -5203,7 +5200,7 @@ export async function handler_disclose() {
     pick_cnt = await select_menu(tmpwin, PICK_ANY, disclosure_pick);
     if (pick_cnt > 0) {
         for (pick_idx = 0; pick_idx < pick_cnt; ++pick_idx) {
-            opt_idx = disclosure_pick[pick_idx].a_int - 1;
+            opt_idx = disclosure_pick[pick_idx].item.a_int - 1;
             disc_cat[opt_idx] = 1;
         }
         disclosure_pick = [];
@@ -5259,9 +5256,9 @@ export async function handler_disclose() {
             disclosure_pick = [];
             n = await select_menu(tmpwin, PICK_ONE, disclosure_pick);
             if (n > 0) {
-                end_disclose[i] = disclosure_pick[0].a_char;
+                end_disclose[i] = disclosure_pick[0].item.a_char;
                 if (n > 1 && end_disclose[i] === c)
-                    end_disclose[i] = disclosure_pick[1].a_char;
+                    end_disclose[i] = disclosure_pick[1].item.a_char;
             }
             destroy_nhwindow(tmpwin);
         }
@@ -5294,6 +5291,7 @@ export async function handler_menu_objsyms() {
     const sep = (game.iflags && game.iflags.menu_tab_sep) ? '\t' : ' ';
     const clr = NO_COLOR;
     game.iflags = game.iflags || {};
+    const cur = game.iflags.menuobjsyms ?? 4;  /* default: conditional */
 
     tmpwin = create_nhwindow(NHW_MENU);
     start_menu(tmpwin, MENU_BEHAVE_STANDARD);
@@ -5303,15 +5301,15 @@ export async function handler_menu_objsyms() {
         j = i; /* objsymvals[i].num == i for every row */
         add_menu(tmpwin, null, { a_int: i + 1 },
                  String.fromCharCode(48 + i), buf[0], ATR_NONE, clr, buf,
-                 (j === game.iflags.menuobjsyms) ? MENU_ITEMFLAGS_SELECTED
+                 (j === cur) ? MENU_ITEMFLAGS_SELECTED
                                                  : MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, 'Set object symbols in menus to what?');
     n = await select_menu(tmpwin, PICK_ONE, picklist);
     if (n > 0) {
-        i = picklist[0].a_int - 1;
+        i = picklist[0].item.a_int - 1;
         /* if there are two picks, use the one that wasn't pre-selected */
-        if (n > 1 && i === game.iflags.menuobjsyms) i = picklist[1].a_int - 1;
+        if (n > 1 && i === cur) i = picklist[1].item.a_int - 1;
         set_menuobjsyms_flags(i, { iflags: game.iflags });
     }
     destroy_nhwindow(tmpwin);
@@ -5354,9 +5352,9 @@ export async function handler_msg_window() {
         end_menu(tmpwin, 'Select message history display type:');
         n = await select_menu(tmpwin, PICK_ONE, window_pick);
         if (n > 0) {
-            c = window_pick[0].a_char;
+            c = window_pick[0].item.a_char;
             /* if there are two picks, use the one that wasn't pre-selected */
-            if (n > 1 && c === old_prevmsg_window) c = window_pick[1].a_char;
+            if (n > 1 && c === old_prevmsg_window) c = window_pick[1].item.a_char;
             game.iflags.prevmsg_window = c;
         }
         destroy_nhwindow(tmpwin);
@@ -5414,7 +5412,7 @@ export async function handler_number_pad() {
         // this build per the comment at their definition, but calling them was
         // never enough without this write).
         const NUMPAD_MODE = [0, 1, 2, 3, 4, -1];
-        switch (mode_pick[0].a_int - 1) {
+        switch (mode_pick[0].item.a_int - 1) {
         case 0:
             game.iflags.num_pad = false;
             game.iflags.num_pad_mode = 0;
@@ -5441,7 +5439,7 @@ export async function handler_number_pad() {
             game.iflags.num_pad_mode = 1;
             break;
         }
-        game.flags.number_pad = NUMPAD_MODE[mode_pick[0].a_int - 1];
+        game.flags.number_pad = NUMPAD_MODE[mode_pick[0].item.a_int - 1];
         reset_commands(false);
         number_pad(game.iflags.num_pad ? 1 : 0);
     }
@@ -5469,7 +5467,7 @@ export async function handler_paranoid_confirmation() {
         explain = PARANOIA_EXPLAIN[i];
         add_menu(tmpwin, null, { a_int: PARANOIA[i][0] }, PARANOIA[i][1][0],
                  0, ATR_NONE, clr, explain,
-                 ((game.flags.paranoia_bits | 0) & PARANOIA[i][0])
+                 ((game.flags.paranoia_bits ?? 0x0c20) & PARANOIA[i][0])
                      ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
     }
     end_menu(tmpwin, 'Actions requiring extra confirmation:');
@@ -5482,7 +5480,7 @@ export async function handler_paranoid_confirmation() {
         if (i > 0) {
             /* at least 1 item set, either preselected or newly picked */
             while (--i >= 0)
-                game.flags.paranoia_bits |= paranoia_picks[i].a_int;
+                game.flags.paranoia_bits |= paranoia_picks[i].item.a_int;
         }
     }
     destroy_nhwindow(tmpwin);
@@ -5523,8 +5521,8 @@ export async function handler_perminv_mode() {
     n = await select_menu(tmpwin, PICK_ONE, pi_pick);
     destroy_nhwindow(tmpwin);
     if (n > 0) {
-        new_pi = pi_pick[0].a_int - 1;
-        if (n > 1 && new_pi === old_pi) new_pi = pi_pick[1].a_int - 1;
+        new_pi = pi_pick[0].item.a_int - 1;
+        if (n > 1 && new_pi === old_pi) new_pi = pi_pick[1].item.a_int - 1;
         game.iflags.perminv_mode = new_pi;
     }
     if (n >= 0) { /* not ESC */
@@ -5563,7 +5561,7 @@ export async function handler_pickup_burden() {
     }
     end_menu(tmpwin, 'Select encumbrance level:');
     if (await select_menu(tmpwin, PICK_ONE, burden_pick) > 0)
-        game.flags.pickup_burden = burden_pick[0].a_int - 1;
+        game.flags.pickup_burden = burden_pick[0].item.a_int - 1;
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
 }
@@ -5595,7 +5593,7 @@ export async function handler_runmode() {
     if (await select_menu(tmpwin, PICK_ONE, mode_pick) > 0)
         /* C stores the index; the port keeps flags.runmode as the name (see
            optfn_runmode() above), which js/hack.c's runmode tests read. */
-        game.flags.runmode = RUNMODES[mode_pick[0].a_int - 1];
+        game.flags.runmode = RUNMODES[mode_pick[0].item.a_int - 1];
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
 }
@@ -5635,9 +5633,9 @@ export async function handler_sortloot() {
     end_menu(tmpwin, 'Select loot sorting type:');
     n = await select_menu(tmpwin, PICK_ONE, sortl_pick);
     if (n > 0) {
-        let c = sortl_pick[0].a_char;
+        let c = sortl_pick[0].item.a_char;
 
-        if (n > 1 && c === game.flags.sortloot) c = sortl_pick[1].a_char;
+        if (n > 1 && c === game.flags.sortloot) c = sortl_pick[1].item.a_char;
         game.flags.sortloot = c;
         /* changing to or from 'f' affects persistent inventory display */
         if (game.iflags && game.iflags.perm_invent) update_inventory();
@@ -5652,7 +5650,7 @@ export async function handler_whatis_coord() {
     const window_pick = [];
     let pick_cnt;
     game.iflags = game.iflags || {};
-    const gpc = game.iflags.getpos_coords;
+    const gpc = game.iflags.getpos_coords ?? GPCOORDS_NONE;
     const clr = NO_COLOR;
     const verbose = !!(game.flags && game.flags.verbose);
 
@@ -5695,11 +5693,11 @@ export async function handler_whatis_coord() {
     end_menu(tmpwin,
         'Select coordinate display when auto-describing a map position:');
     if ((pick_cnt = await select_menu(tmpwin, PICK_ONE, window_pick)) > 0) {
-        game.iflags.getpos_coords = window_pick[0].a_char;
+        game.iflags.getpos_coords = window_pick[0].item.a_char;
         /* PICK_ONE doesn't unselect preselected entry when
            selecting another one */
         if (pick_cnt > 1 && game.iflags.getpos_coords === gpc)
-            game.iflags.getpos_coords = window_pick[1].a_char;
+            game.iflags.getpos_coords = window_pick[1].item.a_char;
     }
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
@@ -5732,11 +5730,11 @@ export async function handler_whatis_filter() {
     end_menu(tmpwin,
       'Select location filtering when going for next/previous map position:');
     if ((pick_cnt = await select_menu(tmpwin, PICK_ONE, window_pick)) > 0) {
-        game.iflags.getloc_filter = window_pick[0].a_char - 1;
+        game.iflags.getloc_filter = window_pick[0].item.a_char - 1;
         /* PICK_ONE doesn't unselect preselected entry when
            selecting another one */
         if (pick_cnt > 1 && game.iflags.getloc_filter === gfilt)
-            game.iflags.getloc_filter = window_pick[1].a_char - 1;
+            game.iflags.getloc_filter = window_pick[1].item.a_char - 1;
     }
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
@@ -5830,7 +5828,7 @@ export async function handler_autopickup_exception() {
                                          pick_list);
             if (pick_cnt > 0) {
                 for (pick_idx = 0; pick_idx < pick_cnt; ++pick_idx)
-                    remove_autopickup_exception(pick_list[pick_idx].a_void,
+                    remove_autopickup_exception(pick_list[pick_idx].item.a_void,
                                                 result);
             }
             destroy_nhwindow(tmpwin);
@@ -5915,7 +5913,7 @@ export async function handler_menu_colors() {
                                          pick_list);
             if (pick_cnt > 0) {
                 for (pick_idx = 0; pick_idx < pick_cnt; ++pick_idx)
-                    colorings.splice(pick_list[pick_idx].a_int - 1 - pick_idx,
+                    colorings.splice(pick_list[pick_idx].item.a_int - 1 - pick_idx,
                                      1);
             }
             destroy_nhwindow(tmpwin);
@@ -5932,6 +5930,7 @@ export async function handler_msgtype() {
     let opt_idx, nmt, mttyp;
     let mtbuf;
     const types = (game.msgtypes = game.msgtypes || []);
+    game.msgtype_type = msgtype_type; /* display.js consults it once the list exists */
 
     for (;;) {                                      /* msgtypes_again: */
         nmt = msgtype_count();
@@ -5978,7 +5977,7 @@ export async function handler_msgtype() {
                                          pick_list);
             if (pick_cnt > 0) {
                 for (pick_idx = 0; pick_idx < pick_cnt; ++pick_idx)
-                    free_one_msgtype(pick_list[pick_idx].a_int - 1 - pick_idx,
+                    free_one_msgtype(pick_list[pick_idx].item.a_int - 1 - pick_idx,
                                      { msgtypes: types });
             }
             destroy_nhwindow(tmpwin);
@@ -6021,7 +6020,7 @@ export async function handler_versinfo() {
     if (n > 0) {
         let i, newval = 0;
 
-        for (i = 0; i < n; ++i) newval |= vi_pick[i].a_int;
+        for (i = 0; i < n; ++i) newval |= vi_pick[i].item.a_int;
         newval &= 7;
         if (newval) game.flags.versinfo = newval;
     }
@@ -6057,7 +6056,7 @@ export async function handler_windowborders() {
     end_menu(tmpwin, 'Select window borders mode:');
     if (await select_menu(tmpwin, PICK_ONE, mode_pick) > 0) {
         game.iflags = game.iflags || {};
-        game.iflags.wc2_windowborders = mode_pick[0].a_int - 1;
+        game.iflags.wc2_windowborders = mode_pick[0].item.a_int - 1;
     }
     destroy_nhwindow(tmpwin);
     return OPTN_OK;
@@ -6078,7 +6077,7 @@ export async function query_msgtype() {
     end_menu(tmpwin, 'How to show the message');
     pick_cnt = await select_menu(tmpwin, PICK_ONE, picks);
     destroy_nhwindow(tmpwin);
-    if (pick_cnt > 0) return picks[0].a_int - 1;
+    if (pick_cnt > 0) return picks[0].item.a_int - 1;
     return -1;
 }
 
@@ -6122,8 +6121,8 @@ export async function handle_add_list_remove(optname, numtotal) {
     }
     end_menu(tmpwin, 'Do what?');
     if ((pick_cnt = await select_menu(tmpwin, PICK_ONE, pick_list)) > 0) {
-        opt_idx = pick_list[0].a_int - 1;
-        if (pick_cnt > 1 && opt_idx === 3) opt_idx = pick_list[1].a_int - 1;
+        opt_idx = pick_list[0].item.a_int - 1;
+        if (pick_cnt > 1 && opt_idx === 3) opt_idx = pick_list[1].item.a_int - 1;
     } else {
         opt_idx = 3; /* none selected, exit menu */
     }

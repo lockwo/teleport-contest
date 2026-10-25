@@ -1972,19 +1972,21 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         const { doname_invent } = await import('./invent.js');
         // gv.vis is latched by the caller and NOT recomputed after the rloc().
         const vis = ops.vis;
-        const couldspot = ops.canspotmon(magr);
-        const buf = ops.Monnam(magr);
         const mdefnam = ops.mon_nam(mdef);
-        // C ref: uhitm.c mhitm_ad_sedu — extract_from_minvent(mdef, obj, TRUE,
-        // FALSE) unwears/unwields it BEFORE doname(), so no "(weapon in hand)".
-        if (obj.owornmask) {
-            mdef.misc_worn_check = (mdef.misc_worn_check | 0) & ~obj.owornmask;
-            if (mdef.mw === obj) mdef.mw = null;
-            obj.owornmask = 0;
+        // C ref: uhitm.c mhitm_ad_sedu — a stolen saddle dismounts the hero
+        // first ("You can no longer ride <steed>."), then extract_from_minvent(
+        // mdef, obj, TRUE, FALSE) unwears/unwields it BEFORE doname(), so no
+        // "(weapon in hand)".
+        const { which_armor, extract_from_minvent } = await import('./worn.js');
+        const { W_SADDLE, DISMOUNT_POLY } = await import('./const.js');
+        if (game.u?.usteed === mdef && obj === which_armor(mdef, W_SADDLE)) {
+            const { dismount_steed } = await import('./steed.js');
+            await dismount_steed(DISMOUNT_POLY);
         }
+        await extract_from_minvent(mdef, obj, true, false);
         const onam = doname_invent(obj);
-        mdef.minvent.splice(mdef.minvent.indexOf(obj), 1);
         add_to_minv(magr, obj);
+        const buf = ops.Monnam(magr);
         if (vis && ops.canseemon(mdef))
             await ops.emit(`${buf} steals ${onam} from ${mdefnam}!`);
         { const { possibly_unwield } = await import('./weapon.js'); await possibly_unwield(mdef, false); }
@@ -1994,6 +1996,7 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
         if (ops.permonst(magr)?.mcls === S_NYMPH) {
             const { rloc, tele_restrict, RLOC_NOMSG } = await import('./teleport.js');
             if (!await tele_restrict(magr)) {
+                const couldspot = ops.canspotmon(magr);
                 mhm.hitflags = M_ATTK_AGR_DONE;
                 await rloc(magr, RLOC_NOMSG);
                 if (vis && couldspot && !ops.canspotmon(magr))

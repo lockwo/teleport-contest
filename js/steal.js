@@ -32,7 +32,7 @@ import { add_to_minv } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
-    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual,
+    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual, setnotworn,
 } from './invent.js';
 
 import { armor_simple_name, doffing, stop_donning } from './do_wear.js';
@@ -362,7 +362,6 @@ function money_cnt_st(list) {
 }
 // C ref: worn.c setnotworn(obj) — js/invent.js:829 (private).  Clears the worn
 // mask; the slot-pointer half needs invent.js's uarm/uwep bookkeeping.
-function setnotworn_st(obj) { if (obj) obj.owornmask = 0; }
 // C ref: hack.h distu(x, y) == dist2(x, y, u.ux, u.uy).
 function distu_st(x, y) { return dist2(x, y, game.u.ux, game.u.uy); }
 // C ref: you.h Levitation / Flying.
@@ -435,7 +434,7 @@ export async function stealgold(mtmp) {
         if (tmp < (ygold.quan | 0))
             ygold = splitobj(ygold, tmp);
         else
-            setnotworn_st(ygold);
+            setnotworn(ygold);
         freeinv(ygold);
         add_to_minv(mtmp, ygold);
         await update_topl('Your purse feels lighter.');

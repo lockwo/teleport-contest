@@ -35,7 +35,7 @@ import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object, weight, nextoid, add_to_container } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
-import { set_mon_data, slimeproof } from './mondata.js';
+import { set_mon_data, slimeproof, monstseesu, monstunseesu } from './mondata.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
 import { mondied_mm, monkilled_mm, mondead_mm as mondead } from './mhitm.js';
@@ -54,7 +54,7 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 // --More-- for the UNACKNOWLEDGED previous one first (or appends to it when both
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
-import { update_topl, Norep, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at, You_feel } from './display.js';
+import { update_topl, set_msg_mon, Norep, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at, You_feel } from './display.js';
 import { Monnam, mon_nam, monflee, x_monnam, seemimicLocal } from './uhitm.js';
 import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT } from './do_name.js';
 import { same_race, dog_nutrition, monnear } from './dogmove.js';
@@ -542,6 +542,7 @@ async function precheck(mon, obj) {
             } else {
                 if (vis) {
                     const { a_monnam } = await import('./do_name.js');
+                    set_msg_mon(mtmp);
                     await update_topl(`In a cloud of smoke, ${a_monnam(mtmp)} emerges!`);
                 }
                 await update_topl(`${vis ? Monnam(mtmp) : 'Something'} speaks.`);
@@ -563,6 +564,7 @@ async function precheck(mon, obj) {
         const dam = d((obj.spe | 0) + 2, 6);
 
         if (vis) {
+            set_msg_mon(mon);
             await update_topl(
                 `${Monnam(mon)} zaps ${an(xname(obj))}, which suddenly explodes!`);
         } else {
@@ -653,6 +655,7 @@ async function mzapwand(mtmp, otmp, self) {
         // C: monverbself(mtmp, Monnam, "zap", 0) => "<Mon> zaps himself/herself/itself".
         await update_topl(`${monverbself(mtmp, Monnam(mtmp), 'zap', null)} with ${obj_doname(otmp)}!`);
     } else {
+        set_msg_mon(mtmp);
         await update_topl(`${Monnam(mtmp)} zaps ${an(xname(otmp))}!`);
         await stop_occupation();
     }
@@ -692,6 +695,7 @@ async function mreadmsg(mtmp, otmp) {
     const onambuf = vismon ? singular_doname(otmp) : singular_ansimpleoname(otmp);
 
     if (vismon) {
+        set_msg_mon(mtmp);
         await update_topl(`${Monnam(mtmp)} reads ${onambuf}!`);
     } else {
         const similar = same_race(youmonst_data(), mtmp.data);
@@ -719,6 +723,7 @@ async function mreadmsg(mtmp, otmp) {
 async function mquaffmsg(mtmp, otmp) {
     if (canseemon(mtmp)) {
         observe_object(otmp);
+        set_msg_mon(mtmp);
         await update_topl(`${Monnam(mtmp)} drinks ${singular_doname(otmp)}!`);
     } else if (!Deaf()) {
         await You_hear('a chugging sound.');
@@ -768,8 +773,10 @@ async function m_tele(mtmp, vismon, oseen, how) {
         if (vismon && how) makeknown(how);
         if (noteleport_level(mtmp)) mon_learns_traps(mtmp, TELEP_TRAP);
     } else if ((mon_has_amulet(mtmp) || On_W_tower_level(game.u?.uz)) && !rn2(3)) {
-        if (vismon)
+        if (vismon) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} seems disoriented for a moment.`);
+        }
     } else if (how) {
         /* teleportation has been triggered by an object */
         if (oseen) makeknown(how);
@@ -1074,7 +1081,7 @@ function reveal_trap(t, seeit) {
 async function mon_escape(mtmp, vismon) {
     if (mon_has_special(mtmp) || (mtmp.iswiz && (game.no_of_wizards | 0) < 2))
         return 0;
-    if (vismon) await update_topl(`${Monnam(mtmp)} escapes the dungeon!`);
+    if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes the dungeon!`); }
     await mongone(mtmp);
     return 2;
 }
@@ -1100,8 +1107,10 @@ export async function use_defensive(mtmp) {
     case MUSE_UNICORN_HORN:
         /* unlike most defensive cases, the unicorn horn object is optional */
         if (vismon) {
-            if (otmp)
+            if (otmp) {
+                set_msg_mon(mtmp);
                 await update_topl(`${Monnam(mtmp)} uses a unicorn horn!`);
+            }
             else
                 await update_topl(`The tip of ${s_suffix(mon_nam(mtmp))} horn glows!`);
         }
@@ -1109,12 +1118,13 @@ export async function use_defensive(mtmp) {
             await mcureblindness(mtmp, vismon);
         } else if (mtmp.mconf || mtmp.mstun) {
             mtmp.mconf = 0; mtmp.mstun = 0;
-            if (vismon) await update_topl(`${Monnam(mtmp)} seems steadier now.`);
+            if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} seems steadier now.`); }
         }
         return 2;
     case MUSE_BUGLE:
         if (!otmp) return 0;
         if (vismon) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} plays ${obj_doname(otmp)}!`);
         } else if (!Deaf()) {
             await You_hear('a bugle playing reveille!');
@@ -1152,12 +1162,16 @@ export async function use_defensive(mtmp) {
             const { random_teleport_level, get_level } = await import('./do.js');
             const nlev = random_teleport_level();
             if (mon_has_amulet(mtmp) || In_endgame(game.u?.uz)) {
-                if (vismon)
+                if (vismon) {
+                    set_msg_mon(mtmp);
                     await update_topl(
                         `${Monnam(mtmp)} seems very disoriented for a moment.`);
+                }
             } else if (nlev === depth(game.u.uz)) {
-                if (vismon)
+                if (vismon) {
+                    set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} shudders for a moment.`);
+                }
             } else {
                 await migrate_to_level(mtmp, ledger_no(get_level(nlev)),
                     MIGR_RANDOM, null);
@@ -1189,6 +1203,7 @@ export async function use_defensive(mtmp) {
             }
             if (vis) {
                 seetrap(t);
+                set_msg_mon(mtmp);
                 await update_topl(`${Monnam(mtmp)} has made a pit in the ${
                     surface(mtmp.mx, mtmp.my)}.`);
             }
@@ -1198,8 +1213,10 @@ export async function use_defensive(mtmp) {
         if (!t) return 2;
         seetrap(t);
         if (vis) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} has made a hole in the ${
                 surface(mtmp.mx, mtmp.my)}.`);
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} ${
                 is_flyer(mtmp.data) ? 'dives' : 'falls'} through...`);
         } else if (!Deaf()) {
@@ -1262,6 +1279,7 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         t = t_at(gt.trapx, gt.trapy);
         if (vis && t) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} ${
                 vtense_s(locomotion(mtmp.data, 'jump'))} into a ${
                 await trapname(t.ttyp, false)}!`);
@@ -1286,7 +1304,7 @@ export async function use_defensive(mtmp) {
         if (!stway) return 0;
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
-        if (vismon) await update_topl(`${Monnam(mtmp)} escapes upstairs!`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes upstairs!`); }
         await migrate_to_level(mtmp,
             ledger_no(stway.tolev),
             MIGR_STAIRS_DOWN, null);
@@ -1296,7 +1314,7 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
-        if (vismon) await update_topl(`${Monnam(mtmp)} escapes downstairs!`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes downstairs!`); }
         await migrate_to_level(mtmp,
             ledger_no(stway.tolev),
             MIGR_STAIRS_UP, null);
@@ -1306,7 +1324,7 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
-        if (vismon) await update_topl(`${Monnam(mtmp)} escapes up the ladder!`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes up the ladder!`); }
         await migrate_to_level(mtmp,
             ledger_no(stway.tolev),
             MIGR_LADDER_DOWN, null);
@@ -1316,7 +1334,7 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         const stway = stairway_at(mtmp.mx, mtmp.my);
         if (!stway) return 0;
-        if (vismon) await update_topl(`${Monnam(mtmp)} escapes down the ladder!`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes down the ladder!`); }
         await migrate_to_level(mtmp,
             ledger_no(stway.tolev),
             MIGR_LADDER_UP, null);
@@ -1328,9 +1346,11 @@ export async function use_defensive(mtmp) {
         if (!stway) return 0;
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
-        if (vismon)
+        if (vismon) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} escapes ${
                 stway.up ? 'up' : 'down'}stairs!`);
+        }
         await migrate_to_level(mtmp,
             ledger_no(stway.tolev),
             MIGR_SSTAIRS, null);
@@ -1340,6 +1360,7 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         t = t_at(gt.trapx, gt.trapy);
         if (vis && t) {
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} ${
                 vtense_s(locomotion(mtmp.data, 'jump'))} onto a ${
                 await trapname(t.ttyp, false)}!`);
@@ -1370,7 +1391,7 @@ export async function use_defensive(mtmp) {
         i = d(6 + 2 * bcsign(otmp), 4);
         healmon(mtmp, i, 1);
         if (!otmp.cursed && !mtmp.mcansee) await mcureblindness(mtmp, vismon);
-        if (vismon) await update_topl(`${Monnam(mtmp)} looks better.`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} looks better.`); }
         if (oseen) makeknown(OT().POT_HEALING);
         await m_useup(mtmp, otmp);
         return 2;
@@ -1380,7 +1401,7 @@ export async function use_defensive(mtmp) {
         i = d(6 + 2 * bcsign(otmp), 8);
         healmon(mtmp, i, otmp.blessed ? 5 : 2);
         if (!mtmp.mcansee) await mcureblindness(mtmp, vismon);
-        if (vismon) await update_topl(`${Monnam(mtmp)} looks much better.`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} looks much better.`); }
         if (oseen) makeknown(OT().POT_EXTRA_HEALING);
         await m_useup(mtmp, otmp);
         return 2;
@@ -1391,7 +1412,7 @@ export async function use_defensive(mtmp) {
         healmon(mtmp, mtmp.mhpmax, otmp.blessed ? 8 : 4);
         if (!mtmp.mcansee && otmp.otyp !== OT().POT_SICKNESS)
             await mcureblindness(mtmp, vismon);
-        if (vismon) await update_topl(`${Monnam(mtmp)} looks completely healed.`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} looks completely healed.`); }
         if (oseen) makeknown(otmp.otyp);
         await m_useup(mtmp, otmp);
         return 2;
@@ -1412,8 +1433,10 @@ export async function mcureblindness(mon, verbos) {
     if (!mon.mcansee) {
         mon.mcansee = 1;
         mon.mblinded = 0;
-        if (verbos && haseyes(mon.data))
+        if (verbos && haseyes(mon.data)) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} can see again.`);
+        }
     }
 }
 
@@ -1710,20 +1733,6 @@ function Antimagic_muse() {
 function Half_spell_damage_muse() {
     return (game.u?.uprops?.HHalf_spell_damage || 0) > 0;
 }
-// C ref: mondata.c:1557/1572 monstseesu()/monstunseesu() — every monster with
-// line of sight to the hero remembers (or forgets) that the hero resisted.
-// RNG-free itself, but find_offensive()'s m_seenres() gates read the bit, so it
-// changes which wand a monster picks on a later turn.
-function monstseesu_muse(seenres, clear) {
-    if (!seenres || game.u?.uswallow) return;
-    for (const mon of monsterList()) {
-        if (DEADMONSTER(mon)) continue;
-        if (!couldsee(mon.mx, mon.my)) continue;   /* m_canseeu(): hero visible, on land */
-        mon.seen_resistance = clear ? ((mon.seen_resistance | 0) & ~seenres)
-                                    : ((mon.seen_resistance | 0) | seenres);
-    }
-}
-
 // C ref: worn.c find_mac(mon).
 function find_mac_muse(mon) { return worn_find_mac(mon); }
 
@@ -1741,7 +1750,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
         // melees; skipping it lost the whole rest of the boundary's stream.
         if (hits_you) {
             if (Antimagic_muse()) {
-                monstseesu_muse(M_SEEN_MAGR, false);
+                monstseesu(M_SEEN_MAGR); /* monsters notice hero resisting */
                 await shieldeff(game.u.ux, game.u.uy);
                 await update_topl('Boing!');
                 learnit = true;
@@ -1750,7 +1759,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
                 // rnd(20) is drawn FIRST (short-circuit order), so it fires even
                 // on a monster's very first wand shot when the buzzer test then
                 // fails.
-                monstseesu_muse(M_SEEN_MAGR, true);
+                monstunseesu(M_SEEN_MAGR); /* mons see hero not resisting */
                 await update_topl('The wand hits you!');
                 let tmp = d(2, 12);
                 if (Half_spell_damage_muse()) tmp = Math.trunc((tmp + 1) / 2);
@@ -2058,6 +2067,7 @@ export async function use_offensive(mtmp, throw_potion) {
          * out of sight might throw and it hits something _in_ sight. */
         if (cansee(mtmp.mx, mtmp.my)) {
             observe_object(otmp);
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} hurls ${singular_doname(otmp)}!`);
         }
         const mux = mtmp.mux ?? game.u.ux, muy = mtmp.muy ?? game.u.uy;
@@ -2296,9 +2306,11 @@ async function mloot_container(mon, container, vismon) {
             if (vismon) {
                 if (howfar > 2)
                     await Norep(`${Monnam(mon)} rummages through ${contnr_nam}.`);
-                else if (takeout_indx === 0)
+                else if (takeout_indx === 0) {
+                    set_msg_mon(mon);
                     await update_topl(
                         `${Monnam(mon)} removes ${obj_doname(xobj)} from ${contnr_nam}.`);
+                }
                 else
                     await update_topl(
                         `${upstart(mpronounbuf)} removes ${obj_doname(xobj)}.`);
@@ -2339,6 +2351,7 @@ export async function use_misc(mtmp) {
         if (otmp.cursed) {
             if (Can_rise_up(mtmp.mx, mtmp.my, game.u?.uz)) {
                 if (vismon) {
+                    set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} rises up, through the ${
                         ceiling(mtmp.mx, mtmp.my)}!`);
                     await trycall(otmp);
@@ -2349,13 +2362,14 @@ export async function use_misc(mtmp) {
                 return 2;
             }
             if (vismon) {
+                set_msg_mon(mtmp);
                 await update_topl(`${Monnam(mtmp)} looks uneasy.`);
                 await trycall(otmp);
             }
             await m_useup(mtmp, otmp);
             return 2;
         }
-        if (vismon) await update_topl(`${Monnam(mtmp)} seems more experienced.`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} seems more experienced.`); }
         if (oseen) makeknown(OT().POT_GAIN_LEVEL);
         await m_useup(mtmp, otmp);
         if (!(await (await import('./mhitm.js')).grow_up(mtmp, null))) return 1;
@@ -2415,7 +2429,7 @@ export async function use_misc(mtmp) {
         if (!otmp) return 0;
         await mquaffmsg(mtmp, otmp);
         await m_useup(mtmp, otmp);
-        if (vismon) await update_topl(`${Monnam(mtmp)} suddenly mutates!`);
+        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} suddenly mutates!`); }
         const { newcham_wizard_aware } = await import('./makemon.js');
         await newcham_wizard_aware(mtmp, muse_newcham_mon(mtmp), NC_SHOW_MSG);
         if (oseen) makeknown(OT().POT_POLYMORPH);
@@ -2428,6 +2442,7 @@ export async function use_misc(mtmp) {
         if (vismon || vistrapspot) {
             const { Some_Monnam } = await import('./do_name.js');
             const { trapname } = await import('./trap.js');
+            set_msg_mon(mtmp);
             await update_topl(`${Some_Monnam(mtmp)} deliberately ${
                 vtense_s(locomotion(mtmp.data, 'jump'))} onto a ${
                 t.tseen ? trapname(t.ttyp, false) : 'hidden trap'}!`);
@@ -2469,9 +2484,11 @@ export async function use_misc(mtmp) {
         let hand = 'hand';
         if (bimanual(obj)) hand = 'hands';
 
-        if (vismon)
+        if (vismon) {
+            set_msg_mon(mtmp);
             await update_topl(
                 `${Monnam(mtmp)} flicks a bullwhip towards your ${hand}!`);
+        }
         if (obj.otyp === OT().HEAVY_IRON_BALL) {
             await update_topl(`${The_whip} fails to wrap around ${the_weapon}.`);
             return 1;
@@ -2494,15 +2511,18 @@ export async function use_misc(mtmp) {
         hero_unwield(obj);
         switch (where_to) {
         case 1: /* onto floor beneath mon */
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} yanks ${the_weapon} from your ${hand}!`);
             place_object(obj, mtmp.mx, mtmp.my);
             break;
         case 2: /* onto floor beneath you */
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} yanks ${the_weapon} to the ${
                 surface(game.u.ux, game.u.uy)}!`);
             await (await import('./invent.js')).dropy(obj);
             break;
         case 3: /* into mon's inventory */
+            set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} snatches ${the_weapon}!`);
             (await import('./steal.js')).mpickobj(mtmp, obj);
             break;
@@ -2779,9 +2799,12 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
 
     if (acid && !tinned && !resists_acid_mon(mon)) {
         mon.mhp -= rnd(15);
-        if (vis)
+        if (vis) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} has a very bad case of stomach acid.`);
+        }
         if (DEADMONSTER(mon)) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} dies!`);
             await mondead(mon);
             return;
@@ -2791,15 +2814,19 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
         if (Hallucination())
             await update_topl(
                 `What a pity - ${mon_nam(mon)} just ruined a future piece of art!`);
-        else
+        else {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} seems limber!`);
+        }
     }
     if (lizard && (mon.mconf || mon.mstun)) {
         mon.mconf = 0;
         mon.mstun = 0;
         if (vis && mon.data?.name !== 'bat' && mon.data?.name !== 'giant bat'
-            && mon.data?.name !== 'stalker')
+            && mon.data?.name !== 'stalker') {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} seems steadier now.`);
+        }
     }
     if (mon.mtame && !mon.isminion && nutrit > 0 && mon.edog) {
         if (mon.edog.hungrytime < game.moves) mon.edog.hungrytime = game.moves;
@@ -2906,9 +2933,11 @@ async function muse_unslime(mon, obj, trap, by_you) {
     const otyp = obj.otyp;
     let vis = canseemon(mon), res = true, dmg = 0;
 
-    if (vis)
+    if (vis) {
+        set_msg_mon(mon);
         await update_topl(`${Monnam(mon)} starts turning ${
             green_mon(mon) ? 'into ooze' : 'green'}.`);
+    }
     await mon_adjust_speed(mon, -4, null);
 
     if (trap) {
@@ -2962,6 +2991,7 @@ async function muse_unslime(mon, obj, trap, by_you) {
             mon.minvent.splice(mon.minvent.indexOf(obj) + 1, 0, o);
         }
         if (vis && !was_lit) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} ignites ${an(xname(o))}.`);
             saw_lit = true;
         }
@@ -2987,21 +3017,26 @@ async function muse_unslime(mon, obj, trap, by_you) {
     if (dmg) {
         if (DEADMONSTER(mon)) {
             if (by_you) {
-                if (vis)
+                if (vis) {
+                    set_msg_mon(mon);
                     await update_topl(`${Monnam(mon)} is ${
                         nonliving(mon.data) ? 'destroyed' : 'killed'} by the fire!`);
+                }
                 const { killed } = await import('./uhitm.js');
                 await killed(mon, { nomsg: true, noconduct: true });
             } else {
                 await monkilled_mm(mon, AD_FIRE, 'fire');
             }
         } else if (vis) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} is burned${dmg <= 4 ? '.' : '!'}`);
         }
     }
     if (vis) {
-        if (res && !DEADMONSTER(mon))
+        if (res && !DEADMONSTER(mon)) {
+            set_msg_mon(mon);
             await update_topl(`${s_suffix(Monnam(mon))} slime is burned away!`);
+        }
         if (otyp !== STRANGE_OBJECT) makeknown(otyp);
     }
     mon.movement = (mon.movement | 0) - NORMAL_SPEED;
@@ -3072,12 +3107,17 @@ export async function mon_adjust_speed(mon, adjust, obj) {
         && !(mon.mfrozen || mon.msleeping) && canseemon(mon)) {
         const howmuch = (mon.mspeed + oldspeed === MFAST + MSLOW) ? 'much ' : '';
         if (petrify) {
-            if (game.flags?.verbose)
+            if (game.flags?.verbose) {
+                set_msg_mon(mon);
                 await update_topl(`${Monnam(mon)} is slowing down.`);
-        } else if (adjust > 0 || mon.mspeed === MFAST)
+            }
+        } else if (adjust > 0 || mon.mspeed === MFAST) {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} is suddenly moving ${howmuch}faster.`);
-        else
+        } else {
+            set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} seems to be moving ${howmuch}slower.`);
+        }
         if (obj) {
             const { learnwand } = await import('./zap.js');
             learnwand(obj);

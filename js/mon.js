@@ -62,7 +62,7 @@ import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
 import { EGG, ICE_BOX, disturb_buried_zombies, is_flimsy } from './mkobj.js';
 import { name_to_pmidx, pm_to_cham, dead_species, mpickobj,
     is_home_elemental } from './makemon.js';
-import { impossible, m_at, shieldeff, You_hear, You_see, unmap_object } from './display.js';
+import { impossible, m_at, shieldeff, You_hear, You_see, unmap_object, set_msg_mon } from './display.js';
 import { couldsee } from './vision.js';
 
 
@@ -688,8 +688,10 @@ export async function minliquid(mtmp) {
     }
     if (ptr?.name === 'iron golem' && inpool && !rn2(5)) {
         const dam = d(2, 6);
-        if (cansee(mtmp.mx, mtmp.my))
+        if (cansee(mtmp.mx, mtmp.my)) {
+            set_msg_mon(mtmp);
             await pline(`${Monnam(mtmp)} rusts.`);
+        }
         mtmp.mhp -= dam;
         if (mtmp.mhpmax > dam)
             mtmp.mhpmax -= dam;
@@ -731,10 +733,13 @@ export async function minliquid(mtmp) {
                 // Fire-resistant but not a lava-liker: 1 point of damage.
                 mtmp.mhp -= 1;
                 if (DEADMONSTER(mtmp)) {
-                    if (cansee(mtmp.mx, mtmp.my))
+                    if (cansee(mtmp.mx, mtmp.my)) {
+                        set_msg_mon(mtmp);
                         await pline(`${Monnam(mtmp)} surrenders to the fire.`);
+                    }
                     await mon_kill_leaving(mtmp, true);
                 } else if (cansee(mtmp.mx, mtmp.my)) {
+                    set_msg_mon(mtmp);
                     await pline(`${Monnam(mtmp)} burns slightly.`);
                 }
             }
@@ -763,9 +768,11 @@ export async function minliquid(mtmp) {
                 if (!(await tele_restrict(mtmp)) && await rloc(mtmp, RLOC_MSG))
                     return 0;
             }
-            if (cansee(mtmp.mx, mtmp.my))
+            if (cansee(mtmp.mx, mtmp.my)) {
+                if (game.context?.mon_moving) set_msg_mon(mtmp);
                 await pline(game.context?.mon_moving
                     ? `${Monnam(mtmp)} drowns.` : `You drown ${mon_nam(mtmp)}.`);
+            }
             if (engulfing_u(mtmp)) {
                 const { hliquid } = await import('./do_name.js');
                 await pline(`${Monnam(mtmp)} sinks as ${hliquid('water')} rushes in and flushes you out.`);
@@ -1258,6 +1265,7 @@ async function mon_adjust_speed_worn(mon, creation) {
     if (!mmove_of(mon.data) || mon.mfrozen || mon.msleeping) return;
     if (!canseemon_shared(mon)) return;
     const howmuch = ((mon.mspeed | 0) + oldspeed === MFAST + MSLOW) ? 'much ' : '';
+    set_msg_mon(mon);
     await pline((mon.mspeed | 0) === MFAST
         ? `${Monnam(mon)} is suddenly moving ${howmuch}faster.`
         : `${Monnam(mon)} seems to be moving ${howmuch}slower.`);
@@ -1966,9 +1974,11 @@ function Blind_telepat_mon() {
 // prints there and is silent in monmove's version.  That divergence is why the
 // C form is restated here instead of reusing (or "fixing") the other copy.
 export async function wake_msg_core(mtmp, interesting) {
-    if (mtmp.msleeping && canseemon_shared(mtmp))
+    if (mtmp.msleeping && canseemon_shared(mtmp)) {
+        set_msg_mon(mtmp);
         await pline(`${Monnam(mtmp)} wakes up${interesting ? '!' : '.'}`
             + `${monsndx(mtmp.data) === PM('flesh golem') ? " It's alive!" : ''}`);
+    }
 }
 
 // C ref: mon.c's `svl.level.monsters[x][y]` map slot.  This port has no
@@ -3041,8 +3051,10 @@ export async function unstuck(mtmp) {
 export async function mon_to_stone(mtmp) {
     if (mtmp.data?.mcls === S_GOLEM_C) {
         /* it's a golem, and not a stone golem */
-        if (canseemon_shared(mtmp))
+        if (canseemon_shared(mtmp)) {
+            set_msg_mon(mtmp);
             await pline(`${Monnam(mtmp)} solidifies...`);
+        }
         if (newcham(mtmp, monster_by_pmidx(PM('stone golem')))) {
             if (canseemon_shared(mtmp))
                 await pline(`Now it's ${an_mon(mtmp.data?.name || 'golem')}.`);
@@ -3101,9 +3113,11 @@ export async function vamp_stone(mtmp) {
             }
             newcham(mtmp, monster_by_pmidx(mndx));
             mtmp.cham = (monsndx(mtmp.data) === mndx) ? NON_PM : mndx;
-            if (canspotmon(mtmp))
+            if (canspotmon(mtmp)) {
+                set_msg_mon(mtmp);
                 await pline(`${Amonnam(mtmp)} rises from the`
                     + ` ${surface(mtmp.mx, mtmp.my)} with renewed agility!`);
+            }
             newsym(mtmp.mx, mtmp.my);
             return false; /* didn't petrify */
         }
@@ -3466,8 +3480,10 @@ export async function peacefuls_respond(mtmp) {
                         mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITMASK;
                         const { adjalign } = await import('./attrib.js');
                         adjalign(-1);
-                        if (!exclaimed)
+                        if (!exclaimed) {
+                            set_msg_mon(mon);
                             await pline(`${Monnam(mon)} gets angry!`);
+                        }
                     }
                 }
             } else if (mon.data?.mcls === mtmp.data?.mcls
@@ -4083,8 +4099,10 @@ export async function see_nearby_monsters() {
 export async function shieldeff_mon(mtmp) {
     await shieldeff(mtmp.mx, mtmp.my);
     /* does not depend on seeing the monster; the shield effect is visible */
-    if (cansee(mtmp.mx, mtmp.my))
+    if (cansee(mtmp.mx, mtmp.my)) {
+        set_msg_mon(mtmp);
         await pline(`${Monnam(mtmp)} resists!`);
+    }
 }
 
 // ── mon.c:6067 flash_mon() ──────────────────────────────────────────────────

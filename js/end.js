@@ -7,7 +7,7 @@
 import { rawPrintBias, setFinalCursor } from './rawprint.js';
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
-import { midnight, night } from './calendar.js';
+import { midnight, night, getnow, yyyymmdd } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
 import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, PLNMSG_OK_DONT_DIE } from './const.js';
 
@@ -152,7 +152,7 @@ export async function outrip_and_score(how) {
     // Death description for the tombstone (formatkiller with NO_KILLER_PREFIX
     // just yields killer.name).  ends[]/deaths[] fall back for the summary.
     const deathText = game._killer_name || DEATHS[how] || 'died';
-    const year = (+String(game.datetime || '').slice(0, 4)) || 2020;
+    const year = Math.trunc(yyyymmdd(getnow()) / 10000) % 10000; /* rip.c genl_outrip(): yyyymmdd(when) / 10000 */
     const moves = (game.moves == null ? 0 : (game.moves | 0));
 
     // ── build the endgame TEXT window (24 lines), C ref rip.c + end.c ──
@@ -1136,7 +1136,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     u.urexp = urexp; // really_done() persists this before topten() reads it
 
     const deathText = game._killer_name || DEATHS[how] || 'died';
-    const year = (+String(game.datetime || '').slice(0, 4)) || 2020;
+    const year = Math.trunc(yyyymmdd(getnow()) / 10000) % 10000; /* rip.c genl_outrip(): yyyymmdd(when) / 10000 */
     const moves = (game.moves == null ? 0 : (game.moves | 0));
 
     // C ref: end.c really_done() — every rip/goodbye/summary line is written

@@ -27,6 +27,7 @@ import { exercise } from './attrib.js';
 import { menuHeadAttr } from './menuattr.js';
 import { A_WIS } from './const.js';
 import { Hallucination_u } from './display.js';
+import { create_nhwindow, putstr, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu } from './windows.js';
 
 // ── Color constants (C ref: include/color.h) ──
 const CLR_BLACK = 0, CLR_RED = 1, CLR_GREEN = 2, CLR_BROWN = 3, CLR_BLUE = 4;
@@ -746,9 +747,9 @@ function className(oclass) {
 //   * `char *buf` fill-and-return functions take the buffer argument for
 //     signature fidelity, ignore it, and RETURN the string.
 //   * `int *` out-parameters are objects with a `.value` field.
-//   * create_nhwindow/start_menu/add_menu/end_menu/putstr only collect items
-//     (as C's tty_add_menu()/tty_putstr() do); select_menu/display_nhwindow/
-//     destroy_nhwindow render+read input for real, via the shared renderers
+//   * create_nhwindow/start_menu/add_menu/end_menu/select_menu/putstr are the
+//     shared windows.js API; display_nhwindow/destroy_nhwindow (NHW_TEXT)
+//     render+read input for real, via the shared renderers
 //     in js/invent.js and the shared yn primitives in js/display.js and
 //     js/extcmd-handlers.js.
 //   * Collaborators in other modules are reached by dynamic import() so that
@@ -772,7 +773,7 @@ const NHW_MENU = 4, NHW_TEXT = 5, WIN_ERR = -1;
 const PICK_ONE = 1, MENU_BEHAVE_STANDARD = 0;
 const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1;
 /* include/color.h NO_COLOR; include/hack.h ATR_NONE */
-const NO_COLOR = 0, ATR_NONE = 0;
+const NO_COLOR = 8, ATR_NONE = 0;
 /* include/flag.h menu_style values */
 const MENU_TRADITIONAL = 0, MENU_COMBINATION = 1, MENU_FULL = 2,
       MENU_PARTIAL = 3;
@@ -1197,7 +1198,7 @@ export async function choose_disco_sort(mode) {
         add_menu(tmpwin, null, any, String.fromCharCode(any.a_int),
                  0, ATR_NONE, clr,
                  disco_orders_descr[i],
-                 (disco_order_let[i] === flags.discosort)
+                 (disco_order_let[i] === (flags.discosort ?? 'o'))
                     ? MENU_ITEMFLAGS_SELECTED
                     : MENU_ITEMFLAGS_NONE);
     }
@@ -1218,10 +1219,10 @@ export async function choose_disco_sort(mode) {
     n = await select_menu(tmpwin, PICK_ONE, selected);
     await destroy_nhwindow(tmpwin);
     if (n > 0) {
-        choice = selected[0].a_int;
+        choice = selected[0].item.a_int;
         /* skip preselected entry if we have more than one item chosen */
-        if (n > 1 && choice === flags.discosort?.charCodeAt?.(0))
-            choice = selected[1].a_int;
+        if (n > 1 && choice === (flags.discosort ?? 'o').charCodeAt(0))
+            choice = selected[1].item.a_int;
         flags.discosort = String.fromCharCode(choice);
     }
     return n;
@@ -1432,7 +1433,7 @@ export async function doclassdisco() {
             end_menu(tmpwin, prompt);
             i = await select_menu(tmpwin, PICK_ONE, pick_list);
             if (i > 0) {
-                c = String.fromCharCode(pick_list[0].a_int);
+                c = String.fromCharCode(pick_list[0].item.a_int);
             } /* else c stays 0 */
         }
         await destroy_nhwindow(tmpwin);
@@ -1591,7 +1592,7 @@ export async function rename_disco() {
         dis = STRANGE_OBJECT;
         sl = await select_menu(tmpwin, PICK_ONE, selected);
         if (sl > 0) {
-            dis = selected[0].a_int;
+            dis = selected[0].item.a_int;
         }
         if (dis !== STRANGE_OBJECT) {
             const odummy = {};      /* odummy = cg.zeroobj */
@@ -1625,115 +1626,17 @@ export function get_sortdisco(opts, cnf) {
 }
 
 // ── window layer ──
-// create_nhwindow/add_menu/end_menu/putstr only collect items (as C's own
-// tty_add_menu()/tty_putstr() do); select_menu/display_nhwindow/destroy_nhwindow
-// below do the actual rendering+input, sharing the real renderers
-// (renderMenuLines/renderWindowScreen, js/invent.js) and yn primitives
-// (y_n, js/display.js; yn_function, js/extcmd-handlers.js) that every other
-// interactive command in the port already uses.
+// Menus are the shared windows.js API (create_nhwindow/add_menu/end_menu/
+// select_menu); the NHW_TEXT display_nhwindow/destroy_nhwindow below do the
+// rendering+input, sharing the real renderers (renderWindowScreen, js/invent.js)
+// and yn primitives (y_n, js/display.js; yn_function, js/extcmd-handlers.js)
+// that every other interactive command in the port already uses.
 
-function create_nhwindow(type) { return { type, items: [], query: '', lines: [] }; }
 // C ref: wintty.c tty_destroy_nhwindow -> erase_menu_or_text(): closing a menu
 // or text window docrt()s the map back underneath it.
 async function destroy_nhwindow(_win) {
     const inv = await import('./invent.js');
     await inv.dismiss_invent_screen();
-}
-function start_menu(win, behave) { win.items.length = 0; win.behave = behave; }
-function add_menu(win, _glyphinfo, any, accel, gacc, attr, clr, str, itemflags) {
-    win.items.push({ any, accel, gacc, attr, clr, str, itemflags,
-                     selectable: any !== null && any !== undefined });
-}
-function add_menu_str(win, str) { win.items.push({ any: null, str, selectable: false }); }
-function add_menu_heading(win, str) {
-    win.items.push({ any: null, str, heading: true, selectable: false });
-}
-function end_menu(win, query) { win.query = query; }
-function putstr(win, _attr, str) { win.lines.push(str); }
-
-// C ref: wintty.c tty_add_menu():2602 `Sprintf(buf, "%c - ", ch ? ch : '?')` —
-// a selectable entry always paints as "<letter> - <text>"; set_item_state()
-// only overwrites the '-' with '+'/'#' for an item that starts preselected
-// (MENU_ITEMFLAGS_SELECTED, used by choose_disco_sort's current-order mark).
-function disco_menu_flat(win) {
-    const flat = [];
-    if (win.query)
-        flat.push({ text: win.query, attr: disco_menu_heading_attr() });
-    flat.push({ text: '' });
-    // C ref: wintty.c tty_end_menu() — an item with an identifier but no
-    // accelerator gets 'a'..'z' then 'A'..'Z', restarting at 'a' on every page
-    // of lmax = min(52, rows - 1) rows (the prompt/blank rows count).
-    const lmax = Math.min(52, (game.nhDisplay?.rows ?? 24) - 1);
-    let menu_ch = 'a';
-    for (const it of win.items) {
-        const n = flat.length;
-        it.row = n;
-        if ((n % lmax) === 0) menu_ch = 'a';
-        if (it.selectable && !it.accel) {
-            it.accel = menu_ch;
-            menu_ch = menu_ch === 'z' ? 'A' : String.fromCharCode(menu_ch.charCodeAt(0) + 1);
-        }
-        if (it.heading) { flat.push({ text: it.str, attr: disco_menu_heading_attr() }); continue; }
-        if (!it.selectable) { flat.push({ text: it.str }); continue; }
-        const mark = (it.itemflags & MENU_ITEMFLAGS_SELECTED) ? '+' : '-';
-        flat.push({ text: `${it.accel || '?'} ${mark} ${it.str}` });
-    }
-    return flat;
-}
-
-// Returns C's select_menu() count: >0 picked, 0 confirmed nothing, -1 ESC.
-// `picks` is the menu_item** out-param.  C ref: wintty.c process_menu_window()
-// — an accelerator (or its group accelerator) toggles the item and, for
-// PICK_ONE, finishes immediately; ' '/Enter with nothing selected commits
-// whatever is already marked (a PICK_ONE default, e.g. choose_disco_sort's
-// current sort order) or 0 when nothing is; ESC cancels.
-async function select_menu(win, how, picks) {
-    const inv = await import('./invent.js');
-    const { nhgetch } = await import('./input.js');
-    const flat = disco_menu_flat(win);
-    const rows = game.nhDisplay?.rows ?? 24;
-    const perPage = Math.min(52, rows - 1);
-    const pages = [];
-    for (let i = 0; i < flat.length; i += perPage) pages.push(flat.slice(i, i + perPage));
-    if (!pages.length) pages.push([]);
-    const fullscreen = flat.length + 1 >= rows;
-    let idx = 0;
-    const render = () => {
-        if (fullscreen) {
-            inv.renderWindowScreen(pages[idx], {
-                menu: true,
-                footer: pages.length > 1 ? `(${idx + 1} of ${pages.length})` : '(end) ', // morestr carries a trailing space (cursor parks one past)
-                footerRow: pages[idx].length, footerCol: 1, modal: 'discowin',
-            });
-        } else {
-            inv.renderMenuLines(flat, null); // cursor: parked past "(end)"
-            game._modal_screen = 'discowin';
-        }
-    };
-    render();
-    // C ref: wintty.c tty_select_menu() — tty_dismiss_nhwindow() erases the menu
-    // (docrt) as soon as the selection is made, before the caller acts on it.
-    const dismiss = async (r) => { await inv.dismiss_invent_screen(); return r; };
-    for (;;) {
-        const c = await nhgetch();
-        if (c === 27) return await dismiss(-1);
-        const ch = String.fromCharCode(c);
-        if (fullscreen && ch === ' ' && idx < pages.length - 1) { idx++; render(); continue; }
-        if (c === 32 || c === 13 || c === 10) {
-            const already = win.items.filter((it) => it.selectable
-                && (it.itemflags & MENU_ITEMFLAGS_SELECTED));
-            for (const it of already) picks.push(it.any);
-            return await dismiss(already.length);
-        }
-        // C ref: process_menu_window() — an accelerator is matched against the
-        // CURRENT page only (accelerators restart at 'a' on every page); a group
-        // accelerator matches on any page.
-        const hit = win.items.find((it) => it.selectable
-            && ((it.accel === ch && (!fullscreen || Math.floor(it.row / perPage) === idx))
-                || it.gacc === ch));
-        if (hit) { picks.push(hit.any); return await dismiss(1); }
-        /* unacceptable key (C: tty_nhbell()); menu stays up */
-    }
 }
 
 // C ref: wintty.c process_text_window() paging — (rows-1) content lines per

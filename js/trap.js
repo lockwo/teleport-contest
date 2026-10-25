@@ -9,7 +9,7 @@ import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
 import { del_engr_at } from './engrave.js';
@@ -68,7 +68,7 @@ import {
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
     LARGE_BOX, CHEST,
-    mkcorpstat, ROCK, ARROW,
+    mkcorpstat, add_to_container, ROCK, ARROW,
     WEAPON_CLASS, ARMOR_CLASS, SCROLL_CLASS, POTION_CLASS, SPBOOK_CLASS,
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
@@ -620,15 +620,14 @@ function mk_trap_statue(x, y) {
     const mtmp = makemon(monster_by_pmidx(statue.corpsenm), 0, 0,
                          MM_NOCOUNTBIRTH | MM_NOMSG);
     if (!mtmp) return;                  /* should never happen */
-    // Everything the statue's monster was carrying goes inside the statue.
-    // No RNG; container contents only matter for weight and later looting.
-    const inv = mtmp.minvent || [];
-    while (inv.length) {
-        const otmp = inv.shift();
+    // Everything the statue's monster was carrying goes inside the statue,
+    // head of minvent first, each add_to_container() prepending (so the
+    // statue's chain ends up oldest-added last, like C).  No RNG.
+    while (mtmp.minvent && mtmp.minvent.length) {
+        const otmp = mtmp.minvent[0];
         otmp.owornmask = 0;
-        otmp.where = OBJ_CONTAINED;
-        otmp.ocontainer = statue;
-        (statue.cobj || (statue.cobj = [])).push(otmp);
+        obj_extract_self(otmp);
+        add_to_container(statue, otmp);
     }
     statue.owt = weight(statue);
     trap_mongone(mtmp);
@@ -2385,7 +2384,12 @@ async function trapeffect_pit(trap, trflags) {
             const pitKnam = plunged ? 'deliberately plunged into a pit' : 'fell into a pit';
             await losehp(rnd(adj_pit ? 3 : 6), pitKnam, NO_KILLER_PREFIX);
         }
-        // Punished is never set in this port -> no unplacebc/ballfall/placebc.
+        if (Punished_fu() && !carried(game.u.uball)) {
+            const { unplacebc, ballfall, placebc } = await import('./ball.js');
+            unplacebc();
+            await ballfall();
+            placebc();
+        }
         if (!conj_pit) await selftouch('Falling, you');
         game.vision_full_recalc = 1;
         await exercise(A_STR, false);
@@ -3535,6 +3539,16 @@ async function untrap_box(box, force, confused) {
     }
 }
 
+// C ref: trap.c:5848 untrap(FALSE, 0, 0, container) — autounlock's untrap of a
+// locked container: skip the direction prompt and check just that box.
+export async function untrap_container(container) {
+    const u = game.u;
+    const force = !!(await import('./artifact.js')).has_magic_key(null);
+    const confused = !!(u?.uprops?.Confusion || Hallucination_u());
+    await untrap_box(container, force, confused);
+    return 1;
+}
+
 // C ref: trap.c:5848 untrap(force, rx, ry, container), usual case (rx == 0 and
 // no container): read the direction, then work on that square.  `force` is
 // TRUE for #invoke of the Master Key of Thievery.
@@ -3552,7 +3566,7 @@ export async function untrap(force) {
 
 // C ref: trap.c:5848 untrap() after the square has been resolved.  Returns 1 if
 // the attempt took time.
-export async function untrap_at(x, y, force) {
+export async function untrap_at(x, y, force, autounlock_door = false) {
     const u = game.u;
     /* 'force' is true for #invoke; if carrying MKoT, make it be true
        for #untrap or autounlock */
@@ -3574,7 +3588,10 @@ export async function untrap_at(x, y, force) {
                 && Is_box_otyp(o.otyp) && ++boxcnt > 1) break;
 
     let deal_with_floor_trap = can_reach_floor(false);
-    if (!deal_with_floor_trap) {
+    const floor_reachable = deal_with_floor_trap && !autounlock_door;
+    if (autounlock_door) {
+        /* autounlock's untrap of a locked/trapped door: skip a bunch */
+    } else if (!deal_with_floor_trap) {
         let the_trap = '';
         if (ttmp) the_trap += an(trapdescr);
         if (ttmp && boxcnt) the_trap += ' and ';
@@ -3642,7 +3659,7 @@ export async function untrap_at(x, y, force) {
         }
     }
     // C ref: trap.c:5998 — at most one container per move may be checked.
-    if (deal_with_floor_trap && boxcnt) {
+    if (floor_reachable && boxcnt) {
         const { ynq } = await import('./invent.js');
         for (const otmp of (game.level?.objects || [])) {
             if (!(otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y
@@ -4221,6 +4238,9 @@ export async function switch_terrain() {
     }
     if ((!!Levitation_fu() !== was_levitating) || (!!Flying_fu() !== was_flying))
         game.botl = true; /* update Lev/Fly status condition */
+
+    if (game.flags?.terrainstatus)
+        hooks.classify_terrain?.();
 }
 
 // C ref: trap.c:3937 float_up() — start levitating: pick the right message
@@ -5646,6 +5666,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
             if (otyp === BOULDER && throws_rocks_flag(mtmp.data) && rn2(3)) {
                 if (cansee(x, y)) {
                     const { Monnam } = await import('./do_name.js');
+                    set_msg_mon(mtmp);
                     await pline(`${Monnam(mtmp)} snatches the boulder.`);
                 }
                 singleobj.otrapped = 0;
@@ -5888,8 +5909,10 @@ export async function minstapetrify(mon, byplayer) {
     await mon_adjust_speed(mon, -3, null);
 
     const { Monnam } = await import('./uhitm.js');
-    if (cansee(mon.mx, mon.my))
+    if (cansee(mon.mx, mon.my)) {
+        set_msg_mon(mon);
         await pline(`${Monnam(mon)} turns to stone.`);
+    }
     if (byplayer) {
         // C ref: mon.c:3866 `gs.stoned = TRUE; xkilled(mon, XKILL_NOMSG);` --
         // killed() routes a stoned kill through monstone() and skips the
@@ -5914,6 +5937,7 @@ export async function mselftouch(mon, arg, byplayer) {
         return;
     if (cansee(mon.mx, mon.my)) {
         const { Monnam, mon_nam } = await import('./uhitm.js');
+        set_msg_mon(mon);
         await pline(`${arg || ''}${arg ? mon_nam(mon) : Monnam(mon)} touches the ${xname(mwep)}.`);
     }
     await minstapetrify(mon, byplayer);

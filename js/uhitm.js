@@ -43,7 +43,7 @@ import { Cold_resistance } from './zap.js';
 import { finish_meating, monnear } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
 import { m_at, newsym, map_invisible, unmap_object, canseemon_shared, tp_sensemon,
-         update_topl, shieldeff, You_feel } from './display.js';
+         update_topl, set_msg_mon, shieldeff, You_feel } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE,
          MGIVENNAME, has_mgivenname, W_SADDLE, SUPPRESS_SADDLE,
@@ -465,6 +465,7 @@ export async function wakeupAttack(mtmp, viaAttack) {
         const { update_topl } = await import('./display.js');
         // mon.c:4325-4328 wake_msg() — flesh golem alone gets " It's alive!".
         const alive = mtmp.data?.name === 'flesh golem' ? " It's alive!" : '';
+        set_msg_mon(mtmp);
         await update_topl(`${Monnam(mtmp)} wakes up${viaAttack ? '!' : '.'}${alive}`);
     }
     mtmp.msleeping = 0;
@@ -531,8 +532,10 @@ export async function setmangry(mtmp, via_attack) {
         adjalign(-1); /* attacking peaceful monsters is bad */
     }
     if (humanoid(mtmp.data) || mtmp.isshk || mtmp.isgd) {
-        if (couldsee(mtmp.mx, mtmp.my))
+        if (couldsee(mtmp.mx, mtmp.my)) {
+            set_msg_mon(mtmp);
             await pline(`${Monnam(mtmp)} gets angry!`);
+        }
     } else {
         const { growl } = await import('./sounds.js');
         await growl(mtmp);
@@ -1391,8 +1394,10 @@ async function hmon_hitmon(mon, obj, thrown, dieroll) {
         const { resist } = await import('./zap.js');
         if (!mon.mconf && !resist(mon, SPBOOK_CLASS_UH, 0, 0)) {
             mon.mconf = 1;
-            if (!mon.mstun && !helpless(mon) && canseemon(mon))
+            if (!mon.mstun && !helpless(mon) && canseemon(mon)) {
+                set_msg_mon(mon);
                 await update_topl(`${Monnam(mon)} appears confused.`);
+            }
         }
     }
     if (hmd.unpoisonmsg)
@@ -3015,7 +3020,10 @@ function Stunned_uh() {
         || (u_of().ustun | 0) > 0;
 }
 function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of().see_invis; }
-function Invisible_uh() { return !!u_of().uinvis && !See_invisible(); }
+// C ref: youprop.h Invisible == (Invis && !See_invisible); Invis includes the
+// timed HInvis intrinsic and worn extrinsics (monmove.js Invis()).
+import { Invis as Invis_uh } from './monmove.js';
+function Invisible_uh() { return Invis_uh() && !See_invisible(); }
 function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
 import { Deaf_hero as Deaf_uh } from './display.js';
 function Upolyd() { return !!u_of().Upolyd; }
@@ -5444,6 +5452,7 @@ export async function light_hits_gremlin(mon, dmg) {
             + `${(dmg > Math.trunc(mon.mhp / 2)) ? 'wails in agony'
                                                  : 'cries out in pain'}!`);
     } else if (canseemon(mon)) {
+        set_msg_mon(mon);
         await update_topl(`${Monnam(mon)} recoils from the light!`);
     }
     mon.mhp -= dmg;

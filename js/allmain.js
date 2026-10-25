@@ -524,7 +524,11 @@ async function maybe_do_tutorial(preambleShownMore) {
         // on the top line is the preamble; otherwise it's the welcome line, or
         // nothing at all, if that line had wrapped and paged itself already
         // (see the same guard above).
-        if (game._pending_message) await topl_more();
+        // C ref: wintty.c tty_display_nhwindow(NHW_MENU): `if (toplin ==
+        // TOPLINE_NEED_MORE) tty_display_nhwindow(WIN_MESSAGE, TRUE)`, whose
+        // `cw->flags & WIN_CANCELLED` (== WIN_STOP) test returns before more()
+        // when ESC dismissed the welcome line's --More--.
+        if (game._pending_message && !game._winStop) await topl_more();
         await ask_do_tutorial();
     }
 
@@ -605,6 +609,9 @@ async function enter_tutorial_level() {
     // Hero placement: teleport_region {9,3} (Lua) -> abs cell {12,6}.
     g.u.ux = 12; g.u.uy = 6;
     g.u.dx = 0; g.u.dy = 0;
+    // C ref: dungeon.c u_on_newpos() — a new level leaves iflags.terrain_typ
+    // unclassified (MAX_TYPE) so the arrival re-runs classify_terrain().
+    (g.iflags = g.iflags || {}).terrain_typ = 37; /* MAX_TYPE */
     if (g.u.umovement == null) g.u.umovement = NORMAL_SPEED;
 
     // Reset vision for the new level and redraw.  C ref: goto_level() ->
@@ -1326,6 +1333,7 @@ export async function moveloop_turn() {
             }
             for (const m of hungerMsgs) {
                 if (m === null) await (await import('./hack.js')).stop_occupation(true);
+                else if (typeof m === 'object') (await import('./hack.js')).end_running(true);
                 else await update_topl(m);
             }
             if (hungerMsgs.uhs !== undefined) {
@@ -2051,7 +2059,16 @@ export async function moveloop_core() {
         vision_recalc(0);
         g.vision_full_recalc = 0;
     }
+    // C ref: allmain.c:473-479 — `if (disp.botl || disp.botlx) { bot();
+    // curs_on_u(); } else if (disp.time_botl) { timebot(); curs_on_u(); }`;
+    // curs_on_u() is flush_screen(1), so a dirty status line also paints every
+    // pending map glyph (the pet's moves this turn) before a counted repeat's
+    // next prompt raises its --More--.
+    const status_dirty = !!(g.botl || g.botlx || g.time_botl);
     await bot();
+    if (status_dirty) {
+        await flush_screen(1);
+    }
 
     // C ref: allmain.c:481 — `m_everyturn_effect(&gy.youmonst)` runs after bot()
     // and before the next command is read, so a hero polymorphed into a fog
@@ -2364,6 +2381,11 @@ export async function moveloop_core() {
     // so the run/travel (svc.context.mv) half stays with hack.js's own loop.
     let cmd_key = 0;
     if ((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run && g._cmd_key) {
+        // C ref: allmain.c:502-503 — `lookaround(); runmode_delay_output();`
+        // precedes the repeat; on every 7th turn (RUN_LEAP) its curs_on_u() is
+        // flush_screen(1), which paints the previous repeat's map changes
+        // (e.g. magic mapping) before the next prompt raises its --More--.
+        await (await import('./hack.js')).runmode_delay_output();
         g.multi -= 1;
         cmd_key = g._cmd_key;
     }

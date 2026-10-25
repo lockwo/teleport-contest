@@ -1530,7 +1530,7 @@ export async function hatch_egg(arg, timeout) {
     /* sterilized while waiting */
     if (!egg || egg.corpsenm === NON_PM) return;
 
-    const { big_to_little, monster_by_pmidx, makemon } = await import('./makemon.js');
+    const { big_to_little, monster_by_pmidx, makemon, makemon_appears_msg } = await import('./makemon.js');
     const { enexto_gpflags } = await import('./teleport.js');
     const { tamedog } = await import('./dothrow.js');
     const { m_monnam, a_monnam } = await import('./do_name.js');
@@ -1571,6 +1571,9 @@ export async function hatch_egg(arg, timeout) {
                 if (!cc || !(mon = makemon(ptr, cc.x, cc.y,
                                           C.NO_MINVENT | C.MM_NOMSG)))
                     break;
+                /* makemon()'s tail: newsym, and (even with MM_NOMSG) the
+                   dochugw(mtmp, FALSE) that interrupts a busy hero */
+                await makemon_appears_msg(mon, mon.mx, mon.my, C.NO_MINVENT | C.MM_NOMSG);
                 /* tame if your own egg hatches while you're on the same
                    dungeon level, or any dragon egg which hatches while it's in
                    your inventory */

@@ -23,7 +23,7 @@ import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as t
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON } from './const.js';
+import { A_CON, PICK_ONE } from './const.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
 import { fruit_from_name } from './objnam.js';
@@ -179,7 +179,8 @@ export function end_running(and_travel) {
     // C ref: hack.c:4132-4137 — `if (svc.context.run) { svc.context.run = 0;
     // if (flags.time) disp.time_botl = TRUE; ... }`: moveloop() suppressed
     // time_botl while the run lasted, so T: is republished once it stops.
-    if (svc_context_run() && game.flags?.time)
+    const was_running = svc_context_run();
+    if (was_running && game.flags?.time)
         game.time_botl = true;
     if (c.run) c.run = 0;
     c.run_leftover8 = 0; // see travel_walk()
@@ -200,6 +201,13 @@ export function end_running(and_travel) {
     // interrupts).
     c.stale_run = 0;
     c.cmd_stale_run = 0;
+    // C ref: hack.c end_running(): classify_terrain() suppresses setting disp.botl
+    // while running, so once the run stops recompute against an unclassified
+    // iflags.terrain_typ to catch a change.
+    if (was_running && game.flags?.terrainstatus) {
+        (game.iflags = game.iflags || {}).terrain_typ = 37; /* MAX_TYPE */
+        hooks.classify_terrain?.();
+    }
     if (and_travel) {
         c.travel = c.travel1 = c.mv = 0;
     }
@@ -614,7 +622,7 @@ async function run_movement(run) {
         // The next step is a new moveloop_core() iteration in C: its
         // once-per-input head runs before lookaround()+domove().
         await moveloop_input_redraw();
-        await bot();                   // moveloop_core()'s bot()/timebot() check
+        await moveloop_bot();          // moveloop_core()'s bot()/timebot() check
 
         await lookaround();            // may stop (multi=0) or turn the path
         await runmode_delay_output();  // allmain.c:517, between lookaround and domove
@@ -1180,7 +1188,7 @@ async function travel_walk(fastPathFailed = false) {
         if ((game.multi ?? 0) <= 0) break;
 
         await moveloop_input_redraw();  // next moveloop_core() iteration head
-        await bot();                    // its bot()/timebot() check
+        await moveloop_bot();           // its bot()/timebot() check
 
         await lookaround();
         await runmode_delay_output();   // allmain.c:517
@@ -1293,6 +1301,10 @@ function render_getpos_tip() {
     const cols = 80;
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
+    // C ref: tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0, and
+    // without overlay the screen is wiped (term_clear_screen()), not overlaid.
+    const overlay = game.flags?.menu_overlay ?? game.iflags?.menu_overlay;
+    if (overlay === false) { offx = 0; if (disp.clearScreen) disp.clearScreen(); }
     const textCol = offx + 1; // leading blank at offx, item text at offx+1
 
     const blankCols = (row) => {
@@ -1484,7 +1496,14 @@ function render_text_window(lines) {
     if (offx < 0) offx = 0;
     // wintty.c:1974 — a window as tall as the terminal drops the overlay form.
     if (lines.length >= 24) offx = 0;
-    const textCol = offx + 1;
+    let textCol = offx + 1;
+    // C ref: tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0 and the
+    // screen is wiped (term_clear_screen()) rather than overlaid.  The text then
+    // starts in column 0 and process_text_window()'s dmore() puts --More-- one
+    // column further in (the recorded hu78 step 693 screen).
+    const overlay = game.flags?.menu_overlay ?? game.iflags?.menu_overlay;
+    const noOverlay = overlay === false;
+    if (noOverlay) { offx = 0; textCol = 0; if (disp.clearScreen) disp.clearScreen(); }
 
     const blankCols = (row) => {
         for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
@@ -1497,8 +1516,9 @@ function render_text_window(lines) {
     }
     const endRow = lines.length;
     blankCols(endRow);
-    disp.putstr(textCol, endRow, GETPOS_MORESTR, NO_COLOR, 0);
-    disp.setCursor(textCol + GETPOS_MORESTR.length, endRow);
+    const moreCol = noOverlay ? textCol + 1 : textCol;
+    disp.putstr(moreCol, endRow, GETPOS_MORESTR, NO_COLOR, 0);
+    disp.setCursor(moreCol + GETPOS_MORESTR.length, endRow);
 }
 
 async function getpos_help(force, goal, doingWhatIs, hasValid, hasHilite) {
@@ -1572,7 +1592,16 @@ function gp_glyph_at(x, y, detectMode = false) {
     }
     // GLYPH_UNEXPLORED and a seen S_stone both draw blank but are distinct glyphs.
     if ((loc.disp_ch ?? ' ') === ' ' && gloc_unexplored(x, y)) return 'unexplored';
-    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}`;
+    // A doorway/broken door (S_ndoor) and plain room floor (S_room) draw the same
+    // character but are distinct glyphs, so a skip-same-glyphs fast move stops at
+    // the doorway.  Only when the cell shows its terrain (no monster, object,
+    // trap, warning or hero over it).
+    const u2 = game.u;
+    const terrainShown = !loc.disp_monster && !loc.remembered_glyph?.objotyp
+        && !loc.disp_trap && !loc.disp_warning && !loc.disp_hstatue
+        && !(u2 && x === u2.ux && y === u2.uy);
+    const ndoor = terrainShown && loc.typ === DOOR && !((loc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) ? 1 : 0;
+    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}|${ndoor}`;
 }
 
 // C ref: pager.c:123 self_lookat() -> mhidden_description(&youmonst,
@@ -2749,7 +2778,9 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // key is simply forgotten.  The old `mult` carried the prefix across
         // iterations, so 'G' then '#' then 'h' fast-moved where C steps one cell.
         let rushrun = false;
-        if (ch === 'G' || ch === 'g') {
+        // C ref: getpos.c:897 `c == cmd_from_func(do_run) || c == cmd_from_func(do_rush)`
+        // -- the keys bound NOW ('G'/'g', or '5'/M-5 under number_pad), not fixed letters.
+        if (ch === cmd_from_func('do_run') || ch === cmd_from_func('do_rush')) {
             // C getpos.c:898 — this second read is ALSO readchar_poskey(),
             // so it gets the same ALTMETA ESC-combining as the first.
             game.input_state = 'getposInp';
@@ -3021,92 +3052,46 @@ function terrain_menu_items() {
     const wizard = !!f.debug;
     const discover = !!(f.explore || f.discover || f.playmode === 'explore');
     const items = [
-        { ch: 'a', sel: true,  desc: 'known map without monsters, objects, and traps' },
-        { ch: 'b', sel: false, desc: 'known map without monsters and objects' },
-        { ch: 'c', sel: false, desc: 'known map without monsters' },
+        { sel: true, desc: 'known map without monsters, objects, and traps' },
+        { sel: false, desc: 'known map without monsters and objects' },
+        { sel: false, desc: 'known map without monsters' },
     ];
     if (discover || wizard) {
-        items.push({ ch: 'd', sel: false, desc: 'full map without monsters, objects, and traps' });
+        items.push({ sel: false, desc: 'full map without monsters, objects, and traps' });
         if (wizard) {
-            items.push({ ch: 'e', sel: false, desc: 'internal levl[][].typ codes in base-36' });
-            items.push({ ch: 'f', sel: false, desc: 'legend of base-36 levl[][].typ codes' });
+            items.push({ sel: false, desc: 'internal levl[][].typ codes in base-36' });
+            items.push({ sel: false, desc: 'legend of base-36 levl[][].typ codes' });
         }
     }
     return items;
 }
 
-// Render the "View which?" PICK_ONE menu as a tty corner overlay (the map
-// shows through the columns left of offx).  Mirrors render_whatis_menu /
-// process_menu_window: title (inverse) on row 0, a blank separator, the item
-// lines, then the "(end)" morestr with the cursor parked after it.  A selected
-// PICK_ONE default renders its marker column as '*' (tty tty_print_glyph:
-// n==2 && selected => '*').
-function render_terrain_menu(items, blankTop = false) {
-    const disp = game.nhDisplay;
-    if (!disp?.setCell) return;
-    const cols = disp.cols || 80;
-
-    const lines = [];
-    lines.push({ text: blankTop ? '' : 'View which?', attr: menuHeadAttr() });
-    lines.push({ text: '' });
-    for (const it of items)
-        lines.push({ text: `${it.ch} ${it.sel ? '*' : '-'} ${it.desc}` });
-
-    let maxcols = 0;
-    for (const l of lines) maxcols = Math.max(maxcols, l.text.length + 2);
-
-    let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcols - 1);
-    if (offx < 0) offx = 0;
-    const textCol = offx + 1;
-
-    const blankCols = (row) => {
-        for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
-    };
-    for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
-
-    for (let i = 0; i < lines.length; i++) {
-        blankCols(i);
-        if (lines[i].text) disp.putstr(textCol, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
-    }
-    const moreRow = lines.length;
-    blankCols(moreRow);
-    disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
-    disp.setCursor(textCol + 6, moreRow);
-}
-
-// Display the "View which?" menu and read a PICK_ONE selection.  Returns the
-// chosen a_int (1..3), or -1 if cancelled.  C select_menu(PICK_ONE): a
-// <space>/<return> confirms the preselected entry (n==1 => which==1); a direct
-// accelerator picks that entry; ESC cancels.
+// Display the "View which?" PICK_ONE menu through the shared tty menu
+// renderer and return doterrain()'s `which`.  C ref: cmd.c doterrain():
+//   n <  0: player used ESC to cancel;
+//   n == 0: preselected entry was explicitly chosen and got toggled off;
+//   n == 1: preselected entry was implicitly chosen via <space>|<enter>;
+//   n == 2: another entry was explicitly chosen, so skip preselected one.
+// Returns the chosen a_int (1..6), or -1 when cancelled.
 async function terrain_menu() {
     const items = terrain_menu_items();
-    render_terrain_menu(items);
-    for (;;) {
-        const k = await nhgetch();
-        if (k === 27) return -1;                        // ESC: cancel
-        if (k === 32 || k === 13 || k === 10) return 1; // confirm preselected
-        const ch = String.fromCharCode(k);
-        if (ch === ':') {
-            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
-            const reply = await hooked_tty_getlin('Search for:', null);
-            render_terrain_menu(items, true);
-            if (!reply || reply[0] === '\x1b') continue;
-            const match = items.findIndex((it) =>
-                pmatchi(`*${reply}*`, `${it.ch} ${it.sel ? '*' : '-'} ${it.desc}`));
-            if (match >= 0) return match + 1;
-            continue;
-        }
-        if (ch === '-') {
-            // C ref: wintty.c MENU_UNSELECT_ALL ('-') clears the preselected
-            // entry; a later <space> then reports n == 0 (doterrain: which = 1).
-            for (const it of items) it.sel = false;
-            render_terrain_menu(items);
-            continue;
-        }
-        const i = items.findIndex((it) => it.ch === ch);
-        if (i >= 0) return i + 1; // accelerator -> a_int (1-based menu order)
-        // invalid key: PICK_ONE stays open (the menu is still on the grid).
-    }
+    const entries = [
+        { text: 'View which?', attr: menuHeadAttr() },
+        { text: '' },
+        ...items.map((it, i) => ({
+            text: it.desc,
+            item: { value: i + 1, selected: it.sel, count: -1 },
+        })),
+    ];
+    const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
+    const committed = await select_command_menu(entries, { how: PICK_ONE });
+    const sel = committed ? entries.filter((e) => e.item?.selected).map((e) => e.item.value) : [];
+    await dismiss_invent_screen();
+    if (!committed) return -1;
+    const n = sel.length;
+    let which = (n === 0) ? 1 : sel[0];
+    if (n > 1 && which === 1) which = sel[1];
+    return which;
 }
 
 // C ref: cmd.c doterrain().  recalc_mapseen() has no display effect for our
@@ -3527,13 +3512,17 @@ function look_pick_description(x, y) {
         // C ref: pager.c do_screen_description() keys off the displayed symbol —
         // a polymorphed hero is drawn as its monster class letter, so the class
         // explanation is that class's, and "or you" is never tacked on (!Upolyd).
-        if (u.Upolyd && u.data?.mlet) {
-            const pcls = def_monsyms.find((d) => d.sym === u.data.mlet && d.explain);
-            if (pcls)
+        // C ref: showrace draws a non-polymorphed hero with its race's monster letter
+        // ('h' dwarf, 'G' gnome, 'o' orc), which keys the class lookup the same way
+        // (and `sym == def_monsyms[S_HUMAN].sym` for "or you" no longer holds).
+        const heroSym = u.Upolyd ? u.data?.mlet : (game.flags?.showrace ? hero_glyph().ch : '@');
+        if (heroSym && heroSym !== '@') {
+            const pcls = def_monsyms.filter((d) => d.sym === heroSym && d.explain);
+            if (pcls.length)
                 return {
-                    text: `${u.data.mlet}        ${an(pcls.explain)} (${self})`,
+                    text: `${heroSym}        ${pcls.map((d) => an(d.explain)).join(' or ')} (${self})`,
                     firstmatch: self,
-                    found: 1,
+                    found: pcls.length,
                 };
         }
         // C ref: display.c display_self() draws a visible steed's (ridden) glyph at the
@@ -3637,10 +3626,12 @@ function look_pick_description(x, y) {
     // A hallucinated floor object is drawn as a random object glyph (display.h
     // random_obj_to_glyph), so glyph_is_object() holds for it whatever the real
     // object is; lookat() then names that glyph's otyp via object_from_map().
+    // Likewise a REMEMBERED object glyph (glyph_at() is the map memory) is an
+    // object glyph even when nothing of that kind lies there any more.
     const hrem = loc?.remembered_glyph;
     if ((floorObject && !covers_objects(loc)
          && object_glyph(floorObject).ch === loc.disp_ch)
-        || (loc && !covers_objects(loc) && hrem?.hallucotyp != null
+        || (loc && !covers_objects(loc) && (hrem?.hallucotyp != null || hrem?.objotyp)
             && hrem.ch === loc.disp_ch)) {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
@@ -4025,6 +4016,10 @@ async function display_dbase_window(lines, forceFull = false) {
     // Restore the map/status underneath the dismissed window.
     game._pending_message = '';
     game._toplin = 0;
+    // C ref: wintty.c erase_menu_or_text(): a full-screen window (offx == 0,
+    // always so for NHW_TEXT) is torn down with docrt(), which re-sights every
+    // square (a remembered engraving since wiped out shows as plain floor).
+    if (offx === 0) await docrt();
     await flush_screen(1);
 }
 
@@ -5040,6 +5035,17 @@ export async function overexert_hp() {
         const { fall_asleep } = await import('./zap.js');
         await fall_asleep(-10, false);
     }
+}
+
+// C ref: allmain.c:473-479 moveloop_core() — `if (disp.botl || disp.botlx) {
+// bot(); curs_on_u(); } else if (disp.time_botl) { timebot(); curs_on_u(); }`.
+// curs_on_u() is flush_screen(1), so a dirty status line also paints every
+// pending map glyph (a monster's trap-door fall, say) before the next
+// prompt's --More-- in a run/travel continuation.
+async function moveloop_bot() {
+    const dirty = !!(game.botl || game.botlx || game.time_botl);
+    await bot();
+    if (dirty) await flush_screen(1);
 }
 
 export async function runmode_delay_output() {
