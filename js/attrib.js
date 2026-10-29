@@ -521,7 +521,7 @@ export async function postadjabil(ability) {
         return;
     if (ability === P_WARNING || ability === P_SEE_INVIS) {
         const { see_monsters } = await import('./display.js');
-        see_monsters();
+        await see_monsters();
     }
 }
 

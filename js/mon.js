@@ -55,7 +55,7 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     W_SADDLE, DISMOUNT_FELL, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL, FOUNTAIN,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
     M_AP_TYPE, M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
-    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR } from './const.js';
+    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR, PLNMSG_GROWL } from './const.js';
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
 import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
@@ -3492,7 +3492,7 @@ export async function peacefuls_respond(mtmp) {
                 if (!rn2(4)) {
                     const { growl } = await import('./sounds.js');
                     await growl(mon);
-                    exclaimed = (game.iflags?.last_msg === 'PLNMSG_GROWL');
+                    exclaimed = (game.last_msg === PLNMSG_GROWL);
                 }
                 if (rn2(6)) {
                     alreadyfleeing = !!(mon.mflee || mon.mfleetim);

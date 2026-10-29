@@ -138,6 +138,13 @@ function what_gives_artifact(propidx) {
         if (art === artilist[ART_NONARTIFACT]) continue;
         if (dtyp && (art.cary.adtyp === dtyp
                      || (art.defn.adtyp === dtyp && o.owornmask))) return o;
+        /* C ref: artifact.c set_artifact_intrinsic(SPFX_WARN): an artifact with
+           an m2 mask (Orcrist, Sting, Grimtooth) grants EWarn_of_mon, one
+           without grants EWarning; what_gives() also needs warntype.obj for the
+           former. */
+        if (spfx === SPFX_WARN && propidx === 31 /*WARNING*/ && art.mtype) continue;
+        if (spfx === SPFX_WARN && propidx === 32 /*WARN_OF_MON*/
+            && (!art.mtype || !game.context?.warntype?.obj)) continue;
         if (spfx && ((art.cspfx & spfx) === spfx
                      || ((art.spfx & spfx) === spfx && o.owornmask))) return o;
         // C ref: artifact.c set_artifact_intrinsic() — Sunsword grants
@@ -265,7 +272,9 @@ function from_what(propidx, hkey) {
                        /* Fumbling's countdown (HFumbling timeout) shares the word too */
                        && !(propidx === FUMBLING && !((H_prop(propidx) | 0) & FROMOUTSIDE))
                        /* a timeout-only Polymorph word is not FROMOUTSIDE either */
-                       && !(propidx === POLYMORPH && !((H_prop(propidx) | 0) & FROMOUTSIDE))) {
+                       && !(propidx === POLYMORPH && !((H_prop(propidx) | 0) & FROMOUTSIDE))
+                       /* Strangled is the amulet's 6-turn countdown, not an intrinsic */
+                       && !(propidx === STRANGLED_PROP && !((H_prop(propidx) | 0) & FROMOUTSIDE))) {
                 // C ref: attrib.c:872 `(*ability & FROMOUTSIDE) != 0`.  Read
                 // the intrinsic through H_prop() so the bare-name spelling
                 // several modules write (js/eat.js stores corpse intrinsics as
@@ -764,7 +773,7 @@ export function enlightenment_lines(final = 0, basic = true) {
     }
     if ((up.Strangled | 0) > 0 || ispec(STRANGLED)) {
         if (ispec(STRANGLED)) out(' You died from strangulation.');
-        else youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`);
+        else youAre(`being strangled${_wizard() ? ` (${up.Strangled & TIMEOUT_MASK})` : ''}`, from_what_p(STRANGLED));
     }
     if ((up.Sick | 0) > 0 || u.sick || ispec(SICK)) {
         if (ispec(SICK)) {

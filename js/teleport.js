@@ -816,7 +816,7 @@ export async function teleds(nux, nuy, teleds_flags) {
      *  vision recalculation because the hero is now somewhere new.
      */
     newsym_(u.ux0, u.uy0);
-    see_monsters_();
+    await see_monsters_();
     game.vision_full_recalc = 1;
     const { nomul } = await import('./hack.js');
     nomul(0);
@@ -1631,7 +1631,7 @@ async function u_on_newpos_(x, y) {
 }
 // C ref: display.c see_monsters() / notice_mon_off()/on() (mon.c) /
 // vision.c vision_recalc(control) / detect.c switch_terrain().
-function see_monsters_() { see_monsters(); }
+async function see_monsters_() { await see_monsters(); }
 function notice_mon_off_() {
     const a11y = game.a11y || (game.a11y = {});
     a11y.mon_notices_blocked = (a11y.mon_notices_blocked || 0) + 1;

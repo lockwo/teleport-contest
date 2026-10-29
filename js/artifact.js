@@ -16,7 +16,7 @@
 //     below do the conversion; do not "simplify" the table to 0..12.
 import { game, hooks } from './gstate.js';
 import { livelog_printf, LL_ARTIFACT } from './livelog.js';
-import { update_topl, see_monsters, map_invisible, shieldeff, newsym, stairway_at, You_feel } from './display.js';
+import { update_topl, see_monsters_sync, flush_sting_effects, map_invisible, shieldeff, newsym, stairway_at, You_feel } from './display.js';
 import { hcolor } from './do_name.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost, stamp_fobj, uncurse } from './mkobj.js';
@@ -1169,7 +1169,9 @@ function toggle_extrinsic(prop, on, wp_mask) {
 // been worn/wielded/picked-up or the reverse.  Pickup/drop only set/reset the
 // W_ART bit.  RNG-free, but it writes the state that later moduli read.
 export async function set_artifact_intrinsic(otmp, on, wp_mask) {
-    if (set_artifact_intrinsic_core(otmp, on, wp_mask))
+    const invoke_off = set_artifact_intrinsic_core(otmp, on, wp_mask);
+    await flush_sting_effects();
+    if (invoke_off)
         await arti_invoke(otmp);
 }
 
@@ -1210,7 +1212,7 @@ export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
         if (spfx & bit) {
             toggle_extrinsic(p, on, wp_mask);
             /* artifact.c:798 SPFX_ESP: recalc_telepat_range(); see_monsters() */
-            if (bit === SPFX_ESP) see_monsters();
+            if (bit === SPFX_ESP) see_monsters_sync();
         }
     if (spfx & SPFX_HALRES) {
         /* make_hallucinated must (re)set the mask itself to get the display
@@ -1225,9 +1227,11 @@ export function set_artifact_intrinsic_core(otmp, on, wp_mask) {
     if (spfx & SPFX_WARN) {
         if (spec_m2(otmp)) {
             toggle_extrinsic(WARN_OF_MON, on, wp_mask);
-            game.warntype_obj = on ? ((game.warntype_obj || 0) | spec_m2(otmp))
-                                   : ((game.warntype_obj || 0) & ~spec_m2(otmp));
-            see_monsters();
+            /* C ref: svc.context.warntype.obj |= / &= ~ spec_m2(otmp) */
+            const wt = ((game.context ||= {}).warntype ||= {});
+            wt.obj = on ? ((wt.obj | 0) | spec_m2(otmp))
+                        : ((wt.obj | 0) & ~spec_m2(otmp));
+            see_monsters_sync();
         } else {
             toggle_extrinsic(WARNING, on, wp_mask);
         }
@@ -2489,7 +2493,7 @@ export function what_gives(abilName, abilValue) {
 
     for (const obj of invent_list()) {
         if (obj.oartifact
-            && (abilName !== 'EWarn_of_mon' || game.warntype_obj)) {
+            && (abilName !== 'EWarn_of_mon' || game.context?.warntype?.obj)) {
             const art = get_artifact(obj);
 
             if (art !== NONART()) {
@@ -2583,12 +2587,13 @@ export function glow_verb(count, ingsfx) {
 
 // C ref: artifact.c Sting_effects() — the warning glow for Sting, Orcrist and
 // Grimtooth.  RNG-free; it only decides which message (if any) is given.
-export async function Sting_effects(orc_count) {
+// `warn_obj_cnt` is C's gw.warn_obj_cnt, the OLD count; see_monsters_sync()
+// has already committed the new one, so it passes the old value it saw.
+export async function Sting_effects(orc_count, warn_obj_cnt = game.warn_obj_cnt | 0) {
     const uwep = game.uwep;
     if (!(is_art(uwep, ART_STING) || is_art(uwep, ART_ORCRIST)
           || is_art(uwep, ART_GRIMTOOTH)))
         return;
-    const warn_obj_cnt = game.warn_obj_cnt | 0;
     const oldstr = glow_strength(warn_obj_cnt), newstr = glow_strength(orc_count);
 
     if (orc_count === -1 && warn_obj_cnt > 0) {
@@ -2596,6 +2601,10 @@ export async function Sting_effects(orc_count) {
            that the eventual 'stop' message will match */
         await update_topl(`${bare_artifactname(uwep)} is ${glow_verb(Blind() ? 0 : warn_obj_cnt, true)}.`);
     } else if (newstr > 0 && newstr !== oldstr) {
+        /* goto_level() -> docrt() -> see_monsters() -> Sting_effects(); if
+           "you materialize on a different level" is pending, give it now so
+           that the start-glowing message comes after it */
+        await (await import('./do.js')).maybe_lvltport_feedback(); /* usually called by goto_level() */
         if (!Blind())
             await update_topl(`${bare_artifactname(uwep)} ${glow_verb(orc_count, false)}s ${glow_color(uwep.oartifact)}${(newstr > oldstr) ? '!' : '.'}`);
         else if (oldstr === 0) /* quivers */

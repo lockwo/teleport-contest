@@ -40,6 +40,7 @@ import {
     remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
     weldmsg, setuswapwep, setuqwep,
     W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropx, dropy,
+    report_merge_discovery,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { touch_artifact } from './artifact.js';
@@ -1923,6 +1924,9 @@ export async function out_container(obj) {
 
     const otmp = addinv(obj);
     await flush_artitouch();
+    /* C: merged() plines "You learn more about your items by comparing
+       them." during addinv(), before the prinv() announcement. */
+    await report_merge_discovery();
     await pickup_prinv(otmp, count, 'removing');
 
     if (is_gold) await bot();

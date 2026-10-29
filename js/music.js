@@ -14,7 +14,7 @@ import {
 } from './const.js';
 import { acurr_eff } from './attrib.js';
 import { fmonOrder } from './mon.js';
-import { m_at, newsym, update_topl, You_hear, You_feel } from './display.js';
+import { m_at, newsym, update_topl, You_hear, You_feel, canseemon_shared as canseemon } from './display.js';
 import { cansee, Blind } from './vision.js';
 import { Is_stronghold, In_sokoban, SHOPBASE, STRAT_WAITMASK } from './const.js';
 import {
@@ -135,7 +135,7 @@ async function put_monsters_to_sleep(distance) {
 
 // C ref: music.c:104 charm_snakes(distance).  No RNG.
 async function charm_snakes(distance) {
-    const { Monnam, x_monnam, canspotmon } = await import('./uhitm.js');
+    const { Monnam, x_monnam } = await import('./uhitm.js');
     for (const mtmp of monsterList().slice()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mdata(mtmp)?.mcls === S_SNAKE && mtmp.mcanmove && mdistu(mtmp) < distance) {
@@ -143,10 +143,10 @@ async function charm_snakes(distance) {
             mtmp.mpeaceful = 1;
             mtmp.mavenge = 0;
             mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-            const could_see_mon = canspotmon(mtmp);
+            const could_see_mon = canseemon(mtmp);
             mtmp.mundetected = 0;
             newsym(mtmp.mx, mtmp.my);
-            if (canspotmon(mtmp)) {
+            if (canseemon(mtmp)) {
                 if (!could_see_mon)
                     await update_topl(`You notice ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}, swaying with the music.`);
                 else
@@ -159,7 +159,7 @@ async function charm_snakes(distance) {
 
 // C ref: music.c:139 calm_nymphs(distance).  No RNG.
 async function calm_nymphs(distance) {
-    const { Monnam, canspotmon } = await import('./uhitm.js');
+    const { Monnam } = await import('./uhitm.js');
     for (const mtmp of monsterList().slice()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mdata(mtmp)?.mcls === S_NYMPH && mtmp.mcanmove && mdistu(mtmp) < distance) {
@@ -167,7 +167,7 @@ async function calm_nymphs(distance) {
             mtmp.mpeaceful = 1;
             mtmp.mavenge = 0;
             mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-            if (canspotmon(mtmp))
+            if (canseemon(mtmp))
                 await update_topl(`${Monnam(mtmp)} listens cheerfully to the music, then seems quieter.`);
         }
     }
@@ -176,7 +176,7 @@ async function calm_nymphs(distance) {
 // C ref: music.c:161 awaken_soldiers(bugler) — every mercenary on the level
 // wakes and turns hostile; everything else within range gets awaken_scare().
 export async function awaken_soldiers(bugler) {
-    const { Monnam, canspotmon } = await import('./uhitm.js');
+    const { Monnam } = await import('./uhitm.js');
     const isYou = !bugler || bugler === game.u;
     const distance = (isYou ? (game.u?.ulevel | 0) : (mdata(bugler)?.mlevel | 0)) * 30;
     for (const mtmp of monsterList().slice()) {
@@ -186,7 +186,7 @@ export async function awaken_soldiers(bugler) {
             mtmp.msleeping = 0; mtmp.mfrozen = 0;
             mtmp.mcanmove = 1;
             mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
-            if (canspotmon(mtmp))
+            if (canseemon(mtmp))
                 await update_topl(`${Monnam(mtmp)} is now ready for battle!`);
             else if (!Deaf()) {
                 /* Norep(): pline.c PLINE_NOREPEAT drops an exact repeat of the

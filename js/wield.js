@@ -11,7 +11,7 @@
 
 import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
-import { pline } from './display.js';
+import { pline, hold_botl_con } from './display.js';
 import { rnd } from './rng.js';
 import {
     update_inventory, xname, is_plural, bimanual, otense, body_part, setuswapwep, freeinv, inventoryArray,
@@ -419,6 +419,7 @@ export async function uwepgone(deps = {}) {
             if (!(await import('./vision.js')).Blind())   /* C: `if (!Blind)` */
                 await pline(`${Tobjnam(game.uwep, 'stop')} shining.`);
         }
+        hold_botl_con();                /* no disp.botl here: Ogresmasher's Con lingers */
         setuwep_slot(null);             /* setworn(0, W_WEP) */
         await flush_hallucination_transitions();
         game.unweapon = true;

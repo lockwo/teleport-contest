@@ -787,8 +787,12 @@ function map_object(obj, show) {
     /* C ref: display.h obj_to_glyph() -> obj_is_piletop(): MG_OBJPILE */
     const pile = obj_is_piletop(obj);
     if (game.level?.flags?.hero_memory) {
+        /* C ref: display.h obj_to_glyph() — a corpse/statue glyph carries its
+           monster type (GLYPH_BODY_OFF + corpsenm), which autodescribe and
+           lookat() read back out of levl[x][y].glyph. */
         loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
-                                 objotyp: obj.otyp, pile };
+                                 objotyp: obj.otyp, pile, female: !!g.female,
+                                 corpsenm: g.corpsenm };
         loc.mapped_trap_ttyp = 0;
     }
     if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr({ pile }));
@@ -1621,7 +1625,7 @@ export async function do_vicinity_map(sobj) {
                 if (!mtmp || !canspotmon(mtmp)) map_invisible(zx, zy);
             }
         }
-    see_monsters();
+    await see_monsters();
 
     if (refresh) await docrt();
 }

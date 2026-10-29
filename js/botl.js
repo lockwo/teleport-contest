@@ -54,7 +54,7 @@ import { depth } from './hacklib.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { clr2colorname, query_color, query_attr } from './coloratt.js';
 import { pline, impossible, status_hold } from './display.js';
-import { pmname_of_pmidx } from './makemon.js';
+import { pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading,
          end_menu, select_menu, nul_glyphinfo } from './windows.js';
 import { status_version } from './version.js';
@@ -629,17 +629,20 @@ export function timebot() {
 }
 
 /* C ref: botl.c:367 — resolve a rank title (or role name) back to its role. */
+/* role.js roles[].mnum is the 0-based offset from PM_ARCHEOLOGIST (the
+   player-monster block of mons[] is contiguous); C's roles[].mnum is the PM_ index. */
+const PM_ARCHEOLOGIST_IDX = () => name_to_pmidx('archeologist');
 export function title_to_mon(str, out) {
     for (let i = 0; i < roles.length && roles[i].name?.m; i++) {
         for (let j = 0; j < 9; j++) {
             const rm = roles[i].rank?.[j]?.m, rf = roles[i].rank?.[j]?.f;
             if (rm && str_start_is(str, rm, true)) {
                 if (out) { out.rank_indx = j; out.title_length = rm.length; }
-                return roles[i].mnum;
+                return PM_ARCHEOLOGIST_IDX() + roles[i].mnum;
             }
             if (rf && str_start_is(str, rf, true)) {
                 if (out) { out.rank_indx = j; out.title_length = rf.length; }
-                return roles[i].mnum;
+                return PM_ARCHEOLOGIST_IDX() + roles[i].mnum;
             }
         }
     }

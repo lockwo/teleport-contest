@@ -268,11 +268,11 @@ export function tmp_at_flash(obj, tethered = false) {
 // Same machinery for a caller-supplied display cell {ch, color, dec} (a cmap
 // glyph such as boomhit()'s S_boomleft/S_boomright).  change(cell) is
 // tmp_at(DISP_CHANGE, glyph).
-export function tmp_at_flash_cell(glyph, tethered = false) {
+export function tmp_at_flash_cell(glyph, tethered = false, always = false) {
     let fx = -1, fy = -1;
     const saved = [];
     const draw = (x, y) => {
-        if (glyph) show_glyph_cell(x, y, glyph.ch, glyph.color, glyph.dec);
+        if (glyph) show_glyph_cell(x, y, glyph.ch, glyph.color, glyph.dec, glyph.attr | 0);
     };
     return {
         change(cell) { glyph = cell; },
@@ -291,9 +291,11 @@ export function tmp_at_flash_cell(glyph, tethered = false) {
                 return;
             }
             if (fx >= 0) { newsym(fx, fy); fx = fy = -1; }
-            if (!glyph || !cansee(x, y)) return;
+            /* DISP_ALWAYS shows the glyph whether or not the hero can see <x,y> */
+            if (!glyph || (!always && !cansee(x, y))) return;
             draw(x, y);
             fx = x; fy = y;
+            if (always) await flush_screen(0);
         },
         async end(backtrack = false) {
             if (tethered) {
@@ -313,6 +315,15 @@ export function tmp_at_flash_cell(glyph, tethered = false) {
             if (fx >= 0) { newsym(fx, fy); fx = fy = -1; }
         },
     };
+}
+
+// C ref: display.h mon_to_glyph(&youmonst, rn2_on_display_rng) as a display
+// cell: the hero's current form, or a fresh display-RNG species while
+// Hallucinating.
+export function youmonst_glyph_cell(form, female) {
+    const mon = Hallucination_u() ? monster_by_pmidx(random_monster()) : form;
+    return { ch: mon?.mlet || 'x', color: (mon?.mcolor != null) ? mon.mcolor : NO_COLOR,
+             dec: false, attr: female_attr(female) };
 }
 
 // C ref: display.h what_mon(monsndx(mon->data), rng) — while Hallucination
@@ -661,7 +672,7 @@ export function match_warn_of_mon(mon) {
           || ((u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0))) return false;
     const wt = game.context?.warntype || {};
     const m2 = mflags2_of(mon.data);
-    return (((game.warntype_obj | 0) & m2) !== 0)
+    return (((wt.obj | 0) & m2) !== 0)
         || (((wt.polyd | 0) & m2) !== 0)
         || (!!wt.species && wt.species.pmidx === mon.data.pmidx);
 }
@@ -1883,14 +1894,19 @@ function mon_warning(mon) {
 // C ref: display.c see_monsters() — redraw every live monster's square (and the
 // hero's).  A warning glyph is a property of the HERO's current position
 // (mdistu(mon) < 100), so without this pass a '2' drawn when the hero was
-// adjacent stayed on screen after they stepped away.  Sting_effects has no
-// analogue here; newsym() draws no RNG unless the hero is hallucinating, and
-// C's Hallucination arm is a different branch.
-export function see_monsters() {
+// adjacent stayed on screen after they stepped away.  newsym() draws no RNG
+// unless the hero is hallucinating, and C's Hallucination arm is a different
+// branch.
+//
+// The monster loop shared by the async see_monsters() and the synchronous
+// see_monsters_sync(); returns new_warn_obj_cnt (the number of monsters a
+// wielded Sting/Orcrist/Grimtooth warns of), or -1 when defer_see_monsters
+// made C return early.
+function see_monsters_loop() {
     // C ref: display.c see_monsters() `if (gd.defer_see_monsters) return;` —
     // restgamestate() sets it so docrt() during a restore does not paint
     // sensed/telepathic monsters before moveloop_preamble() releases it.
-    if (game.defer_see_monsters) return;
+    if (game.defer_see_monsters) return -1;
     // C ref: makemon.c m_initweap-era `mtmp->nmon = fmon; fmon = mtmp` — fmon is
     // a PREPEND list, so C walks the level's monsters newest-first.  This port's
     // level.monsters[] is append-ordered, i.e. exactly the reverse.  The order
@@ -1898,6 +1914,13 @@ export function see_monsters() {
     // fixes which display-rng draw each hallucinated monster gets.
     const lev = game.level;
     const mons = lev?.monsters || [];
+    // C: Warn_of_mon is HWarn_of_mon || EWarn_of_mon; the count is of monsters
+    // whose m2 flags match svc.context.warntype.obj.
+    const up = game.u?.uprops || {};
+    const warn_of_mon = !!((up.HWarn_of_mon | 0) || (up.EWarn_of_mon | 0)
+        || ((game.u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0));
+    const warn_obj = game.context?.warntype?.obj | 0;
+    let new_warn_obj_cnt = 0;
     for (let i = mons.length - 1; i >= 0; i--) {
         const mon = mons[i];
         if (!mon || (mon.mhp != null && mon.mhp <= 0)) continue;
@@ -1914,8 +1937,47 @@ export function see_monsters() {
             for (let seg = lev.wtails[mon.wormno]; seg && seg !== lev.wheads[mon.wormno];
                  seg = seg.nseg)
                 newsym(seg.wx, seg.wy);
+        if (warn_of_mon && (warn_obj & mflags2_of(mon.data)) !== 0)
+            new_warn_obj_cnt++;
+    }
+    return new_warn_obj_cnt;
+}
+
+export async function see_monsters() {
+    await flush_sting_effects();
+    const new_warn_obj_cnt = see_monsters_loop();
+    if (new_warn_obj_cnt < 0) return;
+    /* Make Sting glow blue or stop glowing if required. */
+    if (new_warn_obj_cnt !== (game.warn_obj_cnt | 0)) {
+        const { Sting_effects } = await import('./artifact.js');
+        await Sting_effects(new_warn_obj_cnt);
+        game.warn_obj_cnt = new_warn_obj_cnt;
+    }
+    /* when mounted, hero's location gets caught by monster loop */
+    if (!game.u?.usteed) newsym(game.u?.ux, game.u?.uy);
+}
+
+// see_monsters() for the synchronous worn.c setworn() -> artifact.c
+// set_artifact_intrinsic_core() chain, which cannot await Sting_effects()'s
+// pline.  The count is committed now; the message is queued and given by
+// flush_sting_effects() at the async boundary that follows the setworn().
+export function see_monsters_sync() {
+    const new_warn_obj_cnt = see_monsters_loop();
+    if (new_warn_obj_cnt < 0) return;
+    if (new_warn_obj_cnt !== (game.warn_obj_cnt | 0)) {
+        (game._pending_sting_effects ||= []).push(
+            { orc_count: new_warn_obj_cnt, old: game.warn_obj_cnt | 0 });
+        game.warn_obj_cnt = new_warn_obj_cnt;
     }
     if (!game.u?.usteed) newsym(game.u?.ux, game.u?.uy);
+}
+
+export async function flush_sting_effects() {
+    const q = game._pending_sting_effects;
+    if (!q?.length) return;
+    game._pending_sting_effects = null;
+    const { Sting_effects } = await import('./artifact.js');
+    for (const { orc_count, old } of q) await Sting_effects(orc_count, old);
 }
 
 // C ref: display.c see_objects() — newsym() every square whose top floor
@@ -1980,7 +2042,8 @@ export function canspotself() {
     // EInvis: the worn-item extrinsic store (prop.h INVIS=40) as well as the
     // flat aliases, so a worn ring/cloak of invisibility really hides the hero.
     const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis
-        || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0)) && !(p.BInvis || u.BInvis);
+        || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0))
+        && !(p.BInvis || u.BInvis || ((u.uprops_blocked || {})[40 /*INVIS*/] | 0)); // mummy wrapping
     if (!(invis && !see_invisible()) && !u.uundetected) return true;
     /* senseself(): Unblind_telepat is ETelepat (worn helm of telepathy / amulet
        of ESP live in the extrinsic store), Detect_monsters either half */
@@ -2142,12 +2205,25 @@ function set_seenv(lev, x0, y0, x, y) {
 // C ref: display.c map_location(x, y, FALSE) — update the hero's memory of one
 // square without drawing it.  background_glyph() makes the same display-rng
 // draws C's map_object() does while Hallucinating (u_on_newpos() arrival).
-export function map_location(x, y) {
+export function map_location(x, y, show = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
+    if (show) maybe_observe_near_object(x, y);   // _map_location(x, y, 1) -> map_object()
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
     update_lastseentyp_d(x, y);
+    if (show) {
+        show_bg_glyph(x, y, bg);
+        // C ref: display.c _map_location() tail — `if (show && !Blind &&
+        // (reg = visible_region_at(x, y))) show_region()`.
+        if (!Blind()) {
+            const reg = visible_region_at(x, y);
+            if (reg) {
+                const rg = show_region(reg);
+                show_glyph_cell(x, y, rg.ch, rg.color, false);
+            }
+        }
+    }
 }
 
 // C ref: display.c feel_newsym(x, y) — "when hero knows what happened to
@@ -2867,7 +2943,7 @@ async function docrt_live() {
     vision_recalc(0);
     // C ref: display.c docrt -> see_monsters(), whose tail newsym()s the hero's
     // own square (which honours canspotself()).
-    see_monsters();
+    await see_monsters();
 }
 
 // C ref: role.c races[].mnum — PM_HUMAN, PM_ELF, PM_DWARF, PM_GNOME, PM_ORC,
@@ -3258,7 +3334,7 @@ function _botFields(order, transient = null) {
     // (A_STR..A_CHA); the status line displays St Dx Co In Wi Ch.
     raw[BL_STR] = _strengthStr(status_held('str', acurr_eff(0)));
     raw[BL_DX] = String(acurr_eff(3));
-    raw[BL_CO] = String(acurr_eff(4));
+    raw[BL_CO] = String(status_held('con', acurr_eff(4)));
     raw[BL_IN] = String(acurr_eff(1));
     raw[BL_WI] = String(acurr_eff(2));
     raw[BL_CH] = String(acurr_eff(5));
@@ -3305,31 +3381,19 @@ function _botFields(order, transient = null) {
     raw[BL_HD] = String(u.data?.mlevel ?? 0);
     raw[BL_XP] = String(status_held('xl', u.ulevel || 1));
     raw[BL_EXP] = String(u.uexp || 0);
-    // NOT YET FIXED: C ref: allmain.c:262-263 `if (flags.time &&
-    // !svc.context.run) disp.time_botl = TRUE;` — while a run/rush is armed, C
-    // freezes the displayed turn counter instead of republishing it every turn
-    // (see [[stale-context-run-freezes-turn-counter]]).
-    // Tried and reverted: gating a snapshot on game.context.run_prefix/
-    // stale_run (JS stand-ins for svc.context.run) doesn't work — those only
-    // bridge ONE keypress after a 'g'/'G' prefix, but stay armed across MORE
-    // turns whenever a multi-turn occupation (e.g. take-off) advances
-    // game.moves without a new rhack() clearing them; false-froze bl011/bl023
-    // by one screen each while fixing bl026, net only +11/50-session draw.
-    // Needs a faithful svc.context.run equivalent or an occupation-aware guard
-    // (game.occupation alone was NOT sufficient — still TBD).
-    // Round-3 lp-ranger-gnome attempt: gating on the ACTUAL game.context.run
-    // flag (not run_prefix/stale_run) also fails — e.g. bl000's boulder-push
-    // rush shows C's T: field updating LIVE (T:64) mid-run while our freeze
-    // held it at a 25-turn-stale T:39, because context.run stays truthy for
-    // the run's whole duration but C's timebot()-suppression is NOT simply
-    // "frozen for context.run's entire lifetime" — some other per-turn stat
-    // change (or a run-internal disp.botl trigger not modelled here) forces
-    // a live full redraw mid-run that this gate doesn't reproduce. Confirmed
-    // via gate.mjs --flat: REJECT (proxyscore -2, proxy4 -7, blind -37 across
-    // 8 sessions, wave7 -3, wave9 net -5 despite +2 on the target session).
-    // Do not re-attempt without first modelling C's disp.botl full-redraw
-    // triggers (any OTHER bot field changing) as an escape hatch from the
-    // freeze, not just gating on context.run in isolation.
+    // C ref: allmain.c:262-263 `if (flags.time && !svc.context.run)
+    // disp.time_botl = TRUE;` — while a run/travel is armed, moveloop() does not
+    // republish the turn counter; allmain.js moveloop_core() ports that gate
+    // (svc_context_run()), and hack.js runmode_delay_output()/end_running() are
+    // the only things that put time_botl back.  The T: field therefore lags
+    // during a run UNLESS something else dirties disp.botl, because bot()
+    // repaints every field including T:.  One such trigger is a levitating
+    // hero: hack.c spoteffects() calls switch_terrain() on every step (while
+    // iflags.terrain_typ stays MAX_TYPE, i.e. without terrainstatus), whose
+    // `else if (BFlying)` arm runs float_vs_flight() and its unconditional
+    // disp.botl = TRUE.  That needs BFlying|I_SPECIAL, which polyself.js
+    // float_vs_flight() sets only if it sees every Levitation source,
+    // including worn boots/rings (invent.js worn_extrinsic()).
     // C ref: botl.c bot()/timebot() are the only writers of BL_TIME, so the
     // field shows `moves` as of the last bot()/timebot() (game._shownMoves,
     // refreshed by botl_flush()/timebot_sync()), not the live counter.
@@ -4492,6 +4556,16 @@ export function hold_botl_hp() {
     if (!u || game.botl || game.botlx) return;
     status_hold('hp', u.Upolyd ? u.mh : u.uhp);
     status_hold('hpmax', (u.Upolyd ? u.mhmax : u.uhpmax) || 0);
+}
+
+// C ref: wield.c uwepgone() empties the weapon slot WITHOUT setting disp.botl
+// (unlike setuwep()), so losing Ogresmasher (steal.c remove_worn_item(): "She
+// stole ...") leaves the Con bonus on the status line until a later bot().
+// Call just before the slot is emptied; nothing is held when a pending bot()
+// would publish the new value anyway.
+export function hold_botl_con() {
+    if (game.botl || game.botlx) return;
+    status_hold('con', acurr_eff(4));
 }
 
 // C ref: fountain.c dipfountain() case 28 shrinks the carried coin stack's
@@ -6706,7 +6780,7 @@ export async function docrt_flags(refresh_flags) {
         vision_recalc(0);
 
         /* overlay with monsters */
-        see_monsters();
+        await see_monsters();
     }
 
     if (!maponly) {

@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
-         unmap_object, see_monsters, set_mimic_blocking, You_feel, status_hold, You_see, You_hear } from './display.js';
+         unmap_object, see_monsters, flush_sting_effects, set_mimic_blocking, You_feel, status_hold, You_see, You_hear } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
@@ -27,6 +27,7 @@ import { can_reach_floor } from './engrave.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect, nomul } from './hack.js';
 import { DEADMONSTER } from './mon.js';
+import { Invis as Invis_mm, aggravate } from './monmove.js';
 import { exercise, acurr_eff, adjattrib, Fixed_abil } from './attrib.js';
 import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
 import { POTION_CLASS, SPBOOK_CLASS, POT_OIL, POT_CONFUSION, POT_PARALYSIS,
@@ -37,7 +38,7 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
          COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT,
-         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU } from './const.js';
+         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS } from './const.js';
 import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -120,7 +121,8 @@ function Unaware() { return !!(game.u?.usleep || game.u?.Unaware) || Unaware_con
 // Poison_resistance lives in youprop.js (one reader for H/E/innate/form halves).
 export { Poison_resistance };
 function Sick_resistance() { return !!game.u?.formprops?.Sick_resistance || HProp('HSick_resistance') > 0; }
-function Invis() { return HProp('HInvis', 'EInvis') > 0; }
+// C ref: youprop.h Invis == ((HInvis || EInvis) && !BInvis): monmove.js reads the worn extrinsic/blocked words too.
+function Invis() { return Invis_mm(); }
 function See_invisible() { return !!game.u?.see_invis || HProp('HSee_invisible', 'ESee_invisible') > 0; }
 // C ref: youprop.h Levitation = HLevitation || ELevitation; the E half (ring, boots, invoked Heart of Ahriman) is worn_extrinsic().
 function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0 || worn_extrinsic(LEVITATION) !== 0; }
@@ -315,7 +317,7 @@ export async function redraw_after_hallucination_change() {
     if (game.u?.uswallow) {
         await swallowed(0);
     } else {
-        see_monsters();
+        await see_monsters();
         see_objects();
         see_traps();
     }
@@ -346,11 +348,16 @@ export async function make_hallucinated(xtime, talk, mask) {
 export function queue_hallucination_transition(xtime, talk) {
     (game._pending_hallucination ||= []).push({ xtime, talk });
 }
+// Also gives the Sting_effects() message that set_artifact_intrinsic_core()'s
+// see_monsters() queued (display.js see_monsters_sync()): both are the display
+// half of a worn.c setworn() the synchronous core could not await.
 export async function flush_hallucination_transitions() {
     const q = game._pending_hallucination;
-    if (!q?.length) return;
-    game._pending_hallucination = null;
-    for (const { xtime, talk } of q) await make_hallucinated_redraw(xtime, talk);
+    if (q?.length) {
+        game._pending_hallucination = null;
+        for (const { xtime, talk } of q) await make_hallucinated_redraw(xtime, talk);
+    }
+    await flush_sting_effects();
 }
 
 // C ref: hack.c losehp(dmg, knam, k_format).  Delegates to do.js losehp_do(),
@@ -1102,8 +1109,7 @@ async function peffect_invisibility(otmp) {
     newsym(game.u.ux, game.u.uy);
     if (otmp.cursed) {
         await update_topl('For some reason, you feel your presence is known.');
-        // aggravate() only clears msleeping/mstrategy on the level's monsters.
-        for (const mtmp of game.level?.monsters || []) mtmp.msleeping = 0;
+        aggravate();
         uprops().HInvis = (HProp('HInvis') | 0) & ~FROMOUTSIDE;
     }
 }
@@ -1140,7 +1146,7 @@ async function peffect_see_invisible(otmp) {
     else
         uprops().HSee_invisible = itimeout_incr(HProp('HSee_invisible'), rn1(100, 750));
     set_mimic_blocking(); /* do special mimic handling */
-    see_monsters();       /* see invisible monsters */
+    await see_monsters();       /* see invisible monsters */
     newsym(game.u.ux, game.u.uy);
     if (msg && !Blind()) {
         await update_topl('You can see through yourself, but you are visible!');
@@ -1353,7 +1359,7 @@ async function peffect_monster_detection(otmp) {
         if (any_mon) game.potion_unkn = 0;
         // C: if swallowed or underwater, fall through to the uncursed case.
         if (!game.u?.uswallow && !Underwater()) {
-            see_monsters();
+            await see_monsters();
             if (game.potion_unkn) await You_feel('lonely.');
             return 0;
         }
@@ -2071,7 +2077,7 @@ export async function make_stoned(xtime, msg, killedby, killername) {
 export async function toggle_blindness() {
     const u = game.u;
     /* EWarn_of_mon & W_WEP — a wielded warning artifact (Sting/Orcrist) */
-    const Stinging = !!(game.uwep && (u?.uprops?.EWarn_of_mon_wep));
+    const Stinging = !!(game.uwep && (((u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0) & 0x100 /* W_WEP */));
 
     /* blindness has just been toggled */
     game.botl = true;               /* status conditions need update */
@@ -2254,8 +2260,7 @@ export async function H2Opotion_dip(potion, targobj, useeit, objphrase) {
                 await update_topl(`${objphrase} with ${p_an(glowcolor)} aura.`);
             else
                 await update_topl(`${objphrase} ${glowcolor}.`);
-            game.iflags = game.iflags || {};
-            game.iflags.last_msg = 'PLNMSG_OBJ_GLOWS';
+            game.last_msg = PLNMSG_OBJ_GLOWS; /* iflags.last_msg: reset by every later pline */
             targobj.bknown = !Hallucination();
         } else {
             /* didn't see what happened: forget the BUC state if it was known,

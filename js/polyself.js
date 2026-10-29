@@ -24,7 +24,7 @@ const pline = update_topl;
 import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
 import { encumber_msg, freeinv, dropx, xname, near_capacity,
-    youmonst_data_pub, makeknown, simple_typename } from './invent.js';
+    youmonst_data_pub, makeknown, simple_typename, worn_extrinsic, WA_ARMF } from './invent.js';
 import { makeplural } from './plural.js';
 import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
@@ -45,7 +45,7 @@ import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_MAX, TT_PIT, TT_BURIEDBALL,
     POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL } from './const.js';
 // C ref: hack.h bodypart NECK; prop.h I_SPECIAL / FROMOUTSIDE / FROMRACE — the
 // float_vs_flight() / steed_vs_stealth() / polysense() ports below need them.
-import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE, FROMFORM } from './const.js';
+import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE, FROMFORM, LEVITATION, FLYING } from './const.js';
 import { TT_BEARTRAP, TT_WEB, TT_LAVA, TT_INFLOOR, SICK_ALL,
     DISMOUNT_POLY } from './const.js';
 import { Unaware } from './const.js';
@@ -377,7 +377,6 @@ export async function instapetrify(str) {
     game.killer = { format: 1 /* KILLED_BY */, name: str || '' };
     /* formatkiller(how = STONING): "petrified by " + str */
     game._killer_name = (await import('./topten.js')).formatkiller(256, 8 /* STONING */, false);
-    game.multi_reason = 'turning to stone';
     const { done } = await import('./end.js');
     await done(8 /* STONING */);
 }
@@ -740,6 +739,8 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // its OWN field rather than u.blinded: u.blinded is a TIMEOUT that
     // timeout.js counts down, and C carries this on a separate FROMFORM bit.
     u.uprops.BlindedFromForm = (u.Upolyd && u.formprops.Blinded) ? 1 : 0;
+    if (!game.program_state?.restoring)
+        float_vs_flight(); /* maybe toggle (BFlying & I_SPECIAL) */
     polysense();
     // C ref: polyself.c:153 — set_uasmon() ends with disp.botl = TRUE, so the
     // status is ALREADY dirty by the time polymon's break_armor() -> dropp() ->
@@ -1128,7 +1129,7 @@ export async function polymon(mntmp) {
     // blind hero keeps a stale monster glyph on screen until something
     // newsym()s that square; without this pass the pre-poly 'e' never cleared.
     game.vision_full_recalc = 1;
-    see_monsters();
+    await see_monsters();
     await encumber_msg();
 
     const { retouch_equipment } = await import('./artifact.js');
@@ -1177,6 +1178,9 @@ export function change_sex() {
         game.flags.female = !game.flags.female;
         set_uasmon();
     }
+    /* C's status line derives the title from flags.female at every bot(); this
+       port caches it in urole.rank.m (exper.js update_rank), so refresh it. */
+    update_rank();
 }
 
 // C ref: polyself.c polyman(fmt, arg) + newman() — fail-to-poly / werecritter
@@ -1271,7 +1275,7 @@ export async function newman() {
     }
 
     game.botl = true;
-    see_monsters();
+    await see_monsters();
     await encumber_msg();
 
     const { retouch_equipment } = await import('./artifact.js');
@@ -1349,7 +1353,7 @@ async function polyman(fmt, arg) {
         await make_blinded_hero(0, true); /* remove blindness */
     }
     await check_strangling(true);
-    see_monsters();
+    await see_monsters();
 }
 
 
@@ -2614,33 +2618,41 @@ const PM_MANES = name_to_pmidx('manes');
 function uprops_of() { const u = game.u; return (u.uprops = u.uprops || {}); }
 // C ref: youprop.h HLevitation/ELevitation, HFlying/EFlying.  These read the
 // H/E halves ONLY (see the header note): C's Levitation macro also demands
-// !BLevitation.
-function HELevitation() {
+// !BLevitation.  The extrinsic half is invent.js's worn_extrinsic() store (boots
+// of levitation, a ring or amulet), not u.uprops.E<Prop>: float_vs_flight() must
+// see it or a hero levitating by worn gear never gets BFlying|I_SPECIAL, and
+// hack.c switch_terrain()'s `else if (BFlying)` arm (which float_vs_flight()'s
+// unconditional disp.botl = TRUE makes publish the status line on EVERY step
+// while levitating) never fires.
+function HELevitation(mask_armf = false) {
     const p = game.u?.uprops || {};
-    return (p.HLevitation | 0) || (p.ELevitation | 0) || (p.Levitation | 0);
+    let ext = worn_extrinsic(LEVITATION);
+    if (mask_armf) ext &= ~WA_ARMF;   /* weight_cap(): ELevitation &= ~W_ARMF */
+    return (p.HLevitation | 0) || (p.ELevitation | 0) || (p.Levitation | 0) || ext;
 }
 function HEFlying() {
     const p = game.u?.uprops || {};
-    return (p.HFlying | 0) || (p.EFlying | 0) || (p.Flying | 0);
+    return (p.HFlying | 0) || (p.EFlying | 0) || (p.Flying | 0)
+        || worn_extrinsic(FLYING);
 }
 
 // C ref: polyself.c:131 float_vs_flight() — "Levitation overrides Flying; set
 // or clear BFlying|I_SPECIAL".  Called from every place that changes
 // levitation, flight or floor-trapping.  No RNG.
-export function float_vs_flight() {
+export function float_vs_flight(mask_armf = false) {
     const u = game.u;
     const p = uprops_of();
     const stuck_in_floor = !!(u.utrap && u.utraptype !== TT_PIT);
 
     /* floating overrides flight; so does being trapped in the floor */
-    if (HELevitation() || (HEFlying() && stuck_in_floor))
+    if (HELevitation(mask_armf) || (HEFlying() && stuck_in_floor))
         p.BFlying = (p.BFlying | 0) | I_SPECIAL;
     else
         p.BFlying = (p.BFlying | 0) & ~I_SPECIAL;
     /* being trapped on the ground (bear trap, web, molten lava survived with
        fire resistance, former lava solidified via cold, tethered to a buried
        iron ball) overrides floating -- the floor is reachable */
-    if (HELevitation() && stuck_in_floor)
+    if (HELevitation(mask_armf) && stuck_in_floor)
         p.BLevitation = (p.BLevitation | 0) | I_SPECIAL;
     else
         p.BLevitation = (p.BLevitation | 0) & ~I_SPECIAL;

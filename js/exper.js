@@ -630,7 +630,7 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
             if (changed && (game.u?.ulevel | 0)
                 && (prop === 'HWarning' || prop === 'HSee_invisible')) {
                 const { see_monsters } = await import('./display.js');
-                see_monsters();
+                await see_monsters();
             }
         }
     }

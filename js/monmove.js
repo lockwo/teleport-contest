@@ -2462,6 +2462,15 @@ export async function mon_kill_leaving(mon, nocorpse) {
         const { lifesaved_monster } = await import('./mon.js');
         await lifesaved_monster(mon);
         if (mon.mhp > 0) return;
+        // C ref: mon.c:3098 mondead() — a vampire in bat/fog/wolf form reverts
+        // to vampire form instead of dying.
+        const { vamprises } = await import('./mon.js');
+        if (is_vampshifter(mon)) {
+            game.disintegested = !!nocorpse;
+            const rose = await vamprises(mon);
+            game.disintegested = false;
+            if (rose) return;
+        }
     }
     // mondead(): detach the monster so the renderer stops drawing it.  Coords
     // are left intact for make_corpse() to place the cadaver.
@@ -2490,6 +2499,10 @@ export async function mon_kill_leaving(mon, nocorpse) {
     }
     // C: m_detach() releases inventory before creating the corpse.
     await relobj(mon, mx, my);
+    // C ref: mon.c:2782-2785 m_detach() — `if (mtmp->m_id == gs.stealmid)
+    // thiefdead()` (the hero's pending afternmv stealarm becomes unstolenarm)
+    // and `if (mtmp->isshk) shkgone(mtmp)`.
+    await (await import('./mon.js')).thiefdead_shkgone(mon);
     // mondied(): corpse_chance() rolls its rn2; on success (and accessible
     // terrain) make_corpse() builds the cadaver.  nocorpse (disintegration)
     // suppresses the cadaver entirely with no corpse_chance roll.
@@ -7157,20 +7170,19 @@ export function mswings_verb(otemp, bash) {
 // C ref: mhitu.c mswings(mtmp, otemp, bash) — "<Mon> <verb> [one of] <his>
 // <weapon>." when the attacker (and weapon) is visible.  A multi-item stack
 // (e.g. a demon's 5 carried daggers) reads "one of his daggers" — xname()'s
-// bare pluralized name, with no leading count digit (that belongs to
-// doname() alone), so this uses cxname_singular()+makeplural rather than the
-// digit-prefixing invent.js xname().
+// bare pluralized name with no leading count digit.  C calls xname(), NOT
+// cxname(), so a wielded corpse reads "swings her corpse", never "her
+// cockatrice corpse" (objnam.c singular(): "using xname for corpses does not
+// give the monster type").
 async function mswings_mm(mtmp, otemp, bash) {
     if (game.flags?.verbose === false || !canseemon_mm(mtmp)) return;
     const verb = mswings_verb(otemp, bash);
     const hisher = mhis(mtmp);
     const { update_topl } = await import('./display.js');
-    const { cxname_singular } = await import('./invent.js');
-    const { makeplural } = await import('./plural.js');
+    const { xname } = await import('./invent.js');
     const quan = otemp?.quan ?? 1;
     const oneOf = quan > 1 ? 'one of ' : '';
-    const base = cxname_singular(otemp);
-    const name = quan > 1 ? makeplural(base) : base;
+    const name = xname(otemp);
     (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my);
     await update_topl(`${Monnam(mtmp)} ${verb} ${oneOf}${hisher} ${name}.`);
 }

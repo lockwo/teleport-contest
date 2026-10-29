@@ -67,7 +67,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
          Is_airlevel, Is_rogue_level, SDOOR, SCORR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
-         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, PLNMSG_ENVELOPED_IN_GAS } from './const.js';
+         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, PLNMSG_ENVELOPED_IN_GAS, PLNMSG_OBJ_GLOWS, TIMEOUT, INTRINSIC } from './const.js';
 import { is_pool, is_ice, is_lava, is_moat } from './dbridge.js';
 import { in_rooms } from './shkroom.js';
 import { create_gas_cloud } from './region.js';
@@ -915,7 +915,7 @@ export async function bhito(obj, otmp) {
                     /* view contents (not recursively) */
                     for (const o of obj.cobj)
                         observe_object(o); /* "seen", even if blind */
-                    display_cinventory(obj);
+                    await display_cinventory(obj);
                 }
                 res = 1;
             } else if (obj.otyp === TIN) {
@@ -2307,7 +2307,7 @@ async function zap_map(x, y, obj) {
                 // plus wipeout_text — several draws.
                 del_engr_z(x, y);
                 const r = random_engraving();
-                if (r) make_engr_at(x, y, r.text, r.pristine, game.moves | 0, DUST);
+                if (r) make_engr_at(x, y, r.text, r.pristine, game.moves | 0, 0); /* type 0: random, rnd(N_ENGRAVE-1) */
                 break;
             }
             case WAN_CANCELLATION:
@@ -4605,13 +4605,12 @@ export async function zapyourself(obj, ordinary) {
 
     case WAN_SLOW_MONSTER:
     case SPE_SLOW_MONSTER:
-        // C: HFast & (TIMEOUT | INTRINSIC) — only an already-hasted hero is
-        // affected; u_slow_down()'s exercise(A_DEX, FALSE) is an rn2(2) draw.
-        if (u.uprops?.HFast) {
+        // C: `if (HFast & (TIMEOUT | INTRINSIC)) { learn_it = TRUE; u_slow_down(); }`
+        // HFast's INTRINSIC bits include the role-granted FROMEXPER Fast.
+        if ((((u.uprops?.HFast | 0) | (u.HFast | 0)) & (TIMEOUT | INTRINSIC))
+            || (await import('./allmain.js')).youHaveFast()) {
             learn_it = true;
-            u.uprops.HFast = 0;
-            await update_topl('You slow down.');
-            exercise(A_DEX, false);
+            await (await import('./mhitu.js')).u_slow_down();
         }
         break;
 
@@ -5284,9 +5283,10 @@ function extrinsic_of_z(prop) {
     return (game.u?.uprops_extrinsic || {})[prop] || 0;
 }
 // C ref: hack.h PLNMSG_OBJ_GLOWS — the iflags.last_msg tag revive() sets and
-// unturn_dead() reads back.  js/ has no plnmsg_types enum, so the tag is a
-// string (its value is never compared against another module's).
-const PLNMSG_OBJ_GLOWS_Z = 'PLNMSG_OBJ_GLOWS';
+// unturn_dead() reads back.  display.js update_topl() resets game.last_msg on
+// every message (pline.c vpline: iflags.last_msg = PLNMSG_UNKNOWN), so the tag
+// lives there; a separate game.iflags.last_msg field was never reset and made
+// every later unturn_dead() say "It comes alive".
 
 // ---------------------------------------------------------------------------
 
@@ -5920,8 +5920,7 @@ export async function revive(corpse, by_hero) {
             if (one_of) /* could be simplified to ''corpse->quan = 1L;'' */
                 corpse.quan--;
             await pline(`${upstart(buf)} glows iridescently.`);
-            game.iflags = game.iflags || {};
-            game.iflags.last_msg = PLNMSG_OBJ_GLOWS_Z; /* usually for BUC change */
+            game.last_msg = PLNMSG_OBJ_GLOWS; /* usually for BUC change */
         } else if (shkp) {
             /* need some prior description of the corpse since stolen_value()
                will refer to the object as "it" */
@@ -6073,7 +6072,7 @@ export async function unturn_dead(mon) {
             ++res;
             /* might get revived as a zombie rather than corpse's monster */
             const different_type = (mtmp2.data?.pmidx !== corpsenm);
-            if (game.iflags?.last_msg === PLNMSG_OBJ_GLOWS_Z) {
+            if (game.last_msg === PLNMSG_OBJ_GLOWS) {
                 /* revive() already reported "[one of] your <mon> corpse[s]
                    glows iridescently"; override the saved corpse and owner
                    names to say "It comes alive" */

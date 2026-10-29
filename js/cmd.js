@@ -1120,7 +1120,13 @@ export async function rhack(key) {
         // ^A replay does NOT flush_screen(1) first: the cursor stays where the
         // ^A's own parse() clear_nhwindow(WIN_MESSAGE) left it (home) until the
         // replayed command prompts or redraws.
-        const replay = game.in_doagain ? cmdq_pop(CQ_REPEAT) : null;
+        // C ref: cmd.c rhack() `if ((cmdq = cmdq_pop()) != 0)` pops CQ_CANNED first, so a
+        // key a canned command left unconsumed (an item action whose command
+        // bailed with ECMD_OK before its getobj(), e.g. #throw with no hands)
+        // is the NEXT command, read with no parse() and no flush_screen(1).
+        const canned = !game.in_doagain && cmdq_peek(CQ_CANNED)?.typ === CMDQ_KEY
+            ? cmdq_pop(CQ_CANNED) : null;
+        const replay = game.in_doagain ? cmdq_pop(CQ_REPEAT) : canned;
         if (!replay) await flush_screen(1);
         // C ref: cmd.c rhack() `if ((cmdq = cmdq_pop()) != 0) { ...; key =
         // cq.key; }` — do_repeat() (^A) sets game.in_doagain and re-enters
@@ -1154,18 +1160,20 @@ export async function rhack(key) {
         // the replayed command's own prompt (or a getobj() that reads its answer
         // silently, invent.c in_doagain readchar()) waits for a key.
         if (!replay) game._parse_cleared_topl = !!game._pending_message;
-        game._pending_message = '';
+        // A canned key was never read from the player (no parse(), so no
+        // clear_nhwindow(WIN_MESSAGE)): the previous command's message stays up.
+        if (!canned) game._pending_message = '';
         // The top line was acknowledged by this keystroke; reset the topl
         // NEED_MORE state so the next turn's messages start a fresh line
         // (C ref: topl.c clears toplin when the player's input is read).
-        game._toplin = 0;
+        if (!canned) game._toplin = 0;
         // Same clear: cmd.c parse():5147 clear_nhwindow(WIN_MESSAGE) ->
         // wintty.c:1080 toplin = TOPLINE_EMPTY.  _yn_need_more stands in for
         // NEED_MORE at the getobj/yn prompt sites, so it is command-scoped too:
         // 14 set-sites vs 2 consume-sites, so one that never reached a prompt
         // leaked and paged a --More-- over the NEXT command's prompt.
-        game._yn_need_more = false;
-        if (replay && game._parse_cleared_topl) {
+        if (!canned) game._yn_need_more = false;
+        if (replay && !canned && game._parse_cleared_topl) {
             await flush_screen(1);
             game.nhDisplay?.setCursor?.(0, 0);
         }
@@ -1859,11 +1867,8 @@ export async function rhack(key) {
         if ((rD & 6) !== 0) { cmdVarsReset = true; game.multi = 0; }
         if ((rD & 1) !== 0) game.context.move = 1;
     } else if (ch === '!') {
-        // C ref: cmd.c { '!', "shell", dosh_core, IFBURIED | GENERALCMD |
-        // NOFUZZERCMD } -> sys/unix/unixunix.c dosh():349 — with SYSCF and no
-        // SHELLERS line in the shipped sysconf, sysopt.shellers is empty, so
-        // every shell escape is refused with this Norep() line.  ECMD_OK.
-        await Norep_topl("Unavailable command '!'.");
+        // C ref: cmd.c { '!', "shell", dosh_core, IFBURIED | GENERALCMD | NOFUZZERCMD }.
+        await dosh_core();
         game.context.move = 0;
     } else if (ch === 'C') {
         // C ref: cmd.c:1687 { 'C', "call", docallcmd, IFBURIED | GENERALCMD }
@@ -7048,8 +7053,15 @@ async function extlist_select_menu(m) {
     let curr_page = 0;
     // C ref: cmd.c:600 — 's' selects the ':' search item on any menu page.
     const searchAlias = m.pages.some((page) => page.some((it) => it.sel === ':'));
+    // tty_getlin("Search for:") clears the message window, which is row 0 of a
+    // full-screen menu; only a page change repaints it.
+    let blankTop = false;
     for (;;) {
         extlist_render_page(m, curr_page);
+        if (blankTop) {
+            const d = game.nhDisplay;
+            for (let x = 0; x < d.cols; x++) d.setCell(x, 0, ' ', NO_COLOR, 0);
+        }
         const page = m.pages[curr_page];
         const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
         const morc = await extlist_waitforspace(
@@ -7064,23 +7076,34 @@ async function extlist_select_menu(m) {
             return null;
         case ' ':
         case MENU_NEXT_PAGE:
-            if (curr_page !== m.npages - 1) curr_page++;
+            if (curr_page !== m.npages - 1) { curr_page++; blankTop = false; }
             else if (morc === ' ') return null;   // ' ' finishes, '>' does not
             break;
         case MENU_PREVIOUS_PAGE:
-            if (curr_page !== 0) curr_page--;
+            if (curr_page !== 0) { curr_page--; blankTop = false; }
             break;
         case MENU_FIRST_PAGE:
-            curr_page = 0;
+            if (curr_page !== 0) { curr_page = 0; blankTop = false; }
             break;
         case MENU_LAST_PAGE:
-            curr_page = m.npages - 1;
+            if (curr_page !== m.npages - 1) { curr_page = m.npages - 1; blankTop = false; }
             break;
+        case ':': {
+            // MENU_SEARCH on a page without doextlist()'s own ':' entry: getlin,
+            // then the first selectable entry (any page) whose "<sel> - <text>"
+            // matches "*reply*" is selected, and PICK_ONE finishes.
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            blankTop = true;
+            if (!reply || reply[0] === '\x1b') break;
+            for (const pg of m.pages)
+                for (const it of pg)
+                    if (it.sel && pmatchi(`*${reply}*`, `${it.sel} - ${it.text}`)) return it.sel;
+            break;
+        }
         default:
-            // MENU_SEARCH (':') on a page that doesn't hold doextlist()'s own
-            // ':'/'s' search entry, and the PICK_ANY-only select/unselect/
-            // invert commands: unreachable with this menu's fixed a/:/s/z
-            // item set from any recorded keystroke sequence; left as a bell.
+            // The PICK_ANY-only select/unselect/invert commands do nothing on a
+            // PICK_ONE menu (nothing is ever selected, so '\\' and '-' are no-ops).
             break;
         }
     }
@@ -9569,10 +9592,12 @@ export async function dosuspend_core() {
     return ECMD_OK;
 }
 
-// C ref: cmd.c:5682 dosh_core() — the '!' command, #shell.  SHELL is likewise
-// not defined for this build.
+// C ref: cmd.c:5682 dosh_core() -> sys/unix/unixunix.c:344 dosh().  SHELL is
+// defined for this build (the recorded #? list carries "shell"); with SYSCF and
+// no SHELLERS line in the shipped sysconf every shell escape is refused with
+// unixunix.c:352's Norep() line, whichever of '!' or #shell asked.
 export async function dosh_core() {
-    await Norep_topl(cmdnotavail.replace('%s', '#shell'));
+    await Norep_topl("Unavailable command '!'.");
     return ECMD_OK;
 }
 

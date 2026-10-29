@@ -359,7 +359,7 @@ export function stagger(ptr, def) {
 
 // C ref: mon.c golemeffects() — flesh/iron golems heal or slow from the
 // elemental type instead of taking it.  No RNG.
-async function golemeffects(mon, damtype, dam, ops) {
+export async function golemeffects(mon, damtype, dam, ops) {
     const ptr = ops.permonst(mon);
     let heal = 0, slow = 0;
     if (ptr?.name === 'flesh golem') {

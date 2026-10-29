@@ -31,7 +31,7 @@ import { NomuxRecorder } from './nomux_capture.js';
 import './light.js';   // registers game.lightsources_hook for vision_recalc
 import {
     aligns, apply_selection, build_plselection_prompt, count_ok_race,
-    count_ok_gend, count_ok_align, genders, gotrolefilter, ok_align, ok_gend,
+    count_ok_gend, count_ok_align, genders, gotrolefilter, ok_align, reset_role_filtering, ok_gend,
     ok_race, ok_role, pick_align, pick_gend, pick_race, pick_role, races,
     randalign, randgend, randrace, randrole, rigid_role_checks, roleName,
     plnamesuffix, roles, str2align, str2gend, str2race, str2role, validalign, validgend,
@@ -1251,123 +1251,17 @@ export class NethackGame {
         }
     }
 
-    // Placeholder filtering menu — populated below.
-    // C ref: role.c reset_role_filtering() — the "Pick all that apply" PICK_ANY
-    // menu listing every role/race/gender/alignment under section headers, used
-    // to mark facets as unacceptable.  Selectable entries toggle a '+'; on
-    // confirm the chosen entries become the new filter (gr.rfilter).  The menu
-    // is full-screen (offx=0, leading space, text at col 1) and paginates at
-    // (rows-1) items per page.  Returns true if any filter was set.
+    // C ref: role.c reset_role_filtering() — the "Pick all that apply" PICK_ANY menu.  Built and
+    // applied by role.js reset_role_filtering() through the shared tty menu (select_command_menu), so
+    // every process_menu_window() command works.  Returns n (< 0 cancelled, 0 filters cleared).
     async _filterMenu(sel) {
         void sel;
-        const disp = game.nhDisplay;
-        const cols = 80, rows = 24;
-
-        // Build the item list in C's add order.  Each entry: section header
-        // (unselectable) or a selectable { sel, text, kind, idx, selected }.
-        const items = [];
-        items.push({ header: 'Unacceptable roles' });
-        for (let i = 0; roles[i]; i++)
-            items.push({ sel: this._roleSelectorChar(i), text: this._roleMenuLabel(i, -1),
-                kind: 'role', idx: i,
-                selected: !(ok_role(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
-                            && ok_race(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
-                            && ok_gend(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)
-                            && ok_align(i, ROLE_NONE, ROLE_NONE, ROLE_NONE)) });
-        items.push({ blank: true });
-        items.push({ header: 'Unacceptable races' });
-        for (let i = 0; races[i]; i++)
-            items.push({ sel: races[i].noun[0].toUpperCase(), text: races[i].noun,
-                kind: 'race', idx: i,
-                selected: !(ok_race(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)
-                            && ok_role(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)
-                            && ok_align(ROLE_NONE, i, ROLE_NONE, ROLE_NONE)) });
-        items.push({ blank: true });
-        items.push({ header: 'Unacceptable genders' });
-        for (let i = 0; i < genders.length; i++)
-            items.push({ sel: genders[i].adj[0].toUpperCase(), text: genders[i].adj,
-                kind: 'gender', idx: i,
-                selected: !(ok_gend(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)
-                            && ok_role(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)
-                            && ok_race(ROLE_NONE, ROLE_NONE, i, ROLE_NONE)) });
-        items.push({ blank: true });
-        items.push({ header: 'Unacceptable alignments' });
-        for (let i = 0; i < aligns.length; i++)
-            items.push({ sel: aligns[i].adj[0].toUpperCase(), text: aligns[i].adj,
-                kind: 'align', idx: i,
-                selected: !(ok_align(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)
-                            && ok_role(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)
-                            && ok_race(ROLE_NONE, ROLE_NONE, ROLE_NONE, i)) });
-
-        // Prepend title + blank (end_menu).
-        const prompt = 'Pick all that apply'
-            + (gotrolefilter() ? ' and/or unpick any that no longer apply' : '');
-        const all = [{ title: prompt }, { blank: true }, ...items];
-
-        // Paginate at lmax = min(52, rows-1) items per page.
-        const lmax = Math.min(52, rows - 1);
-        const npages = Math.ceil(all.length / lmax);
-
-        let page = 0;
-        const render = (fresh) => {
-            disp.clearScreen();
-            this._bannerOnScreen = false;
-            const start = page * lmax;
-            const end = Math.min(start + lmax, all.length);
-            // C ref: wintty.c process_menu_window() draws a selected entry's marker as
-            // '*' (all selected) when a page is painted; only an in-place toggle
-            // (set_item_state) writes '+'.
-            if (fresh) for (let i = start; i < end; i++)
-                if (all[i].kind) all[i].mark = all[i].selected ? '*' : '-';
-            let r = 0;
-            for (let i = start; i < end; i++, r++) {
-                const it = all[i];
-                // cl_end from offx(0) to EOL.
-                for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
-                let text;
-                if (it.title) text = it.title;
-                else if (it.header) text = it.header;
-                else if (it.blank) text = '';
-                else text = `${it.sel} ${it.mark ?? (it.selected ? '*' : '-')} ${it.text}`;
-                // Leading space at col 0, text at col 1.
-                if (text) disp.putstr(1, r, text, NO_COLOR, it.title ? ATR_INVERSE : 0);
-            }
-            // morestr footer.
-            const morestr = npages > 1 ? `(${page + 1} of ${npages})` : '(end) ';
-            for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
-            disp.putstr(1, r, morestr, NO_COLOR);
-            disp.setCursor(1 + morestr.replace(/ $/, '').length, r);
-        };
-        render(true);
-
-        for (;;) {
-            const ch = await this._readPromptKey();
-            if (ch === 'q' || ch === '\x1b') { this._prevChargenMenu = { offx: 0, rows: 23 }; return -1; } // cancel (select_menu n < 0): no filter change
-            if (ch === '\r' || ch === '\n') break;  // confirm
-            if (ch === ' ' || ch === '>') {          // next page
-                if (page < npages - 1) page++; else break;
-                render(true);
-                continue;
-            }
-            if (ch === '<') { if (page > 0) page--; render(true); continue; }
-            // Toggle a selectable entry by its selector letter.
-            const it = all.find(x => x.sel === ch);
-            if (it) { it.selected = !it.selected; it.mark = it.selected ? '+' : '-'; render(false); }
-        }
-
+        this._bannerOnScreen = false;
+        const n = await reset_role_filtering();
         // The filter menu was a full-screen (offx == 0) window: destroying it wipes the screen, so the next
         // chargen menu (_eraseChargenMenu) must clear it instead of overlaying the old text.
         this._prevChargenMenu = { offx: 0, rows: 23 };
-        // Apply the new filter: clear and set from the selected entries.
-        const sel2 = all.filter(x => x.selected);
-        game.rfilter = { roles: [], mask: 0 };
-        for (const it of sel2) {
-            if (it.kind === 'role') game.rfilter.roles[it.idx] = true;
-            else if (it.kind === 'race') game.rfilter.mask |= races[it.idx].selfmask;
-            else if (it.kind === 'gender') game.rfilter.mask |= genders[it.idx].allow;
-            else if (it.kind === 'align') game.rfilter.mask |= aligns[it.idx].allow;
-        }
-        return sel2.length;
+        return n;
     }
 
     // C ref: role.c genl_player_setup() makepicks loop.  Facet order is role ->

@@ -88,7 +88,7 @@ export const EXTCMD_TABLE = [
     { key: 61, txt: "seerings", desc: "show the ring(s) currently worn", flags: "IFBURIED | GENERALCMD | CMD_M_PREFIX" },
     { key: 40, txt: "seetools", desc: "show the tools currently in use", flags: "IFBURIED | GENERALCMD | CMD_M_PREFIX" },
     { key: 41, txt: "seeweapon", desc: "show the weapon currently wielded", flags: "IFBURIED | GENERALCMD | CMD_M_PREFIX" },
-    { key: 33, txt: "shell", desc: "leave game to enter a sub-shell ('exit' to come back)", flags: "(IFBURIED | GENERALCMD | NOFUZZERCMD\n                        | CMD_NOT_AVAILABLE\n                        )" },
+    { key: 33, txt: "shell", desc: "leave game to enter a sub-shell ('exit' to come back)", flags: "IFBURIED | GENERALCMD | NOFUZZERCMD" },
     { key: 36, txt: "showgold", desc: "show gold, possibly shop credit or debt", flags: "IFBURIED | GENERALCMD | CMD_M_PREFIX" },
     { key: 43, txt: "showspells", desc: "list and reorder known spells", flags: "IFBURIED | GENERALCMD" },
     { key: 94, txt: "showtrap", desc: "describe an adjacent, discovered trap", flags: "IFBURIED | GENERALCMD" },

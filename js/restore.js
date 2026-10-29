@@ -240,7 +240,7 @@ async function resume_preamble_tail() {
     // gd.defer_see_monsters was set by restgamestate so the restore itself did
     // not paint monsters too early; moveloop_preamble releases it (allmain.c).
     game.defer_see_monsters = false;
-    see_monsters();
+    await see_monsters();
     u.uz0 = u.uz0 || {};
     u.uz0.dlevel = u.uz?.dlevel;
     game.context = game.context || {};
@@ -458,8 +458,11 @@ export async function dorestore() {
     game.defer_see_monsters = true;
     init_vision_globals();
     vision_reset();
-    game.vision_full_recalc = 0;
-    vision_recalc(0);
+    /* C ref: restore.c dorecover() — vision_reset() (which sets
+       vision_full_recalc = 1) and NO vision_recalc(): the first recompute is
+       docrt()'s vision_recalc(2) + vision_recalc(0), so the restore itself
+       never newsym()s (draws display rng) a cell. */
+    game.vision_full_recalc = 1;
 
     // C ref: restore.c dorecover() — run_timers(), "expire all timers that have
     // gone off while away", between vision_reset() and docrt().  The blob

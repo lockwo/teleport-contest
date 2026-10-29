@@ -178,7 +178,7 @@ const m = {
 const gt = { trapx: 0, trapy: 0 };
 // C ref: gm.m_using / gz.zap_oseen — set around mbhit() so the zap machinery
 // knows the beam came from a monster and whether the hero watched it fire.
-let m_using = false, zap_oseen = false;
+let m_using = false;
 // C ref: gb.buzzer (muse.c:1883/1885) — the monster currently firing a beam.
 // mbhitm's WAN_STRIKING miss test reads it: a monster whose wand the hero has
 // never seen work (`!mwandexp`) cannot land its first shot.
@@ -1141,7 +1141,7 @@ export async function use_defensive(mtmp) {
         return 2;
     case MUSE_WAN_TELEPORTATION:
         if (!otmp) return 0;
-        zap_oseen = oseen;
+        game.zap_oseen = oseen;
         await mzapwand(mtmp, otmp, false);
         m_using = true;
         await mbhit(mtmp, rn1(8, 6), otmp);
@@ -1227,7 +1227,7 @@ export async function use_defensive(mtmp) {
         return 2;
     case MUSE_WAN_UNDEAD_TURNING:
         if (!otmp) return 0;
-        zap_oseen = oseen;
+        game.zap_oseen = oseen;
         await mzapwand(mtmp, otmp, false);
         m_using = true;
         await mbhit(mtmp, rn1(8, 6), otmp);
@@ -1793,7 +1793,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
             await miss('wand', mtmp);
         }
         // C: need to have seen the wand zapped AND the spot where it lands.
-        if (learnit && zap_oseen
+        if (learnit && game.zap_oseen
             && (hits_you || cansee(mtmp.mx, mtmp.my)))
             makeknown(OT().WAN_STRIKING);
         break;
@@ -1802,7 +1802,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
             /* C ref: muse.c:1653 tele() == teleport.c scrolltele(NULL) */
             const { scrolltele } = await import('./read.js');
             await scrolltele(null);
-            if (zap_oseen) makeknown(OT().WAN_TELEPORTATION);
+            if (game.zap_oseen) makeknown(OT().WAN_TELEPORTATION);
             break;
         }
         if (!await tele_restrict(mtmp)) await rloc(mtmp, RLOC_MSG);
@@ -1811,7 +1811,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
         const Z = await import('./zap.js');
         if (hits_you) {
             await Z.unturn_you();
-            learnit = !!zap_oseen;
+            learnit = !!game.zap_oseen;
         } else {
             let wake = false;
             if (await Z.unturn_dead(mtmp)) /* affects mtmp's invent, not mtmp */
@@ -1825,7 +1825,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
             }
             if (wake) {
                 if (!DEADMONSTER(mtmp)) await Z.wakeup(mtmp, false);
-                learnit = !!zap_oseen;
+                learnit = !!game.zap_oseen;
             }
         }
         if (learnit) makeknown(OT().WAN_UNDEAD_TURNING);
@@ -1895,7 +1895,7 @@ async function mbhit(mon, range, obj) {
                 || otyp === OT().WAN_STRIKING) {
                 const { doorlock } = await import('./lock.js');
                 if (await doorlock(obj, bx, by)) {
-                    if (zap_oseen) makeknown(otyp);
+                    if (game.zap_oseen) makeknown(otyp);
                     const { in_rooms } = await import('./shkroom.js');
                     const { SHOPBASE } = await import('./const.js');
                     if (levl_at(bx, by)?.doormask === D_BROKEN
@@ -1988,7 +1988,7 @@ export async function use_offensive(mtmp, throw_potion) {
     case MUSE_WAN_TELEPORTATION:
     case MUSE_WAN_UNDEAD_TURNING:
     case MUSE_WAN_STRIKING:
-        zap_oseen = oseen;
+        game.zap_oseen = oseen;
         await mzapwand(mtmp, otmp, false);
         m_using = true;
         buzzer = mtmp;                      // C ref: muse.c:1883 gb.buzzer
@@ -2806,7 +2806,14 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
         if (DEADMONSTER(mon)) {
             set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} dies!`);
-            await mondead(mon);
+            if (by_you) {
+                /* hero gets credit (experience) and blame for the kill but
+                   does not break pacifism conduct */
+                const { killed } = await import('./uhitm.js');
+                await killed(mon, { nomsg: true, noconduct: true });
+            } else {
+                await mondead(mon);
+            }
             return;
         }
     }

@@ -800,6 +800,7 @@ import {
     HEAVY_IRON_BALL, CORPSE, LEASH, POT_OIL, COIN_CLASS, POTION_CLASS,
 } from './mkobj.js';
 import { does_block, vision_recalc } from './vision.js';
+import { F_WARNED } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_WALLWALK, M1_CLING, M1_CONCEAL, M1_AMORPHOUS,
     M1_TUNNEL, M1_NEEDPICK, M1_UNSOLID,
@@ -1084,11 +1085,11 @@ export async function spot_checks(x, y, old_typ) {
 async function dogushforth(drinking) {
     await (await import('./fountain.js')).dogushforth(drinking);
 }
-// C ref: fountain.h SET_FOUNTAIN_WARNED(x,y) — levl[x][y].blessedftn = 1 is the
-// looted flag; the port stores the fountain flags on the rm cell.
+// C ref: rm.h SET_FOUNTAIN_WARNED(x,y) — levl[x][y].looted |= F_WARNED, the
+// flag fountain.js dryup() tests (a bare warnedftn field is never read).
 function SET_FOUNTAIN_WARNED(x, y) {
     const lev = game.level?.at(x, y);
-    if (lev) lev.warnedftn = 1;
+    if (lev) lev.looted = (lev.looted || 0) | F_WARNED;
 }
 async function pooleffects(newspot) {
     return await (await import('./trap.js')).pooleffects(newspot);

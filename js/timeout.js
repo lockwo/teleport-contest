@@ -467,6 +467,22 @@ async function expire_glib() {
     await make_glib(0);
 }
 
+// C ref: timeout.c case WARN_OF_MON — "timed Warn_of_mon is via #wizintrinsic
+// only": once no source remains, forget the warned species and say so.
+async function expire_warn_of_mon() {
+    const u = game.u, p = u.uprops || {};
+    if ((p.HWarn_of_mon | 0) || (p.EWarn_of_mon | 0)
+        || ((u.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0)) return;
+    const wt = game.context?.warntype;
+    const wptr = wt?.species;
+    if (wt) { wt.species = 0; wt.speciesidx = C.NON_PM; }
+    if (wptr) {
+        const { pmname_of_pmidx, MGEND_NEUTRAL } = await import('./makemon.js');
+        await pline(`You are no longer warned about ${
+            makeplural(pmname_of_pmidx(wptr.pmidx, MGEND_NEUTRAL))}.`);
+    }
+}
+
 // C ref: timeout.c case INVIS — redraw the hero, then stop occupation only if
 // no remaining source makes the hero invisible.
 async function expire_invisibility() {
@@ -487,7 +503,7 @@ async function expire_invisibility() {
 async function expire_see_invisible() {
     const { newsym, set_mimic_blocking } = await import('./display.js');
     set_mimic_blocking();
-    see_monsters();
+    await see_monsters();
     newsym(game.u.ux, game.u.uy);
     await stop_occupation();
 }
@@ -606,7 +622,7 @@ const TIMED_PROPS = [
     timed_uprop('SEE_INVIS', 'HSee_invisible', expire_see_invisible),
     timed_uprop('TELEPAT', 'HTelepat'),
     timed_uprop('WARNING', 'HWarning'),
-    timed_uprop('WARN_OF_MON', 'HWarn_of_mon'),
+    timed_uprop('WARN_OF_MON', 'HWarn_of_mon', expire_warn_of_mon),
     timed_uprop('WARN_UNDEAD', 'HWarn_undead'),
     timed_uprop('SEARCHING', 'HSearching'),
     timed_uprop('CLAIRVOYANT', 'HClairvoyant'),
@@ -617,7 +633,7 @@ const TIMED_PROPS = [
           const flags = (u.uprops?.HDetect_monsters | 0) & ~TIMEOUT;
           u.uprops.HDetect_monsters = flags | (v & TIMEOUT);
       },
-      expire: async () => { see_monsters(); } },
+      expire: async () => { await see_monsters(); } },
     timed_uprop('BLND_RES', 'HBlnd_resistance'),
     timed_uprop('ADORNED', 'HAdorned'),
     timed_uprop('INVIS', 'HInvis', expire_invisibility),

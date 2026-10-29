@@ -71,7 +71,7 @@ import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
          ck_bag, is_worn_by_type, menu_class_present,
          PICK_ANY, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES, WORN_TYPES, CHOOSE_ALL,
          BUCX_TYPES, JUSTPICKED } from './pickup.js';
-import { AUTOUNLOCK_FORCE, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
+import { AUTOUNLOCK_FORCE, KILLED_BY_AN, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
@@ -108,7 +108,7 @@ import { wiz_debug_cmd_bury } from './dig.js';
 import { doeat } from './eat.js';
 import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
-import { doextlist, dosuspend_core } from './cmd.js';
+import { doextlist, dosuspend_core, dosh_core } from './cmd.js';
 import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
@@ -210,7 +210,7 @@ const EXTCMDLIST = [
     ["seerings", 0, "show the ring(s) currently worn"],
     ["seetools", 0, "show the tools currently in use"],
     ["seeweapon", 0, "show the weapon currently wielded"],
-    ["shell", CMD_NOT_AVAILABLE, "leave game to enter a sub-shell ('exit' to come back)"],
+    ["shell", 0, "leave game to enter a sub-shell ('exit' to come back)"],
     ["showgold", 0, "show gold, possibly shop credit or debt"],
     ["showspells", 0, "list and reorder known spells"],
     ["showtrap", 0, "describe an adjacent, discovered trap"],
@@ -1843,8 +1843,10 @@ function floor_obj_here(pred) {
 // container_at()/do_loot_cont() iterate the floor object list at the location,
 // testing Is_container().
 function floor_boxes_at(x, y) {
-    return (game.level?.objects || []).filter(
-        (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y && is_container_otyp(o.otyp));
+    // objects_at() is level.objects[x][y] order (topmost first), which is the
+    // order C's `for (cobj = level.objects[x][y]; cobj; cobj = cobj->nexthere)`
+    // loops in doloot_core() list and ask about the containers.
+    return objects_at(x, y).filter((o) => is_container_otyp(o.otyp));
 }
 // C ref: pickup.c doloot_core() lootmon: label — container_at(cc.x, cc.y,
 // FALSE) at an arbitrary (not-necessarily-hero) square, used to decide
@@ -2802,6 +2804,21 @@ async function do_loot_one(box, more_containers, ccount = 1) {
         return 0;
     }
     box.lknown = 1;
+    // C ref: pickup.c do_loot_cont() — a bag of tricks passes Is_container();
+    // looting it wakes the teeth instead of opening a menu.
+    if (box.otyp === BAG_OF_TRICKS_OTYP) {
+        const { xname: xnameLoot, the: theLoot } = await import('./objnam.js');
+        const { Maybe_Half_Phys, losehp } = await import('./zap.js');
+        const { makeknown } = await import('./invent.js');
+        await pline(`You carefully open ${theLoot(await xnameLoot(box))}...`);
+        await pline('It develops a huge set of teeth and bites you!');
+        const tmp = rnd(10);
+        await losehp(Maybe_Half_Phys(tmp), 'carnivorous bag', KILLED_BY_AN);
+        makeknown(BAG_OF_TRICKS_OTYP);
+        game._pickup = game._pickup || {};
+        game._pickup.abort_looting = true;
+        return 1; // ECMD_TIME
+    }
     return await use_container(box, more_containers);
 }
 
@@ -2841,6 +2858,8 @@ async function doloot() {
 }
 
 async function doloot_core() {
+    game._pickup = game._pickup || {};
+    game._pickup.abort_looting = false; // C ref: pickup.c doloot_core():2192
     // C ref: pickup.c doloot_core():2194 — check_capacity((char *) 0) runs
     // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
     // and no turn passes (so the container prompts never appear).
@@ -2896,17 +2915,27 @@ async function doloot_core() {
                 if (picks === null) {
                     // ESC: C's select_menu returns -1 here, which is `!= 0`, so C
                     // still sets c = 'y' and skips the "nothing to loot" fallback.
+                    // tty_dismiss_nhwindow() tears the corner menu down.
+                    await dismiss_invent_screen();
                     c = 'y';
                 } else if (picks.length > 0) {
                     const n = picks.length;
-                    for (let i = 0; i < n; i++)
+                    for (let i = 0; i < n; i++) {
                         timepassed |= await do_loot_one(picks[i].obj, i + 1 < n, boxes.length);
+                        // chest trap or magic bag explosion or <esc>
+                        if (game._pickup?.abort_looting) return timepassed ? 1 : 0;
+                    }
                     c = 'y';
+                } else {
+                    // confirmed with nothing picked (picks === []): destroy_nhwindow(win)
+                    // tears the menu down; c stays -1 and C falls through to the
+                    // mon_beside/"nothing to loot" tail below.
+                    await dismiss_invent_screen();
                 }
-                // confirmed with nothing picked (picks === []): c stays -1, C
-                // falls through to the mon_beside/"nothing to loot" tail below.
             } else {
                 timepassed |= await do_loot_one(boxes[0], false);
+                // chest trap or magic bag explosion or <esc>
+                if (game._pickup?.abort_looting) return timepassed ? 1 : 0;
                 c = 'y';
             }
         } else if (IS_GRAVE(game.level?.at?.(cc.x, cc.y)?.typ)) {
@@ -3674,6 +3703,8 @@ const HANDLERS = {
     showtrap: doidtrap_extcmd,
     // C ref: cmd.c extcmdlist[] { C('z'), "suspend", dosuspend_core } (SUSPEND is defined in this build, so not CMD_NOT_AVAILABLE).
     suspend: dosuspend_core,
+    // C ref: cmd.c extcmdlist[] { '!', "shell", dosh_core } (SHELL is defined: the recorded #? lists it).
+    shell: dosh_core,
     swap: doswapweapon_extcmd,
     takeoff: dotakeoff_extcmd,
     therecmdmenu: dotherecmdmenu_extcmd,
@@ -4627,6 +4658,20 @@ async function wiz_intrinsic() {
         case 'GLIB':
             await potion.make_glib(newtimeout);
             break;
+        case 'WARN_OF_MON': {
+            // C ref: wizcmds.c wiz_intrinsic() case WARN_OF_MON — with no
+            // Warn_of_mon yet, the timed warning is for grid bugs.
+            const wp = u.uprops || {};
+            if (!((wp.HWarn_of_mon | 0) || (wp.EWarn_of_mon | 0)
+                  || ((u.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0))) {
+                const { monster_by_pmidx } = await import('./makemon.js');
+                const wt = ((game.context ||= {}).warntype ||= {});
+                wt.speciesidx = 116 /* PM_GRID_BUG */;
+                wt.species = monster_by_pmidx(wt.speciesidx);
+            }
+            if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;
+            break;
+        }
         default:
             if (slot) slot.set(u, newtimeout); else u.uprops[it.key] = newtimeout;
             break;
@@ -4872,27 +4917,52 @@ async function run_pickone_corner_menu(title, entries) {
     game._pending_message = '';
     game._toplin = 0;
     const sels = entries.filter((e) => e.sel).map((e) => e.sel).join('');
+    // wintty.c toggle_menu_curr(): a counted pick of a selected entry only
+    // changes its count; otherwise a selected entry deselects, an unselected
+    // one selects (a bare 0 count does nothing).
+    const toggle = (e, counting, count) => {
+        if (e.selected) { if (!(counting && count > 0)) e.selected = false; }
+        else if (!counting || count > 0) e.selected = true;
+    };
+    const picked = () => entries.filter((x) => x.sel && x.selected).map((x) => x.value);
     let result;
+    let blankTop = false;      // getlin("Search for:") cleared the title row
     for (;;) {
-        const lines = [{ text: title, attr: menuHeadAttr() }, { text: '' }];
+        const lines = [{ text: blankTop ? '' : title, attr: menuHeadAttr() }, { text: '' }];
         for (const e of entries)
             lines.push({ text: e.sel ? `${e.sel} ${e.selected ? '*' : '-'} ${e.text}` : e.text });
         let maxcol = '(end) '.length;
         for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 2);
         draw_corner_window(lines, maxcol, '(end)', 1);
         let redraw = false;
+        let count = 0, counting = false;
         for (;;) {
             const key = await nhgetch();
             const ch = key === 27 ? '\x1b' : String.fromCharCode(key);
             if (sels.includes(ch)) {                     /* explicit choice */
-                const e = entries.find((x) => x.sel === ch);
-                e.selected = !e.selected;
-                result = entries.filter((x) => x.sel && x.selected).map((x) => x.value);
+                toggle(entries.find((x) => x.sel === ch), counting, count);
+                result = picked();
                 break;
             }
-            if (ch === '\x1b') { result = null; break; }
-            if (ch === '\n' || ch === '\r' || ch === ' ') {
-                result = entries.filter((x) => x.sel && x.selected).map((x) => x.value);
+            if (ch >= '0' && ch <= '9') {
+                count = count * 10 + key - 48;
+                if (count !== 0) counting = true;
+                continue;
+            }
+            if (ch === '\x1b') {
+                if (counting) { count = 0; counting = false; continue; }
+                result = null;
+                break;
+            }
+            if (ch === '\n' || ch === '\r' || ch === ' ') { result = picked(); break; }
+            if (ch === ':') {
+                const reply = await hooked_tty_getlin('Search for:', null);
+                blankTop = true;
+                redraw = true;
+                if (reply && reply[0] !== '\x1b') {
+                    const hit = entries.find((x) => x.sel && pmatchi(`*${reply}*`, `${x.sel} - ${x.text}`));
+                    if (hit) { toggle(hit, counting, count); result = picked(); redraw = false; }
+                }
                 break;
             }
             if ((ch === '-' || ch === '\\') && entries.some((x) => x.selected)) {
@@ -4900,7 +4970,7 @@ async function run_pickone_corner_menu(title, entries) {
                 redraw = true;
                 break;
             }
-            /* digits start a count; anything else is tty_nhbell() */
+            /* PICK_ONE ignores select/invert; page keys are no-ops on one page; else tty_nhbell() */
         }
         if (!redraw) break;
     }

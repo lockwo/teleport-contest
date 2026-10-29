@@ -1950,6 +1950,8 @@ async function cprefx(pm) {
             const { polymon } = await import('./polyself.js');
             if (await polymon(stoneGolem)) return;
         }
+        /* if food was a tin, use it up early to keep it out of bones */
+        if (game.context?.tin?.tin) await use_up_tin(game.context.tin.tin);
         game._killer_name = `petrified by tasting ${nm} meat`;  // killed_by_prefix[STONING]
         await update_topl('You turn to stone.');
         const { done } = await import('./end.js');
@@ -2173,8 +2175,8 @@ async function cpostfx(pm) {
             await You_feel('momentarily different.');
         } else {
             const ctx = (game.context = game.context || {});
-            if (ctx.tin) {
-                await use_up_tin(ctx.tin);
+            if (ctx.tin?.tin) {
+                await use_up_tin(ctx.tin.tin);
                 await lesshungry_eat(200 + (metallivorous_hero() ? 5 : 0));
             }
             await update_topl(`You ${nm === 'genetic engineer'
@@ -2512,6 +2514,19 @@ async function eatcorpse(otmp) {
 function mon_cwt_of(mnum) {
     const c = mon_cwt(mnum);
     return (c != null) ? c : 100;   /* goblin cwt */
+}
+
+// C ref: eat.c Finish_digestion() — afternmv of a hero who swallowed a monster
+// whole (uhitm.c gulpum AD_DGST): once the digesting nomul() ends, the corpse's
+// cpostfx() effects apply, then the stored species is cleared.
+export async function Finish_digestion() {
+    const mndx = game.corpsenm_digested;
+    if (mndx != null && mndx !== NON_PM) {
+        await loadEatDeps();   /* cpostfx() needs the lazily-resolved modules */
+        await cpostfx(mndx);
+        game.corpsenm_digested = NON_PM;
+    }
+    return 0;
 }
 
 // C ref: eat.c Hear_again() — the afternmv callback run by unmul() when the hero
@@ -3220,7 +3235,7 @@ export async function givit(type, ptr) {
             // If blind, make sure monsters show up.
             if (_vision?.Blind?.()) {
                 const { see_monsters } = await import('./display.js');
-                see_monsters();
+                await see_monsters();
             }
         }
         break;
@@ -3756,10 +3771,7 @@ export async function eataccessory(otmp) {
         case AMULET_OF_CHANGE:
             await accessory_has_effect(otmp);
             _invent.makeknown(typ);
-            // C: change_sex() — js/invent.js:3740 keeps this port's only copy
-            // and it is module-private; the observable part is the flag.
-            game.flags = game.flags || {};
-            game.flags.female = !game.flags.female;
+            (await import('./polyself.js')).change_sex();
             await pline(`You are suddenly very ${
                 game.flags.female ? 'feminine' : 'masculine'}!`);
             game.botl = true;
@@ -3806,7 +3818,7 @@ export async function eataccessory(otmp) {
                 // C: set_mimic_blocking() + see_monsters().  js/ has no
                 // set_mimic_blocking().
                 const { see_monsters } = await import('./display.js');
-                see_monsters();
+                await see_monsters();
                 if (u?.uprops?.HInvis && !oldprop && !_vision?.Blind?.()) {
                     const { newsym } = await import('./display.js');
                     newsym(u.ux, u.uy);

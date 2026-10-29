@@ -2004,10 +2004,10 @@ export function doname_base(obj, doname_flags) {
                     : 'weapon in'} ${hand_s})`;
 
             if (!Blind() && bp[bp.length - 1] === ')') {
-                if (game.gw?.warn_obj_cnt && obj === game.uwep
-                    && ((game.EWarn_of_mon | 0) & W_WEP) !== 0)
+                if (game.warn_obj_cnt && obj === game.uwep
+                    && (((game.u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0) & W_WEP) !== 0)
                     bp = bp.slice(0, -1)
-                        + `, ${glow_verb(game.gw.warn_obj_cnt, true)} `
+                        + `, ${glow_verb(game.warn_obj_cnt, true)} `
                         + `${glow_color(obj.oartifact)})`;
                 else if (obj.lamplit && artifact_light(obj))
                     bp = bp.slice(0, -1) + `, ${arti_light_description(obj)} lit)`;

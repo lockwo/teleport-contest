@@ -1937,7 +1937,7 @@ export async function moveloop_input_redraw() {
         // immediately (display.c "only permit updating the hero when
         // swallowed"), so swallowed(0)'s eight swallow_to_glyph() picks are
         // the whole cost.
-        dsp.see_monsters();
+        await dsp.see_monsters();
         dsp.see_objects();
         dsp.see_traps();
         if (g.u?.uswallow) await dsp.swallowed(0);
@@ -1954,7 +1954,7 @@ export async function moveloop_input_redraw() {
         const warn_of_mon = !!((_up.HWarn_of_mon | 0) || (_up.EWarn_of_mon | 0)
             || ((g.u?.uprops_extrinsic || {})[32 /* WARN_OF_MON */] | 0));
         if (dsp.have_warning() || Unblind_telepat() || warn_of_mon || any_visible_region())
-            dsp.see_monsters();
+            await dsp.see_monsters();
     }
     if (g.vision_full_recalc) vision_recalc(0);
 }
@@ -1967,13 +1967,17 @@ export async function moveloop_input_redraw() {
 export async function end_turn_callbacks() {
     const g = game;
     g._end_turn_cb_ran = true;
-    if (!g._tutorial_active) return;
-    // allmain.c:541 — the vision recalc precedes the callback in C, so the
-    // callback's --More-- pages over an up-to-date map.
+    // allmain.c:541 — `if (gv.vision_full_recalc) vision_recalc(0)` follows
+    // every domove()/rhack() and precedes the NEXT iteration's turn work, so a
+    // run step's flag is consumed here before takeTurn() (whose monster moves
+    // may raise it again for the redraw block at the head of the next
+    // iteration).  It precedes the callback in C too, so the callback's --More--
+    // pages over an up-to-date map.
     if (g.vision_full_recalc) {
         vision_recalc(0);
         g.vision_full_recalc = 0;
     }
+    if (!g._tutorial_active) return;
     await (await import('./nhlua.js')).tutorial_turn();
 }
 
@@ -2115,6 +2119,7 @@ export async function moveloop_core() {
         if (!busy) g._force_box = null;
         else if (monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2134,6 +2139,7 @@ export async function moveloop_core() {
         if (!busy) g._picklock_box = null;
         else if (monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2158,6 +2164,7 @@ export async function moveloop_core() {
         if (!busy) g._takeoff_occupation = null;
         if (busy && monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2173,6 +2180,7 @@ export async function moveloop_core() {
         if (!busy) g._trap_occupation = null;
         if (busy && monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2190,6 +2198,7 @@ export async function moveloop_core() {
         // C ref: allmain.c:501-508 — monster_nearby() interrupts the occupation.
         if (busy && monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2221,6 +2230,7 @@ export async function moveloop_core() {
             g._eat_occupation = null;
             g._pendingTurn = !!g.context.move;   // stop_occupation() may finish the meal (savelife)
         }
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2242,6 +2252,7 @@ export async function moveloop_core() {
             await (await import('./hack.js')).stop_occupation(true);
             g._engrave_occupation = null;
         }
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2262,6 +2273,7 @@ export async function moveloop_core() {
             await (await import('./hack.js')).stop_occupation(true);
             g._tin_occupation = null;
         }
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2288,6 +2300,7 @@ export async function moveloop_core() {
             await (await import('./hack.js')).stop_occupation(true);
             g._dig_occupation = null;
         }
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2305,6 +2318,7 @@ export async function moveloop_core() {
         if (!busy) g._study_occupation = null;
         if (busy && monster_nearby())
             await (await import('./hack.js')).stop_occupation(true);
+        await (await import('./hack.js')).runmode_delay_output(); /* allmain.c:509 */
         return;
     }
 
@@ -2413,11 +2427,10 @@ export async function moveloop_core() {
 
     // C ref: allmain.c:541 — `if (gv.vision_full_recalc) vision_recalc(0);`
     // right after rhack()/deferred_goto(), before the next iteration's redraw.
-    if (g.vision_full_recalc) {
-        vision_recalc(0);
-        g.vision_full_recalc = 0;
-    }
-
+    // It is part of end_turn_callbacks() below, which hack.js's inline run loop
+    // has already called for its own steps: the run loop's trailing takeTurn()
+    // may raise the flag again, and C only consumes THAT one in the next
+    // iteration's redraw block, after see_monsters()/see_objects().
     // C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])`
     // run nh_callback_run("end_turn") at the tail of moveloop_core(); only the
     // tutorial registers one (nhlib.lua tutorial_turn()).

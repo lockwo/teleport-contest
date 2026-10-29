@@ -32,7 +32,7 @@ import { STATUE } from './mkobj.js';
 import {
     COURT, BEEHIVE, MORGUE, ZOO, BARRACKS, HAIR, NECK, HEAD, IRONBARS, BOLT_LIM,
     W_ARMH, A_NONE, STRAT_WAITMASK, nothing_happens, ACCESSIBLE, isok,
-    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_FLOOR } from './const.js';
+    M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_FLOOR, PLNMSG_GROWL } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_NOEYES, M1_CARNIVORE, M1_HERBIVORE, M1_SEE_INVIS,
     M2_LORD, M2_PRINCE, M2_UNDEAD, is_animal, humanoid,
@@ -360,10 +360,12 @@ export async function growl(mtmp) {
     if (!verb) return;
     // C ref: growl() — `if (canseemon(mtmp) || !Deaf) pline(...)`; the wake_nearto
     // below runs either way.
-    if (canseemon_shared(mtmp) || !Deaf_hero())
+    if (canseemon_shared(mtmp) || !Deaf_hero()) {
         await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
-    // C ref: growl() — `if (gc.context.run) nomul(0);` after the message.
-    if (game.context?.run) (await import('./hack.js')).nomul(0);
+        game.last_msg = PLNMSG_GROWL; // sounds.c:417 iflags.last_msg
+        // C ref: growl() — `if (gc.context.run) nomul(0);` inside the same block.
+        if (game.context?.run) (await import('./hack.js')).nomul(0);
+    }
     const { wake_nearto } = await import('./cmd.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
 }

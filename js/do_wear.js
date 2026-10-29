@@ -10,7 +10,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
-import { pline, update_topl, newsym, see_monsters, You_feel } from './display.js';
+import { pline, update_topl, newsym, see_monsters, You_feel, see_invisible } from './display.js';
 import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
@@ -318,8 +318,14 @@ export async function toggle_displacement(obj, oldprop, on) {
     const u = game.u || {};
     if (!oldprop
         && !(u.uprops?.DISPLACED_intrinsic)
-        && ((!Blind() && !u.uswallow && !u.uprops?.Invis)
-            || u.uprops?.Telepat || u.uprops?.Detect_monsters)) {
+        && ((!Blind() && !u.uswallow
+             && !((await import('./monmove.js')).Invis() && !see_invisible())) /* see self */
+            /* senseself(): Unblind_telepat, Blind_telepat while blind, Detect_monsters */
+            || (await import('./worn.js')).Unblind_telepat()
+            || (Blind() && (await import('./youprop.js')).Blind_telepat())
+            || !!(u.uprops?.Detect_monsters || u.uprops?.HDetect_monsters
+                  || u.uprops?.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters
+                  || ((u.uprops_extrinsic || {})[37 /* DETECT_MONSTERS */] | 0)))) {
         if (obj) makeknown(obj.otyp);
         // C ref: do_wear.c You_feel() is pline(), i.e. update_topl(): the
         // following on_msg() ("You are now wearing ...") must page THIS line
@@ -456,9 +462,10 @@ export async function Cloak_on() {
         break;
     case MUMMY_WRAPPING:
         /* the wrapping is already worn, so C tests the raw Invis sources */
-        if ((game.u?.uprops?.HInvis || game.u?.uprops?.EInvis) && !Blind()) {
+        if ((game.u?.uprops?.HInvis || game.u?.HInvis || game.u?.uprops?.EInvis || game.u?.EInvis
+             || ((game.u?.uprops_extrinsic || {})[40 /* INVIS */] | 0)) && !Blind()) {
             newsym_here();
-            await pline(`You can ${game.u?.uprops?.See_invisible
+            await pline(`You can ${see_invisible()
                 ? 'no longer see through yourself' : 'see yourself'}!`);
         }
         break;
@@ -466,7 +473,7 @@ export async function Cloak_on() {
         if (!extrinsic_invis_except(uarmc) && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(uarmc.otyp);
             newsym_here();                    /* C do_wear.c:360 */
-            await pline(`Suddenly you can${game.u?.uprops?.See_invisible ? ' see through' : 'not see'} yourself.`);
+            await pline(`Suddenly you can${see_invisible() ? ' see through' : 'not see'} yourself.`);
         }
         break;
     case OILSKIN_CLOAK:
@@ -508,16 +515,16 @@ export async function Cloak_off() {
         await toggle_displacement(otmp, olddisp, false);
         break;
     case MUMMY_WRAPPING:
-        if (game.u?.uprops?.Invis && !Blind()) {
+        if ((await import('./monmove.js')).Invis() && !Blind()) {
             newsym_here();                    /* C do_wear.c:409 */
-            await pline(`You can ${game.u?.uprops?.See_invisible ? 'see through yourself' : 'no longer see yourself'}.`);
+            await pline(`You can ${see_invisible() ? 'see through yourself' : 'no longer see yourself'}.`);
         }
         break;
     case CLOAK_OF_INVISIBILITY:
         if (!oldinvis && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(CLOAK_OF_INVISIBILITY);
             newsym_here();                    /* C do_wear.c:417 */
-            await pline(`Suddenly you can ${game.u?.uprops?.See_invisible ? 'no longer see through yourself' : 'see yourself'}.`);
+            await pline(`Suddenly you can ${see_invisible() ? 'no longer see through yourself' : 'see yourself'}.`);
         }
         break;
     case ALCHEMY_SMOCK:
@@ -546,7 +553,7 @@ export async function Helmet_on() {
     case DWARVISH_IRON_HELM: case ORCISH_HELM: case HELM_OF_TELEPATHY:
         break;
     case HELM_OF_CAUTION:
-        see_monsters();
+        await see_monsters();
         break;
     case HELM_OF_BRILLIANCE:
         adj_abon(uarmh, uarmh.spe | 0);
@@ -630,7 +637,7 @@ export async function Helmet_off() {
         /* C updates the ability BEFORE see_monsters(), and returns early */
         worn_slot_clear(WA_ARMH);
         uarmh.owornmask = (uarmh.owornmask | 0) & ~WA_ARMH;
-        see_monsters();
+        await see_monsters();
         update_inventory();
         return 0;
     case HELM_OF_BRILLIANCE:
@@ -829,7 +836,7 @@ export async function dragon_armor_handling(otmp, puton, on_purpose) {
         break;
     case RED_DRAGON_SCALES: case RED_DRAGON_SCALE_MAIL:
         setE('EInfravision', puton);
-        see_monsters();
+        await see_monsters();
         break;
     case GOLD_DRAGON_SCALES: case GOLD_DRAGON_SCALE_MAIL:
         /* make_hallucinated(!puton, TRUE, W_ARM): the hallucination timer lives

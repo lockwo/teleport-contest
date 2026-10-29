@@ -1123,7 +1123,8 @@ export function RS_menu_arg(x) { return ROLE_RANDOM - (x + 1); }
 // C would have drawn, which is what makes the four setup_*menu() builders below
 // verifiable without a terminal.
 const NHW_MENU = 4, MENU_BEHAVE_STANDARD = 0;
-const ATR_NONE = 0, NO_COLOR = 0;
+const ATR_NONE = 0;
+import { NO_COLOR } from './terminal.js';  // C NO_COLOR is CLR_MAX (8), not 0 (CLR_BLACK)
 const MENU_ITEMFLAGS_NONE = 0, MENU_ITEMFLAGS_SELECTED = 1;
 const PICK_ANY = 2;
 
@@ -1849,12 +1850,22 @@ export async function reset_role_filtering() {
 
     rs_end_menu(win, `Pick all that apply${gotrolefilter()
         ? ' and/or unpick any that no longer apply' : ''}`);
-    // UNPORTED: windows.c select_menu(win, PICK_ANY, &selected).  With no
-    // window layer there is nothing to select, so n stays -1 ("cancelled"),
-    // which is exactly the arm that leaves the existing filters alone.
+    // windows.c select_menu(win, PICK_ANY, &selected) through the one tty menu
+    // (js/windows.js -> invent.js select_command_menu()).  The rs_* descriptor
+    // built above is replayed into a real window: preselected rows carry
+    // MENU_ITEMFLAGS_SELECTED, and every tty bulk/page/count command applies.
+    const { create_nhwindow, start_menu, add_menu, add_menu_str, end_menu,
+            select_menu, nul_glyphinfo } = await import('./windows.js');
+    const w = create_nhwindow(NHW_MENU);
+    start_menu(w, MENU_BEHAVE_STANDARD);
+    for (const it of win.items) {
+        if (!it.any) add_menu_str(w, it.str);
+        else add_menu(w, nul_glyphinfo, it.any, it.selector, it.groupacc,
+                      it.attr, it.clr, it.str, it.itemflags);
+    }
+    end_menu(w, win.prompt);
     const selected = [];
-    n = -1;
-    void PICK_ANY;
+    n = await select_menu(w, PICK_ANY, selected);
 
     if (n >= 0) { /* n==0: clear current filters and don't set new ones */
         clearrolefilter(RS_filter);
@@ -1862,7 +1873,8 @@ export async function reset_role_filtering() {
 
         game.initrole = game.initrace = game.initgend = game.initalign = ROLE_NONE;
     }
-    return (n > 0);
+    // C returns (n > 0); the live caller (jsmain.js) also needs n < 0 (cancelled).
+    return n;
 }
 
 // C ref: role.c:2777 maybe_skip_seps(rows, aspect) — "the change in format when

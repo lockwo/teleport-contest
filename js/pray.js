@@ -1145,7 +1145,7 @@ async function pleased(g_align) {
             if (!(HProp_pr('HTelepat') & INTRINSIC)) {
                 setHProp_pr('HTelepat', (HProp_pr('HTelepat') | 0) | FROMOUTSIDE);
                 await giftMsg('Telepathy');
-                if (Blind()) see_monsters();
+                if (Blind()) await see_monsters();
             } else if (!(HProp_pr('HFast') & INTRINSIC)) {
                 setHProp_pr('HFast', (HProp_pr('HFast') | 0) | FROMOUTSIDE);
                 await giftMsg('Speed');

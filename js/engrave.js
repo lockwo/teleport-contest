@@ -620,7 +620,6 @@ function is_boots(obj) {
 }
 
 const MAGIC_MARKER = 242, TOWEL = 234;
-const ART_FIRE_BRAND = 22; // artilist.h index; no covered stylus is an artifact
 const WAND_BACKFIRE_CHANCE = 100; // C ref: zap.h
 
 // C ref: engrave.c blind_writing[]/blengr() — ROLL_FROM() is an rn2(9) draw, so
@@ -817,7 +816,7 @@ async function doengrave_sfx_item(de) {
         break;
     }
     case WEAPON_CLASS:
-        if (de.otmp.oartifact === ART_FIRE_BRAND) {
+        if (de.otmp.oartifact === (await import('./artifact.js')).ART_FIRE_BRAND) {
             de.type = BURN; /* doesn't dull weapon */
         } else if (is_blade(de.otmp)) {
             if (de.otmp === game.uwep && de.otmp.cursed)
@@ -1001,7 +1000,15 @@ export async function doengrave() {
     };
     const oep = engr_at(u.ux, u.uy);
     if (oep) de.oetype = oep.engr_type;
-    // (ENGR_BLOOD-when-bleeding and jello/frost branches not exercised.)
+    // C ref: engrave.c doengrave_ctx_init(): `if (is_demon(gy.youmonst.data)
+    // || is_vampire(gy.youmonst.data)) de->type = ENGR_BLOOD;`
+    {
+        const { is_demon_flag } = await import('./monflags_data.js');
+        const { youmonst_data } = await import('./invent.js');
+        const ydata = youmonst_data();
+        if (ydata && (is_demon_flag(ydata) || ydata.mcls === S_VAMPIRE_CLS))
+            de.type = ENGR_BLOOD;
+    }
     const frosted = (game.level?.at(u.ux, u.uy)?.typ === ICE);
 
     // getobj("write with", stylus_ok, GETOBJ_PROMPT): otmp == hands_obj for '-'.

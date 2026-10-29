@@ -2166,7 +2166,11 @@ function vtense(verb) {
 const OBJ_CLASS_SYMS = ')[="(%!?/*`0$';
 // '_' is an iron chain (CHAIN_CLASS) except where it is the altar's cmap symbol.
 function remembered_is_object(loc) {
-    const ch = loc?.remembered_glyph?.ch;
+    const rg = loc?.remembered_glyph;
+    // A remembered statue is drawn as a monster letter but its glyph is a
+    // statue glyph (glyph_is_object); remember_bg() records the object type.
+    if (rg?.objotyp > 0) return true;
+    const ch = rg?.ch;
     if (!ch || ch === ' ') return false;
     if (ch === '+') return !IS_DOOR(loc.typ);
     if (ch === '_') return loc.typ !== ALTAR;

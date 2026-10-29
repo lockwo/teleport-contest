@@ -2250,6 +2250,32 @@ function gloc_glyph_covered(x, y, loc, mtmp) {
 // restriction) and getloc_usemenu defaults Off, so neither is modelled.
 const GLOC_MONS = 0, GLOC_OBJS = 1, GLOC_DOOR = 2, GLOC_EXPLORE = 3,
       GLOC_INTERESTING = 4, GLOC_VALID = 5;
+
+// C ref: display.c unmap_object() — `lev->glyph = cmap_to_glyph(S_stone)` on a
+// never-seen spot (and the "dark room remembered dark" case).  S_stone is a
+// cmap glyph that is_cmap_wall() covers (sym.h), so getpos.c's DOOR/EXPLORE
+// arms do not see a door/room/corridor there and the INTERESTING arm
+// excludes it.  Our remembered_glyph keeps it as a blank cell.
+// C ref: getpos.c GLOC_DOOR tests is_cmap_door()/S_ndoor on glyph_at(), the
+// REMEMBERED glyph.  A door a monster tunnelled (mdig_tunnel) or a wall that
+// became a door out of the hero's sight keeps its old wall glyph until it is
+// seen again, so the terrain alone is not enough.  The remembered cell must
+// draw like some door state (closed/open/broken/doorless, either orientation).
+function gloc_remembers_door(loc, x, y) {
+    const rg = loc.remembered_glyph;
+    if (!rg) return true; // no memory kept: fall back to the terrain
+    for (const doormask of [D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED])
+        for (const horizontal of [false, true]) {
+            const g = terrain_glyph({ typ: DOOR, doormask, horizontal }, x, y);
+            if (g.ch === rg.ch && !!g.dec === !!rg.decgfx && g.color === rg.color)
+                return true;
+        }
+    return false;
+}
+function gloc_remembers_stone(loc) {
+    const rg = loc.remembered_glyph;
+    return !!rg && rg.ch === ' ' && !rg.objotyp && !rg.hallucotyp;
+}
 // C ref: cmd.c spkeys[] defaults for mMoOdDxX_def[] — next/prev pairs, so the
 // index >> 1 is the GLOC_* class.
 const GLOC_KEYS = 'mMoOdDxXaAzZ';
@@ -2306,8 +2332,11 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     // DISPLAYED glyph.  back_to_glyph() shows a drawbridge as S_?cdbridge on its
     // DBWALL portcullis and S_?odbridge on DRAWBRIDGE_DOWN; the DRAWBRIDGE_UP
     // span itself displays the water/ice/lava/room beneath it.
-    const isDoorSym = explored && (loc.typ === DOOR || loc.typ === 12 /*DBWALL*/
-                                   || loc.typ === 34 /*DRAWBRIDGE_DOWN*/);
+    const stoneGlyph = !terrainFull && gloc_remembers_stone(loc);
+    const isDoorSym = explored && !stoneGlyph
+                      && ((loc.typ === DOOR && gloc_remembers_door(loc, x, y))
+                          || loc.typ === 12 /*DBWALL*/
+                          || loc.typ === 34 /*DRAWBRIDGE_DOWN*/);
     const terrainmode = game.iflags?.terrainmode || 0;
     const showMonsters = !terrainmode || (terrainmode & 0x08 /* TER_MON */) !== 0;
     const mtmp = showMonsters ? m_at(x, y) : null;
@@ -2356,7 +2385,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // C tests glyph_is_cmap(glyph_at()): a displayed monster, remembered
         // 'I', warning, object, seen trap or engraving glyph is not a cmap
         // door/room/corridor symbol.
-        return explored
+        return explored && !stoneGlyph
             && (isDoorSym || loc.typ === ROOM || loc.typ === CORR)
             && !gloc_glyph_covered(x, y, loc, mtmp)
             && !is_cmap_engraving_at(x, y)
@@ -2373,7 +2402,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // Warning and remembered invisible glyphs are interesting, but
         // neither is a monster target for GLOC_MONS.
         if (showMonsters && (loc.invisMon || loc.disp_warning)) return true;
-        if (!explored) return false;
+        if (!explored || stoneGlyph) return false;
         if (shows_mimic_object(mtmp, x, y)) return true;
         const rememberedObj = loc.remembered_glyph;
         if (rememberedObj?.objotyp != null && rememberedObj.ch === loc.disp_ch) return true;

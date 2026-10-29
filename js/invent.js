@@ -83,12 +83,14 @@ import {
     container_weight,
     unknwn_contnr_contents,
     clear_object_timer,
+    obj_absorb,
 } from './mkobj.js';
 
 import { getpos, getpos_menu, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
 import { observe_object as disco_observe_object, build_discoveries_rows, discoveries_title, discover_object } from './o_init.js';
 import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx, little_to_big } from './makemon.js';
 import { MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING } from './const.js';
+import { FROMOUTSIDE as FROMOUTSIDE_PROP } from './const.js';
 import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates_silver,
          is_neuter_flag, humanoid as humanoid_flag, nolimbs as nolimbs_flag,
          mflags1_of, mflags2_of, likes_gems_flag,
@@ -195,7 +197,7 @@ import {
 // the other at module-evaluation time.
 // polyself.js owns mbodypart()/body_part(); the cycle back to this file is
 // fine (both sides only call each other's hoisted declarations at run time).
-import { body_part as poly_body_part } from './polyself.js';
+import { body_part as poly_body_part, float_vs_flight } from './polyself.js';
 import { twoweapon_action_ok, setuwep as setuwep_c } from './wield.js';
 import * as DT from './dothrow.js';
 import { Blind_telepat } from './youprop.js';
@@ -540,7 +542,6 @@ function ammo_and_launcher(ammo, launcher) {
     return is_ammo(ammo) && matching_launcher(ammo, launcher);
 }
 function carry_obj_effects_message(_obj) {}
-function obj_absorb(potmp, pobj) { if (pobj) pobj.obj = null; return potmp?.obj || null; }
 function maybereleaseobuf(_str) {}
 function dupstr(s) { return String(s ?? ''); }
 // C ref: objnam.c cxname_singular() == xname_flags(obj, CXN_SINGULAR). xname
@@ -1375,8 +1376,8 @@ function acurrstr() {
 // drops carrcap by WT_WOUNDEDLEG_REDUCT, which is what pushes the seed0004
 // hero from unencumbered to Burdened).  Consumes no RNG, but every encumbrance
 // predicate downstream (allmain.c moveloop_core, do.c doup, uhitm.c) reads it.
-// The Boots_on/afternmv ELevitation deferral and float_vs_flight() are not
-// modelled (no multi-turn levitation-boots don in this port).
+// The Boots_on/afternmv ELevitation deferral is modelled (dressing_boots_on())
+// together with the float_vs_flight() calls that bracket the calculation.
 export function weight_cap() {
     const u = game.u;
     let ewl = 0;
@@ -1398,8 +1399,23 @@ export function weight_cap() {
     // C ref: hack.c:4324 — Levitation / Plane of Air / strong steed pin
     // capacity at MAX_CARR_CAP and, crucially, SKIP the wounded-legs reduction
     // (it lives in the else branch: airborne legs can't be limped on).
+    // C ref: hack.c:4300-4308 — boots take several turns to wear but setworn()
+    // enables their property at the start, so while ga.afternmv == Boots_on the
+    // levitation boots' W_ARMF bit is left out of ELevitation: their capacity
+    // benefit (and the Burdened/Lev status flip with its encumber_msg) waits
+    // until Boots_on() runs from unmul() with afternmv already cleared.
+    let ext_lev = worn_extrinsic(LEVITATION);
+    let float_changed = false;
+    if (dressing_boots_on() && (ext_lev & WA_ARMF)) {
+        ext_lev &= ~WA_ARMF;
+        float_vs_flight(true); /* in case Levitation is blocking Flying */
+        float_changed = true;
+    }
+    /* levitation is blocked by being trapped in the floor, but it still
+       functions enough in that situation to enhance carrying capacity */
+    if ((u?.uprops?.BLevitation | 0) & I_SPECIAL_PROP) float_changed = true;
     const levitating = u?.uprops?.Levitation
-        || (worn_extrinsic(LEVITATION) & ~worn_blocked(LEVITATION));
+        || (ext_lev & ~worn_blocked(LEVITATION));
     if (levitating || Is_airlevel()
         || (u?.usteed && strongmonst(u.usteed.data))) {
         carrcap = MAX_CARR_CAP;
@@ -1418,6 +1434,7 @@ export function weight_cap() {
         if (ewl & LEFT_SIDE) carrcap -= WT_WOUNDEDLEG_REDUCT;
         if (ewl & RIGHT_SIDE) carrcap -= WT_WOUNDEDLEG_REDUCT;
     }
+    if (float_changed) float_vs_flight();
     return Math.max(carrcap, 1);
 }
 
@@ -2314,6 +2331,7 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
         if (c === 27) return false;                                    // cancel
         // xwaitforspace rejects unknown keys without ending a numeric count.
         if (c !== 13 && c !== 10 && !' ><^|:,.\\~-@'.includes(ch)) continue;
+        const useCount = counting, useN = count;   // MENU_SEARCH still sees the pending count
         count = 0;
         counting = false;
         if (c === 13 || c === 10) return true;                         // commit
@@ -2334,8 +2352,15 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             if (!reply || reply[0] === '\x1b') continue;
             for (const e of entries) {
                 if (!e.item || !pmatchi(`*${reply}*`, `${e.item.sel} - ${e.text}`)) continue;
-                e.item.selected = !e.item.selected;
-                e.item.count = -1;
+                // C ref: wintty.c toggle_menu_curr(): a counted search takes the count
+                // (a selected item just changes its count, an unselected one is
+                // selected with it; a bare 0 does nothing), an uncounted one flips.
+                const it = e.item;
+                if (it.selected) {
+                    if (useCount && useN > 0) it.count = useN;
+                    else { it.selected = false; it.count = -1; }
+                } else if (useCount && useN > 0) { it.selected = true; it.count = useN; }
+                else if (!useCount) it.selected = true;
                 if (how === PICK_ONE) return true;
             }
             continue;
@@ -3009,7 +3034,7 @@ export function merged(potmp, pobj) {
         otmp.age = Math.trunc(((otmp.age || 0) * (otmp.quan || 1) + (obj.age || 0) * (obj.quan || 1))
             / ((otmp.quan || 1) + (obj.quan || 1)));
     if (!otmp.globby) otmp.quan = (otmp.quan || 1) + (obj.quan || 1);
-    otmp.owt = weight(otmp);
+    if (otmp.oclass === COIN_CLASS || !otmp.globby) otmp.owt = weight(otmp);
     if (!has_oname(otmp) && has_oname(obj)) setONAME(otmp, ONAME(obj));
     if (obj.pickup_prev && otmp.where === OBJ_INVENT) otmp.pickup_prev = 1;
     if (obj.bypass) otmp.bypass = 1;
@@ -3028,9 +3053,20 @@ export function merged(potmp, pobj) {
         otmp.bknown = 1;
         if (!Role_if(PM_CLERIC)) discovered = true;
     }
+    /* handle puddings a bit differently; absorption will free the other
+       object automatically (C ref: invent.c merged()) */
+    if (obj.globby) {
+        (game._pudding_merge_msgs ||= []).push(pudding_merge_message_plan(otmp, obj));
+        game._merge_discovery_pending = true;
+        obj_extract_self(obj);
+        obj_absorb({ obj: otmp }, { obj });
+        if (pobj && typeof pobj === 'object' && 'obj' in pobj) pobj.obj = null;
+        return 1;
+    }
     if (discovered && otmp.where === OBJ_INVENT
         && obj.how_lost !== LOST_THROWN && otmp.how_lost !== LOST_THROWN) {
         game._merge_discovery_pending = true;
+        game._merge_learn_pending = true;
     }
 
     obfree(obj, otmp); /* free(obj), bill->otmp */
@@ -3045,7 +3081,44 @@ hooks.merged = merged;
 export async function report_merge_discovery() {
     if (!game._merge_discovery_pending) return;
     game._merge_discovery_pending = false;
-    await update_topl('You learn more about your items by comparing them.');
+    const puddings = game._pudding_merge_msgs;
+    game._pudding_merge_msgs = null;
+    for (const m of puddings || []) await pudding_merge_message_emit(m);
+    if (game._merge_learn_pending) {
+        game._merge_learn_pending = false;
+        await update_topl('You learn more about your items by comparing them.');
+    }
+}
+
+// C ref: mkobj.c pudding_merge_message(otmp, otmp2), called from invent.c
+// merged() before obj_absorb().  merged() is synchronous here, so the
+// visibility/location facts C reads are captured now and the pline is paged by
+// report_merge_discovery() once the merge's caller can await.
+function pudding_merge_message_plan(otmp, otmp2) {
+    return {
+        visible: cansee(otmp.ox, otmp.oy) || cansee(otmp2.ox, otmp2.oy),
+        onfloor: otmp.where === OBJ_FLOOR || otmp2.where === OBJ_FLOOR,
+        inpack: otmp.where === OBJ_INVENT || otmp2.where === OBJ_INVENT,
+        adj: (otmp.ox !== game.u.ux || otmp.oy !== game.u.uy)
+            && (otmp2.ox !== game.u.ux || otmp2.oy !== game.u.uy),
+        otyp: otmp.otyp,
+    };
+}
+async function pudding_merge_message_emit(p) {
+    const { pline, You_hear, You_see } = await import('./display.js');
+    if ((!Blind_for_wear() && p.visible) || p.inpack) {
+        if (Hallucination_hero()) {
+            if (p.onfloor) await You_see('parts of the floor melting!');
+            else if (p.inpack) await pline('Your pack reaches out and grabs something!');
+        } else if (p.onfloor || p.inpack) {
+            const { obj_typename } = await import('./objnam.js');
+            await pline(`The ${p.onfloor && p.adj ? 'adjacent ' : ''}`
+                + `${makeplural(obj_typename(p.otyp))} coalesce`
+                + `${p.inpack ? ' inside your pack' : ''}.`);
+        }
+    } else {
+        await You_hear('a faint sloshing sound.');
+    }
 }
 
 // impossible() is async here, so addinv_core1()'s "already have ...?" reports
@@ -4344,13 +4417,13 @@ export async function Ring_on(obj) {
         await toggle_stealth(obj, oldprop, true);
         break;
     case RIN_WARNING:
-        see_monsters(); /* C ref: do_wear.c:1286 */
+        await see_monsters(); /* C ref: do_wear.c:1286 */
         break;
     case RIN_SEE_INVISIBLE:
         /* can now see invisible monsters (C ref: do_wear.c:1289-1291) */
         set_mimic_blocking(); /* do special mimic handling */
-        see_monsters();
-        if (game.u?.uprops?.Invis && !oldprop && !game.u?.uprops?.HSee_invisible
+        await see_monsters();
+        if ((await import('./monmove.js')).Invis() && !oldprop && !game.u?.uprops?.HSee_invisible
             && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
             await pline('Suddenly you are transparent, but there!');
@@ -4371,19 +4444,18 @@ export async function Ring_on(obj) {
         break;
     case RIN_LEVITATION:
         // C ref: do_wear.c:1307 — `if (!oldprop && !HLevitation &&
-        // !(BLevitation & FROMOUTSIDE))`.  oldprop above now carries every
-        // other worn source (the other hand, levitation boots, an amulet);
-        // BLevitation (terrain-blocked) is never set anywhere in this port
-        // (switch_terrain() is NOT PORTED, see js/dig.js:868).
-        if (!oldprop && !(game.u?.uprops?.Levitation | 0)) {
+        // !(BLevitation & FROMOUTSIDE))`.  oldprop above carries every other
+        // worn source (the other hand, levitation boots, an amulet).
+        if (!oldprop && !(game.u?.uprops?.Levitation | 0)
+            && !((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE_PROP)) {
             const { float_up, spoteffects } = await import('./trap.js');
             await float_up();
             learnring(obj, true);
             /* C: `if (Levitation) spoteffects(FALSE);` -- for sinks */
             await spoteffects();
+        } else {
+            float_vs_flight(); /* maybe toggle (BFlying & I_SPECIAL) */
         }
-        // else: float_vs_flight() (hack.c) — not ported anywhere in this
-        // codebase (no BFlying I_SPECIAL-toggle infra exists).
         break;
     case RIN_PROTECTION_FROM_SHAPE_CHAN:
         /* C ref: do_wear.c:1332 rescham() — every chameleon, vampshifter and
@@ -4497,16 +4569,6 @@ export function poly_gender() {
     return game.flags?.female ? 1 : 0;
 }
 
-// C ref: polyself.c change_sex() — flip flags.female (and u.mfemale while
-// polymorphed) and resync u.umonnum for the un-polymorphed hero.
-function change_sex() {
-    const u = game.u;
-    if (!u) return;
-    if (!u.Upolyd) game.flags.female = !game.flags.female;
-    else u.mfemale = !u.mfemale;
-    if (!u.Upolyd) u.umonnum = u.umonster ?? u.umonnum;
-}
-
 // C ref: do_wear.c Amulet_on(obj).  Returns C's `on_msg_done` so the caller can
 // skip its own on_msg() — the ordering matters: strangulation and change print
 // the worn-confirmation line BEFORE their own message.  setworn() has already
@@ -4531,7 +4593,7 @@ async function Amulet_on(amul) {
         break;
     case AMULET_OF_CHANGE: {
         const orig_sex = poly_gender();
-        if (!u?.Unchanging) change_sex();
+        if (!u?.Unchanging) (await import('./polyself.js')).change_sex();
         const new_sex = poly_gender();
         if (new_sex !== orig_sex) makeknown(AMULET_OF_CHANGE);
         await on_msg_accessory(amul);   /* C: on_msg(uamul) */
@@ -4577,7 +4639,8 @@ async function Amulet_on(amul) {
     case AMULET_OF_FLYING:
         // setworn() conferred extrinsic flying; C then float_vs_flight() and,
         // if this is new flight, makeknown + "You are now in flight."
-        if (u && !u.uprops?.Levitation) {
+        float_vs_flight(); /* block flying if levitating */
+        if (u && !(u.uprops?.BFlying | 0) && !worn_blocked(FLYING)) {
             const already = !!u.uprops?.Flying;
             if (!already) {
                 if (!u.uprops) u.uprops = {};
@@ -4702,15 +4765,16 @@ async function Ring_off_or_gone(obj, _gone) {
         await toggle_stealth(obj, still_from_other, false);
         break;
     case RIN_WARNING:
-        see_monsters(); /* C ref: do_wear.c:1383 */
+        await see_monsters(); /* C ref: do_wear.c:1383 */
         break;
     case RIN_SEE_INVISIBLE:
         /* Make invisible monsters go away (C ref: do_wear.c:1386-1390) */
         if (!worn_extrinsic(29 /* SEE_INVIS */) && !game.u?.uprops?.HSee_invisible) {
             set_mimic_blocking(); /* do special mimic handling */
-            see_monsters();
+            await see_monsters();
         }
-        if (game.u?.uprops?.Invis && !Blind_for_wear()) {
+        if ((await import('./monmove.js')).Invis()
+            && !(await import('./display.js')).see_invisible() && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
             await pline('Suddenly you cannot see yourself.');
             learnring(obj, true);
@@ -4719,18 +4783,22 @@ async function Ring_off_or_gone(obj, _gone) {
     case RIN_INVISIBILITY:
         if (!still_from_other && !game.u?.uprops?.HInvis && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
-            await pline(`Your body seems to unfade${game.u?.uprops?.See_invisible ? ' completely' : '..'}.`);
+            await pline(`Your body seems to unfade${(await import('./display.js')).see_invisible() ? ' completely' : '..'}.`);
             learnring(obj, true);
         }
         break;
     case RIN_LEVITATION: {
         // C ref: do_wear.c:1406 — `float_down(0L, 0L)` then, if that actually
-        // landed the hero, learnring().  BLevitation is never set in this port
-        // so the float_vs_flight() arm is unreachable.
-        const { float_down } = await import('./trap.js');
-        await float_down(0, 0);
-        if (!still_from_other && !(game.u?.uprops?.Levitation | 0))
-            learnring(obj, true);
+        // landed the hero, learnring(); with terrain-blocked levitation
+        // (BLevitation & FROMOUTSIDE) only float_vs_flight().
+        if (!((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE_PROP)) {
+            const { float_down } = await import('./trap.js');
+            await float_down(0, 0);
+            if (!still_from_other && !(game.u?.uprops?.Levitation | 0))
+                learnring(obj, true);
+        } else {
+            float_vs_flight(); /* maybe toggle (BFlying & I_SPECIAL) */
+        }
         break;
     }
     case RIN_PROTECTION_FROM_SHAPE_CHAN:
@@ -4781,7 +4849,7 @@ export async function Amulet_off(amul = game.uamul) {
     switch (amul.otyp) {
     case AMULET_OF_ESP:
         clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
-        see_monsters(); /* C ref: do_wear.c:1104 — a blind hero stops sensing minds */
+        await see_monsters(); /* C ref: do_wear.c:1104 — a blind hero stops sensing minds */
         break;
     case AMULET_OF_LIFE_SAVING:
     case AMULET_VERSUS_POISON:
@@ -4874,9 +4942,10 @@ export async function remove_worn_item(obj, unchain_ball) {
     } else if ((obj.owornmask || 0) & W_BLINDF) {
         await Blindf_off(obj);
     } else if ((obj.owornmask || 0) & W_WEAPONS) {
-        if (obj === game.uwep) setuwep_slot(null);
-        if (obj === game.uswapwep) setuswapwep(null);
-        if (obj === game.uquiver) setuqwep(null);
+        const { uwepgone, uswapwepgone, uqwepgone } = await import('./wield.js');
+        if (obj === game.uwep) await uwepgone();
+        if (obj === game.uswapwep) uswapwepgone();
+        if (obj === game.uquiver) uqwepgone();
     }
 
     // Ball & chain (W_BALL|W_CHAIN) -> unpunish(); the hero is never Punished
@@ -4964,7 +5033,8 @@ function equip_ok(obj, removing, accessory) {
     // exclude object classes that can never be worn
     if (obj.oclass !== ARMOR_CLASS && obj.oclass !== RING_CLASS
         && obj.oclass !== AMULET_CLASS) {
-        if (obj.otyp !== BLINDFOLD && obj.otyp !== LENSES && obj.otyp !== TOWEL)
+        if (obj.otyp !== MEAT_RING && obj.otyp !== BLINDFOLD
+            && obj.otyp !== TOWEL && obj.otyp !== LENSES)
             return GETOBJ_EXCLUDE;
     }
     // armor with 'P'/'R', or accessory with 'W'/'T' -> downplay (selectable via *)
@@ -5166,11 +5236,12 @@ async function accessory_or_armor_on(obj) {
         game._dressing_obj = obj;
         game._dressing_off = false;
         const on_fn_after = armor_on_fn(mask);
-        await run_dress_occupation(delay, 'You finish your dressing maneuver.',
-                                   async () => {
-                                       game._dressing_obj = null;
-                                       if (on_fn_after) await on_fn_after();
-                                   });
+        const afternmv = async () => {
+            game._dressing_obj = null;
+            if (on_fn_after) await on_fn_after();
+        };
+        afternmv.armor_on = on_fn_after;
+        await run_dress_occupation(delay, 'You finish your dressing maneuver.', afternmv);
         if (game._allow_inventory_update !== undefined) update_inventory();
         return ECMD_OK;
     }
@@ -5200,6 +5271,13 @@ function armor_on_fn(mask) {
     case WA_ARMU: return Shirt_on;
     default: return null;
     }
+}
+
+// C ref: hack.c weight_cap() `ga.afternmv == Boots_on`.  The pending dressing
+// callback is a closure here (it also clears game._dressing_obj), tagged with the
+// *_on routine it stands for by accessory_or_armor_on().
+function dressing_boots_on() {
+    return game.afternmv?.armor_on === Boots_on;
 }
 
 // C ref: hack.c nomul(-delay, msg) + allmain.c moveloop_core() multi<0
@@ -10976,6 +11054,17 @@ async function itemactions(otmp, getDir) {
 // queue so the command's getobj() consumes it before any further player keys
 // (the cmdq_add_key equivalent).
 async function itemactions_dispatch(otmp, act, getDir) {
+    const res = await itemactions_run(otmp, act, getDir);
+    // C ref: cmd.c rhack() epilogue, run for the queued command as its own rhack():
+    // ECMD_CANCEL/ECMD_FAIL -> reset_cmd_vars(TRUE) clears CQ_CANNED; ECMD_OK without
+    // time clears it only while gm.multi < 0.  A key the command never consumed
+    // otherwise stays queued and is read as the next command.
+    if (res === ECMD_CANCEL || res === ECMD_FAIL || (res === ECMD_OK && (game.multi | 0) < 0))
+        cmdq_clear(CQ_CANNED);
+    return res;
+}
+
+async function itemactions_run(otmp, act, getDir) {
     // C ref: itemactions() returns ECMD_OK with the command queued on CQ_CANNED,
     // so the queued command runs in a NEW moveloop_core() iteration, whose
     // once-per-input hallucination/warning redraw happens first.
@@ -13102,7 +13191,23 @@ export async function display_minventory(mon, dflags, title) {
 }
 export function cinv_doname(obj) { return obj?.otrapped ? `trapped ${doname(obj)}` : doname(obj); }
 export function cinv_ansimpleoname(obj) { return obj?.otrapped ? `a trapped ${simpleonames(obj)}` : ansimpleoname(obj); }
-export function display_cinventory(obj) { if (obj) obj.cknown = 1; if (Has_contents(obj)) display_inventory(null, false); else invdisp_nothing(`Contents of ${doname(obj)}:`, '(empty)'); return null; }
+// C ref: invent.c display_cinventory() — a probed container's contents in
+// inventory style (PICK_NONE, INVORDER_SORT, menu-assigned letters).  The
+// title goes through safe_qbuf() with cinv_doname() so a long container name
+// falls back to cinv_ansimpleoname().
+export async function display_cinventory(obj) {
+    const { safe_qbuf } = await import('./pickup.js');
+    const qbuf = safe_qbuf('Contents of ', ':', obj, cinv_doname, cinv_ansimpleoname, 'that');
+    let ret = null;
+    if (Has_contents(obj)) {
+        const sel = await query_objlist_menu(qbuf, obj.cobj, INVORDER_SORT, PICK_NONE, allow_all);
+        if (sel.length) ret = sel[0].obj;
+    } else {
+        invdisp_nothing(qbuf, '(empty)');
+    }
+    obj.cknown = 1;
+    return ret;
+}
 export function only_here(obj) { return obj?.ox === game.only?.x && obj?.oy === game.only?.y; }
 export function display_binventory(x, y, as_if_seen) { void as_if_seen; let n = 0; for (const obj of iterateObjects(game.level?.buriedobjlist)) if (obj.ox === x && obj.oy === y) ++n; return n; }
 

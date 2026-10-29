@@ -100,7 +100,7 @@ import { is_weptool, simple_typename, is_plural, otense,
 import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
 import { engr_at, wipe_engr_at, u_wipe_engr, sengr_at, del_engr_at } from './engrave.js';
 import { find_mac as worn_find_mac, bypass_obj } from './worn.js';
-import { YOUMONST, erode_armor } from './mhitm_ad.js';
+import { YOUMONST, erode_armor, golemeffects } from './mhitm_ad.js';
 
 // ── small monster-state predicates (C: include/monst.h, mondata.h) ──
 
@@ -4359,16 +4359,19 @@ export async function explum(mdef, mattk) {
 // C ref: uhitm.c:4931 start_engulf(mdef) — the swallow animation.  No RNG in
 // the C path this port can reach: rn2_on_display_rng() draws from the display
 // RNG, which is a separate stream.
+let engulf_flash = null;   // C: tmp_at(DISP_ALWAYS, ...) state of start_engulf()
 export async function start_engulf(mdef) {
     const u = game.u;
     const form = youmonst_data_uh();
     const u_digest = digests(form);
     const u_enfold = enfolds(form);
-    /* display.c map_location()/tmp_at() have no port: the swallow animation is
-       display-only.  tmp_at(DISP_ALWAYS, mon_to_glyph(&youmonst,
-       rn2_on_display_rng)) still draws one display-RNG monster pick while
-       hallucinating. */
-    if (!Invisible_uh() && u?.uhallu) (await import('./disprng.js')).random_monster();
+    if (!Invisible_uh()) {
+        const { map_location, tmp_at_flash_cell, youmonst_glyph_cell, flush_screen } = await import('./display.js');
+        map_location(u.ux, u.uy, true);
+        engulf_flash = tmp_at_flash_cell(youmonst_glyph_cell(form, u.mfemale), false, true);
+        await flush_screen(0);   /* tmp_at(DISP_ALWAYS, glyph) flushes */
+        await engulf_flash.step(mdef.mx, mdef.my);
+    }
     const { update_topl } = await import('./display.js');
     await update_topl(`You `
         + `${u_digest ? 'swallow' : u_enfold ? 'enclose' : 'engulf'} `
@@ -4378,9 +4381,10 @@ export async function start_engulf(mdef) {
 }
 
 // C ref: uhitm.c:4949 end_engulf() — tear down the swallow animation.  No RNG.
-export function end_engulf() {
+export async function end_engulf() {
     if (!Invisible_uh()) {
-        /* display.c tmp_at(DISP_END, 0) — no port */
+        /* display.c tmp_at(DISP_END, 0) */
+        if (engulf_flash) { await engulf_flash.end(); engulf_flash = null; }
         newsym(game.u?.ux, game.u?.uy);
     }
 }
@@ -4442,9 +4446,8 @@ export async function gulpum(mdef, mattk) {
                 && (is_rider(pd) || (pd?.name === 'Medusa'
                                      && !Stone_resistance())));
 
-        if (mattk.adtyp === AD_DGST && (!Slow_digestion() || fatal_gulp)) {
-            /* eat.c eating_conducts(pd) — conduct bookkeeping, no RNG */
-        }
+        if (mattk.adtyp === AD_DGST && (!Slow_digestion() || fatal_gulp))
+            await (await import('./eat.js')).eating_conducts(pd);
 
         if (fatal_gulp && !is_rider(pd)) {   /* petrification */
             await update_topl(`You ${u_digest ? 'englut' : 'engulf'}`
@@ -4464,7 +4467,7 @@ export async function gulpum(mdef, mattk) {
                 if (is_rider(pd)) {
                     await update_topl('Unfortunately, digesting any of it is'
                         + ' fatal.');
-                    end_engulf();
+                    await end_engulf();
                     const { done, DIED } = await import('./end.js');
                     const { formatkiller } = await import('./topten.js');
                     game.killer = { ...(game.killer || {}),
@@ -4498,7 +4501,7 @@ export async function gulpum(mdef, mattk) {
                         + ` in your ${body_part(STOMACH)}.`);
                 } else {
                     tmp = 1 + ((pd?.cwt | 0) >> 8);
-                    if (await corpse_chance(mdef, true) && !mon_nocorpse(pd)) {
+                    if (await corpse_chance(mdef, true) && !mon_nocorpse(pd?.pmidx)) {
                         /* nutrition only if there can be a corpse */
                         u.uhunger = (u.uhunger | 0)
                             + Math.trunc(((pd?.cnutrit | 0) + 1) / 2);
@@ -4515,18 +4518,25 @@ export async function gulpum(mdef, mattk) {
                         game.nomovemsg = msgbuf;
                         /* possible intrinsic once totally digested */
                         game.corpsenm_digested = pd?.pmidx;
-                        /* ga.afternmv = Finish_digestion — no port */
+                        const { Finish_digestion } = await import('./eat.js');
+                        game.afternmv = Finish_digestion;
                     } else {
                         await update_topl(msgbuf);
                     }
                     if (pd?.name === 'green slime') {
-                        /* make_slimed(5L, 0) — no port */
+                        /* "<slime> isn't sitting well with you." is built but never
+                           printed in C (msgbuf unused) */
+                        const { Unchanging_poly } = await import('./polyself.js');
+                        if (!Unchanging_poly()) {
+                            const { make_slimed } = await import('./potion.js');
+                            await make_slimed(5, null);
+                        }
                     } else {
                         await exercise(A_CON, true);
                     }
                 }
                 game.mswallower = null;
-                end_engulf();
+                await end_engulf();
                 return M_ATTK_DEF_DIED;
             }
             case AD_PHYS:
@@ -4575,8 +4585,7 @@ export async function gulpum(mdef, mattk) {
                         await update_topl(`${Monnam(mdef)} seems unhurt.`);
                         dam = 0;
                     }
-                    /* mhitm_ad.c golemeffects(mdef, adtyp, dam) is file-static
-                       in js/mhitm_ad.js; RNG-free for elec/cold/fire golems */
+                    await golemeffects(mdef, mattk.adtyp, dam, uhitm_ops);
                 } else {
                     dam = 0;
                 }
@@ -4593,6 +4602,7 @@ export async function gulpum(mdef, mattk) {
                         await update_topl(`${Monnam(mdef)} is freezing to`
                             + ` death!`);
                     }
+                    await golemeffects(mdef, mattk.adtyp, dam, uhitm_ops);
                 } else {
                     dam = 0;
                 }
@@ -4608,6 +4618,7 @@ export async function gulpum(mdef, mattk) {
                         await update_topl(`${Monnam(mdef)} is burning to a`
                             + ` crisp!`);
                     }
+                    await golemeffects(mdef, mattk.adtyp, dam, uhitm_ops);
                 } else {
                     dam = 0;
                 }
@@ -4615,14 +4626,15 @@ export async function gulpum(mdef, mattk) {
             }
             case AD_DREN:
                 if (!rn2(4)) {
-                    /* mhitm_ad.c xdrainenergym(mdef, TRUE) — no port */
+                    const { xdrainenergym } = await import('./mhitm.js');
+                    await xdrainenergym(mdef, true);
                 }
                 dam = 0;
                 break;
             default:
                 break;
             }
-            end_engulf();
+            await end_engulf();
             mdef.mhp -= dam;
             if (DEADMONSTER(mdef)) {
                 await killed(mdef);
