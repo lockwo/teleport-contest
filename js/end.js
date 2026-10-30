@@ -478,6 +478,16 @@ async function done(how) {
     const u = game.u;
     const stopprint = !!game._done_stopprint;
 
+    // C ref: end.c:1023 done() — `if (how == TRICKED)`: a wizard-mode hero
+    // survives (the killer name is cleared, paniclog() has no file here).
+    if (how === TRICKED) {
+        game._killer_name = '';
+        if (is_wizard()) {
+            await d.update_topl('You are a very tricky wizard, it seems.');
+            return;
+        }
+    }
+
     // C ref: end.c:1071 — mortality counts every actual death attempt before
     // a life-saving amulet, debug fuzzer, or declined wizard "Die?" prompt can
     // revive the hero.  It drives enlightenment and the final disclosure.

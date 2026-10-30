@@ -9,7 +9,7 @@ import { game, hooks, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
-import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, Hallucination_u } from './display.js';
+import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, urgent_topl, Hallucination_u } from './display.js';
 import { rndmonnam } from './do_name.js';
 import { short_oname } from './objnam.js';
 import {
@@ -50,7 +50,7 @@ import { mflags1_of, mflags2_of, M1_NOTAKE, M1_NOHANDS, M1_NOLIMBS,
 import { makesingular } from './plural.js';
 import { costly_spot } from './shk.js';
 import { hliquid, surface } from './dungeon.js';
-import { In_sokoban } from './const.js';
+import { In_sokoban, FOOT } from './const.js';
 import { can_reach_floor } from './engrave.js';
 
 /* pickup.c:12 */
@@ -1306,8 +1306,10 @@ export async function pickup_object(obj, count, telekinesis) {
 
     if (obj === game.u?.uchain) {
         return 0;   /* do not pick up attached chain */
-    } else if (obj.where === OBJ_MINVENT && obj.owornmask) {
-        await pline(`You can't pick ${xname(obj)} up.`);
+    } else if (obj.where === OBJ_MINVENT && obj.owornmask
+               && !!game.u?.uswallow && game.u?.ustuck === obj.ocarry) {
+        const { ysimple_name } = await import('./invent.js');
+        await pline(`You can't pick ${ysimple_name(obj)} up.`);
         return 0;
     } else if (obj.oartifact && !(await touch_artifact(obj, game.u))) {
         return 0;
@@ -1546,7 +1548,7 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
             }
             if (otmp.cursed) {
                 await pline('You can\'t.  The saddle seems to be stuck to '
-                            + `${(await uh_()).mon_nam(mtmp)}.`);
+                            + `${(await uh_()).x_monnam(mtmp, 1 /* ARTICLE_THE */, null, 0x08 /* SUPPRESS_SADDLE */, false)}.`);
                 return 1;   /* the attempt costs you time */
             }
             obj_extract_self(otmp);
@@ -1671,6 +1673,7 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
     if (box.where !== OBJ_FLOOR) { box.ox = u.ux; box.oy = u.uy; }
 
     const deadcat = (box.cobj || [])[0] || null;
+    const mon_moving = !!game.context?.mon_moving;
     if (itsalive) {
         let livecat = null;
         if (makecat) {
@@ -1682,20 +1685,45 @@ export async function observe_quantum_cat(box, makecat, givemsg) {
         }
         if (livecat) {
             livecat.mpeaceful = 1;
-            if (givemsg)
-                await pline(`${(await uh_()).Monnam(livecat)} inside the box is still alive!`);
-            livecat.mname = sc;
+            (await import('./makemon.js')).set_malign(livecat);
+            if (givemsg) {
+                if (!(await uh_()).canspotmon(livecat))
+                    await pline(`You think something brushed your ${
+                        (await import('./invent.js')).body_part(FOOT)}.`);
+                else
+                    await pline(`${(await uh_()).Monnam(livecat)} inside the box is still alive!`);
+            }
+            (await import('./do_name.js')).christen_monst(livecat, sc);
             if (deadcat) { obj_extract_self(deadcat); obfree(deadcat, null); }
             box.owt = weight(box);
             box.spe = 0;
+
+            if (!mon_moving) {
+                /* give experience points for releasing live cat; slightly
+                   different amount from what is given for "killing" it */
+                const { more_experienced, newexplevel } = await import('./exper.js');
+                more_experienced(10, 20); /* 10:current exp; 20:score bonus */
+                await newexplevel();
+            }
         }
     } else {
         box.spe = 0;   /* now an ordinary box with a cat corpse inside */
         if (givemsg) await pline(`The ${Hallucination_u() ? rndmonnam().name : 'housecat'} inside the box is dead!`);
         if (deadcat) {
+            /* set_corpsenm() will start the rot timer that was removed
+               when makemon() created SchroedingersBox; start it from
+               now rather than from when this special corpse got created */
             deadcat.age = game.moves || 0;
-            deadcat.corpsenm = pmidx_by_name('housecat');
-            deadcat.oname = sc;
+            (await import('./mkobj.js')).set_corpsenm(deadcat, pmidx_by_name('housecat'));
+            await (await import('./invent.js')).oname(deadcat, sc, 0);
+
+            if (!mon_moving) {
+                /* give experience points for the death of the cat since
+                   that has been finalized by the hero opening the box */
+                const { more_experienced, newexplevel } = await import('./exper.js');
+                more_experienced(20, 10); /* 20:current exp; 10:score bonus */
+                await newexplevel();
+            }
         }
     }
 }
@@ -1795,7 +1823,7 @@ export async function in_container(obj) {
         await pline(`${The(xname(obj))} cannot be confined in such trappings.`);
         return 0;
     } else if (obj.otyp === LEASH && obj.leashmon) {
-        await pline(`${upstart(xname(obj))} ${otense(obj, 'are')} attached`
+        await pline(`${The(xname(obj))} ${otense(obj, 'are')} attached`
                     + ' to your pet.');
         return 0;
     } else if (obj === game.uwep) {
@@ -1858,8 +1886,12 @@ export async function in_container(obj) {
             stop_object_timer(obj, SHRINK_GLOB);
         }
     } else if (Is_mbag(cc) && mbag_explodes(obj, 0)) {
-        await pline(`As you put ${doname(obj)} inside, you are blasted by`
-                    + ' a magical explosion!');
+        const { livelog_printf, LL_ACHIEVE } = await import('./livelog.js');
+        livelog_printf(LL_ACHIEVE, `just blew up ${
+            game.flags?.female ? 'her' : 'his'} bag of holding`);
+        /* explicitly mention what item is triggering the explosion */
+        await urgent_topl(`As you put ${doname(obj)} inside, you are blasted by`
+                          + ' a magical explosion!');
         /* did not actually insert obj yet */
         if (was_unpaid) {
             const { addtobill } = await import('./shk.js');
@@ -2074,6 +2106,7 @@ export async function tipcontainer(box, targetbox = null) {
     box.cknown = 1;
 
     const contents = [...(box.cobj || [])];
+    let tipping_done = false;
     if (targetbox)
         await pline(`${contents.length > 1 ? 'Objects tumble' : 'An object tumbles'}`
                     + ` into ${the(xname(targetbox))}.`);
@@ -2101,13 +2134,30 @@ export async function tipcontainer(box, targetbox = null) {
         }
         if (targetbox) {
             if (Is_mbag(targetbox) && mbag_explodes(otmp, 0)) {
-                await pline(`As ${doname(otmp)} ${otense(otmp, 'tumble')}`
-                            + ' inside, you are blasted by a magical explosion!');
-                obfree(otmp, null);
+                const { livelog_printf, LL_ACHIEVE } = await import('./livelog.js');
+                livelog_printf(LL_ACHIEVE, `just blew up ${
+                    game.flags?.female ? 'her' : 'his'} bag of holding via tipping`);
+                /* explicitly mention what item is triggering explosion */
+                await urgent_topl(`As ${doname(otmp)} ${otense(otmp, 'tumble')}`
+                                  + ' inside, you are blasted by a magical explosion!');
+                /* if putting one bag of holding into another, first
+                   blow up the one going in, then (below) blow up the
+                   one it's going into */
+                if (otmp.otyp === BAG_OF_HOLDING) /* BoH into another */
+                    await do_boh_explosion(otmp, !srcheld);
+                /* always delete the item which triggered the explosion */
+                obfree(otmp, null); /* where==OBJ_FREE */
+                /* [assumes targetbox is carried, otherwise shop bill
+                   handling becomes necessary here] */
+                await do_boh_explosion(targetbox, !dstheld);
+                if (dstheld) useup(targetbox);
+                else await useupf(targetbox, targetbox.quan);
+                targetbox = null; /* it's gone */
+                tipping_done = true; /* stop tipping; want loop to exit 'normally' */
                 await losehp(d(6, 6), 'magical explosion');
-                break;
+            } else {
+                add_to_container(targetbox, otmp);
             }
-            add_to_container(targetbox, otmp);
         } else if (highdrop) {
             otmp.how_lost = LOST_DROPPED;
             /* might break or fall down stairs; handles altars itself */
@@ -2136,6 +2186,7 @@ export async function tipcontainer(box, targetbox = null) {
         }
         if (maybeshopgoods)
             game.iflags.suppress_price--; /* reset */
+        if (tipping_done) break;
     }
     if (loss)
         await pline(`You owe ${loss} ${currency(loss)} for lost merchandise.`);

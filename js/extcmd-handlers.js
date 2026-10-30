@@ -35,7 +35,7 @@ import { is_undead_flag, is_demon_flag, humanoid, nohands, nolimbs, hides_under_
 import { couldsee, Blind } from './vision.js';
 import { align_gname, halu_gname } from './role.js';
 import { map_invisible, doredraw } from './display.js';
-import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT } from './mkobj.js';
+import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT, CHEST } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
@@ -55,7 +55,7 @@ import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
 import { cxname, The, thesimpleoname, simpleonames, an } from './objnam.js';
-import { artifact_origin } from './artifact.js';
+import { artifact_origin, is_magic_key } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
          Is_waterlevel, PICK_ONE } from './const.js';
 import { begin_burn } from './timeout.js';
@@ -2716,6 +2716,7 @@ async function pick_lock_box(pick, box) {
         const resumed = await (await import('./cmd.js')).pick_lock_resume(pick);
         if (resumed !== null) return resumed;
     }
+    if (await (await import('./cmd.js')).pick_lock_unusable(pick)) return 0; // PICKLOCK_DID_NOTHING
     const { yname, ysimple_name, ynq } = await import('./invent.js');
     const autounlock = game.flags?.autounlock ?? 2;
     // ynq(): the "Hmmm... turns out to be locked." topline is still pending, so
@@ -2767,7 +2768,7 @@ async function pick_lock_box(pick, box) {
         chance: ch,
         picktyp,
         usedtime: 0,
-        magic_key: false, // is_magic_key(): a plain lock pick is not the MKoT
+        magic_key: is_magic_key(game.u, pick),
     };
     game._picklock_box = box;
     return 1; // PICKLOCK_DID_SOMETHING — a turn elapses
@@ -2900,6 +2901,9 @@ async function doloot_core() {
     const lootcont = async () => {
         const boxes = floor_boxes_at(cc.x, cc.y);
         if (boxes.length > 0) {
+            // C ref: pickup.c doloot_core():2218 — cannot reach the floor, deep
+            // water/lava underfoot, no limbs or no free hand: no turn passes.
+            if (!(await able_to_loot(cc.x, cc.y, true))) return 0; // ECMD_OK
             // C ref: pickup.c doloot_core():2223 — blind and gloveless, touching a
             // cockatrice corpse here is fatal before any container prompt appears.
             if (Blind() && !game.uarmg) {
@@ -3073,9 +3077,40 @@ export async function picklock() {
     if (rn2(100) >= xl.chance)
         return 1;
 
-    // C lock.c:101-136's Master Key trap-disarm branch is not modeled: none of
-    // the scheduled tools is the quest artifact, and the recorded targets are
-    // untrapped.  The ordinary success arm follows.
+    // C lock.c:101-136 — using the Master Key of Thievery finds traps if its
+    // bless/curse state is adequate (checked when setting up xlock.magic_key).
+    if ((xl.door ? (xl.door.doormask & D_TRAPPED) !== 0 : !!xl.box.otrapped)
+        && xl.magic_key) {
+        xl.chance += 20; /* less effort needed next time */
+        if (!xl.door) {
+            if (!xl.box.tknown)
+                await pline('You find a trap!');
+            xl.box.tknown = 1;
+        }
+        if (await y_n('Do you want to try to disarm it?') === 'y') {
+            let what, alreadyunlocked;
+            /* disarming while using magic key always succeeds */
+            if (xl.door) {
+                xl.door.doormask &= ~D_TRAPPED;
+                what = 'door';
+                alreadyunlocked = !(xl.door.doormask & D_LOCKED);
+            } else {
+                xl.box.otrapped = 0;
+                xl.box.tknown = 0;
+                what = (xl.box.otyp === CHEST) ? 'chest' : 'box';
+                alreadyunlocked = !xl.box.olocked;
+            }
+            await pline(`You succeed in disarming the trap.  The ${what} is still ${alreadyunlocked ? 'un' : ''}locked.`);
+            exercise(A_WIS, true);
+        } else {
+            await pline(`You stop ${lock_action(xl)}.`);
+            exercise(A_WIS, false);
+        }
+        game._picklock_box = null;
+        game.xlock = null;
+        return 0;
+    }
+
     await pline(`You succeed in ${lock_action(xl)}.`);
     if (xl.door) {
         const door = xl.door;
@@ -3266,16 +3301,19 @@ async function chest_shatter_msg(otmp) {
         await P.potionbreathe_hero(otmp);
         return;
     }
-    // Blind/unidentified singular name (HBlinded=1 in C): a spellbook of an
-    // undiscovered type reads simply "spellbook".
-    let thing;
-    if (otmp.oclass === 10 /*SPBOOK_CLASS*/) thing = 'spellbook';
-    else if (otmp.oclass === 9 /*SCROLL_CLASS (objclass.h); 7 is FOOD_CLASS*/) thing = 'scroll';
-    else thing = ocl?.name || 'object';
+    // C ref: lock.c:1290-1293 — `thing = singular(otmp, xname)` with HBlinded = 1
+    // (BBlinded = 0): the name is read without the hero seeing (observe_object
+    // is skipped), so a never-seen gem is "gem", a wand "wand", ...
+    const { singular, xname } = await import('./objnam.js');
+    const u = game.u;
+    const save_HBlinded = u.blinded;
+    u.blinded = 1;
+    const thing = singular(otmp, xname);
+    u.blinded = save_HBlinded;
     const disposition = chest_shatter_disposition(ocl?.material);
-    // An()/An(thing): capitalised indefinite article.
-    const art = /^[aeiou]/i.test(thing) ? 'An' : 'A';
-    await update_topl(`${art} ${thing} ${disposition}!`);
+    // An(thing): capitalised indefinite article.
+    const withart = an(thing);
+    await update_topl(`${withart[0].toUpperCase()}${withart.slice(1)} ${disposition}!`);
 }
 
 // C ref: lock.c breakchestlock(): bill a broken lock without its contents,
@@ -3291,14 +3329,26 @@ async function breakchestlock(box, destroyit) {
         box.olocked = 0; box.obroken = 1; box.lknown = 1;
         return;
     }
-    await update_topl(`In fact, you've totally destroyed the ${box_basename(box.otyp)}.`);
+    const u = game.u;
+    const { costly_spot, stolen_value } = await import('./shk.js');
+    const { shop_keeper } = await import('./shkroom.js');
+    const shkp = ((u.ushops || [])[0] && costly_spot(u.ux, u.uy))
+        ? shop_keeper(u.ushops[0]) : null;
+    const costly = !!shkp, peaceful_shk = costly && !!shkp.mpeaceful;
+    let loss = 0;
+    const { the } = await import('./objnam.js');
+    const { xname } = await import('./invent.js');
+    await update_topl(`In fact, you've totally destroyed ${the(xname(box))}.`);
+    /* Put the contents on ground at the hero's feet. */
     const contents = box.cobj || [];
     box.cobj = [];
     for (const otmp of contents) {
         const isPotion = otmp.oclass === 8 /*POTION_CLASS*/;
         if (!rn2(3) || isPotion) {
             await chest_shatter_msg(otmp);
-            // single-quantity item is freed (destroyed); no shop loss here.
+            if (costly)
+                loss += await stolen_value(otmp, u.ux, u.uy, peaceful_shk, true);
+            // single-quantity item is freed (destroyed).
             if (otmp.quan === 1) {
                 continue; // obfree: gone
             }
@@ -3306,9 +3356,13 @@ async function breakchestlock(box, destroyit) {
             otmp.quan -= 1;
             otmp.owt = weight(otmp);
         }
-        place_object(otmp, game.u.ux, game.u.uy);
+        place_object(otmp, u.ux, u.uy);
         stackobj(otmp);
     }
+    if (costly)
+        loss += await stolen_value(box, u.ux, u.uy, peaceful_shk, true);
+    if (loss)
+        await update_topl(`You owe ${loss} ${currency(loss)} for objects destroyed.`);
     delobj(box);
 }
 

@@ -13,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero } from './display.js';
+import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -3396,7 +3396,7 @@ export async function angry_guards(silent) {
             await update_topl(`${sct === 1 ? 'An angry' : 'Angry'} guard${sct === 1 ? '' : 's'} ${
                 sct === 1 ? 'is' : 'are'} approaching!`);
         else
-            await update_topl(`You hear the shrill sound of ${ct === 1 ? "a guard's" : "guards'"} whistle${ct === 1 ? '' : 's'}.`);
+            await You_hear(`the shrill sound of ${ct === 1 ? "a guard's" : "guards'"} whistle${ct === 1 ? '' : 's'}.`);
     }
     return true;
 }

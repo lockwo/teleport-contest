@@ -808,9 +808,13 @@ export async function use_saddle(otmp) {
     const ptr = mtmp.data;
     if (touch_petrifies_std(ptr) && !game.uarmg && !Stone_resistance_std()) {
         await pline(`You touch ${mon_nam(mtmp)}.`);
-        /* poly_when_stoned(youmonst.data) && polymon(PM_STONE_GOLEM), else
-           instapetrify("attempting to saddle <a mon>") — polyself.c/mon.c,
-           neither reachable from an unpolymorphed hero here. */
+        const { poly_when_stoned } = await import('./mondata.js');
+        const { polymon, instapetrify } = await import('./polyself.js');
+        if (!(poly_when_stoned(youmonst_data())
+              && await polymon(name_to_pmidx('stone golem')))) {
+            const { an } = await import('./objnam.js');
+            await instapetrify(`attempting to saddle ${an(mon_pmname(mtmp))}`);
+        }
     }
     if (ptr?.name === 'amorous demon') {
         await pline('Shame on you!');

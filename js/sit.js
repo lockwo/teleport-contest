@@ -18,7 +18,8 @@ import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_AL
 import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
-import { mon_nam } from './do_name.js';
+import { mon_nam, Monnam, mhis } from './do_name.js';
+import { humanoid } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
@@ -91,8 +92,10 @@ export async function dosit() {
             await update_topl('You are sitting on air.');
         return ECMD_OK;
     } else if (u.ustuck && !sticks()) {
-        // Held by a monster that is beside the hero.
-        await update_topl("It won't offer you its lap.");
+        if (humanoid(u.ustuck.data))
+            await update_topl(`${Monnam(u.ustuck)} won't offer ${mhis(u.ustuck)} lap.`);
+        else
+            await update_topl(`${Monnam(u.ustuck)} has no lap.`);
         return ECMD_OK;
     } else if ((is_pool(u.ux, u.uy) && !u.uprops?.Underwater)
                || (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')
@@ -142,6 +145,7 @@ export async function dosit() {
                 u.utrap += rn1(10, 5);
             } else if (u.utraptype === TT_LAVA) {
                 await update_topl(`You sit in the ${hliquid('lava')}!`);
+                if (u.uprops?.Slimed) await (await import('./timeout.js')).burn_away_slime();
                 u.utrap += rnd(4);
                 await losehp(d(2, 10), 'sitting in lava', 1 /* KILLED_BY */); // lava damage
             } else if (u.utraptype === TT_INFLOOR || u.utraptype === TT_BURIEDBALL) {
@@ -152,9 +156,13 @@ export async function dosit() {
             await update_topl(`You ${u.uprops?.Flying ? 'land' : 'sit down'}.`);
             await dotrap(trap, VIASITTING);
         }
-    } else if (u.uprops?.Underwater /* || Is_waterlevel */) {
-        await update_topl('You sit down on the muddy bottom.');
-    } else if (is_pool(u.ux, u.uy)) {
+    } else if ((u.uprops?.Underwater || Is_waterlevel(u.uz))
+               && !eggs_in_water(youmonst_data_pub())) {
+        if (Is_waterlevel(u.uz))
+            await update_topl('There are no cushions floating nearby.');
+        else
+            await update_topl('You sit down on the muddy bottom.');
+    } else if (is_pool(u.ux, u.uy) && !eggs_in_water(youmonst_data_pub())) {
         return await sit_in_water();
     } else if (IS_SINK(typ)) {
         await update_topl('You sit on the sink.');
@@ -171,6 +179,11 @@ export async function dosit() {
     } else if (is_lava_at(u.ux, u.uy)) {
         // must be WWalking
         await update_topl(`You sit on the ${hliquid('lava')}.`);
+        await (await import('./timeout.js')).burn_away_slime();
+        if (likes_lava(youmonst_data_pub())) {
+            await update_topl(`The ${hliquid('lava')} feels warm.`);
+            return ECMD_TIME;
+        }
         await update_topl(`The ${hliquid('lava')} burns you!`);
         {
             const { Fire_resistance } = await import('./zap.js');
@@ -179,7 +192,9 @@ export async function dosit() {
         }
     } else if (is_ice_at(u.ux, u.uy)) {
         await update_topl('You sit on the ice.');
-        await update_topl('The ice feels cold.');
+        const { Cold_resistance } = await import('./zap.js');
+        if (!Cold_resistance())
+            await update_topl('The ice feels cold.');
     } else if (typ === DRAWBRIDGE_DOWN) {
         await update_topl('You sit on the drawbridge.');
     } else if (IS_THRONE(typ)) {
@@ -215,6 +230,11 @@ async function sit_in_water() {
 // ---- polymorph / hero-monster predicates (all false for the base hero) ----
 
 function sticks() { return false; }                 // sticks(youmonst.data)
+// C ref: mondata.h likes_lava(ptr) — fire elemental and salamander.
+function likes_lava(ptr) {
+    const p = ptr?.pmidx;
+    return p != null && (p === name_to_pmidx('fire elemental') || p === name_to_pmidx('salamander'));
+}
 function is_dragon_form() { return youmonst_data_pub()?.mlet === 'D'; }   // S_DRAGON
 function is_slithy_form() { return (mflags1_of(youmonst_data_pub()) & M1_SLITHY) !== 0; }
 // C ref: sit.c dosit() amorphous(&mons[obj->corpsenm])

@@ -54,7 +54,8 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          MM_ADJACENTOK, MM_MALE, MM_FEMALE, CORPSTAT_GENDER, CORPSTAT_MALE,
          CORPSTAT_FEMALE, NON_PM, ANIMATE_SPELL, NC_VIA_WAND_OR_SPELL,
          NO_NC_FLAGS, SHOPBASE, TIMER_OBJECT, TIMER_LEVEL, REVIVE_MON,
-         ROT_CORPSE, MELT_ICE_AWAY, W_ARMOR, W_ACCESSORY, W_WEP, W_ART,
+         ROT_CORPSE, MELT_ICE_AWAY, W_ARMOR, W_ACCESSORY, W_WEP, W_ART, W_ARTI,
+         W_WEAPONS, W_SWAPWEP, W_QUIVER,
          W_AMUL, W_TOOL, W_RING, W_RINGL, FIRE_RES, COLD_RES,
          SHOCK_RES, ACID_RES, DISINT_RES, DRAIN_RES, SLEEP_RES, ANTIMAGIC, is_magical_trap, has_oname, ONAME,
          ESHK, engulfing_u, u_at, M_AP_TYPE, NHW_MENU, M_AP_NOTHING, M_AP_OBJECT,
@@ -67,7 +68,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
          Is_airlevel, Is_rogue_level, SDOOR, SCORR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
-         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, PLNMSG_ENVELOPED_IN_GAS, PLNMSG_OBJ_GLOWS, TIMEOUT, INTRINSIC } from './const.js';
+         SHOP_DOOR_COST, M_SEEN_REFL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, ERODE_BURN, EF_GREASE, ER_NOTHING, PLNMSG_ENVELOPED_IN_GAS, PLNMSG_OBJ_GLOWS, TIMEOUT, INTRINSIC } from './const.js';
 import { is_pool, is_ice, is_lava, is_moat } from './dbridge.js';
 import { in_rooms } from './shkroom.js';
 import { create_gas_cloud } from './region.js';
@@ -527,8 +528,8 @@ function splitobj_z(obj, num) {
 // STRANGE_OBJECT (0) pick a random object of the source's class, preserving its
 // magic-or-not status (the standard "polymorph" case, which may also fuse a
 // stack); otherwise literally replace it with an object of type `id`.  The new
-// object replaces obj in its link chain; returns it.  Hero-inventory worn-slot
-// re-wearing (wearslot()/setworn()/set_wear()) is not modelled.
+// object replaces obj in its link chain; returns it (null if a worn amulet of
+// change disintegrated).
 export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
     const mk = await import('./mkobj.js');
     const { NUMMONS } = await import('./disprng.js');
@@ -721,6 +722,56 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
         const loc = get_obj_location(obj, BURIED_TOO | CONTAINED_TOO);
         if (loc) { ox = loc.x; oy = loc.y; }
     }
+    // C ref: zap.c poly_obj():1900-1960 — the hero's own inventory item is
+    // swapped in place (freeinv_core/addinv_core1/addinv_core2 on the pair) and
+    // a worn/wielded item is re-worn in the same slot when the new form fits.
+    const old_wornmask = (obj.owornmask | 0) & ~(W_ART | W_ARTI);
+    if (obj_location === OBJ_INVENT) {
+        const inv = await import('./invent.js');
+        const { arti_invoke } = await import('./artifact.js');
+        const wornjs = await import('./worn.js');
+        mk.replace_object(obj, otmp);
+        if (inv.freeinv_core(obj)) await arti_invoke(obj);
+        inv.addinv_core1(otmp);
+        inv.addinv_core2(otmp);
+        await inv.flush_artitouch();
+        if (old_wornmask) {
+            const was_twohanded = inv.bimanual(obj), was_twoweap = !!game.u.twoweap;
+            /* wearslot() expects us to deal with wielded/alt-wep/quivered
+               items in case they're not weapons; for other slots it might
+               return multiple bits (ring left|right); narrow that down to
+               the bit(s) currently in use */
+            /* wearslot() answers in prop.h bits; invent.js stamps owornmask with
+               its own amulet/eyewear bits, so translate those two */
+            const ws = wornjs.wearslot(otmp);
+            const slotmask = (ws & ~(W_AMUL | W_TOOL))
+                | ((ws & W_AMUL) ? inv.W_AMUL : 0)
+                | ((ws & W_TOOL) ? inv.W_BLINDF : 0);
+            const new_wornmask = ((old_wornmask & W_WEAPONS) !== 0)
+                ? old_wornmask : (slotmask & old_wornmask);
+            await inv.remove_worn_item(obj, true);
+            /* if the new form can be worn in the same slot, make it so */
+            if ((new_wornmask & W_WEP) !== 0) {
+                if (was_twohanded || !inv.bimanual(otmp) || !game.uarms)
+                    await (await import('./wield.js')).setuwep(otmp);
+                if (was_twoweap && game.uwep && !inv.bimanual(game.uwep))
+                    game.u.twoweap = true;
+            } else if ((new_wornmask & W_SWAPWEP) !== 0) {
+                if (was_twohanded || !inv.bimanual(otmp))
+                    inv.setuswapwep(otmp);
+                if (was_twoweap && game.uswapwep)
+                    game.u.twoweap = true;
+            } else if ((new_wornmask & W_QUIVER) !== 0) {
+                inv.setuqwep(otmp);
+            } else if (new_wornmask) {
+                inv.setworn_mask(otmp, new_wornmask);
+                /* set_wear() might result in otmp being destroyed if
+                   worn amulet has been turned into an amulet of change */
+                await (await import('./do_wear.js')).set_wear(otmp);
+                otmp = wornjs.wearmask_to_obj(new_wornmask); /* might be Null */
+            }
+        }
+    }
     /* note: if otmp is gone, billing for it was handled by useup() */
     const shk = await import('./shk.js');
     if (((otmp && obj_location !== OBJ_INVENT) || obj.unpaid) && ox && shk.costly_spot(ox, oy)) {
@@ -776,7 +827,7 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
                 vis.block_point(ox, oy);
         }
     } else {
-        mk.replace_object(obj, otmp);
+        if (obj_location !== OBJ_INVENT) mk.replace_object(obj, otmp);
         delobj(obj);
     }
     return otmp;
@@ -3996,55 +4047,16 @@ function cloak_simple_name(obj) {
         return (objects[obj.otyp].oc_name_known && obj.dknown) ? 'smock' : 'apron';
     return 'cloak';
 }
-// C ref: trap.c erode_obj(otmp, ostr, ERODE_BURN, EF_GREASE) — the burn_dmg()
-// macro burnarmor() uses.  Returns an ER_* value; burnarmor only cares whether
-// it is non-zero.  RNG: exactly one rnl(4) when the item is BLESSED and not
-// erodeproof (that roll decides whether the blessing saves it) — missing it
-// shifted every later draw of a fire ray that touched blessed armour.
-const ER_NOTHING = 0, ER_DAMAGED = 2, MAX_ERODE = 3;
-const MAT_LIQUID = 1, MAT_WOOD_Z = 8, MAT_PLASTIC = 18;
-// C ref: mkobj.c is_flammable — material <= WOOD (but not LIQUID), or PLASTIC;
-// candles and FIRE_RES-conferring items are exempt.  The material numbers are
-// objclass.h's enum, NOT the 14/22/23 an older copy of this predicate used.
-function is_flammable_obj(obj) {
-    const m = objects[obj?.otyp]?.material | 0;
-    return (m <= MAT_WOOD_Z && m !== MAT_LIQUID) || m === MAT_PLASTIC;
-}
-// C ref: objnam.c erosion_matters — weapons, armour, ball/chain, weptools.
-function erosion_matters_obj(obj) {
-    return obj?.oclass === WEAPON_CLASS || obj?.oclass === ARMOR_CLASS;
-}
-// C ref: objnam.c vtense(subj, verb) — "gloves smoulder" but "helmet smoulders";
-// the faithful copy lives in js/plural.js.
-import { vtense } from './plural.js';
-const vtense_burn = vtense;
+// C ref: trap.c burnarmor()'s burn_dmg(obj, descr) macro, i.e.
+// erode_obj(obj, descr, ERODE_BURN, EF_GREASE).  Returns an ER_* value;
+// burnarmor only cares whether it is non-zero.  erode_obj() (js/trap.js) is the
+// one faithful port: it also says "Somehow, your <armor> is not affected by the
+// heat." for erodeproof armor whose rknown is not yet set.
 async function erode_burn(victim, slot, ostr) {
     const obj = worn_slot(victim, slot);
     if (!obj) return ER_NOTHING;
-    // C ref: trap.c:205 erode_obj ERODE_BURN: uvictim && inventory_resistance_check(AD_FIRE)
-    if (victim === game.u) {
-        const prob = u_adtyp_resistance_obj(AD_FIRE);
-        if (prob && rn2(100) < prob) return ER_NOTHING;
-    }
-    const erosion = obj.oeroded | 0;
-    if (!erosion_matters_obj(obj)) return ER_NOTHING;
-    if (!is_flammable_obj(obj) || (obj.oerodeproof && obj.rknown)) return ER_NOTHING;
-    if (obj.oerodeproof || (obj.blessed && !rnl(4))) {
-        if (obj.oerodeproof) obj.rknown = true;
-        return ER_NOTHING;
-    }
-    if (erosion < MAX_ERODE) {
-        const adverb = (erosion + 1 === MAX_ERODE) ? ' completely'
-                     : erosion ? ' further' : '';
-        const verb = vtense_burn(ostr, 'smoulder');
-        if (victim === game.u) await update_topl(`Your ${ostr} ${verb}${adverb}!`);
-        else if (canspotmon(victim))
-            await update_topl(`${Monnam(victim)}'s ${ostr} ${verb}${adverb}!`);
-        obj.oeroded = erosion + 1;
-        return ER_DAMAGED;
-    }
-    // burn_dmg() passes no EF_DESTROY, so a fully-eroded item just survives.
-    return ER_NOTHING;
+    const { erode_obj } = await import('./trap.js');
+    return await erode_obj(obj, ostr, ERODE_BURN, EF_GREASE);
 }
 
 // ── destroy_items (zap.c) ────────────────────────────────────────────────
@@ -4812,6 +4824,18 @@ export function Fire_resistance() {
         || u?.uprops?.EFire_resistance || u?.Fire_resistance
         || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance')
         || (u?.Upolyd && resists_fire(u)));
+}
+// C ref: hack.c Known_wwalking / Known_lwalking — worn, identified water walking
+// boots (and, for lava, fireproof+known-rust-proof ones with fire resistance).
+const WATER_WALKING_BOOTS_Z = 167; /* mkobj.js OBJECT_DATA */
+export function Known_wwalking() {
+    const b = game.uarmf;
+    return !!(b && b.otyp === WATER_WALKING_BOOTS_Z
+        && objects[WATER_WALKING_BOOTS_Z]?.oc_name_known && !game.u?.usteed);
+}
+export function Known_lwalking() {
+    const b = game.uarmf;
+    return Known_wwalking() && Fire_resistance() && !!(b.oerodeproof && b.rknown);
 }
 export function Cold_resistance() {
     if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */

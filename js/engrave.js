@@ -819,7 +819,7 @@ async function doengrave_sfx_item(de) {
         if (de.otmp.oartifact === (await import('./artifact.js')).ART_FIRE_BRAND) {
             de.type = BURN; /* doesn't dull weapon */
         } else if (is_blade(de.otmp)) {
-            if (de.otmp === game.uwep && de.otmp.cursed)
+            if ((await import('./invent.js')).welded(de.otmp))
                 await engravePline(`${await Yname2(de.otmp)} can only scratch the ${surface_of_hero()}.`);
             else if ((de.otmp.spe | 0) <= -3)
                 await engravePline(`${await Yobjnam2(de.otmp, 'are')} too dull for engraving.`);
@@ -842,6 +842,8 @@ async function doengrave_sfx_item(de) {
             if (de.oep) {
                 if (de.oep.engr_type === DUST || de.oep.engr_type === ENGR_BLOOD
                     || de.oep.engr_type === MARK) {
+                    const WPN = await import('./weapon.js');
+                    if (WPN.is_wet_towel(de.otmp)) await WPN.dry_a_towel(de.otmp, -1, true);
                     if (!Blind) await engravePline('You wipe out the message here.');
                     else await engravePline(`${await Yobjnam2(de.otmp, 'get')} ${de.frosted ? 'frosty' : 'dusty'}.`);
                     de.dengr = true;

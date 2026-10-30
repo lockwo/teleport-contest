@@ -19,7 +19,8 @@ import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          WAN_DIGGING, WAN_DIGGING as WAN_DIGGING_OTYP,
          DILITHIUM_CRYSTAL, DILITHIUM_CRYSTAL as DILITHIUM_CRYSTAL_OTYP,
          LUCKSTONE, LUCKSTONE as LUCKSTONE_OTYP,
-         SCR_SCARE_MONSTER, clear_object_timer } from './mkobj.js';
+         SCR_SCARE_MONSTER, clear_object_timer, unknow_object, FIGURINE,
+         attach_fig_transform_timeout } from './mkobj.js';
 import { get_shop_item, FODDERSHOP, VEGETARIAN_CLASS } from './shtypes.js';
 import { within_bounded_area } from './rect.js';
 import { get_wormno, initworm, count_wsegs, worm_seg_at, wormgone,
@@ -52,7 +53,7 @@ import {
 // declarations from here — a cycle that resolves cleanly because both sides are
 // hoisted `function` declarations used only at call time, never at module init.
 import { inside_room, t_at as t_at_local } from './mkroom.js';
-import { does_block, block_point, is_lightblocker_mappear } from './vision.js';
+import { does_block, block_point, unblock_point, is_lightblocker_mappear } from './vision.js';
 import { ARM_BONUS, m_dowear } from './worn.js';
 import {
     mflags2_of, mflags3_of, msound_of,
@@ -1456,6 +1457,10 @@ function m_initthrow(_mtmp, otyp, oquan) {
 // glyph on object-detection, wrong item on top of the death-drop pile).
 export function mpickobj(mtmp, otmp) {
     if (!mtmp || !otmp) return 0;
+    /* if monster is acquiring a thrown or kicked object, the throwing
+       or kicking code shouldn't continue to track and place it */
+    if (otmp === game.thrownobj) game.thrownobj = null;
+    else if (otmp === game.gk_kickedobj) game.gk_kickedobj = null;
     /* C ref: steal.c:655 — a hero-owned object on a shop floor that a monster
        takes possession of is no longer no_charge. */
     otmp.no_charge = 0;
@@ -1464,9 +1469,18 @@ export function mpickobj(mtmp, otmp) {
        then follows 'pickup_stolen', and addinv() no longer fills the quiver),
        dropped is forgotten. */
     if (!mtmp.mtame) {
+        /* if monst is unseen, some info hero knows about this object becomes
+           lost; continual pickup and drop by pets makes this too annoying if
+           it is applied to them */
+        if (!hooks.canseemon?.(mtmp) && mtmp !== game.u?.ustuck)
+            unknow_object(otmp);
         if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
         else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
     }
+    /* Must do carrying effects on object prior to add_to_minv() */
+    if (otmp.otyp === FIGURINE && otmp.cursed && otmp.corpsenm != null
+        && otmp.corpsenm >= 0 && !dead_species(otmp.corpsenm, true))
+        attach_fig_transform_timeout(otmp);
     return add_to_minv(mtmp, otmp);
 }
 
@@ -3164,6 +3178,9 @@ function accept_newcham_form(mon, mndx) {
 // C ref: mon.c newcham()'s tail — apply the chosen mdat to mtmp (gender, HP
 // rescaling).  Shared by newcham() and newcham_wizard_aware() so the two
 // retry loops below cannot drift on this part.
+// S_MIMIC (defsym.h), W_ARMG (const.js) and BOULDER (mkobj.js) inlined: mkobj.js's
+// import chain reaches this module.
+const S_MIMIC_MK = 13, W_ARMG_MK = 0x10, BOULDER_MK = 475;
 function apply_newcham(mtmp, mdat, olddata) {
     if (!mdat || mdat === olddata || mdat.pmidx === olddata?.pmidx)
         return 0;                       /* still the same monster */
@@ -3174,6 +3191,16 @@ function apply_newcham(mtmp, mdat, olddata) {
         wormgone(mtmp);
         mtmp.mx = mx;
         mtmp.my = my;
+    }
+    /* C ref: mon.c:5363 `if (M_AP_TYPE(mtmp) && mdat->mlet != S_MIMIC)
+       seemimic(mtmp);` — revert to a normal monster (mon.c seemimic()). */
+    if (mtmp.m_ap_type && mdat.mcls !== S_MIMIC_MK) {
+        const was_blocker = is_lightblocker_mappear(mtmp);
+        mtmp.m_ap_type = M_AP_NOTHING;
+        mtmp.mappearance = 0;
+        if (was_blocker && !does_block(mtmp.mx, mtmp.my))
+            unblock_point(mtmp.mx, mtmp.my);
+        hooks.newsym?.(mtmp.mx, mtmp.my);
     }
     // "give the new form the same proportion of HP as its old one had" — no
     // RNG in the arithmetic; newmonhp() draws d(m_lev, 8) for the new form.
@@ -3198,6 +3225,22 @@ function apply_newcham(mtmp, mdat, olddata) {
     return 1;
 }
 
+// C ref: mon.c newcham() entry — Riders, Nazgul and erinyes are immune to
+// polymorph (and green slime), and a cancelled non-shapechanger that is
+// currently in a shapechanger's form becomes uncancelled before it is given
+// a new shape.  Returns true when the monster is immune.
+function newcham_immune(mtmp) {
+    if ((mtmp.cham ?? NON_PM) !== NON_PM) return false;
+    const olddata = mtmp.data;
+    if (is_rider(olddata)) return true;
+    if (mbirth_limit(olddata.pmidx) < MAXMONNO) return true;
+    if (mtmp.mcan && !prot_shape_changers_mm()) {
+        mtmp.cham = pm_to_cham(olddata.pmidx);
+        if (mtmp.cham !== NON_PM) mtmp.mcan = 0;
+    }
+    return false;
+}
+
 function newcham_worm(mtmp, mdat) {
     if (mdat.pmidx === 114 /* PM_LONG_WORM */) {
         mtmp.wormno = get_wormno();
@@ -3214,6 +3257,7 @@ function newcham_worm(mtmp, mdat) {
 // return a form accept_newcham_form() rejects, and each retry re-draws.
 export function newcham(mtmp, mdat) {
     const olddata = mtmp.data;
+    if (newcham_immune(mtmp)) return 0;
     /* C ref: mon.c:5316 "we need this one whether msg is true or not" —
        l_oldname = x_monnam(): a hallucinating hero's rndmonnam() display draws */
     mon_nam(mtmp);
@@ -3269,6 +3313,7 @@ export function newcham(mtmp, mdat) {
 // Creation-time changes retain the synchronous, silent newcham() path.
 export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
     const olddata = mtmp.data;
+    if (newcham_immune(mtmp)) return 0;
     let msg = (ncflags & NC_SHOW_MSG) !== 0;
     const names = await import('./do_name.js');
     let canspotmon, x_monnam, seenorsensed, oldname;
@@ -3372,6 +3417,11 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
             await update_topl(`${oldname} turns into ${names.noname_monnam(mtmp, names.ARTICLE_A)}!`);
         }
     }
+    // C ref: mon.c:5470 — polymorph trap/wand/potion producing a vampire turns
+    // it into a full-fledged vampshifter unless shape-changing is blocked.
+    if (changed && (mtmp.cham ?? NON_PM) === NON_PM && mdat.mcls === S_VAMPIRE
+        && !prot_shape_changers_mm())
+        mtmp.cham = pm_to_cham(mdat.pmidx);
     if (changed) {
         // C ref: mon.c:5484 — shed a weapon the new form cannot wield before
         // checking armor. Other monsters may immediately seek the dropped item.
@@ -3399,7 +3449,28 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         }
         const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
         await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
+        if (!((mtmp.misc_worn_check | 0) & W_ARMG_MK))
+            await (await import('./trap.js')).mselftouch(
+                mtmp, 'No longer petrify-resistant, ', !game.context?.mon_moving);
         check_gear_next_turn(mtmp);
+        // C ref: mon.c:5495-5517 — former giants can't keep carrying boulders.
+        if ((mtmp.minvent || []).length && !throws_rocks_flag(mdat)) {
+            const { bypass_obj } = await import('./worn.js');
+            const { obj_extract_self } = await import('./invent.js');
+            const { flooreffects } = await import('./do.js');
+            const { place_object } = await import('./mkobj.js');
+            const polyspot_b = (ncflags & NC_VIA_WAND_OR_SPELL) !== 0;
+            for (const otmp of [...mtmp.minvent]) {
+                if ((mtmp.mhp | 0) <= 0) break;
+                if (otmp.otyp !== BOULDER_MK) continue;
+                if (polyspot_b) bypass_obj(otmp);
+                obj_extract_self(otmp);
+                if (await flooreffects(otmp, mtmp.mx, mtmp.my, '')) continue;
+                place_object(otmp, mtmp.mx, mtmp.my);
+            }
+        }
+        if (mtmp === game.u?.usteed)
+            await (await import('./steed.js')).poly_steed(mtmp, olddata);
         // C ref: mon.c:5522-5535 — a monster in motion gives its new form a
         // fresh chance to pinpoint the hero, then re-checks scariness.
         if (game.context?.mon_moving) {

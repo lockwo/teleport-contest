@@ -3092,7 +3092,7 @@ function BlindedTimeout() { return H_prop(BLINDED) & TIMEOUT_MASK; }
 // not a valid mons[] row — [[umonnum-is-a-role-index]]) reads as having eyes.
 function haseyes(ptr) { return !ptr || ((mflags1_of(ptr) & M1_NOEYES) === 0); }
 // C ref: mondata.h U_AP_TYPE == gy.youmonst.m_ap_type (the hero's mimic
-// disguise lives on game.u in this port; dohide() sets u.m_ap_type).
+// disguise lives on game.u in this port, numeric M_AP_*).
 function U_AP_TYPE() { return game.u?.m_ap_type | 0; }
 // C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST).
 function digests(ptr) { return dmgtype(ptr, AD_DGST); }

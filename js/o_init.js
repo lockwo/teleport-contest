@@ -22,7 +22,7 @@ import {
     SPBOOK_CLASS, WAND_CLASS, VENOM_CLASS,
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { exercise } from './attrib.js';
 import { menuHeadAttr } from './menuattr.js';
 import { A_WIS } from './const.js';
@@ -445,6 +445,11 @@ export function discover_object(oindx, markKnown, markEncountered, creditHero) {
         if (!o.oc_name_known && markKnown) {
             o.oc_name_known = 1;
             if (creditHero) exercise(A_WIS, true);
+
+            /* !in_moveloop => initial inventory, gameover => final disclosure */
+            if (game.program_state?.in_moveloop && !game.program_state?.gameover
+                && o.oclass === GEM_CLASS)
+                hooks.gem_learned?.(oindx); /* could affect price of unpaid gems */
         }
     }
 }

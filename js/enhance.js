@@ -216,6 +216,17 @@ function build_skill_state() {
         if (P_SKILL[sk] === P_ISRESTRICTED) P_SKILL[sk] = P_UNSKILLED;
     }
 
+    // C ref: weapon.c unrestrict_weapon_skill(skill) — a skill the role table
+    // restricts that has since been opened up (Excalibur, an artifact gift,
+    // a crowning) becomes Unskilled with Basic as its ceiling.  weapon.js
+    // records the skill in u.skill_unrestricted; replay it over the baseline.
+    for (const sk in (game.u?.skill_unrestricted || {})) {
+        if (P_SKILL[sk] === P_ISRESTRICTED) {
+            P_SKILL[sk] = P_UNSKILLED;
+            P_MAX[sk] = P_BASIC;
+        }
+    }
+
     // High-potential fighters already know their hands.
     if (P_MAX[P_BARE_HANDED_COMBAT] > P_EXPERT) P_SKILL[P_BARE_HANDED_COMBAT] = P_BASIC;
     // Roles starting with a horse (Knight's pony) know how to ride it.

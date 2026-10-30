@@ -747,7 +747,7 @@ export function Hello(rolenum, mtmp) {
     case PM_TOURIST:
         return 'Aloha';
     case PM_VALKYRIE:
-        return (mtmp && mtmp.data?.name === 'mail daemon') ? 'Hail' : 'Velkommen';
+        return (mtmp && mtmp.data?.name === 'mail daemon') ? 'Hallo' : 'Velkommen';
     default:
         return 'Hello';
     }
@@ -1060,7 +1060,7 @@ export function build_plselection_prompt(rolenum, racenum, gendnum, alignnum) {
     // "pick a character's <anything>" sounds stilted, so C drops the article.
     tmpbuf = strsubst(tmpbuf, 'pick a character', 'pick character');
     let buf = s_suffix(tmpbuf);
-    if (buf.endsWith("priest/priestess'")) buf += 's';
+    if (/priest\/priestess'$/i.test(buf)) buf += 's'; /* strstri() is case-insensitive */
 
     let num_post_attribs = gr.role_post_attribs;
     if (!num_post_attribs) {

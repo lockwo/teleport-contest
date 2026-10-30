@@ -1366,25 +1366,39 @@ async function god_zaps_you(resp_god) {
     const { REFLECTING, DISINT_RES, W_ARMS, W_ARMC, W_ARM } = await import('./const.js');
     const reflecting = worn_extrinsic(REFLECTING);
     const disint = () => worn_extrinsic(DISINT_RES);
+    const { resists_elec, resists_disint, monstseesu, monstunseesu } = await import('./mondata.js');
+    const { M_SEEN_REFL, M_SEEN_ELEC, M_SEEN_DISINT } = await import('./const.js');
     if (u.uswallow) {
         await update_topl('Suddenly a bolt of lightning comes down at you'
             + ' from the heavens!');
         await update_topl(`It strikes ${D.dnm.mon_nam(u.ustuck)}!`);
-        // C: resists_elec(u.ustuck) ? "seems unaffected" : fries + xkilled().
-        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+        if (!resists_elec(u.ustuck)) {
+            const victim = u.ustuck;
+            await update_topl(`${D.dnm.Monnam(victim)} fries to a crisp!`);
+            /* Yup, you get experience.  It takes guts to successfully
+               pull off this trick on your god, anyway.
+               Other credit/blame applies (luck or alignment adjustments),
+               but not direct kill count (pacifist conduct). */
+            await D.uhi.killed(victim, { nomsg: true, noconduct: true });
+        } else
+            await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
     } else {
         await update_topl('Suddenly, a bolt of lightning strikes you!');
         if (reflecting || uprops_has_pr('Reflecting') || u.formprops?.Reflecting) {
             await shieldeff_pr();
             if (Blind()) await update_topl("For some reason you're unaffected.");
             else await D.zap.ureflects('%s reflects from your %s.', 'It');
+            monstseesu(M_SEEN_REFL);
         } else if (HProp_pr('HShock_resistance') || HProp_pr('EShock_resistance')
                    || has_innate_pr('HShock_resistance')) {
             await shieldeff_pr();
             await update_topl('It seems not to affect you.');
+            monstseesu(M_SEEN_ELEC);
+            monstunseesu(M_SEEN_REFL);
         } else {
             await fry_by_god(resp_god, false);
             if (game.program_state?.gameover) return; /* done() never returns */
+            monstunseesu(M_SEEN_REFL | M_SEEN_ELEC);
         }
     }
 
@@ -1392,7 +1406,12 @@ async function god_zaps_you(resp_god) {
     if (u.uswallow) {
         await update_topl('A wide-angle disintegration beam aimed at you hits '
             + `${D.dnm.mon_nam(u.ustuck)}!`);
-        await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
+        if (!resists_disint(u.ustuck)) {
+            const victim = u.ustuck;
+            await update_topl(`${D.dnm.Monnam(victim)} disintegrates into a pile of dust!`);
+            await D.uhi.killed(victim, { nomsg: true, nocorpse: true, noconduct: true });
+        } else
+            await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
         return;
     }
     await update_topl('A wide-angle disintegration beam hits you!');
@@ -1412,9 +1431,11 @@ async function god_zaps_you(resp_god) {
           || has_innate_pr('HDisint_resistance'))) {
         await fry_by_god(resp_god, true);
         if (game.program_state?.gameover) return; /* done() never returns */
+        monstunseesu(M_SEEN_DISINT);
     } else {
         await update_topl('You bask in its black glow for a minute...');
         await godvoice(resp_god, 'I believe it not!');
+        monstseesu(M_SEEN_DISINT);
     }
     if (Is_astralevel(u.uz) || Is_sanctum_pr(u.uz)) {
         await verbalize('Thou cannot escape my wrath, mortal!');
@@ -1656,7 +1677,11 @@ async function offer_different_alignment_altar(otmp, altaralign) {
             const { summon_minion } = await import('./minion.js');
             await summon_minion(altaralign, true);
         }
-        await angry_priest();
+        /* anger priest; test handles bones files */
+        await loadSacDeps();
+        const pri = _pri.findpriest(_pri.temple_occupied(game.u?.urooms || ''));
+        if (pri && !_pri.p_coaligned(pri))
+            await angry_priest();
     } else {
         await update_topl(`Unluckily, you feel the power of ${u_gname()} decrease.`);
         change_luck(-1);
@@ -1670,12 +1695,35 @@ async function offer_different_alignment_altar(otmp, altaralign) {
     }
 }
 
-// C ref: priest.c angry_priest() — the temple priest underfoot turns hostile.
-// Gated exactly as C gates it: only a priest of a now-different alignment.
+// C ref: priest.c angry_priest() — the temple priest underfoot turns hostile;
+// if the altar has been destroyed or converted he becomes a roaming minion.
 export async function angry_priest() {
-    const pri = _pri.findpriest(_pri.temple_occupied(game.u?.urooms || ''));
-    if (!pri || _pri.p_coaligned(pri)) return;
-    pri.mpeaceful = 0;
+    await loadSacDeps();
+    const priest = _pri.findpriest(_pri.temple_occupied(game.u?.urooms || ''));
+    if (!priest) return;
+    const eprip = priest.epri ?? priest.mextra?.epri;
+    const { wakeup } = await import('./zap.js');
+    const { setmangry } = await import('./uhitm.js');
+    await wakeup(priest, false);
+    await setmangry(priest, false);
+    /*
+     * If the altar has been destroyed or converted, let the priest run loose.
+     */
+    const lev = game.level?.at(eprip.shrpos.x, eprip.shrpos.y);
+    if (lev?.typ !== ALTAR
+        || Amask2align((lev.altarmask | 0) & AM_MASK) !== eprip.shralign) {
+        const { newemin } = await import('./minion.js');
+        const shralign = eprip.shralign;
+        newemin(priest);
+        priest.ispriest = 0; /* now a roaming minion */
+        priest.isminion = 1;
+        const emin = priest.mextra.emin;
+        emin.min_align = shralign;
+        emin.renegade = 0;
+        priest.emin = emin;
+        /* discard priest's memory of his former shrine */
+        _pri.free_epri(priest);
+    }
 }
 
 // C ref: attrib.c uchangealign(newalign, reason) — change the hero's
@@ -1735,8 +1783,12 @@ function dlord(atyp) {
 async function sacrifice_your_race(otmp, highaltar, altaralign) {
     const u = game.u;
     const utype = u.ualign?.type ?? 0;
-    // C's is_demon(youmonst.data) arm needs a demon polyform.
-    if (utype !== A_CHAOTIC) {
+    const { is_demon_flag } = await import('./monflags_data.js');
+    const { youmonst_data } = await import('./invent.js');
+    if (is_demon_flag(youmonst_data())) {
+        await update_topl('You find the idea very satisfying.');
+        exercise(A_WIS, true);
+    } else if (utype !== A_CHAOTIC) {
         await update_topl("You'll regret this infamous offense!");
         exercise(A_WIS, false);
     }

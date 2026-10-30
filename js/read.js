@@ -20,7 +20,8 @@ import { getobj, makeknown, useup, useupall, xname, GETOBJ_SUGGEST, GETOBJ_DOWNP
          update_inventory, remove_worn_item, delobj, shk_your, Yname2 as Yname2_wep,
          worn_extrinsics_off, youmonst_data_pub, uslinging } from './invent.js';
 import { makeplural } from './plural.js';
-import { cxname, obj_is_pname } from './objnam.js';
+import { cxname, obj_is_pname, singular } from './objnam.js';
+import { suit_simple_name } from './do_wear.js';
 import { costly_alteration, alter_cost } from './shk.js';
 import { exercise } from './attrib.js';
 import { discover_object } from './o_init.js';
@@ -54,7 +55,7 @@ import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
 import { wipeout_text } from './engrave.js';
 import { Blind, cansee } from './vision.js';
 import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
-         M1_UNSOLID, M1_WALLWALK, M1_HIDE,
+         M1_UNSOLID, M1_WALLWALK, M1_HIDE, is_whirly,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
 import { mon_mr } from './monmr_data.js';
 import { Invis } from './monmove.js';
@@ -715,8 +716,43 @@ async function seffect_enchant_armor(sobj) {
     if (s > 11) s = 11;
     if (scursed) s = -s;
 
-    // (the s >= 0 && Is_dragon_scales(otmp) "merges and hardens" branch — scales
-    // turning into scale mail — is not ported: no otyp mapping for it here.)
+    const { Is_dragon_scales: Is_dragon_scales_read, GRAY_DRAGON_SCALE_MAIL: GDSM_READ,
+            GRAY_DRAGON_SCALES: GDS_READ } = await import('./artifact.js');
+    if (s >= 0 && Is_dragon_scales_read(otmp)) {
+        const { WA_ARM, worn_slot_clear, worn_slot_set } = await import('./invent.js');
+        const { artifact_light, arti_light_radius, obj_adjust_light_radius } = await import('./light.js');
+        const was_lit = otmp.lamplit;
+        const old_light = artifact_light(otmp) ? arti_light_radius(otmp) : 0;
+
+        /* dragon scales get turned into dragon scale mail */
+        await pline_append(`${Yname2_wep(otmp)} merges and hardens!`);
+        otmp.owornmask = (otmp.owornmask || 0) & ~WA_ARM;
+        worn_slot_clear(WA_ARM);
+        /* assumes same order */
+        otmp.otyp += GDSM_READ - GDS_READ;
+        otmp.lamplit = 0;
+        if (sblessed) {
+            otmp.spe = (otmp.spe || 0) + 1;
+            cap_spe(otmp);
+            if (!otmp.blessed) bless(otmp);
+        } else if (otmp.cursed) {
+            uncurse(otmp);
+        }
+        otmp.known = 1;
+        worn_slot_set(otmp, WA_ARM);
+        if (otmp.unpaid) alter_cost(otmp, 0);
+        otmp.lamplit = was_lit;
+        if (old_light) {
+            /* C ref: mkobj.c maybe_adjust_light(); the hero wears the armor */
+            const new_range = arti_light_radius(otmp), delta = new_range - old_light;
+            if (delta) {
+                obj_adjust_light_radius(otmp, new_range);
+                if (!Blind())
+                    await pline_append(`${Yname2_wep(otmp)} ${otense_wep(otmp, 'shine')} ${Math.abs(delta) > 1 ? 'much ' : ''}${delta > 0 ? 'brighter' : 'less brightly'}.`);
+            }
+        }
+        return false;
+    }
 
     await pline_append(`${Yname2_wep(otmp)} ${(s === 0) ? 'violently ' : ''}${otense_wep(otmp, Blind() ? 'vibrate' : 'glow')}${(!Blind() && !same_color) ? ' ' : ''}${(Blind() || same_color) ? '' : hcolor_wep(scursed ? 'black' : 'silver')} for a ${(s * s > 1) ? 'while' : 'moment'}.`);
     if (s < 0) await costly_alteration(otmp, COST_DECHNT);
@@ -796,8 +832,18 @@ export async function punish(sobj) {
         return;
     }
     // C ref: punish() — an amorphous/whirly/unsolid polyform gets "A ball and
-    // chain appears, then falls away." and stays unpunished; that branch needs
-    // youmonst.data, so a normal hero (always chained) is what's ported.
+    // chain appears, then falls away." and stays unpunished.
+    const ymd = youmonst_data_pub();
+    if (amorphous_read(ymd) || is_whirly(ymd) || unsolid_read(ymd)) {
+        const { dropy } = await import('./invent.js');
+        if (!reuse_ball) {
+            await update_topl('A ball and chain appears, then falls away.');
+            await dropy(mkobj(BALL_CLASS, true));
+        } else {
+            await dropy(reuse_ball);
+        }
+        return;
+    }
     const uchain = mkobj(CHAIN_CLASS, true);
     uchain.owornmask = W_CHAIN;
     u.uchain = uchain;
@@ -805,15 +851,19 @@ export async function punish(sobj) {
     uball.owornmask = W_BALL;
     u.uball = uball;
 
-    // C ref: ball.c placebc_core() — both objects go on the hero's square (the
-    // ball first, so the chain ends up above it: u.bc_order = BCPOS_CHAIN).
-    // flooreffects() can rust them, but not on a dry square, and it draws no RNG
-    // there.
-    place_object(uball, u.ux, u.uy);
-    place_object(uchain, u.ux, u.uy);
-    newsym(u.ux, u.uy);                 // placebc_core()'s newsym
-    if (Blind()) (await import('./ball.js')).set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
-    newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
+    // C ref: read.c punish() — place ball & chain only if not swallowed; when
+    // swallowed the ball and chain are placed at the next placebc().
+    if (!u.uswallow) {
+        // C ref: ball.c placebc_core() — both objects go on the hero's square (the
+        // ball first, so the chain ends up above it: u.bc_order = BCPOS_CHAIN).
+        // flooreffects() can rust them, but not on a dry square, and it draws no RNG
+        // there.
+        place_object(uball, u.ux, u.uy);
+        place_object(uchain, u.ux, u.uy);
+        newsym(u.ux, u.uy);                 // placebc_core()'s newsym
+        if (Blind()) (await import('./ball.js')).set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
+        newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
+    }
 }
 
 // C ref: objnam.c erosion_matters(obj) — the COMPLETE switch: weptools,
@@ -1540,14 +1590,9 @@ async function disintegrate_cursed_armor() {
     return !!(await disintegrate_arm(armors[rn2(armors.length)]));
 }
 
-// C ref: potion.c make_stunned(xtime, talk) — sets HStun; no RNG.
-function make_stunned(xtime, _talk) {
-    const u = game.u;
-    if (!u) return;
-    if (!u.uprops) u.uprops = {};
-    u.uprops.Stun = xtime;
-    u.ustun = xtime > 0;
-    if (game.disp) game.disp.botl = true;
+// C ref: potion.c make_stunned(xtime, talk) — js/mhitu.js make_stunned_u().
+async function make_stunned(xtime, talk) {
+    await (await import('./mhitu.js')).make_stunned_u(xtime, talk);
 }
 
 // C ref: do_wear.c any_worn_armor_ok(obj) — getobj callback for the blessed
@@ -1594,7 +1639,7 @@ async function seffect_destroy_armor(sobj) {
                 otmp.spe = (otmp.spe || 0) - 1;
                 adj_abon(otmp, -1);
             }
-            make_stunned(((game.u?.uprops?.Stun || 0)) + rn1(10, 10), true);
+            await make_stunned(((game.u?.uprops?.Stun || 0) & 0x00FFFFFF) + rn1(10, 10), true);
         } else if (await disintegrate_arm(otmp)) {
             game.known = true;
             return false;
@@ -1855,7 +1900,10 @@ export async function doread() {
         // can't read shirt worn under suit (under cloak is ok though)
         if ((otyp === T_SHIRT || otyp === HAWAIIAN_SHIRT) && game.uarm
             && scroll === game.uarmu) {
-            await pline(`${scroll.unpaid ? 'That' : 'Your'} shirt is obscured by your ${xname(game.uarm)}.`);
+            {
+                const owner = shk_your(game.uarm);
+                await pline(`${scroll.unpaid ? 'That' : 'Your'} shirt is obscured by ${owner ? owner + ' ' : ''}${suit_simple_name(game.uarm)}.`);
+            }
             return ECMD_OK;
         }
         if (otyp === HAWAIIAN_SHIRT) {
@@ -1905,7 +1953,7 @@ export async function doread() {
         return ECMD_TIME;
     }
     if (otyp === CAN_OF_GREASE) {
-        await pline(`This ${xname(scroll)} has no label.`);
+        await pline(`This ${singular(scroll, xname)} has no label.`);
         return ECMD_OK;
     }
     if (otyp === MAGIC_MARKER) {
@@ -1931,6 +1979,14 @@ export async function doread() {
         bump_literate("became literate by reading a coin's engravings");
         return ECMD_TIME;
     }
+    const { is_art: is_art_read, ART_ORB_OF_FATE: ART_ORB_OF_FATE_READ } = await import('./artifact.js');
+    if (is_art_read(scroll, ART_ORB_OF_FATE_READ)) {
+        if (Blind()) await pline('You feel the engraved signature:');
+        else await pline('It is signed:');
+        await pline('"Odin."');
+        bump_literate('became literate by reading the divine signature of Odin');
+        return ECMD_TIME;
+    }
     if (otyp === CANDY_BAR) {
         if (Blind()) {
             await pline("You can't feel any Braille writing.");
@@ -1945,8 +2001,6 @@ export async function doread() {
         bump_literate('became literate by reading a candy bar wrapper');
         return ECMD_TIME;
     }
-    // (the Orb of Fate "It is signed: Odin." branch needs artifact support.)
-
     if (scroll.oclass !== SCROLL_CLASS && scroll.oclass !== SPBOOK_CLASS) {
         await pline('That is a silly thing to read.');
         return ECMD_OK;
@@ -2826,7 +2880,14 @@ export async function recharge(obj, curse_bless) {
         } else if (obj.otyp === OIL_LAMP || obj.otyp === BRASS_LANTERN) {
             if (cursed) {
                 await stripspe(obj);
-                if (obj.lamplit) { obj.lamplit = 0; obj.age = 0; }
+                if (obj.lamplit) {
+                    if (!Blind()) {
+                        const { Tobjnam } = await import('./invent.js');
+                        await pline_append(`${Tobjnam(obj, 'go')} out!`);
+                    }
+                    const { end_burn } = await import('./timeout.js');
+                    await end_burn(obj, true);
+                }
             } else if (blessed) {
                 obj.spe = 1; obj.age = 1500;
                 await p_glow2(obj, 'blue');

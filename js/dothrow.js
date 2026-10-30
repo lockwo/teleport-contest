@@ -359,15 +359,14 @@ export async function release_camera_demon(obj, x, y) {
 // object and run its side effects.  Returns 1 when obj is gone.
 export async function breakobj(obj, x, y, hero_caused, from_invent) {
     let fracture = false;
+    let explosion = false;
 
-    if (is_crackable(obj)) {
-        // C: erode_obj(obj, ..., ERODE_CRACK, EF_DESTROY|EF_VERBOSE) — glass
-        // armor takes four cracks before it is destroyed.  js/mkobj.js carries
-        // greatest_erosion() but no erode_obj(), so the crack step is recorded
-        // on the object and the item survives, which is erode_obj()'s answer
-        // for the first three cracks.
-        obj.oeroded2 = Math.min(3, (obj.oeroded2 | 0) + 1);
-        return 0;
+    if (is_crackable(obj)) { /* if erodeproof, erode_obj() will say so */
+        const { erode_obj } = await import('./trap.js');
+        const { ERODE_CRACK, EF_DESTROY, EF_VERBOSE, ER_DESTROYED } = await import('./const.js');
+        const { armor_simple_name } = await import('./do_wear.js');
+        return (await erode_obj(obj, armor_simple_name(obj), ERODE_CRACK,
+                                EF_DESTROY | EF_VERBOSE) === ER_DESTROYED) ? 1 : 0;
     }
 
     switch (obj.oclass === POTION_CLASS ? POT_WATER : obj.otyp) {
@@ -406,6 +405,8 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
         /* breaking your own eggs is bad luck */
         if (hero_caused && obj.spe && (obj.corpsenm | 0) >= 0)
             I.change_luck(-Math.min(obj.quan || 1, 5));
+        if (obj.corpsenm === name_to_pmidx('pyrolisk'))
+            explosion = true;
         break;
     case BOULDER:
     case STATUE:
@@ -450,6 +451,12 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
     }
 
     if (!fracture) I.delobj(obj);
+    if (explosion) {
+        const { d } = await import('./rng.js');
+        const { explode } = await import('./explode.js');
+        const { EXPL_FIERY } = await import('./const.js');
+        await explode(x, y, -11, d(3, 6), 0, EXPL_FIERY);
+    }
     return 1;
 }
 

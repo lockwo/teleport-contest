@@ -427,15 +427,14 @@ export async function gold_detect(sobj) {
     return false;
 }
 
-// C ref: detect.c skip_premap_detect — a STONE cell flagged both nondiggable
-// and nonpasswall is outside the special level's own map footprint (the rest
+// C ref: detect.c skip_premap_detect — a STONE cell flagged nondiggable or
+// nonpasswall is outside the special level's own map footprint (the rest
 // of the level, solidified at finalize); premap_detect leaves it unmapped.
 function skip_premap_detect(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return true;
     return loc.typ === STONE
-        && ((loc.wall_info || 0) & (W_NONDIGGABLE | W_NONPASSWALL))
-            === (W_NONDIGGABLE | W_NONPASSWALL);
+        && ((loc.wall_info || 0) & (W_NONDIGGABLE | W_NONPASSWALL)) !== 0;
 }
 
 // C ref: detect.c premap_detect() — used by splev_initlev() when a special

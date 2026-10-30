@@ -17,7 +17,7 @@ import { set_msg_mon, newsym, m_at, update_topl, y_n, You_feel } from './display
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
-import { youmonst_data, worn_extrinsic, near_capacity } from './invent.js';
+import { youmonst_data, worn_extrinsic, near_capacity, makeknown } from './invent.js';
 import { known_spell, spelleffects } from './spell.js';
 import { morehungry } from './eat.js';
 import { hero_liquid_goodpos } from './trap.js';
@@ -202,6 +202,7 @@ function rloc_pos_ok(x, y, mtmp) {
     return true;
 }
 
+const WAN_TELEPORTATION = 424; // mkobj.js otyp
 // C ref: teleport.c rloc_to_core(mtmp, x, y, rlocflags) — pull the monster off
 // its current square and put it down at <x,y>, with the vanish / appear
 // messages when the caller asked for them.  No RNG.
@@ -225,9 +226,13 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
             }
             appearmsg = false;
         }
-        // (no long worms) remove_monster(oldx, oldy) then newsym.
-        mtmp.mx = 0; mtmp.my = 0;
-        newsym(oldx, oldy);
+        if (mtmp.wormno) {
+            const { remove_worm } = await import('./worm.js');
+            remove_worm(mtmp);
+        } else {
+            mtmp.mx = 0; mtmp.my = 0;       // remove_monster(oldx, oldy)
+            newsym(oldx, oldy); /* update old location */
+        }
     }
 
     mtmp.mtrack = [];                       // mon_track_clear(mtmp)
@@ -238,6 +243,11 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
     if (game.level?.monsters && !game.level.monsters.includes(mtmp))
         game.level.monsters.push(mtmp);
     update_monster_region(mtmp);
+
+    if (mtmp.wormno) { /* now put down tail */
+        const { place_worm_tail_randomly } = await import('./worm.js');
+        place_worm_tail_randomly(mtmp, x, y, (nx, ny, w) => goodpos(nx, ny, w, 0));
+    }
 
     // C ref: teleport.c:1688 — a relocated engulfer carries the hero along
     // (redrawing the swallowed view); a mere holder is released if no longer
@@ -269,12 +279,15 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
     newsym(x, y);
     set_apparxy(mtmp);
 
-    if (domsg && (canspotmon(mtmp) || appearmsg)) {
+    if (domsg && (canspotmon(mtmp) || appearmsg || mtmp === game.u?.ustuck)) {
         const du = distu(x, y);
         const next = (du <= 2) ? ' next to you' : null;
         const nearu = (du <= BOLT_LIM * BOLT_LIM) ? ' close by' : null;
         mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_APPEARMSG; /* one chance only */
-        if (telemsg && (couldsee(x, y) || sensemon(mtmp))) {
+        if (mtmp === game.u?.ustuck
+            && !(game.u.ux === game.u.ux0 && game.u.uy === game.u.uy0)) {
+            await update_topl(`You and ${mon_nam(mtmp)} teleport together.`);
+        } else if (telemsg && (couldsee(x, y) || sensemon(mtmp))) {
             const olddu = distu(oldx, oldy);
             const where = next ? next
                 : nearu ? nearu
@@ -291,8 +304,11 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
                 + `${appearmsg ? 'suddenly ' : ''}`
                 + `${!Blind() ? 'appears' : 'arrives'}${next || nearu || ''}!`);
         }
-        // (the WAN_TELEPORTATION discovery needs gc.current_wand, which is Null
-        // for an attack-driven relocation)
+        /* wand discovery only happens if a messaage is delivered (bug?);
+           if spell or q.mechanic attack or artifact #invoke for banish
+           then current_wand will be Null */
+        if (game.current_wand && game.current_wand.otyp === WAN_TELEPORTATION)
+            makeknown(WAN_TELEPORTATION);
     }
 
     /* shopkeepers will only teleport if you zap them with a wand of
@@ -316,14 +332,18 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         }
     }
 
-    // The mtrapped mintrap() re-check is inert for the monsters these sessions relocate.
-
     // C ref: teleport.c:1762 — if the hero is busy, a relocated threat that
     // came into view stops the occupation.
     const H = await import('./hack.js');
     if (H.occupation_active()) {
         const { dochugw } = await import('./monmove.js');
         await dochugw(mtmp, false);
+    }
+
+    /* trapped monster teleported away */
+    if (mtmp.mtrapped && !mtmp.wormno) {
+        const { mon_mintrap } = await import('./monmove.js');
+        await mon_mintrap(mtmp, 0);
     }
 }
 
@@ -780,7 +800,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     const { hideunder } = await import('./monmove.js');
     if (!await hideunder(youmonst_()) && youmonster_data()?.mcls === S_MIMIC_MCLS) {
         /* mimics stop being unnoticed */
-        if (game.youmonst) game.youmonst.m_ap_type = 0; /* M_AP_NOTHING */
+        game.u.m_ap_type = 0; /* M_AP_NOTHING */
     }
 
     const { docrt, newsym: newsym_ } = await import('./display.js');

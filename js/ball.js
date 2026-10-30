@@ -16,13 +16,13 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { newsym, object_glyph, You_feel } from './display.js';
+import { newsym, object_glyph, You_feel, m_at } from './display.js';
 import { Blind } from './vision.js';
 import { place_object } from './mkobj.js';
 import { t_at } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
-         DRAWBRIDGE_UP, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+         DRAWBRIDGE_UP, HMON_DRAGGED, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
 export const BC_BALL = 0x01;
@@ -399,13 +399,36 @@ export async function drag_ball(x, y, allow_drag = true) {
             if (chainTrap) chainTrap.tseen = 1;
         } else {
             await pline('You are jerked back by the iron ball!');
-            u.ux = uchain.ox; u.uy = uchain.oy;
-            newsym(u.ux0 ?? u.ux, u.uy0 ?? u.uy);
+            const victim = m_at(uchain.ox, uchain.oy);
+            if (victim) {
+                // C: the ball swings into whatever stands where the chain lies.
+                const { rnd } = await import('./rng.js');
+                const { find_mac } = await import('./worn.js');
+                const { omon_adj, xname } = await import('./invent.js');
+                const dieroll = rnd(20);
+                let tmp = -2 + ((u.uluck | 0) + (u.moreluck | 0)) + find_mac(victim);
+                tmp += omon_adj(victim, uball, true);
+                if (tmp >= dieroll) {
+                    const { hmon } = await import('./uhitm.js');
+                    await hmon(victim, uball, HMON_DRAGGED, dieroll);
+                } else {
+                    const { miss } = await import('./zap.js');
+                    await miss(xname(uball), victim);
+                }
+            } /* now check again in case mon died */
+            if (!m_at(uchain.ox, uchain.oy)) {
+                /* C: u.ux0,u.uy0 is the hero's square before the move */
+                const ox0 = u.ux, oy0 = u.uy;
+                u.ux = uchain.ox; u.uy = uchain.oy;
+                newsym(ox0, oy0);
+            }
             await nomul0();
             bc_control = BC_BALL;
             await move_bc(1, bc_control, ballx, bally, chainx, chainy);
             ballx = uchain.ox; bally = uchain.oy;
             await move_bc(0, bc_control, ballx, bally, chainx, chainy);
+            const { spoteffects } = await import('./trap.js');
+            await spoteffects(true);
             return null;
         }
     }

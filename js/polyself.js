@@ -41,7 +41,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx, golemhp_js as golemhp
     infravision } from './makemon.js';
 import { livelog_printf, LL_CONDUCT, LL_MINORAC } from './livelog.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_MAX, TT_PIT, TT_BURIEDBALL,
-    IS_FOUNTAIN, IS_POOL, IS_LAVA, IS_AIR, In_endgame,
+    IS_FOUNTAIN, IS_POOL, IS_LAVA, IS_AIR, In_endgame, Is_airlevel, Is_waterlevel,
     POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL } from './const.js';
 // C ref: hack.h bodypart NECK; prop.h I_SPECIAL / FROMOUTSIDE / FROMRACE — the
 // float_vs_flight() / steed_vs_stealth() / polysense() ports below need them.
@@ -61,7 +61,7 @@ import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Prote
 import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
-import { surface, In_hell, hliquid } from './dungeon.js';
+import { surface, In_hell, hliquid, has_ceiling } from './dungeon.js';
 import { emits_light, new_light_source, del_light_source, LS_MONSTER,
     HERO, arti_light_radius, artifact_light } from './light.js';
 
@@ -82,6 +82,7 @@ const PM_AIR_ELEMENTAL = name_to_pmidx('air elemental');
 const PM_MARILITH = name_to_pmidx('marilith');
 const PM_WINGED_GARGOYLE = name_to_pmidx('winged gargoyle');
 const PM_FLOATING_EYE = name_to_pmidx('floating eye');
+const PM_MEDUSA_PS = name_to_pmidx('Medusa');
 const PM_GREMLIN = name_to_pmidx('gremlin');
 const PM_GIANT_EEL = name_to_pmidx('giant eel');
 const PM_ELECTRIC_EEL = name_to_pmidx('electric eel');
@@ -893,7 +894,7 @@ export async function polymon(mntmp) {
         game.flags.female = !!u.mfemale;
     }
 
-    const ym = game.youmonst;
+    const ym = u;
     /* if stuck mimicking gold, stop immediately */
     if ((game.multi | 0) < 0 && ym?.m_ap_type === 2 /* M_AP_OBJECT */
         && olddat?.mlet !== 'm') {
@@ -902,8 +903,7 @@ export async function polymon(mntmp) {
     }
     /* if becoming a non-mimic, stop mimicking anything */
     if (mdatNew.mlet !== 'm') {
-        if (ym) { ym.m_ap_type = 0; /* M_AP_NOTHING */ ym.mappearance = 0; }
-        u.m_ap_type = 0;
+        u.m_ap_type = 0; /* M_AP_NOTHING */
         u.mappearance = 0;
     }
     if (is_male_flag(mdatNew)) {
@@ -1306,6 +1306,9 @@ async function newman_dead() {
 async function polyman(fmt, arg) {
     const u = game.u;
     const was_blind = Blind();
+    const seeInvis = async () => (await import('./display.js')).see_invisible()
+        || !!u.formprops?.See_invisible;
+    const had_see_invis = await seeInvis();
     const sticking = sticks(u.data) && !!u.ustuck && !u.uswallow;
     if (u.Upolyd) {
         u.acurr = { a: (u.macurr.a || []).slice() };
@@ -1324,21 +1327,15 @@ async function polyman(fmt, arg) {
         await uunstick();
     find_ac();
     // C ref: polyself.c:223-228 — leaving a form that mimics something (also the
-    // slime countdown's green-slime hack) stops the mimicry.  The hero's
-    // appearance lives on both game.u and game.youmonst in this port.
-    if (u.m_ap_type || game.youmonst?.m_ap_type) {
+    // slime countdown's green-slime hack) stops the mimicry.
+    if (u.m_ap_type) {
         if ((game.multi | 0) < 0) {
             const { unmul } = await import('./vault.js');
             await unmul('');
         }
         u.m_ap_type = 0;
         u.mappearance = 0;
-        if (game.youmonst) { game.youmonst.m_ap_type = 0; game.youmonst.mappearance = 0; }
     }
-
-    // C ref: polyself.c:254-256 — DRAWS rn1(6,2).  Reverting to human while in
-    // a pit resets the escape countdown, exactly as polymon() does.
-    if (u.utrap && u.utraptype === TT_PIT) set_utrap(rn1(6, 2), TT_PIT);
 
     newsym(u.ux, u.uy);
 
@@ -1346,6 +1343,41 @@ async function polyman(fmt, arg) {
     // the fatal form damage was acknowledged with ESC, otherwise the return
     // form (and the following sight-restoration message) disappears.
     await urgent_topl(fmt.replace('%s', arg));
+    /* check whether player foolishly genocided self while poly'd */
+    if (ugenocided()) {
+        /* intervening activity might have clobbered genocide info */
+        const { find_delayed_killer, dealloc_killer, done } = await import('./end.js');
+        const { POLYMORPH, GENOCIDED, KILLED_BY } = await import('./const.js');
+        const kptr = find_delayed_killer(POLYMORPH);
+
+        game.killer = game.killer || { name: '', format: KILLED_BY, id: 0, next: null };
+        if (kptr && kptr.name) {
+            game.killer.format = kptr.format;
+            game.killer.name = kptr.name;
+        } else {
+            game.killer.format = KILLED_BY;
+            game.killer.name = 'self-genocide';
+        }
+        dealloc_killer(kptr);
+        await done(GENOCIDED);
+    }
+
+    if ((await seeInvis()) !== had_see_invis) {
+        const { set_mimic_blocking } = await import('./display.js');
+        set_mimic_blocking(); /* See_invisible just toggled */
+    }
+
+    if (u.twoweap) {
+        const { could_twoweap } = await import('./wield.js');
+        if (!could_twoweap(youmonst_data_pub())) {
+            const { untwoweapon } = await import('./invent.js');
+            await untwoweapon();
+        }
+    }
+
+    // C ref: polyself.c:254-256 — DRAWS rn1(6,2).  Reverting to human while in
+    // a pit resets the escape countdown, exactly as polymon() does.
+    if (u.utrap && u.utraptype === TT_PIT) set_utrap(rn1(6, 2), TT_PIT);
     if (was_blind && !Blind()) { /* reverting from eyeless */
         status_hold('blind', false); /* no bot() until toggle_blindness() */
         u.blinded = 1;           /* set_itimeout(&HBlinded, 1L) */
@@ -1353,6 +1385,13 @@ async function polyman(fmt, arg) {
         await make_blinded_hero(0, true); /* remove blindness */
     }
     await check_strangling(true);
+
+    {
+        const { Levitation_fu, spoteffects } = await import('./trap.js');
+        if (!Levitation_fu() && !u.ustuck && is_pool_or_lava(u.ux, u.uy))
+            await spoteffects(true);
+    }
+
     await see_monsters();
 }
 
@@ -1872,18 +1911,22 @@ async function do_merge_dragon_armor(mntmp) {
     if (!uarm) return;
     if (mvflags_of(mntmp) & G_GENOD_F) return;
     const t = dragonOtyps();
+    const was_lit = uarm.lamplit;
+    const arm_light = artifact_light(uarm) ? arti_light_radius(uarm) : 0;
     if (Is_dragon_scales(uarm)) {
         await pline('You merge with your scaly armor.');
     } else {
         const nm = String(xname(uarm)).replace(' dragon ', ' ');
         await pline(`Your ${nm} reverts to scales as you merge with them.`);
         uarm.otyp += t.scal0 - t.mail0;
-        game.botl = true;
+        (await import('./o_init.js')).observe_object(uarm);
+        game.botl = true; /* AC is changing */
     }
     game.uskin = uarm;
     game.uarm = null;
     /* save/restore hack */
     uskin_mark(game.uskin);
+    if (was_lit) maybe_adjust_light(game.uskin, arm_light);
     const { update_inventory } = await import('./invent.js');
     await update_inventory();
 }
@@ -2221,7 +2264,112 @@ async function dogaze() {
     }
     u.uen -= 15;
     game.botl = true;
-    // per-monster gaze loop + "You gaze at no place in particular.": deferred.
+    const { fmonOrder } = await import('./mon.js');
+    const { canseemon_shared } = await import('./display.js');
+    const { couldsee } = await import('./vision.js');
+    const { Invis } = await import('./monmove.js');
+    const { l_monnam, y_monnam } = await import('./do_name.js');
+    const { mon_nam, Monnam } = await import('./do_name.js');
+    const { perceives_flag } = await import('./monflags_data.js');
+    const { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } = await import('./const.js');
+    const { resists_fire } = await import('./mondata.js');
+    const { setmangry, killed } = await import('./uhitm.js');
+    const flags = game.flags || {};
+    const confused = !!u.uconf;
+    const see_invis = !!u.see_invis || !!u.formprops?.See_invisible;
+    let looked = 0;
+
+    for (const mtmp of fmonOrder()) {
+        if (DEADMONSTER(mtmp))
+            continue;
+        if (canseemon_shared(mtmp) && couldsee(mtmp.mx, mtmp.my)) {
+            looked++;
+            if (Invis() && !perceives_flag(mtmp.data)) {
+                await pline(`${Monnam(mtmp)} seems not to notice your gaze.`);
+            } else if (mtmp.minvis && !see_invis) {
+                await pline(`You can't see where to gaze at ${Monnam(mtmp)}.`);
+            } else if (M_AP_TYPE(mtmp) === M_AP_FURNITURE
+                       || M_AP_TYPE(mtmp) === M_AP_OBJECT) {
+                looked--;
+                continue;
+            } else if ((flags.safe_pet ?? true) && mtmp.mtame && !confused) {
+                await pline(`You avoid gazing at ${y_monnam(mtmp)}.`);
+            } else {
+                if (flags.confirm !== false && mtmp.mpeaceful && !confused) {
+                    const qbuf = `Really ${adtyp === AD_CONF ? 'confuse' : 'attack'} ${mon_nam(mtmp)}?`;
+                    if (await y_n(qbuf) !== 'y')
+                        continue;
+                }
+                await setmangry(mtmp, true);
+                if (mtmp.msleeping || !(mtmp.mcanmove ?? 1) || mtmp.mstun
+                    || !mtmp.mcansee || !haseyes(mtmp.data)) {
+                    looked--;
+                    continue;
+                }
+                /* No reflection check for consistency with when a monster
+                 * gazes at *you*--only medusa gaze gets reflected then. */
+                if (adtyp === AD_CONF) {
+                    if (!mtmp.mconf)
+                        await pline(`Your gaze confuses ${mon_nam(mtmp)}!`);
+                    else
+                        await pline(`${Monnam(mtmp)} is getting more and more confused.`);
+                    mtmp.mconf = 1;
+                } else if (adtyp === AD_FIRE) {
+                    let dmg = d(2, 6);
+                    const orig_dmg = dmg, lev = u.ulevel | 0;
+
+                    await pline(`You attack ${mon_nam(mtmp)} with a fiery gaze!`);
+                    if (resists_fire(mtmp)) {
+                        await pline(`The fire doesn't burn ${mon_nam(mtmp)}!`);
+                        dmg = 0;
+                    }
+                    if (lev > rn2(20)) {
+                        const { destroy_items, ignite_items } = await import('./zap.js');
+                        dmg += await destroy_items(mtmp, AD_FIRE, orig_dmg);
+                        await ignite_items(mtmp.minvent);
+                    }
+                    if (dmg)
+                        mtmp.mhp -= dmg;
+                    if (DEADMONSTER(mtmp) || mtmp.mhp < 1)
+                        await killed(mtmp);
+                }
+                /* For consistency with passive() in uhitm.c, this only
+                 * affects you if the monster is still alive. */
+                if (DEADMONSTER(mtmp) || mtmp.mhp < 1)
+                    continue;
+
+                if (mtmp.data?.pmidx === PM_FLOATING_EYE && !mtmp.mcan) {
+                    const { Free_action } = await import('./invent.js');
+                    if (!Free_action()) {
+                        const { nomul } = await import('./hack.js');
+                        await pline(`You are frozen by ${s_suffix(mon_nam(mtmp))} gaze!`);
+                        nomul(((u.ulevel | 0) > 6 || rn2(4))
+                              ? -d((mtmp.m_lev | 0) + 1, mattk_of(mtmp.data)[0].damd)
+                              : -200);
+                        game.multi_reason = "frozen by a monster's gaze";
+                        game.nomovemsg = 0;
+                        return ECMD_TIME;
+                    } else
+                        await pline(`You stiffen momentarily under ${s_suffix(mon_nam(mtmp))} gaze.`);
+                }
+                /* Technically this one shouldn't affect you at all because
+                 * the Medusa gaze is an active monster attack that only
+                 * works on the monster's turn, but for it to *not* have an
+                 * effect would be too weird. */
+                if (mtmp.data?.pmidx === PM_MEDUSA_PS && !mtmp.mcan) {
+                    await pline(`Gazing at the awake ${l_monnam(mtmp)} is not a very good idea.`);
+                    /* as if gazing at a sleeping anything is fruitful... */
+                    await urgent_topl('You turn to stone...');
+                    game.killer = { format: 1 /* KILLED_BY */, name: "deliberately meeting Medusa's gaze" };
+                    game._killer_name = (await import('./topten.js')).formatkiller(256, 8 /* STONING */, false);
+                    const { done } = await import('./end.js');
+                    await done(8 /* STONING */);
+                }
+            }
+        }
+    }
+    if (!looked)
+        await pline('You gaze at no place in particular.');
     return ECMD_TIME;
 }
 
@@ -2275,7 +2423,39 @@ async function dohide() {
             u.uundetected = 0;
             return ECMD_OK;
         }
-        // all-cockatrice-corpse pile -> instapetrify(): deferred.
+        /* otmp is null iff the entire pile consists of 'trice corpses */
+        const pile = (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR
+            && o.ox === u.ux && o.oy === u.uy).reverse();
+        let ct = 0, k = 0;
+        for (; k < pile.length && pile[k].otyp === CORPSE_OTYP
+               && touch_petrifies(monster_by_pmidx(pile[k].corpsenm)); k++)
+            ct += pile[k].quan || 1;
+        if (k === pile.length && !Stone_resistance_u()) {
+            const { cxname } = await import('./objnam.js');
+            const otop = pile[0];
+            let corpse_name = cxname(otop);
+            /* for the plural case, we'll say "cockatrice corpses" or
+               "chickatrice corpses" depending on the top of the pile */
+            if (ct === 1)
+                corpse_name = an(corpse_name);
+            await pline(`Hiding under ${corpse_name}${ct === 1 ? '' : 's'} is a fatal mistake...`);
+            await instapetrify(`hiding under ${corpse_name}${ct === 1 ? '' : 's'}`);
+            /* only reach here if life-saved */
+            u.uundetected = 0;
+            return ECMD_TIME;
+        }
+    }
+    /* Planes of Air and Water */
+    if (on_ceiling && !has_ceiling(u.uz)) {
+        await pline('There is nowhere to hide above you.');
+        u.uundetected = 0;
+        return ECMD_OK;
+    }
+    if (is_hider_flag(mdat) && !u.uprops?.Flying
+        && (Is_airlevel(u.uz) || Is_waterlevel(u.uz))) { /* floor hider */
+        await pline('There is nowhere to hide beneath you.');
+        u.uundetected = 0;
+        return ECMD_OK;
     }
     if (u.uundetected || (ismimic && u.m_ap_type)) {
         await youhiding(1); /* "You are already hiding ..." */

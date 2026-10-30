@@ -981,7 +981,8 @@ export async function create_force_field(x, y, radius, ttl) {
 // C's own uses of youmonst.data are safe only because C keeps that row valid.
 function Breathless() {
     const u = game.u, p = u?.uprops || {};
-    if (p.HMagical_breathing || p.EMagical_breathing || p.Magical_breathing)
+    if (p.HMagical_breathing || p.EMagical_breathing || p.Magical_breathing
+        || ((u?.uprops_extrinsic || {})[52 /* MAGICAL_BREATHING */] | 0))
         return true;
     return !!u?.Upolyd && (mflags1_of(u.data) & M1_BREATHLESS) !== 0;
 }

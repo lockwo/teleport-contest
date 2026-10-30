@@ -681,6 +681,15 @@ export async function wet_a_towel(obj, amt, verbose) {
             const { cxname } = await import('./objnam.js');
             const nm = (obj.quan ?? 1) !== 1 ? `${obj.quan} ${cxname(obj)}` : cxname(obj);
             await pline(`Your ${nm} gets ${wetness}.`);
+        } else if (obj.where === OBJ_MINVENT && obj.ocarry) {
+            /* C: mcarried(obj) && canseemon(obj->ocarry) */
+            const { canseemon_shared: canseemon } = await import('./display.js');
+            if (canseemon(obj.ocarry)) {
+                const { Monnam } = await import('./uhitm.js');
+                const { s_suffix } = await import('./hacklib.js');
+                const { xname } = await import('./objnam.js');
+                await pline(`${s_suffix(Monnam(obj.ocarry))} ${xname(obj)} gets ${wetness}.`);
+            }
         }
     }
     if (newspe !== (obj.spe | 0)) await finish_towel_change(obj, newspe);
@@ -704,8 +713,10 @@ export async function dry_a_towel(obj, amt, verbose) {
                     !newspe ? ' out' : ''}.`);
             }
         } else {
-            await pline(`Your ${objects[obj.otyp]?.name || 'towel'} dries${
-                !newspe ? ' out' : ''}.`);
+            /* Yobjnam2(obj, NULL): "Your <count> <cxname>" */
+            const { cxname } = await import('./objnam.js');
+            const nm = (obj.quan ?? 1) !== 1 ? `${obj.quan} ${cxname(obj)}` : cxname(obj);
+            await pline(`Your ${nm} dries${!newspe ? ' out' : ''}.`);
         }
     }
     if (newspe !== (obj.spe | 0)) await finish_towel_change(obj, newspe);

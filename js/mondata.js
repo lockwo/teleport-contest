@@ -614,6 +614,13 @@ export function monstunseesu(seenres) {
             m_clearseenres(mtmp, seenres);
 }
 
+// C ref: monst.h:94 monstunseesu_prop(prop) == monstunseesu(cvt_prop_to_mseenres(prop)),
+// called from worn.c setworn()/setnotworn() when the hero loses an
+// extrinsic-granting item: nearby monsters forget the remembered resistance.
+export function monstunseesu_prop(prop) {
+    monstunseesu(cvt_prop_to_mseenres(prop));
+}
+
 // C ref: prop.h:25 res_to_mr(r) — the first eight hero properties (FIRE_RES ..
 // STONE_RES) map 1:1 onto the MR_FIRE .. MR_STONE bits.
 function res_to_mr(r) {

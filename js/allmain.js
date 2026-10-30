@@ -12,7 +12,7 @@ import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
-import { docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
+import { Hallucination_u, docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
 import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
@@ -35,7 +35,7 @@ import { Unaware,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING } from './const.js';
-import { near_capacity, reroll_menu, setnotworn, freeinv, worn_extrinsic, Slow_digestion } from './invent.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion } from './invent.js';
 import { menuHeadAttr } from './menuattr.js';
 import { is_pool } from './dbridge.js';
 import { exercise, acurr_eff } from './attrib.js';
@@ -1801,7 +1801,8 @@ function HRegeneration() { return !!(game.u?.uprops?.HRegeneration || game.u?.HR
 function Sick() { return ((game.u?.uprops?.Sick || 0) > 0) || !!(game.u?.sick); }
 function Vomiting() { return (game.u?.uprops?.Vomiting || 0) > 0; }
 function Confusion() { return ((game.u?.uprops?.Confusion || 0) > 0) || !!(game.u?.uconf || game.u?.HConfusion); }
-function Hallucination() { return ((game.u?.uprops?.Hallucination || 0) > 0) || !!(game.u?.HHallucination) || !!game.u?.uhallu; }
+// C ref: youprop.h Hallucination == (HHallucination && !Halluc_resistance)
+function Hallucination() { return Hallucination_u(); }
 function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling || worn_extrinsic(25 /* FUMBLING */)); } /* youprop.h (HFumbling || EFumbling): EFumbling is the worn-item extrinsic */
 function HStun() { return ((game.u?.uprops?.Stun || 0) > 0) || !!game.u?.Stunned || !!(game.u?.HStun || game.u?.ustun) || !!game.u?.formprops?.Stunned; }
 
@@ -2039,6 +2040,9 @@ export async function moveloop_core() {
     // session stops at the key that finished the game, so the keys still queued
     // after it were never delivered to NetHack.
     if (g.program_state?.gameover) return;
+
+    // C ref: allmain.c:432 — once-per-player-input reset of the split-stack context.
+    clear_splitobjs();
 
     // C ref: allmain.c moveloop_core():445 — "the Amulet of Yendor gives a wish
     // when initially picked up": once per game, at the first player-input

@@ -186,10 +186,10 @@ const WAR_HAMMER = otyp_by_name('war hammer');
 const QUARTERSTAFF = otyp_by_name('quarterstaff');
 const BOW = otyp_by_name('bow');
 const HELM_OF_BRILLIANCE = otyp_by_name('helm of brilliance');
-const GRAY_DRAGON_SCALE_MAIL = otyp_by_name('gray dragon scale mail');
+export const GRAY_DRAGON_SCALE_MAIL = otyp_by_name('gray dragon scale mail');
 const GOLD_DRAGON_SCALE_MAIL = otyp_by_name('gold dragon scale mail');
 const YELLOW_DRAGON_SCALE_MAIL = otyp_by_name('yellow dragon scale mail');
-const GRAY_DRAGON_SCALES = otyp_by_name('gray dragon scales');
+export const GRAY_DRAGON_SCALES = otyp_by_name('gray dragon scales');
 const GOLD_DRAGON_SCALES = otyp_by_name('gold dragon scales');
 const RED_DRAGON_SCALES = otyp_by_name('red dragon scales');
 const WHITE_DRAGON_SCALES = otyp_by_name('white dragon scales');
@@ -1075,7 +1075,7 @@ export function attacks(adtyp, otmp) {
 }
 
 // C ref: obj.h Is_dragon_scales/Is_dragon_mail/Is_dragon_armor.
-function Is_dragon_scales(obj) {
+export function Is_dragon_scales(obj) {
     return obj.otyp >= GRAY_DRAGON_SCALES && obj.otyp <= YELLOW_DRAGON_SCALES;
 }
 function Is_dragon_mail(obj) {

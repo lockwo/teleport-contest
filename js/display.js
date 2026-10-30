@@ -706,6 +706,8 @@ export function canseemon_shared(mtmp) {
     return mon_visible(mtmp);
 }
 
+hooks.canseemon = canseemon_shared;
+
 // C ref: display.h _mon_visible(mon) — (!minvis || See_invisible) && !mundetected.
 // Assumes the caller has established that the hero can see the SQUARE; newsym()
 // relies on this to decide whether to draw the monster glyph at all.
@@ -2967,9 +2969,8 @@ export function hero_glyph() {
     }
     // C ref: display.h display_self() — U_AP_TYPE == M_AP_FURNITURE / M_AP_OBJECT
     // draws cmap_to_glyph / objnum_to_glyph(mappearance) (a hero who ate a mimic
-    // corpse shows as a pile of gold).  This port keeps youmonst's disguise on
-    // game.youmonst (eat.js) or game.u (polyself.js dohide): take whichever is set.
-    const ap = M_AP_TYPE(u) ? u : game.youmonst;
+    // corpse shows as a pile of gold).  The hero's disguise lives on game.u.
+    const ap = u;
     if (M_AP_TYPE(ap) === M_AP_FURNITURE && ap.mappearance != null)
         return { ...furniture_mimic_glyph(ap.mappearance | 0), attr: undefined };
     if (M_AP_TYPE(ap) === M_AP_OBJECT && ap.mappearance != null) {

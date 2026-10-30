@@ -22,7 +22,7 @@ import {
     worn_slot_clear, body_part, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
-    Ring_off, Ring_on, Amulet_off, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
+    Ring_off, Ring_on, Amulet_on, remove_worn_item, setworn_accessory, Amulet_off, Blindf_on, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
     otense, Yname2, makeknown_credit, cmdq_pop, worn_extrinsic, set_worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
@@ -1017,11 +1017,18 @@ export function cancel_doff(obj, slotmask) {
 export async function set_wear(obj) {
     game.initial_don = !obj;
 
-    /* Blindf_on()/Amulet_on() live in invent.js with the accessory slot
-       bookkeeping; C's set_wear() runs them first, but the starting inventory
-       never wears eyewear or an amulet (deferred with those two). */
+    if (!obj ? !!game.ublindf : (obj === game.ublindf)) await Blindf_on(game.ublindf);
     if (!obj ? !!game.uright : (obj === game.uright)) await Ring_on(game.uright);
     if (!obj ? !!game.uleft : (obj === game.uleft)) await Ring_on(game.uleft);
+    if (!obj ? !!game.uamul : (obj === game.uamul)) {
+        /* C ref: do_wear.c:966-969 Amulet_on() begins with remove_worn_item() and
+           setworn() itself; for an already-worn amulet that is a full
+           Amulet_off() (with its off_msg) followed by re-wearing. */
+        const amul = game.uamul;
+        await remove_worn_item(amul, false);
+        setworn_accessory(amul, W_AMUL);
+        await Amulet_on(amul);
+    }
 
     if (!obj ? !!game.uarmu : (obj === game.uarmu)) await Shirt_on();
     if (!obj ? !!game.uarm : (obj === game.uarm)) await Armor_on();

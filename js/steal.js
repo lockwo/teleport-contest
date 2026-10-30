@@ -20,7 +20,7 @@ import { monnear } from './dogmove.js';
 import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
     AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
-import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware } from './const.js';
+import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware, TT_BURIEDBALL, W_WEAPONS } from './const.js';
 // C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
 // shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
 import { nomul, stop_occupation } from './hack.js';
@@ -28,7 +28,7 @@ import { update_topl, urgent_topl } from './display.js';
 import { Blind } from './vision.js';
 import { canspotmon, Monnam } from './uhitm.js';
 import { Some_Monnam, Adjmonnam } from './do_name.js';
-import { add_to_minv } from './makemon.js';
+import { add_to_minv, mpickobj as mm_mpickobj } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
@@ -77,24 +77,12 @@ export function unresponsive() {
 }
 
 // C ref: steal.c mpickobj(mtmp, otmp) — put a just-taken object into the
-// monster's inventory.  Returns 1 if otmp was freed by a merge.  No RNG.
+// monster's inventory.  Returns 1 if otmp was freed by a merge.  No RNG.  The
+// one implementation lives in makemon.js (also used for starting inventory).
 export function mpickobj(mtmp, otmp) {
     if (!otmp) return 1;
-    // uball/uchain, gt.thrownobj/gk.kickedobj and the shop-bill and
-    // light-source cases are all inert for the thefts these sessions see.
-    otmp.no_charge = 0;
-    if (!mtmp.mtame) {
-        // unknow_object() when the thief can't be seen: the covered thefts are
-        // all in plain sight, so the hero's knowledge of the item survives.
-        if (otmp.how_lost === LOST_THROWN) otmp.how_lost = LOST_STOLEN;
-        else if (otmp.how_lost === LOST_DROPPED) otmp.how_lost = LOST_NONE;
-    }
-    return add_to_minv(mtmp, otmp);       /* 1: otmp merged and was freed */
+    return mm_mpickobj(mtmp, otmp);
 }
-// C ref: obj.h how_lost values used by mpickobj's autopickup bookkeeping.
-// obj.h:481-484 — LOST_NONE 0, LOST_THROWN 1, LOST_DROPPED 2, LOST_STOLEN 3.
-// LOST_DROPPED was 3, which is LOST_STOLEN: dropped objects were bookkept as stolen.
-const LOST_THROWN = 1, LOST_DROPPED = 2;
 
 // C ref: steal.c steal(mtmp, objnambuf) — a monster steals one item from the
 // hero.  Returns 1 when something was taken (or at least when the thief should
@@ -108,8 +96,7 @@ export async function steal(mtmp, objnambuf) {
     let named = 0, retrycnt = 0;
     const monkey_business = is_animal(mtmp.data);
     const seen = canspotmon(mtmp);
-    // Punished (ball & chain) never applies to the covered heroes.
-    const was_punished = false;
+    const was_punished = !!u.uball;
 
     if (objnambuf) objnambuf.value = '';
     /* true if successful on first of two attacks */
@@ -122,9 +109,19 @@ export async function steal(mtmp, objnambuf) {
     // the turns a thief strikes in the covered sessions.
 
     const nothing_to_steal = async () => {
-        // The Punished / buried-ball branches need a ball & chain, which the
-        // covered heroes never carry.
-        if (Blind()) {
+        /* nymphs might target uchain if invent is empty; monkeys won't;
+           hero becomes unpunished but nymph ends up empty handed */
+        if (u.uball && !monkey_business && rn2(4)) {
+            /* uball is not carried (uchain never is) */
+            await worn_item_removal(mtmp, u.uchain);
+        } else if (u.utrap && u.utraptype === TT_BURIEDBALL
+                   && !monkey_business && !rn2(4)) {
+            /* buried ball is not tracked via 'uball' and there is no chain
+               at all (hence no uchain to take off) */
+            await update_topl(`${Monnambuf} takes off your unseen chain.`);
+            const { openholdingtrap } = await import('./trap.js');
+            await openholdingtrap(game.u, { value: false });
+        } else if (Blind()) {
             await update_topl('Somebody tries to rob you, but finds nothing to steal.');
         } else if (inv_cnt(true) > inv_cnt(false)) {
             await update_topl(`${Monnambuf} tries to rob you, but isn't interested in gold.`);
@@ -199,9 +196,15 @@ export async function steal(mtmp, objnambuf) {
 
     /* animals can't overcome curse stickiness nor unlock chains */
     if (monkey_business) {
-        const ostuck = ((otmp.cursed && otmp.owornmask)
-            || (otmp === game.uright && welded(game.uwep))
-            || (otmp === game.uleft && welded(game.uwep) && bimanual(game.uwep)));
+        let ostuck;
+        if (otmp === u.uball)
+            ostuck = true; /* effectively worn; curse is implicit */
+        else if (otmp === game.uquiver || (otmp === game.uswapwep && !u.twoweap))
+            ostuck = false; /* not really worn; curse doesn't matter */
+        else
+            ostuck = ((otmp.cursed && otmp.owornmask)
+                || (otmp === game.uright && welded(game.uwep))
+                || (otmp === game.uleft && welded(game.uwep) && bimanual(game.uwep)));
         if (ostuck || !can_carry(mtmp, otmp)) return await cant_take();
     }
 
@@ -274,14 +277,24 @@ export async function steal(mtmp, objnambuf) {
         }
         /* the blindfold might have just been stolen; refresh the cached name */
         if (!seen && canspotmon(mtmp)) Monnambuf = Monnam(mtmp);
-    } else if (otmp.owornmask) { /* weapon (ball & chain never applies here) */
-        await worn_item_removal(mtmp, otmp);
+    } else if (otmp.owornmask) { /* weapon or ball&chain */
+        let item = otmp;
+        if (otmp === u.uball) /* non-Null uball implies non-Null uchain */
+            item = u.uchain; /* yields a more accurate 'takes off' message */
+        await worn_item_removal(mtmp, item);
+        /* if we switched from uball to uchain for the preface message,
+           then unpunish() took place and both those pointers are now Null;
+           if uball was also wielded or quivered, the corresponding weapon
+           pointer hasn't been cleared yet; do that, with no preface message
+           this time */
+        if (((otmp.owornmask || 0) & W_WEAPONS) !== 0)
+            await remove_worn_item(otmp, false);
     }
 
     /* do this before removing it from inventory */
     if (objnambuf) objnambuf.value = yname(otmp);
     /* set mavenge so knights don't suffer an alignment penalty in retaliation */
-    if (!was_punished) mtmp.mavenge = 1;    /* !Conflict: never in these sessions */
+    if (!(was_punished && !u.uball)) mtmp.mavenge = 1;    /* !Conflict: never in these sessions */
 
     freeinv(otmp);
 

@@ -70,7 +70,7 @@ import { resists_blnd_u } from './mhitu.js';
 import { mon_has_special, mon_has_amulet } from './monspecial.js';
 import { inhishop } from './shk.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -1304,10 +1304,23 @@ export async function use_defensive(mtmp) {
         if (!stway) return 0;
         if ((game.u?.uz?.dlevel ?? 1) === 1 && (game.u?.uz?.dnum ?? 0) === 0)
             return await mon_escape(mtmp, vismon);
-        if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes upstairs!`); }
-        await migrate_to_level(mtmp,
-            ledger_no(stway.tolev),
-            MIGR_STAIRS_DOWN, null);
+        const { In_hell, dunlevs_in_dungeon } = await import('./dungeon.js');
+        if (In_hell(game.u.uz) && mon_has_amulet(mtmp) && !rn2(4)
+            && (game.u.uz.dlevel < dunlevs_in_dungeon(game.u.uz) - 3)) {
+            if (vismon) {
+                set_msg_mon(mtmp);
+                await update_topl(`As ${mon_nam(mtmp)} climbs the stairs, a mysterious force`
+                                  + ` momentarily surrounds ${mhim(mtmp)}...`);
+            }
+            /* simpler than for the player; this will usually be the Wizard */
+            await migrate_to_level(mtmp, ledger_no(game.u.uz) + 1,
+                                   MIGR_RANDOM, null);
+        } else {
+            if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes upstairs!`); }
+            await migrate_to_level(mtmp,
+                ledger_no(stway.tolev),
+                MIGR_STAIRS_DOWN, null);
+        }
         return 2;
     }
     case MUSE_DOWNSTAIRS: {
@@ -1805,7 +1818,17 @@ async function mbhitm(mtmp, otmp, hits_you) {
             if (game.zap_oseen) makeknown(OT().WAN_TELEPORTATION);
             break;
         }
-        if (!await tele_restrict(mtmp)) await rloc(mtmp, RLOC_MSG);
+        /* for consistency with zap.c, don't identify */
+        {
+            const { in_rooms } = await import('./shkroom.js');
+            const { TEMPLE } = await import('./const.js');
+            if (mtmp.ispriest && in_rooms(mtmp.mx, mtmp.my, TEMPLE)[0]) {
+                if (cansee(mtmp.mx, mtmp.my)) {
+                    set_msg_mon(mtmp);
+                    await update_topl(`${Monnam(mtmp)} resists the magic!`);
+                }
+            } else if (!await tele_restrict(mtmp)) await rloc(mtmp, RLOC_MSG);
+        }
         break;
     case OT().WAN_UNDEAD_TURNING: {
         const Z = await import('./zap.js');
@@ -2350,6 +2373,18 @@ export async function use_misc(mtmp) {
         await mquaffmsg(mtmp, otmp);
         if (otmp.cursed) {
             if (Can_rise_up(mtmp.mx, mtmp.my, game.u?.uz)) {
+                const { get_level } = await import('./do.js');
+                const tolevel = get_level(depth(game.u.uz) - 1);
+                /* insurance against future changes... */
+                if (tolevel.dnum === game.u.uz.dnum && tolevel.dlevel === game.u.uz.dlevel) {
+                    if (vismon) {
+                        set_msg_mon(mtmp);
+                        await update_topl(`${Monnam(mtmp)} looks uneasy.`);
+                        await trycall(otmp);
+                    }
+                    await m_useup(mtmp, otmp);
+                    return 2;
+                }
                 if (vismon) {
                     set_msg_mon(mtmp);
                     await update_topl(`${Monnam(mtmp)} rises up, through the ${
@@ -2357,8 +2392,7 @@ export async function use_misc(mtmp) {
                     await trycall(otmp);
                 }
                 await m_useup(mtmp, otmp);
-                await migrate_to_level(mtmp, ledger_no({ dnum: game.u.uz.dnum,
-                    dlevel: (game.u?.uz?.dlevel ?? 1) - 1 }), MIGR_RANDOM, null);
+                await migrate_to_level(mtmp, ledger_no(tolevel), MIGR_RANDOM, null);
                 return 2;
             }
             if (vismon) {
@@ -2481,8 +2515,10 @@ export async function use_misc(mtmp) {
         if (!obj) break; /* shouldn't happen after find_misc() */
 
         const the_weapon = the_(xname(obj));
-        let hand = 'hand';
-        if (bimanual(obj)) hand = 'hands';
+        const { body_part, remove_worn_item, freeinv } = await import('./invent.js');
+        const { makeplural } = await import('./plural.js');
+        let hand = body_part(HAND);
+        if (bimanual(obj)) hand = makeplural(hand);
 
         if (vismon) {
             set_msg_mon(mtmp);
@@ -2508,7 +2544,8 @@ export async function use_misc(mtmp) {
                hero's feet instead */
             where_to = 2;
         }
-        hero_unwield(obj);
+        await remove_worn_item(obj, false);
+        freeinv(obj);
         switch (where_to) {
         case 1: /* onto floor beneath mon */
             set_msg_mon(mtmp);
@@ -2547,21 +2584,6 @@ export async function use_misc(mtmp) {
 // (every zombie/mummy/lich answered yes), the literal 24 commented "S_DEMON"
 // (24 is S_XAN; S_DEMON is 56, and C tests the M2_DEMON flag anyway), the name
 // "imp" in place of `mlet == S_IMP && != PM_TENGU`, and no is_vampshifter arm.
-// C ref: invent.c remove_worn_item() + freeinv() for the hero's wielded weapon.
-function hero_unwield(obj) {
-    // same slot-location fix as welded_hero(): clearing u.uwep left game.uwep
-    // still pointing at an object that had just been removed from invent.
-    // C ref: worn.c remove_worn_item() -> wield.c uwepgone(), which also sets
-    // gu.unweapon so the next melee swing prints "You begin bashing monsters
-    // with your bare hands." (uhitm.c:539).
-    if (game.uwep === obj) { game.uwep = null; game.unweapon = true; }
-    if (game.uswapwep === obj) game.uswapwep = null;
-    obj.owornmask = 0;
-    const inv = game.invent || [];
-    const i = inv.indexOf(obj);
-    if (i >= 0) inv.splice(i, 1);
-    obj.where = 0; /* OBJ_FREE: freeinv() */
-}
 /* ------------------------------------------------------------------------ *
  * muse.c:2630 you_aggravate(mtmp)
  * ------------------------------------------------------------------------ */

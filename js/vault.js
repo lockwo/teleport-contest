@@ -791,12 +791,13 @@ export async function invault() {
         await mongone(guard);
         return;
     }
-    const ap_obj = game.youmonst?.m_ap_type === 'obj';
+    const ap_obj = (u.m_ap_type | 0) === 2; /* U_AP_TYPE == M_AP_OBJECT */
     if (ap_obj || u.uundetected) {
-        if (ap_obj && game.youmonst.mappearance !== 'gold piece') {
-            if (!Deaf())
-                await verbalize(`Hey!  Who left that ${
-                    game.youmonst.mappearance || 'thing'} in here?`);
+        if (ap_obj && u.mappearance !== 438 /* GOLD_PIECE */) {
+            if (!Deaf()) {
+                const { mimic_obj_name } = await import('./objnam.js');
+                await verbalize(`Hey!  Who left that ${mimic_obj_name(u)} in here?`);
+            }
         }
         /* You're mimicking some object or you're hidden. */
         await update_topl(`Puzzled, ${mhe(guard)} turns around and leaves.`);

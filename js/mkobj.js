@@ -2061,10 +2061,10 @@ export function place_object(otmp, x, y) {
     otmp.ox = x; otmp.oy = y; otmp.where = OBJ_FLOOR;
     otmp.ocarry = null; otmp.ocontainer = null; /* obj_no_longer_held */
     stamp_fobj(otmp);
-    // C: `if (otmp->no_charge && !costly_spot(x,y) && !costly_adjacent(...))
-    // otmp->no_charge = 0;`  shk.js owns costly_spot; leaving no_charge set
-    // outside a shop is the conservative half of this (it only suppresses a
-    // bill), so it is deliberately not guessed at here.
+    // C: `if (otmp->no_charge && !costly_spot(x,y) && !costly_adjacent(
+    // find_objowner(otmp, x, y), x, y)) otmp->no_charge = 0;` -- shk.js
+    // registers the test (it cannot be imported here).
+    if (otmp.no_charge && hooks.no_charge_off_shop?.(otmp, x, y)) otmp.no_charge = 0;
     if (otmp.timed) obj_timer_checks(otmp, x, y, 0);
     return otmp;
 }

@@ -2222,10 +2222,12 @@ async function dog_attack_mon(mtmp, mtmp2, omx, omy, after, nx, ny) {
     // own FIXME, means "not at all": `ranged_only` always falls through to the
     // same `continue`).  The rn2(10) rolls are real and are drawn only after the
     // species test short-circuits, so they must be emitted in the same order.
-    if ((mtmp2.data?.name === 'floating eye' && rn2(10)
-         && mtmp.mcansee !== 0 && haseyes(mtmp.data) && mtmp2.mcansee !== 0
-         && (!mtmp2.minvis || perceives_flag(mtmp.data))
-         /* mon_reflects(): no pet in the corpus carries a reflecting item */)
+    let eye_blocks = false;
+    if (mtmp2.data?.name === 'floating eye' && rn2(10)
+        && mtmp.mcansee !== 0 && haseyes(mtmp.data) && mtmp2.mcansee !== 0
+        && (!mtmp2.minvis || perceives_flag(mtmp.data)))
+        eye_blocks = !(await (await import('./muse.js')).mon_reflects(mtmp, null));
+    if (eye_blocks
         || (mtmp2.data?.name === 'gelatinous cube' && rn2(10))
         || (touch_petrifies(mtmp2.data) && !resists_ston(mtmp))) {
         return null;

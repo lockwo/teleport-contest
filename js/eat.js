@@ -1686,8 +1686,13 @@ async function fpostfx(otmp) {
     const u = game.u;
     switch (otmp.otyp) {
     case SPRIG_OF_WOLFSBANE:
-        // C: you_unwere(TRUE) when the hero is a lycanthrope; the port has no
-        // u.ulycn source.
+        {
+            const { is_were_flag } = await import('./monflags_data.js');
+            if (ismnum(u?.ulycn ?? -1) || is_were_flag(_invent?.youmonst_data_pub())) {
+                const { you_unwere } = await import('./polyself.js');
+                await you_unwere(true);
+            }
+        }
         break;
     case CARROT:
         // C ref: eat.c fprefx() — make_blinded((long) u.ucreamed, TRUE): a
@@ -1731,33 +1736,55 @@ async function fpostfx(otmp) {
     case LUMP_OF_ROYAL_JELLY:
         // C: "This stuff seems to be VERY healthy!" — gainstr then rnd(20) HP,
         // with a 1-in-17 max-HP bump.  All three draws are unconditional.
+        {
+            const _pi = await import('./polyself.js');
+            if (u && _invent?.youmonst_data_pub()?.pmidx === name_to_pmidx('killer bee')
+                && !(u.uprops?.HUnchanging || u.uprops?.Unchanging)
+                && await _pi.polymon(name_to_pmidx('queen bee')))
+                break;
+        }
         await gainstr(otmp, 1, true);
         if (u) {
-            u.uhp = (u.uhp || 0) + (otmp.cursed ? -rnd(20) : rnd(20));
-            if (u.uhp > u.uhpmax) {
-                if (!rn2(17)) {
-                    u.uhpmax++;
-                    if ((u.uhpmax || 0) > (u.uhppeak || 0)) u.uhppeak = u.uhpmax;
+            const { setuhpmax } = await import('./exper.js');
+            if (u.Upolyd) {
+                u.mh = (u.mh || 0) + (otmp.cursed ? -rnd(20) : rnd(20));
+                game.botl = true;
+                if (u.mh > u.mhmax) {
+                    if (!rn2(17)) setuhpmax((u.mhmax | 0) + 1, false);
+                    u.mh = u.mhmax;
+                } else if (u.mh <= 0) {
+                    await (await import('./polyself.js')).rehumanize();
                 }
-                u.uhp = u.uhpmax;
-            } else if (u.uhp <= 0) {
-                game._poisoned_death = true;   /* done(POISONING) unported */
+            } else {
+                u.uhp = (u.uhp || 0) + (otmp.cursed ? -rnd(20) : rnd(20));
+                game.botl = true;
+                if (u.uhp > u.uhpmax) {
+                    if (!rn2(17)) setuhpmax((u.uhpmax | 0) + 1, false);
+                    u.uhp = u.uhpmax;
+                } else if (u.uhp <= 0) {
+                    const { done } = await import('./end.js');
+                    const { POISONING, KILLED_BY_AN } = await import('./const.js');
+                    const { formatkiller } = await import('./topten.js');
+                    game.killer = { ...(game.killer || {}), name: 'rotten lump of royal jelly', format: KILLED_BY_AN };
+                    game._killer_name = formatkiller(256, POISONING, false);
+                    await done(POISONING);
+                }
             }
             // C: if (!cursed) heal_legs(0) — wounded legs are healed.
-            if (!otmp.cursed && u.uprops?.Wounded_legs) {
-                u.uprops.Wounded_legs = 0;
-                if (u.atemp?.a && (u.atemp.a[A_DEX] || 0) < 0)
-                    u.atemp.a[A_DEX]++;
-            }
+            if (!otmp.cursed) await (await import('./trap.js')).heal_legs(0);
         }
         break;
     case EGG:
         // C: a cockatrice/chickatrice egg petrifies the eater (make_stoned(5)).
         if (ismnum(otmp.corpsenm) && flesh_petrifies(otmp.corpsenm)) {
-            if (u && !u.uprops?.Stoned) {
-                u.uprops = u.uprops || {};
-                u.uprops.Stoned = 5;
-                game._delayed_killer = `${corpse_mon_name(otmp.corpsenm)} egg`;
+            if (!stone_resistance_eat()
+                && !(poly_when_stoned_eat()
+                     && await (await import('./polyself.js')).polymon(name_to_pmidx('stone golem')))) {
+                if (u && !u.uprops?.Stoned) {
+                    u.uprops = u.uprops || {};
+                    u.uprops.Stoned = 5;
+                    game._delayed_killer = `${corpse_mon_name(otmp.corpsenm)} egg`;
+                }
             }
         }
         break;
@@ -1896,8 +1923,14 @@ async function maybe_cannibal(pm, allowmsg) {
     const ulycn = game.u?.ulycn;
     const cannibalLycn = ismnum(ulycn)
         && (await import('./mon.js')).were_beastie(pm) === ulycn;
-    if (!CANNIBAL_ALLOWED() && (your_race(pm) || cannibalLycn)) {
-        if (allowmsg) await update_topl('You cannibal!  You will regret this!');
+    const polySame = !!game.u?.Upolyd
+        && (await import('./dogmove.js')).same_race(hero_data_eat(), monster_by_pmidx(pm));
+    if (!CANNIBAL_ALLOWED() && (your_race(pm) || polySame || cannibalLycn)) {
+        if (allowmsg) {
+            if (game.u?.Upolyd && your_race(pm))
+                await update_topl('You have a bad feeling deep inside.');
+            await update_topl('You cannibal!  You will regret this!');
+        }
         const u = game.u;
         if (u) {
             u.uprops = u.uprops || {};
@@ -2127,9 +2160,8 @@ async function cpostfx(pm) {
             game._eatmbuf = buf;
             game.nomovemsg = buf;
             game.afternmv = eatmdone;
-            const ym = (game.youmonst = game.youmonst || {});
-            ym.m_ap_type = 'obj';
-            ym.mappearance = hallu ? ORANGE : GOLD_PIECE;
+            u.m_ap_type = 2; /* M_AP_OBJECT */
+            u.mappearance = hallu ? ORANGE : GOLD_PIECE;
             const { newsym } = await import('./display.js');
             newsym(u.ux, u.uy);
         }
@@ -2587,7 +2619,7 @@ const GLOB_OF_GREEN_SLIME = 273;
 const TIN_OPENER = 239, DAGGER = 34, ELVEN_DAGGER = 35, ORCISH_DAGGER = 36,
       SILVER_DAGGER = 37, ATHAME = 38, KNIFE = 40, STILETTO = 41,
       CRYSKNIFE = 43, AXE = 44, PICK_AXE = 259;
-const TRIDENT = 33, FLINT = 473, LEASH = 236, SCR_SCARE_MONSTER = 326;
+const TRIDENT = 33, FLINT = 473, LEASH = 236, SCR_SCARE_MONSTER = 326, SCR_MAIL = 364;
 const RIN_ADORNMENT = 173, RIN_GAIN_STRENGTH = 174, RIN_GAIN_CONSTITUTION = 175,
       RIN_INCREASE_ACCURACY = 176, RIN_INCREASE_DAMAGE = 177,
       RIN_PROTECTION = 178, RIN_SUSTAIN_ABILITY = 182, RIN_LEVITATION = 183,
@@ -2728,10 +2760,8 @@ export async function eatmdone() {
         if (game.nomovemsg === game._eatmbuf) game.nomovemsg = null;
         game._eatmbuf = null;
     }
-    // C: U_AP_TYPE == gy.youmonst.m_ap_type.  display.js keys a disguised
-    // monster off `m_ap_type === 'obj'`; the HERO's appearance has no
-    // representation yet, so this only fires once game.youmonst exists.
-    const ym = game.youmonst;
+    // C: U_AP_TYPE == gy.youmonst.m_ap_type, kept on game.u (numeric M_AP_*).
+    const ym = game.u;
     if (ym && ym.m_ap_type) {
         ym.m_ap_type = 0;                      /* M_AP_NOTHING */
         const { newsym } = await import('./display.js');
@@ -2745,12 +2775,12 @@ export async function eatmdone() {
 // message and the object the hero appears as.  No RNG.
 export async function eatmupdate() {
     if (!game._eatmbuf || game.nomovemsg !== game._eatmbuf) return;
-    const ym = game.youmonst;
+    const ym = game.u;
     const Halluc = !!game.u?.uhallu;
     let altmsg = null, altapp = 0;
     // C: is_obj_mappear(&gy.youmonst, ORANGE) — an orange is the HALLUCINATORY
     // appearance, a gold piece the normal one.
-    const mappear = (otyp) => !!ym && ym.m_ap_type === 'obj'
+    const mappear = (otyp) => !!ym && ym.m_ap_type === 2
                               && ym.mappearance === otyp;
     if (mappear(ORANGE) && !Halluc) {
         altmsg = 'You now prefer mimicking yourself.';
@@ -3896,7 +3926,10 @@ export async function eatspecial() {
         return;
     }
     if (oc_material(otmp.otyp) === PAPER) {
-        if (otmp.otyp === SCR_SCARE_MONSTER)
+        if (otmp.otyp === SCR_MAIL)
+            /* no nutrition */
+            await pline('This junk mail is less than satisfying.');
+        else if (otmp.otyp === SCR_SCARE_MONSTER)
             /* to eat a scroll, the hero is polymorphed into a monster */
             await pline(`Yuck${otmp.blessed ? '!' : '.'}`);
         else if (otmp.oclass === SCROLL_CLASS
@@ -3928,13 +3961,16 @@ export async function eatspecial() {
         await exercise(A_CON, true);
     }
 
-    // C: uwepgone()/uqwepgone()/uswapwepgone() — none is exported by this port;
-    // clearing the slot is the observable part.
-    if (otmp === game.uwep && (otmp.quan | 0) === 1) game.uwep = null;
-    if (otmp === game.uquiver && (otmp.quan | 0) === 1) game.uquiver = null;
-    if (otmp === game.uswapwep && (otmp.quan | 0) === 1) game.uswapwep = null;
+    const { uwepgone, uqwepgone, uswapwepgone } = await import('./wield.js');
+    if (otmp === game.uwep && (otmp.quan | 0) === 1) await uwepgone();
+    if (otmp === game.uquiver && (otmp.quan | 0) === 1) uqwepgone();
+    if (otmp === game.uswapwep && (otmp.quan | 0) === 1) uswapwepgone();
 
-    // C: uball/uchain -> unpunish(); the port has no ball & chain.
+    if (otmp === game.u?.uball) (await import('./read.js')).unpunish();
+    if (otmp === game.u?.uchain) {
+        (await import('./read.js')).unpunish(); /* but no useup() */
+        return;
+    }
     if (carried(otmp)) _invent.useup(otmp);
     else await _invent.useupf(otmp, 1);
 }

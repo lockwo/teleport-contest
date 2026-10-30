@@ -923,9 +923,15 @@ async function flip_through_book(obj) {
     await _display.pline(
         `You flip through the pages of ${thesimpleoname(obj)}.`);
     if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
-        // Deaf is never set for these heroes.
-        await _display.You_hear(`the pages make an unpleasant ${
-            hallu ? 'chuckling' : 'rustling'} sound.`);
+        if (!Deaf()) {
+            await _display.You_hear(`the pages make an unpleasant ${
+                hallu ? 'chuckling' : 'rustling'} sound.`);
+        } else if (!blind) {
+            const { hcolor } = await import('./do_name.js');
+            await _display.You_see(`the pages glow faintly ${hcolor('red')}.`);
+        } else {
+            await _display.You_feel('the pages tremble.');
+        }
     } else if (blind) {
         await _display.pline(`The pages feel ${
             hallu ? 'freshly picked' : 'rough and dry'}.`);

@@ -720,11 +720,21 @@ export async function gulpmu(mtmp, mattk) {
                 : enfolds(mtmp.data) ? 'folds itself around you' : 'engulfs you'}!`);
         }
         await (await import('./hack.js')).stop_occupation();
+        await (await import('./cmd.js')).reset_occupations(); /* behave as if you had moved */
 
         if (u.utrap) {
             await emitU(`You are released from the ${
                 u.utraptype === TT_WEB ? 'web' : 'trap'}!`);
-            u.utrap = 0;
+            await (await import('./trap.js')).reset_utrap_fu(false);
+        }
+
+        {
+            const { number_leashed, unleash_all } = await import('./apply.js');
+            const nleash = number_leashed();
+            if (nleash > 0) {
+                await emitU(`The ${nleash > 1 ? 'leashes' : 'leash'} ${nleash > 1 ? 'snap' : 'snaps'} loose.`);
+                unleash_all();
+            }
         }
         // C ref: mhitu.c:1357 — if the HERO is polymorphed into a
         // touch-petrifies form (cockatrice/chickatrice) and the engulfer has
@@ -1468,9 +1478,20 @@ export async function doseduce(mon) {
 
     const { rloc, tele_restrict, RLOC_MSG } = await import('./teleport.js');
     if (game.uarm || game.uarmc) {
-        if (!Deaf())
-            await emitU(`"You're such a ${game.flags?.female ? 'sweet lady' : 'nice guy'}; I wish..."`);
-        else if (seewho)
+        if (!Deaf()) {
+            // C ref: mhitu.c:25 ld() — true only on Feb 29 (mmdd == 0xe5).
+            const { yyyymmdd, getyear } = await import('./calendar.js');
+            if (!((yyyymmdd(0) - getyear() * 10000) === 0xe5 && mon.female)) {
+                await emitU(`"You're such a ${game.flags?.female ? 'sweet lady' : 'nice guy'}; I wish..."`);
+            } else {
+                const invm = await import('./invent.js');
+                const { is_gloves } = await import('./do_wear.js');
+                const yourgloves = game.uarmg
+                    || invm.inventoryArray().find((o) => is_gloves(o)) || null;
+                if (yourgloves) (await import('./o_init.js')).observe_object(yourgloves);
+                await emitU(`"Well, then you owe me ${yourgloves ? invm.yname(yourgloves) : 'twelve pairs of gloves'}${yourgloves ? ' and eleven more pairs of gloves' : ''}!"`);
+            }
+        } else if (seewho)
             await emitU(`${Monnam(mon)} appears to sigh.`, mon);
         if (!await tele_restrict(mon)) await rloc(mon, RLOC_MSG);
         return 1;
@@ -1687,6 +1708,11 @@ export function ranged_attk_assessed(mtmp, assessfunc) {
 // one, and AD_ACID adds three more rolls — js/monmove.js's hitmu() short-cuts
 // this to "returns M_ATTK_HIT, no RNG", which is only true for a passive-less
 // hero form.
+async function passive_golemeffects(mtmp, adtyp, tmp) {
+    const { golemeffects } = await import('./mhitm_ad.js');
+    await golemeffects(mtmp, adtyp, tmp, mhitu_ops());
+}
+
 export async function passiveum(olduasmon, mtmp, mattk) {
     const list = mattk_list({ data: olduasmon }) || [];
     let oldu_mattk = null;
@@ -1738,6 +1764,12 @@ export async function passiveum(olduasmon, mtmp, mattk) {
         if (!mres(MR_STONE)
             && (protector === 0
                 || (protector !== ~0 && (wornitems & protector) !== protector))) {
+            const { poly_when_stoned } = await import('./mondata.js');
+            if (poly_when_stoned(mtmp.data)) {
+                const { mon_to_stone } = await import('./mon.js');
+                await mon_to_stone(mtmp);
+                return 1;
+            }
             await emitU(`${Monnam(mtmp)} turns to stone!`, mtmp);
             const { killed } = await import('./uhitm.js');
             game.stoned = true;
@@ -1749,7 +1781,16 @@ export async function passiveum(olduasmon, mtmp, mattk) {
         return M_ATTK_HIT;
     }
     case AD_ENCH:
-        // drain_item(mon_currwep, TRUE) — no message, no RNG.
+        // C: mon_currwep is the weapon used by an AT_WEAP attack on the hero
+        // (reset to null for every other attack); drain_item() draws
+        // obj_resists()'s rn2(100) whenever the weapon has charges to drain.
+        {
+            const mon_currwep = mattk.aatyp === AT_WEAP ? (mtmp.mw || null) : null;
+            if (mon_currwep) {
+                const { drain_item } = await import('./zap.js');
+                await drain_item(mon_currwep, true);
+            }
+        }
         return M_ATTK_HIT;
     default:
         break;
@@ -1776,6 +1817,10 @@ export async function passiveum(olduasmon, mtmp, mattk) {
                     if (Blind()) {
                         await emitU('As a blind floating eye, you cannot defend yourself.');
                     } else {
+                        const { mon_reflects } = await import('./muse.js');
+                        if (await mon_reflects(mtmp,
+                                'Your gaze is reflected by %s %s.'))
+                            return 1;
                         await emitU(`${Monnam(mtmp)} is frozen by your gaze!`, mtmp);
                         paralyze_monst(mtmp, tmp);
                         return M_ATTK_AGR_DONE;
@@ -1789,7 +1834,9 @@ export async function passiveum(olduasmon, mtmp, mattk) {
             return M_ATTK_HIT;
         case AD_COLD:
             if (mres(MR_COLD_L)) {
+                await (await import('./display.js')).shieldeff(mtmp.mx, mtmp.my);
                 await emitU(`${Monnam(mtmp)} is mildly chilly.`, mtmp);
+                await passive_golemeffects(mtmp, AD_COLD, tmp);
                 tmp = 0;
                 break;
             }
@@ -1810,13 +1857,17 @@ export async function passiveum(olduasmon, mtmp, mattk) {
         case AD_STUN:
             if (!mtmp.mstun) {
                 mtmp.mstun = 1;
-                await emitU(`${Monnam(mtmp)} staggers.`);
+                const { stagger_verb } = await import('./uhitm.js');
+                const { makeplural } = await import('./plural.js');
+                await emitU(`${Monnam(mtmp)} ${makeplural(stagger_verb(mtmp.data, 'stagger'))}.`, mtmp);
             }
             tmp = 0;
             break;
         case AD_FIRE:
             if (mres(MR_FIRE)) {
+                await (await import('./display.js')).shieldeff(mtmp.mx, mtmp.my);
                 await emitU(`${Monnam(mtmp)} is mildly warm.`, mtmp);
+                await passive_golemeffects(mtmp, AD_FIRE, tmp);
                 tmp = 0;
                 break;
             }
@@ -1824,7 +1875,9 @@ export async function passiveum(olduasmon, mtmp, mattk) {
             break;
         case AD_ELEC:
             if (mres(MR_ELEC)) {
+                await (await import('./display.js')).shieldeff(mtmp.mx, mtmp.my);
                 await emitU(`${Monnam(mtmp)} is slightly tingled.`, mtmp);
+                await passive_golemeffects(mtmp, AD_ELEC, tmp);
                 tmp = 0;
                 break;
             }

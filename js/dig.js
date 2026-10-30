@@ -430,6 +430,7 @@ export async function mdig_tunnel(mtmp) {
 export async function zap_dig() {
     const u = game.u;
     const lvl = game.level;
+    const { pline: pline_pd } = await import('./display.js');
 
     if (u.uswallow) {
         // C ref: dig.c:1566-1579 — pierce/near-kill the engulfer and get expelled.
@@ -499,8 +500,14 @@ export async function zap_dig() {
     const maze_dig = !!lvl?.flags?.is_maze_lev && !Is_earthlevel(u.uz);
     const dx = u.dx | 0, dy = u.dy | 0;
     let zx = u.ux + dx, zy = u.uy + dy;
-    // pit-dig (zapping laterally while trapped in a pit, u.utraptype==TT_PIT)
-    // is not exercised; pitdig stays FALSE.
+    // C ref: dig.c:1616 — zapping laterally while down in a pit digs one adjacent
+    // pit (3.6.0) instead of tunnelling.
+    let pitdig = false, pitflow = false, diridx = 8, trap_with_u = null;
+    let flow_x = -1, flow_y = -1;
+    if (u.utrap && u.utraptype === TT_PIT && (trap_with_u = t_at(u.ux, u.uy))) {
+        pitdig = true;
+        diridx = xytodir_(dx, dy);
+    }
     let digdepth = rn1(18, 8);
     // C ref: dig.c:1623 tmp_at(DISP_BEAM, cmap_to_glyph(S_digbeam)); the beam
     // glyph itself is display-only, the DISP_END restore is not (see below).
@@ -512,7 +519,39 @@ export async function zap_dig() {
         if (!room) break;
         await tmp_at(zx, zy);
 
-        if (closed_door(zx, zy) || room.typ === SDOOR) {
+        if (pitdig) { /* we are already in a pit if this is true */
+            let adjpit = t_at(zx, zy);
+
+            if (diridx !== DIR_ERR
+                && !conjoined_pits_sync(adjpit, trap_with_u, false)) {
+                digdepth = 0; /* limited to the adjacent location only */
+                if (!(adjpit && is_pit(adjpit.ttyp))) {
+                    const cc = { x: zx, y: zy }, box = { msg: '' };
+                    if (!adj_pit_checks(cc, box)) {
+                        if (box.msg) await pline_pd(box.msg);
+                    } else {
+                        /* this can also result in a pool at zx,zy */
+                        await dighole(true, true, cc);
+                        adjpit = t_at(zx, zy);
+                    }
+                }
+                if (adjpit && is_pit(adjpit.ttyp)) {
+                    const adjidx = DIR_180(diridx);
+
+                    trap_with_u.conjoined = (trap_with_u.conjoined | 0) | (1 << diridx);
+                    adjpit.conjoined = (adjpit.conjoined | 0) | (1 << adjidx);
+                    flow_x = zx;
+                    flow_y = zy;
+                    pitflow = true;
+                }
+                if (is_pool_(zx, zy) || is_lava_(zx, zy)) {
+                    flow_x = zx - dx;
+                    flow_y = zy - dy;
+                    pitflow = true;
+                }
+                break;
+            }
+        } else if (closed_door(zx, zy) || room.typ === SDOOR) {
             // C ref: dig.c:1669 — raze a door / expose+raze a secret door.
             if ((await in_rooms_(zx, zy, SHOPBASE)).length > 0) {
                 const { add_damage } = await import('./shk.js');
@@ -603,6 +642,19 @@ export async function zap_dig() {
     // hero could see; while hallucinating each monster/object redrawn there
     // draws the display RNG.
     await tmp_at(DISP_END, 0);
+
+    // C ref: dig.c:1738 — a pit dug beside a pool/lava (or joined to a flooded
+    // pit) lets the liquid flow into every conjoined pit.
+    if (pitflow && isok(flow_x, flow_y)) {
+        const ttmp = t_at(flow_x, flow_y);
+
+        if (ttmp && is_pit(ttmp.ttyp)) {
+            const filltyp = fillholetyp(ttmp.tx, ttmp.ty, true);
+
+            if (filltyp !== ROOM)
+                await pit_flow(ttmp, filltyp);
+        }
+    }
 
     // C ref: dig.c zap_dig() tail: pay_for_damage() for a shop door or wall hit.
     if (shopdoor || shopwall) {

@@ -31,7 +31,7 @@ import { fobj } from './dogmove.js';
 import { doeat } from './eat.js';
 import { doapply, ECMD } from './apply.js';
 import { dodrink } from './potion.js';
-import { dozap } from './zap.js';
+import { dozap, Known_wwalking, Known_lwalking } from './zap.js';
 import { docast, dovspell } from './spell.js';
 import { doread } from './read.js';
 import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, tty_putstr_text, pg_glyph_at } from './pager.js';
@@ -60,7 +60,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          DBWALL, DRAWBRIDGE_DOWN, STAIRS, LADDER, LA_DOWN,
          FOUNTAIN, SINK, THRONE, GRAVE, ALTAR, AIR, CLOUD,
          A_STR, A_DEX, A_CON, A_WIS, Is_rogue_level,
-         TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR, WEB,
+         TT_BEARTRAP, TT_PIT, TT_WEB, TT_LAVA, TT_INFLOOR, TT_BURIEDBALL, WEB,
          PIT, SPIKED_PIT, STATUE_TRAP, TIP_SWIM, TIP_UNTRAP_MON, TRAPNUM, In_sokoban, ICE,
          is_hole, LANDMINE, HOLE, TRAPDOOR, LEVEL_TELEP, TELEP_TRAP,
          ROLLING_BOULDER_TRAP,
@@ -75,7 +75,8 @@ import { noattacks, attacktype, dmgtype, AT_ENGL, AD_FIRE, AD_RUST, AD_CORR, AT_
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
 // same way muse.js's import of it does.
-import { onscary, dissolve_bars, passes_bars, can_ooze_hero } from './monmove.js';
+import { onscary, dissolve_bars, passes_bars, can_ooze_hero, bad_rock as bad_rock_mon } from './monmove.js';
+import { curr_mon_load } from './mon.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
@@ -95,7 +96,7 @@ import { rloco, dotele } from './teleport.js';
 import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value, add_damage } from './shk.js';
 import { in_rooms, shop_keeper, Stealth } from './shkroom.js';
 import { autopick_testobj, container_at, safe_qbuf } from './pickup.js';
-import { is_drawbridge_wall, is_db_wall, db_under_typ } from './dbridge.js';
+import { is_drawbridge_wall, is_db_wall, db_under_typ, is_pool, is_lava } from './dbridge.js';
 import { bury_objs, still_chewing } from './dig.js';
 import { hit_bars } from './mthrowu.js';
 
@@ -117,7 +118,7 @@ import { selection_new, selection_getbounds,
          set_selection_floodfillchk,
          selection_size_description } from './selvar.js';
 import { carrying, objects_at, inventoryArray,
-         cmdq_add_key, cmdq_pop, cmdq_clear, doperminv, useupf } from './invent.js';
+         cmdq_add_key, cmdq_pop, cmdq_clear, doperminv, useupf, ing_suffix } from './invent.js';
 import { num_spells } from './spell.js';
 import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
@@ -709,17 +710,6 @@ function Is_qstart(uz) {
     return !!lev && lev.dnum === game.quest_dnum && lev.dlevel === 1;
 }
 
-// C ref: hack.c handle_tip(TIP_SWIM) — the first time paranoid_confirm:swim
-// blocks a step into water/lava, remind the player of the 'm' prefix (tracked
-// so it only shows once, via the same game._tips_shown bitmask
-// handle_getpos_tip() in invent.js uses for TIP_GETPOS).
-async function handle_swim_tip() {
-    if (game._tips_shown && (game._tips_shown & (1 << TIP_SWIM))) return;
-    game._tips_shown = (game._tips_shown || 0) | (1 << TIP_SWIM);
-    const { update_topl } = await import('./display.js');
-    await update_topl(`(Tip: use 'm' prefix to step in if you really want to.)`);
-}
-
 // C ref: hack.c swim_move_danger(x,y) — is it dangerous/unwanted for the hero
 // to step onto (x,y) due to water or lava?  A dry<->wet transition onto a
 // *seen*, unimpaired square blocks the move with a message unless the 'm'
@@ -742,17 +732,17 @@ async function swim_move_danger(x, y) {
     if (newtyp !== u_simple_floortyp(u.ux, u.uy) && !stunned && !confused && seenv
         && (pool || lava || liquidWall)) {
         const curTyp = game.level?.at(u.ux, u.uy)?.typ ?? STONE;
-        if (pool || (lava && !IS_LAVA(curTyp)) || liquidWall) {
+        if ((pool && !Known_wwalking()) || (lava && !Known_lwalking() && !IS_LAVA(curTyp))
+            || liquidWall) {
             if (game.context?.nopick) {
-                game._tips_shown = (game._tips_shown || 0) | (1 << TIP_SWIM);
+                game.context.tips = (game.context.tips || 0) | (1 << TIP_SWIM);
                 return false;
             }
             // C ref: hack.c:1911 — ordinary liquid is refused only when
             // paranoid_confirmation includes swim; fluid walls always are.
             if (((game.flags.paranoia_bits ?? 0x0c20) & 0x0400) || liquidWall) {
-                const { update_topl } = await import('./display.js');
-                await update_topl(`You avoid stepping into the ${waterbody_name(x, y)}.`);
-                await handle_swim_tip();
+                await pline(`You avoid ${ing_suffix(u_locomotion('step'))} into the ${waterbody_name(x, y)}.`);
+                await handle_tip(TIP_SWIM);
                 return true;
             }
         }
@@ -836,17 +826,18 @@ function feel_refused_step(x, y, dx, dy) {
 //
 // dx/dy are the C parameters of the same name (the step direction); callers that
 // are not mid-command (mhitm_knockback()) pass their own instead of u.dx/u.dy.
-export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy) {
+export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy,
+                                ux = game.u.ux, uy = game.u.uy) {
     const u = game.u;
     if (!isok(x, y)) return false;
     if (blocksMove(x, y)) return false;
-    if (blocksDiagonalDoor(u.ux, u.uy, x, y, dx, dy)) return false;
+    if (blocksDiagonalDoor(ux, uy, x, y, dx, dy)) return false;
     // C ref: hack.c:1153-1172 — a tight diagonal between two rock/boulder-in-
     // Sokoban squares that cant_squeeze_thru() refuses (mode != DO_MOVE: no
     // message, return FALSE).
-    if (x !== u.ux && y !== u.uy && bad_rock_hero(u.ux, y) && bad_rock_hero(x, u.uy)) {
+    if (x !== ux && y !== uy && bad_rock_hero(ux, y) && bad_rock_hero(x, uy)) {
         if (cant_squeeze_thru_hero()) return false;
-    } else if (x !== u.ux && y !== u.uy && worm_cross(u.ux, u.uy, x, y)) {
+    } else if (x !== ux && y !== uy && worm_cross(ux, uy, x, y)) {
         /* C ref: hack.c:1173 `else if (dx && dy && worm_cross(ux, uy, x, y))` —
            consecutive long worm segments sit on <ux,y> and <x,uy>. */
         return false;
@@ -859,7 +850,7 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy) {
     // direction" probe relies on it: a refused step takes `goto found`
     // (u.dx = u.dy = 0), so domove() spends a turn standing still instead of
     // bumping into avoid_running_into_trap_or_liquid()'s free no-op.
-    if ((game.context?.run || 0) === 8 && !(x === u.ux && y === u.uy)) {
+    if ((game.context?.run || 0) === 8 && !(x === ux && y === uy)) {
         const t = t_at(x, y);
         if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE_CMD) return false;
         const loc = game.level?.at(x, y);
@@ -928,7 +919,7 @@ function avoid_moving_on_liquid(x, y) {
     if ((typ === hereTyp
          || (run < 2 && (!IS_LAVA(typ) || in_air))
          || game.context?.travel)
-        && in_air /* || Known_lwalking || (is_pool && Known_wwalking) */
+        && (in_air || Known_lwalking() || (isPoolTerrain(x, y) && Known_wwalking()))
         && !(typ === WATER || typ === LAVAWALL))
         return false; // liquid is safe to traverse
     if ((isPoolTerrain(x, y) || IS_LAVA(typ)) && (loc?.seenv || 0))
@@ -2937,7 +2928,7 @@ function ACURR(i) { return acurr_eff(i); }
 // decides open vs "resists" (the latter also exercise(A_STR, TRUE) -> rn2(19)).
 // Returns 1 (ECMD_TIME) when a turn elapses, else 0 (ECMD_OK).
 // C ref: lock.c:759 — operating a door first reveals a door-shaped mimic.
-async function stumble_on_door_mimic(x, y) {
+export async function stumble_on_door_mimic(x, y) {
     const mon = m_at(x, y);
     if (mon && M_AP_TYPE(mon) === M_AP_FURNITURE
         && (mon.mappearance === 15 || mon.mappearance === 16)) {
@@ -3064,7 +3055,11 @@ export async function doopen_indir(x, y) {
         return res;
     }
 
-    // verysmall(youmonst): false for the starter roles.
+    if (hero_verysmall()) {
+        await pline("You're too small to pull the door open.");
+        return res;
+    }
+
     // door is known to be CLOSED.
     if (rnl(20) < Math.trunc((acurrstr() + ACURR(A_DEX) + ACURR(A_CON)) / 3)) {
         // C ref: lock.c doopen_indir() — message first, then set the door open,
@@ -3227,7 +3222,10 @@ export async function doclose() {
         await pline('This door is already closed.'); return res;
     }
     if (door.doormask === D_ISOPEN) {
-        // verysmall(youmonst): false for the starter roles.
+        if (hero_verysmall() && !u.usteed) {
+            await pline("You're too small to push the door closed.");
+            return res;
+        }
         // C ref: `if (u.usteed || rn2(25) < (ACURRSTR+DEX+CON)/3)` — a MOUNTED
         // hero shuts the door without rolling at all (|| short-circuits), so
         // drawing rn2(25) while riding put every later draw one out of step.
@@ -3323,6 +3321,7 @@ export async function pick_lock_resume(pick) {
 async function pick_lock_door(pick, cx, cy, door) {
     const resumed = await pick_lock_resume(pick);
     if (resumed !== null) return resumed;
+    if (await pick_lock_unusable(pick)) return PICKLOCK_DID_NOTHING;
     // C ref: lock.c:605 — AUTOUNLOCK_UNTRAP: offer to check the door for a trap
     // before the unlock prompt; 'y' ends the attempt (even if no trap is found),
     // 'q' abandons it, 'n' falls through to "Unlock it with <tool>?".
@@ -3351,7 +3350,7 @@ async function pick_lock_door(pick, cx, cy, door) {
     }
 
     game.xlock = {
-        box: null, door, chance, picktyp: pick.otyp, usedtime: 0, magic_key: false,
+        box: null, door, chance, picktyp: pick.otyp, usedtime: 0, magic_key: is_magic_key(game.u, pick),
     };
     // allmain's shared picklock dispatcher is keyed by this occupation marker;
     game._picklock_box = door;
@@ -3360,13 +3359,30 @@ async function pick_lock_door(pick, cx, cy, door) {
     return 2; // command elapsed a turn
 }
 
+// C ref: lock.c pick_lock():405-412 — refused before any direction prompt or
+// autounlock query when the hero has no hands or is swallowed.  `pick` is null
+// for lock.c's dummypick (AUTOUNLOCK_UNTRAP with no key carried), whose
+// otyp is STRANGE_OBJECT.  Returns true when the attempt was refused.
+export async function pick_lock_unusable(pick) {
+    const u = game.u;
+    if (nohands_youmonst()) {
+        const what = pick ? obj_doname(pick) : 'strange object';
+        await pline(`You can't hold ${what} -- you have no hands!`);
+        return true;
+    } else if (u.uswallow) {
+        const picktyp = pick ? pick.otyp : 0 /* STRANGE_OBJECT */;
+        await pline(`You can't ${picktyp === CREDIT_CARD ? '' : 'lock or '}unlock ${mon_nam(u.ustuck)}.`);
+        return true;
+    }
+    return false;
+}
+
 // C ref: lock.c pick_lock(pick, 0, 0, NULL) — the #apply path for a lock pick /
 // skeleton key / credit card.  get_adjacent_loc() -> getdir() prompts "In what
 // direction?"; the target is a container under the hero (dx==dy==0) or an
 // adjacent door.  Returns a PICKLOCK_* code (doapply maps non-zero -> ECMD_TIME).
-// Unreached-at-these-depths sub-branches (nohands/engulfed, drawbridge locks,
-// credit-card shopkeepers, door-mimics, and the Master-Key trap-disarm) are
-// documented rather than modelled.
+// Unreached-at-these-depths sub-branches (drawbridge locks and credit-card
+// shopkeepers) are documented rather than modelled.
 export async function pick_lock(pick) {
     const u = game.u;
     const picktyp = pick.otyp;
@@ -3375,6 +3391,8 @@ export async function pick_lock(pick) {
     // lock.c:380 — an interrupted previous attempt is resumed, no prompts.
     const resumed = await pick_lock_resume(pick);
     if (resumed !== null) return resumed;
+
+    if (await pick_lock_unusable(pick)) return PICKLOCK_DID_NOTHING;
 
     // get_adjacent_loc(NULL, "Invalid location!", u.ux, u.uy, &cc):
     const dir = await getdir();
@@ -3389,7 +3407,13 @@ export async function pick_lock(pick) {
             await pline("There isn't any sort of lock up there.");
             return PICKLOCK_LEARNED_SOMETHING;
         }
-        // is_lava / is_pool guards: the hero stands on dry floor in these runs.
+        if (is_lava(u.ux, u.uy)) {
+            await pline(`Doing that would probably melt ${(await import('./invent.js')).yname(pick)}.`);
+            return PICKLOCK_LEARNED_SOMETHING;
+        } else if (is_pool(u.ux, u.uy) && !u.uinwater) {
+            await pline(`The ${hliquid('water')} has no lock.`);
+            return PICKLOCK_LEARNED_SOMETHING;
+        }
         // C walks svl.level.objects[x][y] head-first (newest first); this port's
         // level.objects is a flat, push-ordered array, so reverse for that order.
         const pile = (game.level?.objects || [])
@@ -3399,6 +3423,12 @@ export async function pick_lock(pick) {
         for (const otmp of pile) {
             if (!Is_box_otyp(otmp.otyp)) continue;
             count++;
+            // C ref: lock.c pick_lock() — a levitating hero cannot reach the box.
+            if (!can_reach_floor(true)) {
+                const { the } = await import('./objnam.js');
+                await pline(`You can't reach ${the(xname(otmp))} from up here.`);
+                return PICKLOCK_LEARNED_SOMETHING;
+            }
             let verb, it = false;
             if (otmp.obroken) verb = 'fix';
             else if (!otmp.olocked) { verb = 'lock'; it = true; }
@@ -3439,10 +3469,29 @@ export async function pick_lock(pick) {
             return PICKLOCK_LEARNED_SOMETHING; // decided against all boxes
         }
     } else {
-        // Pick the lock in an adjacent door.  (u.utrap TT_PIT guard: unreached.)
+        // C ref: lock.c pick_lock() — no reaching over the rim of a pit (this
+        // used to return PICKLOCK_LEARNED_SOMETHING but #open spends no turn).
+        if (u.utrap && u.utraptype === TT_PIT) {
+            await pline("You can't reach over the edge of the pit.");
+            return PICKLOCK_DID_NOTHING;
+        }
         const mtmp = m_at(cx, cy);
-        if (mtmp && canspotmon(mtmp)) {
-            await pline(`I don't think ${mon_nam(mtmp)} would appreciate that.`);
+        if (mtmp && canseemon_shared(mtmp) && M_AP_TYPE(mtmp) !== M_AP_FURNITURE
+            && M_AP_TYPE(mtmp) !== M_AP_OBJECT) {
+            if (picktyp === CREDIT_CARD
+                && (mtmp.isshk || mtmp.data?.name === 'Oracle')) {
+                await pline('"No checks, no credit, no problem."');
+            } else {
+                await pline(`I don't think ${mon_nam(mtmp)} would appreciate that.`);
+            }
+            return PICKLOCK_LEARNED_SOMETHING;
+        } else if (mtmp && M_AP_TYPE(mtmp) === M_AP_FURNITURE
+                   && (mtmp.mappearance === 15 || mtmp.mappearance === 16)) {
+            /* is_door_mappear(): "The door actually was a <mimic>!" */
+            await stumble_onto_mimic(mtmp);
+            /* mimic might keep the key (50% chance, 10% for PYEC or MKoT) */
+            const { maybe_absorb_item } = await import('./steal.js');
+            await maybe_absorb_item(mtmp, pick, 50, 10);
             return PICKLOCK_LEARNED_SOMETHING;
         }
         const door = game.level?.at(cx, cy);
@@ -3454,7 +3503,10 @@ export async function pick_lock(pick) {
             feel_location(cx, cy);
             const learned = remembered_glyph_sig(door) !== oldglyph
                 || (game.lastseentyp?.[cx]?.[cy] ?? 0) !== oldlastseentyp;
-            await pline(`You ${Blind() ? 'feel' : 'see'} no door there.`);
+            if (is_drawbridge_wall(cx, cy) >= 0)
+                await pline(`You ${Blind() ? 'feel' : 'see'} no lock on the drawbridge.`);
+            else
+                await pline(`You ${Blind() ? 'feel' : 'see'} no door there.`);
             return learned ? PICKLOCK_LEARNED_SOMETHING : PICKLOCK_DID_NOTHING;
         }
         switch (door.doormask) {
@@ -3486,7 +3538,7 @@ export async function pick_lock(pick) {
         chance: ch,
         picktyp,
         usedtime: 0,
-        magic_key: false,
+        magic_key: is_magic_key(game.u, pick),
     };
     // C ref: lock.c pick_lock() ends with set_occupation(picklock, ...) and
     // svc.context.move = 0 — the first rn2(100) is NOT rolled here; the move
@@ -3944,7 +3996,11 @@ async function domove_core(dx, dy, attemptTracked) {
         // never gets to domove_swap_with_pet().
         if (u.utrap) {
             const moved = await trapmove(newx, newy);
-            if (!u.utrap) game.botl = true;
+            if (!u.utrap) {
+                game.botl = true;
+                /* reset_utrap(TRUE): might resume levitation or flight */
+                await (await import('./trap.js')).reset_utrap_fu(true);
+            }
             if (!moved) {
                 game.context.move = 1;
                 return;
@@ -4223,7 +4279,11 @@ async function domove_core(dx, dy, attemptTracked) {
     // trapped hero never relocates, keeping its dochug is_wanderer rn2(4) live).
     if (u.utrap) {
         const moved = await trapmove(newx, newy);
-        if (!u.utrap) game.botl = true; // reset_utrap(TRUE) — freed this turn
+        if (!u.utrap) {
+            game.botl = true;
+            /* reset_utrap(TRUE): might resume levitation or flight */
+            await (await import('./trap.js')).reset_utrap_fu(true);
+        }
         if (!moved) {
             game.context.move = 1; // the struggle elapses a turn
             return;
@@ -4939,15 +4999,47 @@ async function trapmove(x, y) {
         u.umoved = true;
         return false;
     case TT_INFLOOR:
-        // C ref: hack.c:1631 — stuck in the floor (buried-ball not modeled).
-        if (--u.utrap) {
-            if (game.flags?.verbose !== false)
-                await Norep_topl(predicament_msg(`stuck in the ${surface(u.ux, u.uy)}`));
+    case TT_BURIEDBALL: {
+        // C ref: hack.c:1631 — stuck in the floor, or tethered to the buried ball.
+        const anchored = (u.utraptype === TT_BURIEDBALL);
+        if (anchored) {
+            const { buried_ball } = await import('./dig.js');
+            const cc = { x: u.ux, y: u.uy };
+            /* can move normally within radius 1 of buried ball */
+            if (buried_ball(cc) && dist2(x, y, cc.x, cc.y) <= 2) {
+                /* ugly hack: we need to issue some message here
+                   in case "you are chained to the buried ball"
+                   was the most recent message given, otherwise
+                   our next attempt to move out of tether range
+                   after this successful move would have its
+                   can't-do-that message suppressed by Norep */
+                if (game.flags?.verbose !== false)
+                    await Norep_topl("You move within the chain's reach.");
+                return true;
+            }
         }
-        else
-            await pline(u.usteed ? `${YMonnam(u.usteed)} finally lurches free.`
-                                 : 'You finally wriggle free.');
+        if (--u.utrap) {
+            if (game.flags?.verbose !== false) {
+                const predicament = anchored ? 'chained to the' : 'stuck in the';
+                const culprit = anchored ? 'buried ball' : surface(u.ux, u.uy);
+                if (u.usteed) {
+                    await Norep_topl(anchored
+                        ? `You and ${y_monnam(u.usteed)} are ${predicament} ${culprit}.`
+                        : `${YMonnam(u.usteed)} is ${predicament} ${culprit}.`);
+                } else
+                    await Norep_topl(`You are ${predicament} ${culprit}.`);
+            }
+        } else {
+            await pline(u.usteed
+                ? `${YMonnam(u.usteed)} finally ${!anchored ? 'lurches' : 'wrenches the ball'} free.`
+                : `You finally ${!anchored ? 'wriggle' : 'wrench the ball'} free.`);
+            if (anchored) {
+                const { buried_ball_to_punishment } = await import('./dig.js');
+                await buried_ball_to_punishment();
+            }
+        }
         return false;
+    }
     default:
         // Unknown trap type: struggle in place without consuming RNG.
         if (u.utrap) u.utrap--;
@@ -5937,15 +6029,6 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // C ref: hack.c:2120-2161 domove_swap_with_pet() — every refusal must
     // preserve the hero on the old square.  The ordinary starter pony is
     // large and cannot squeeze diagonally through two obstructed corners.
-    const pet_bad_rock = (px, py) => {
-        const loc = game.level?.at(px, py);
-        return !(mflags1_of(mtmp.data) & M1_TUNNEL)
-            && IS_OBSTRUCTED(loc ? loc.typ : STONE);
-    };
-    // C mon.c curr_mon_load(): this includes the pony's carried chest and
-    // saddle. Object weights are kept as owt by mkobj/add_to_minv.
-    const pet_load = () => (mtmp.minvent || [])
-        .reduce((sum, obj) => sum + (obj.owt ?? 0), 0);
     if (mtmp.mtrapped && trap && is_pit_ttyp(trap.ttyp) && boulder_at(trap.tx, trap.ty)) {
         // pet pinned in a pit by a boulder
         return false;
@@ -5961,13 +6044,13 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // only if verysmall(msize < MZ_SMALL) and unladen (no minvent or <= 600).
     if (boulder_at(u.ux, u.uy)
         && !((mtmp.data?.msize ?? 2) < 1 /* MZ_SMALL */
-             && (!(mtmp.minvent || []).length || pet_load() <= 600))) {
+             && (!(mtmp.minvent || []).length || curr_mon_load(mtmp) <= 600))) {
         await pline(`You stop.  ${YMonnam(mtmp)} won't fit into the same spot that you're at.`);
         return false;
     }
     if (u.ux0 !== x && u.uy0 !== y
-        && pet_bad_rock(x, u.uy0) && pet_bad_rock(u.ux0, y)
-        && ((mtmp.data?.msize ?? 2) >= 3 /* MZ_LARGE */ || pet_load() > 600)) {
+        && bad_rock_mon(mtmp.data, x, u.uy0) && bad_rock_mon(mtmp.data, u.ux0, y)
+        && ((mtmp.data?.msize ?? 2) >= 3 /* MZ_LARGE */ || curr_mon_load(mtmp) > 600)) {
         await pline(`You stop.  ${YMonnam(mtmp)} won't fit through.`);
         return false;
     }

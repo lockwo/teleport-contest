@@ -50,7 +50,7 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT, is_neuter_flag,
 } from './monflags_data.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
-import { set_mon_data, poly_when_stoned, troll_baned, slimeproof, resists_ston } from './mondata.js';
+import { set_mon_data, poly_when_stoned, troll_baned, slimeproof, resists_ston, dmgtype_fromattack } from './mondata.js';
 import { G_GENOD, OBJ_FREE } from './const.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub, worn_extrinsic } from './invent.js';
@@ -201,7 +201,8 @@ const AD_PHYS = 0, AD_FIRE = 2, AD_COLD = 3, AD_ELEC = 6, AD_ACID = 8,
       AD_PLYS = 14, AD_STUN = 12, AD_DGST = 26, AD_STCK = 19, AD_WRAP = 28,
       AD_SITM = 21, AD_SEDU = 22, AD_ENCH = 41, AD_SSEX = 35,
       AD_DISE = 33, AD_PEST = 38, AD_FAMN = 39, AD_POLY = 43,
-      AD_DRIN = 32;                     // monattk.h:74 (NOT 27 = AD_HEAL)
+      AD_DRIN = 32,                     // monattk.h:74 (NOT 27 = AD_HEAL)
+      AD_DCAY = 34;
 
 // C ref: monst.h resists_*(mon) — the species mresists bits.  mondata.js's
 // copies read mon.data.mresists directly, which is undefined on the pet's
@@ -595,10 +596,24 @@ export async function monkilled_mm(mdef, adtyp, cause = '') {
     // C: gd.disintegested = (how == AD_DGST || how == -AD_RBRE
     //                        || (how == AD_FIRE && completelyburns(mptr)))
     // -> mondead() (never leaves a corpse) instead of mondied().
-    const { completelyburns } = await import('./mondata.js');
+    const { completelyburns, completelyrusts, completelyrots } = await import('./mondata.js');
     const disintegested = adtyp === AD_DGST || adtyp === -AD_RBRE
         || (adtyp === AD_FIRE && completelyburns(mdef.data));
     await killMonster(mdef, !disintegested, be_sad);
+
+    if (!DEADMONSTER(mdef)) return;          /* life-saved */
+    /* extra message if pet golem is completely destroyed; if not visible,
+       this will follow "you have a sad feeling" */
+    if (mdef.mtame) {
+        const rxt = (adtyp === AD_FIRE && completelyburns(mdef.data)) ? 'roast'
+            : (adtyp === AD_RUST && completelyrusts(mdef.data)) ? 'rust'
+            : (adtyp === AD_DCAY && completelyrots(mdef.data)) ? 'rot'
+            : null;
+        if (rxt) {
+            const { noit_mon_nam } = await import('./do_name.js');
+            await update_topl(`May ${noit_mon_nam(mdef)} ${rxt} in peace.`);
+        }
+    }
 }
 
 // C ref: mhitm.c:970 explmm(magr, mdef, mattk) — an AT_EXPL monster detonates
@@ -695,9 +710,16 @@ export async function monstone_mm(mdef) {
         otmp = MO.mksobj_at(MO.ROCK, x, y, true, false);
 
     stackobj(otmp);
+    /* we don't currently trap the hero in the statue in this case but we
+       could */
+    const wasinside = !!engulfing_u(mdef);
     /* mondead(): unmap_object, m_detach (unstuck, off the map), relobj of
        whatever is still carried (the rock case), newsym */
     await killMonster(mdef, false);
+    if (wasinside && dmgtype_fromattack(ptr, AD_DGST, AT_ENGL)) { /* digests() */
+        const { u_locomotion } = await import('./trap.js');
+        await update_topl(`You ${u_locomotion('jump')} through an opening in the new ${xname(otmp)}.`);
+    }
 }
 
 // C ref: mondata.h:200 touch_petrifies(ptr) — PM_COCKATRICE || PM_CHICKATRICE.
@@ -1536,7 +1558,13 @@ export async function mattackm(magr, mdef) {
             break;
 
         case AT_ENGL:                                  // mhitm.c:500
-            if (pd?.name === 'shade') { strike = 0; break; }
+            if (pd?.name === 'shade') { /* no silver teeth... */
+                if (gv_vis) {
+                    await emitMMmsg(`${s_suffix(Monnam(magr))} attempt to engulf ${mon_nam(mdef)} is futile.`);
+                }
+                strike = 0;
+                break;
+            }
             if (mdef === game.u?.usteed) { strike = 0; break; }
             if (distmin(magr.mx, magr.my, mdef.mx, mdef.my) > 1) continue;
             // Engulfing attacks are directed at the hero if possible.

@@ -38,7 +38,8 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
          COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT,
-         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS } from './const.js';
+         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS, M_SEEN_SLEEP } from './const.js';
+import { monstseesu, monstunseesu } from './mondata.js';
 import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
 import { newuhs } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
@@ -46,13 +47,13 @@ import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './visio
 // naming it cannot create an import cycle or a TDZ edge.
 import { dmgtype, AD_DISE, AD_PEST } from './monattk_data.js';
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
-import { dipfountain, drinkfountain, drinksink, breaksink } from './fountain.js';
+import { dipfountain, drinkfountain, drinksink, breaksink, wash_hands } from './fountain.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
          placeOnLevel, pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
 import { object_detect } from './detect.js';
 import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
-import { hard_helmet } from './do_wear.js';
+import { hard_helmet, fingers_or_gloves } from './do_wear.js';
 import { Poison_resistance } from './youprop.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
@@ -111,7 +112,7 @@ function set_hallucination(v) {
     p.Hallucination = v;              // timeout.js HALLUC countdown
     p.HHallucination = v;             // extcmd-handlers.js #wizintrinsic view
     u.HHallucination = v;             // allmain.js Hallucination()
-    u.uhallu = v > 0;                 // display.js / uhitm.js / eat.js
+    u.uhallu = v > 0 && !Halluc_resistance();   // display.js / uhitm.js / eat.js: C's `Hallucination` macro
 }
 function Hallucination() { return HHallucination() > 0 && !Halluc_resistance(); }
 function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
@@ -296,6 +297,8 @@ export function make_hallucinated_state(xtime, mask) {
         const word = !xtime ? (cur | mask) : (cur & ~mask);
         ext[HALLUC_RES_PROP] = word;
         uprops().EHalluc_resistance = word;   // the spelling Hallucination() readers use
+        // u.uhallu is C's `Hallucination` macro (timeout && !Halluc_resistance)
+        u.uhallu = (uprops().HHallucination | 0) > 0 && !Halluc_resistance();
     } else {
         if (!Halluc_resistance() && ((old > 0) !== (xtime > 0)))
             changed = true;
@@ -338,8 +341,26 @@ export async function make_hallucinated_redraw(xtime, talk) {
 }
 
 export async function make_hallucinated(xtime, talk, mask) {
+    const old = HHallucination();
     const changed = make_hallucinated_state(xtime, mask);
-    if (changed) await make_hallucinated_redraw(xtime, talk);
+    if (changed) {
+        await make_hallucinated_redraw(xtime, talk);
+    } else if (!mask && !HHallucination() && old && talk && !Unaware()) {
+        /* clearing temporary hallucination without toggling vision */
+        const { youmonst_data, body_part } = await import('./invent.js');
+        const { eyecount } = await import('./polyself.js');
+        const ptr = youmonst_data();
+        if (eyecount(ptr) === 0) {
+            await (await import('./detect.js')).strange_feeling(null, null);
+        } else if (Blind()) {
+            let eyes = body_part(1 /* EYE */);
+            const plural = eyecount(ptr) !== 1;
+            if (plural) eyes = makeplural(eyes);
+            await update_topl(`Your ${eyes} momentarily ${plural ? 'itch' : 'itches'}.`);
+        } else { /* Grayswandir */
+            await update_topl('Your vision seems to flatten for a moment but is normal now.');
+        }
+    }
     return changed;
 }
 
@@ -649,6 +670,7 @@ export async function potionbreathe_hero(obj) {
             exercise(A_DEX, false);                      // attrib.c:509 rn2(2)
         } else {
             await pline('You yawn.');
+            (await import('./mondata.js')).monstseesu((await import('./const.js')).M_SEEN_SLEEP);
         }
         break;
     case POT_SPEED:
@@ -666,10 +688,21 @@ export async function potionbreathe_hero(obj) {
         if (!Blind() && !Unaware())
             await update_topl('Your vision clears.');
         break;
-    case POT_WATER:
-        // split_mon (gremlin) / you_were / you_unwere need a lycanthrope or a
-        // gremlin polyform; nothing in this port sets u.ulycn or that form.
+    case POT_WATER: {
+        // C ref: potion.c:2093 — vapor from [un]holy water triggers
+        // transformation but won't cure lycanthropy.
+        const ulycn = u.ulycn ?? -1;
+        if (Upolyd() && u.data?.pmidx === name_to_pmidx('gremlin')) {
+            await split_mon(game.youmonst, null);
+        } else if (ulycn >= 0) {
+            const { you_were, you_unwere } = await import('./polyself.js');
+            if (obj.blessed && Upolyd() && u.data?.pmidx === ulycn)
+                await you_unwere(false);
+            else if (obj.cursed && !Upolyd())
+                await you_were();
+        }
         break;
+    }
     case POT_ACID:
     case POT_POLYMORPH:
         await exercise(A_CON, false);                          // rn2(2)  (no kn++)
@@ -843,17 +876,12 @@ async function peffect_paralysis(otmp) {
 // else arm, so the guard steers the PRNG, not just the message.
 async function peffect_sleeping(otmp) {
     if (Sleep_resistance() || Free_action()) {
+        monstseesu(M_SEEN_SLEEP);
         await pline('You yawn.');
     } else {
         await pline('You suddenly fall asleep!');
-        // fall_asleep(-rn1(10, 25 - 12*bcsign), TRUE)
-        // C ref: timeout.c fall_asleep() — nomul(how_long) applies its own
-        // `multi < nval` guard, but the reason/usleep/nomovemsg stores below it
-        // are unconditional.
-        nomul(-rn1(10, 25 - 12 * bcsign(otmp)));
-        game.multi_reason = 'sleeping';
-        if (game.u) game.u.usleep = game.moves ?? 1;
-        game.nomovemsg = 'You wake up.';
+        monstunseesu(M_SEEN_SLEEP);
+        await (await import('./zap.js')).fall_asleep(-rn1(10, 25 - 12 * bcsign(otmp)), true);
     }
 }
 
@@ -1725,7 +1753,7 @@ export async function dodip() {
                     await update_topl(`You are floating high above the ${pooltype}.`);
                 } else if (is_hands || obj === game.uarmg) {
                     if (!is_hands) obj.pickup_prev = 0;
-                    // wash_hands() only clears Glib; nothing here sets it.
+                    await wash_hands();
                 } else {
                     // C ref: potion.c:2352 — water_damage() is the RNG-bearing
                     // half (rust/erosion rolls) and an acid potion dipped in
@@ -1767,9 +1795,11 @@ async function dipsink(obj) {
 
     if (!rn2(not_looted_yet ? 25 : 15)) {          // fountain.c:721
         await breaksink(u.ux, u.uy);
+        if (Glib() && is_hands)
+            await update_topl(`Your ${fingers_or_gloves(true)} are still slippery.`);
         return;
     } else if (is_hands) {
-        // wash_hands() clears Glib; nothing in this port sets it.
+        await wash_hands();
         return;
     } else if (obj.oclass !== POTION_CLASS) {
         await update_topl(`You hold ${the_xname(obj)} under the tap.`);
@@ -1783,7 +1813,7 @@ async function dipsink(obj) {
     let try_call = false;
     switch (obj.otyp) {
     case POT_POLYMORPH:
-        // polymorph_sink() rerolls the sink's contents; not modelled.
+        await (await import('./do.js')).polymorph_sink();
         try_call = true;
         break;
     case POT_OIL:
@@ -2803,12 +2833,9 @@ export async function potion_dip(obj, potion) {
                 game.u.uconduct = game.u.uconduct || {};
                 game.u.uconduct.polypiles = (game.u.uconduct.polypiles | 0) + 1;
             }
-            /* C: obj = poly_obj(obj, STRANGE_OBJECT) — zap.c's object
-               polymorph.  js/zap.js's poly_obj is module-private (and it can
-               DESTROY obj: poly_obj -> set_wear -> Amulet_on -> useup when a
-               worn amulet becomes an amulet of change).  The three C branches
-               below are kept; the transform itself is the named gap, so obj
-               keeps save_otyp and control lands in the third branch. */
+            /* C: obj = poly_obj(obj, STRANGE_OBJECT).  It can DESTROY obj:
+               poly_obj -> set_wear -> Amulet_on -> useup when a worn amulet
+               becomes an amulet of change. */
             obj = await (await import('./zap.js')).poly_obj(obj, 0 /* STRANGE_OBJECT */);
             if (!obj) {
                 await makeknown(POT_POLYMORPH);

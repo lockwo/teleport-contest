@@ -11,7 +11,7 @@ const SECTIONSCOPE = 1;
 const TITLESCOPE = 2;
 const PASSAGESCOPE = 3;
 
-const MAXPASSAGES = 20; /* SIZE(svc.context.novel.pasg) */
+const MAXPASSAGES = 30; /* SIZE(svc.context.novel.pasg), include/context.h */
 
 function decodeBase64(b64) {
     if (typeof Buffer !== 'undefined') return Buffer.from(b64, 'base64');

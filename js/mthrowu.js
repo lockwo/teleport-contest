@@ -159,14 +159,26 @@ function acurrstr() {
 // mkobj.js otyps.
 const FIRST_GLASS_GEM = 461 /*WORTHLESS_WHITE_GLASS*/,
       LAST_GLASS_GEM = 469 /*WORTHLESS_VIOLET_GLASS*/;
-export function ucatchgem(gem, _mon) {
+export async function ucatchgem(gem, mon) {
     // C: `gem->otyp <= LAST_GLASS_GEM && is_unicorn(youmonst.data)`.
     if (!gem || gem.otyp > LAST_GLASS_GEM) return false;
     if (!is_unicorn_you()) return false;
-    // The two arms differ only in messaging and whether the gem is dropped
-    // immediately (worthless glass is caught then dropped, a real gem is
-    // accepted); both consume the missile.
-    void FIRST_GLASS_GEM;
+    const I = await import('./invent.js');
+    const { mon_nam } = await import('./do_name.js');
+    const { s_suffix } = await import('./hacklib.js');
+    const gem_xname = I.xname(gem);
+    const mon_s_name = s_suffix(mon_nam(mon));
+    const { pline } = await import('./display.js');
+    if (gem.otyp >= FIRST_GLASS_GEM) {
+        await pline(`You catch the ${gem_xname}.`);
+        await pline(`You are not interested in ${mon_s_name} junk.`);
+        I.makeknown(gem.otyp);
+        await I.dropy(gem);
+    } else {
+        await pline(`You accept ${mon_s_name} gift in the spirit in which it was intended.`);
+        await I.hold_another_object(gem, 'You catch, but drop, %s.',
+                                    gem_xname, 'You catch:');
+    }
     return true;
 }
 // C ref: mondata.h is_unicorn(ptr) — mlet S_UNICORN and mons[].maligntyp != 0.
@@ -445,7 +457,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
                 deps.nomul?.(0);
 
             /* hero might be poly'd into a unicorn */
-            if (singleobj.oclass === GEM_CLASS && ucatchgem(singleobj, mon))
+            if (singleobj.oclass === GEM_CLASS && await ucatchgem(singleobj, mon))
                 break;
 
             if (!tethered_weapon && await deps.u_catch_thrown_obj?.(singleobj))

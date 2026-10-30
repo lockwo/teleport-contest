@@ -10,14 +10,14 @@
 
 import { resists_fire, resists_cold, resists_elec, resists_acid, resists_disint, resists_poison } from './mondata.js';
 import { resists_magm } from './zap.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { d, rn2, rnd, rn1 } from './rng.js';
 import {
     isok, A_STR, ZAP_POS, IS_SINK,
     FIRE_RES, COLD_RES, DISINT_RES, SHOCK_RES, POISON_RES, ACID_RES, ANTIMAGIC,
     EXPL_NOXIOUS, EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY,
     MAY_HITMON, MAY_HITYOU, MAY_DESTROY, MAY_FRACTURE,
-    N_DIRS, xdir, ydir,
+    N_DIRS, xdir, ydir, STATUE_TRAP,
     DIED, BURNING, PLNMSG_CAUGHT_IN_EXPLOSION, PLNMSG_TOWER_OF_FLAME,
 } from './const.js';
 
@@ -291,7 +291,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
     let grabbed = false, grabbing = false;
     const grabxy = { x: 0, y: 0 };
     if (u?.ustuck && !u.uswallow) {
-        if (Upolyd()) grabbing = true; else grabbed = true;
+        if (Upolyd() && (await import('./uhitm.js')).sticks(youmonst_data())) grabbing = true;
+        else grabbed = true;
         grabxy.x = u.ustuck.mx; grabxy.y = u.ustuck.my;
     }
 
@@ -584,10 +585,14 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
     for (;;) {
         let otmp = individual_object ? obj : (objects_at(sx, sy)[0] || null);
         if (!otmp) break;
-        // C ref: explode.c:743 — the uball/uchain arm calls unpunish(), which
-        // this port has no equivalent for; without it the `continue` would spin
-        // forever on the chain, so a punished hero's ball/chain is scattered
-        // like any other object here.
+        // C ref: explode.c:743 — a punished hero's ball/chain on the scatter site.
+        if (otmp === game.u?.uball || otmp === game.u?.uchain) {
+            const waschain = (otmp === game.u.uchain);
+            await update_topl('The chain shatters!');
+            const { unpunish } = await import('./read.js');
+            unpunish();
+            if (waschain) continue;
+        }
         if ((otmp.quan | 0) > 1) {
             const qtmp = rnd((otmp.quan | 0) - 1);
             otmp = splitobj(otmp, qtmp);
@@ -605,7 +610,17 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
                 else await You_hear('stone breaking.');
                 fracture_rock(otmp, weight);
                 place_object(otmp, sx, sy);
+                const { sobj_at } = await import('./invent.js');
+                const other = sobj_at(BOULDER, sx, sy);
+                if (other) {
+                    /* another boulder here, restack it to the top */
+                    obj_extract_self(other);
+                    place_object(other, sx, sy);
+                }
             } else {
+                const { t_at, deltrap } = await import('./trap.js');
+                const strap = t_at(sx, sy);
+                if (strap && strap.ttyp === STATUE_TRAP) deltrap(strap);
                 if (cansee(sx, sy)) await update_topl('The statue crumbles.');
                 else await You_hear('stone crumbling.');
                 await break_statue(otmp, weight);
@@ -692,6 +707,7 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
     newsym(sx, sy);
     const mtmp = m_at(sx, sy);
     if (mtmp && mtmp.mtrapped) mtmp.mtrapped = 0;
+    hooks.maybe_unhide_at?.(sx, sy);
     return total;
 }
 

@@ -49,7 +49,7 @@ function youmonst_data() {
 // thirteen player-monster records only archeologist/barbarian/knight/rogue/
 // samurai/tourist/valkyrie carry a second AT_WEAP, so caveman, healer, monk,
 // priest, RANGER and wizard are all refused (monsters.h:3345-3455).
-function could_twoweap(ptr) {
+export function could_twoweap(ptr) {
     const rows = (ptr?.pmidx != null ? MATTK[ptr.pmidx] : null) || [];
     let n = 0;
     for (let i = 0; i < 3; i++) if (rows[i] && rows[i][0] === AT_WEAP) n++;
@@ -246,7 +246,7 @@ async function dropx(obj) {
 }
 
 // C ref: wield.c:833 set_twoweap — toggle the two-weapon flag.
-function set_twoweap(on_off) {
+export function set_twoweap(on_off) {
     if (!game.u) return;
     if (on_off !== game.u.twoweap) {
         game.u.twoweap = on_off;

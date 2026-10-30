@@ -15,7 +15,7 @@
 // dumped from the recorder's own objects.o) via mkobj.js base_oc_cost().
 
 import { Invis } from './monmove.js'; /* youprop.h Invis: (HInvis || EInvis) && !BInvis */
-import { game, register_process_static } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix, depth as depth_of_level } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          mksobj, place_object, remove_object, dealloc_obj,
@@ -1012,7 +1012,7 @@ export async function money2mon(mon, amount) {
 // from pay() with a negative balance (a credit refund), and from priest.js
 // priest_talk()'s "gives you N bits for an ale" arm.
 export async function money2u(mon, amount) {
-    const { addinv } = await import('./invent.js');
+    const { addinv, merge_choice, inv_cnt, invlet_basic, dropy } = await import('./invent.js');
     const { findgold } = await import('./steal.js');
     const mongold = findgold(mon.minvent);
     if (amount <= 0 || !mongold || (mongold.quan || 0) < amount) return;
@@ -1026,7 +1026,13 @@ export async function money2u(mon, amount) {
     }
     give.where = OBJ_FREE;
     give.ocarry = null;
-    addinv(give);
+    if (!merge_choice(game.invent, give) && inv_cnt(false) >= invlet_basic) {
+        await update_topl('You have no room for the gold!');
+        await dropy(give);
+    } else {
+        addinv(give);
+        game.botl = true;
+    }
 }
 
 // C ref: shk.c check_credit(tmp, shkp):1276.
@@ -2256,6 +2262,8 @@ export function gem_learned(oindx) {
     }
 }
 
+hooks.gem_learned = gem_learned; /* o_init.js discover_object() cannot import shk.js (cycle) */
+
 // C ref: shk.c alter_cost(obj, amt):3237 — an item got more valuable; raise its
 // bill entry.  amt 0 = reprice, amt < 0 = force abs(amt) even if lower.
 // NOTE the C loop advances `shkp` itself, not shkp->nmon, so it re-tests the
@@ -2562,6 +2570,11 @@ export function find_objowner(obj, x, y) {
     }
     return deflt_shkp;
 }
+
+/* mkobj.js place_object() cannot import this module (cycle): it drops a stale
+   no_charge flag through these entry points. */
+hooks.no_charge_off_shop = (obj, x, y) =>
+    !costly_spot(x, y) && !costly_adjacent(find_objowner(obj, x, y), x, y);
 
 // C ref: shk.c stolen_value(obj, x, y, peaceful, silent):3754 — the hero got
 // shop goods out of the shop (or gave up billable ones): charge for them.
@@ -3526,14 +3539,14 @@ export async function shopdig(fall) {
                 rile_shk(shkp);
                 return;
             }
-            /* C: makeplural(locomotion(shkp->data, "leap")); locomotion() has
-               no port in this tree, so the verb is fixed at "leaps". */
-            await update_topl(`${Shknam(shkp)} leaps, and ${grabs} your backpack!`);
+            const { locomotion } = await import('./monmove.js');
+            const { makeplural } = await import('./plural.js');
+            await update_topl(`${Shknam(shkp)} ${makeplural(locomotion(shkp.data, 'leap'))}, and ${grabs} your backpack!`);
         } else {
             await update_topl(`${Shknam(shkp)} ${grabs} your backpack!`);
         }
 
-        const { freeinv } = await import('./invent.js');
+        const { freeinv, setnotworn } = await import('./invent.js');
         /* W_SWAPWEP/W_QUIVER here are const.js's (i.e. prop.h's) real bits;
            js/invent.js deliberately REMAPS the W_* bits it writes into
            obj.owornmask, so this mask has to be revisited before going live. */
@@ -3543,7 +3556,7 @@ export async function shopdig(fall) {
                 || (obj.otyp === LEASH && obj.leashmon))
                 continue;
             if (obj === game.current_wand) continue;
-            obj.owornmask = 0;              /* C: setnotworn(obj) */
+            setnotworn(obj);
             freeinv(obj);
             subfrombill(obj, shkp);
             add_to_minv(shkp, obj);
@@ -3860,14 +3873,15 @@ export async function shk_chat(shkp) {
         } how much ${noit_mhe(shkp)} dislikes ${
             eshk.robbed ? 'non-paying' : 'rude'} customers.`);
     } else if (eshk.following) {
+        const { Hello } = await import('./role.js');
         if (strncmp(eshk.customer, game.plname, PL_NSIZ)) {
             if (!Deaf() && !muteshk(shkp))
-                await verbalize(`Hello ${game.plname}!  I was looking for ${
+                await verbalize(`${Hello(game.urole?.mnum, shkp)} ${game.plname}!  I was looking for ${
                     eshk.customer}.`);
             eshk.following = 0;
         } else {
             if (!Deaf() && !muteshk(shkp)) {
-                await verbalize(`Hello ${game.plname}!  Didn't you forget to pay?`);
+                await verbalize(`${Hello(game.urole?.mnum, shkp)} ${game.plname}!  Didn't you forget to pay?`);
             } else {
                 await update_topl(`${Shknam(shkp)} taps you on the ${body_part(ARM)}.`);
             }

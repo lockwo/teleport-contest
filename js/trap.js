@@ -3,7 +3,7 @@
 // Stripped-down version for contest: emits the same rn2/rnd/rne PRNG call
 // sequence as C during level generation so RNG parity is preserved.
 
-import { resists_ston } from './mondata.js';
+import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
 import { level_difficulty } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
@@ -26,7 +26,7 @@ import { shk_blocking_door, block_door_feedback, add_damage, costly_spot, stolen
 import { observe_object } from './o_init.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { Boots_off, stop_donning, hard_helmet, helm_simple_name, gloves_simple_name, cloak_simple_name, suit_simple_name } from './do_wear.js';
-import { float_vs_flight, selftouch, mbodypart } from './polyself.js';
+import { float_vs_flight, selftouch, mbodypart, Stone_resistance_u } from './polyself.js';
 import { is_weptool } from './weapon.js';
 import { is_pool, is_lava, is_waterwall } from './dbridge.js';
 import { vtense } from './dothrow.js';
@@ -55,7 +55,7 @@ import {
     VAULT, IS_FURNITURE, TRAPPED_DOOR, TRAPPED_CHEST,
     POOL, MAY_DESTROY, MAY_HIT, MAY_FRACTURE, VIS_EFFECTS,
     ARM, FINGER, D_TRAPPED, D_ISOPEN, A_WIS, TIMEOUT,
-    AS_NO_MON, AS_MON_IS_UNIQUE,
+    AS_NO_MON, AS_MON_IS_UNIQUE, AS_OK,
     W_BALL, W_ART, W_ARTI, W_SADDLE, I_SPECIAL, FROM_FORM, IS_SINK, W_ARMG, Has_contents, OMONST,
     TT_INFLOOR, TT_BURIEDBALL,
     NO_TRAP, TRAPNUM, FIRE_RES, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
@@ -83,7 +83,7 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag, strongmonst_flag, is_whirly, flaming } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
-import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC } from './const.js';
+import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room, in_rooms, shop_keeper } from './shkroom.js';
@@ -179,6 +179,7 @@ export function into_vs_onto(traptype) {
 // until the hero polymorphs; the pm tests below read the hero's CURRENT form
 // (youmonst_data_pub()), which is a role monster (MZ_HUMAN, no relevant flags)
 // when unpolymorphed and e.g. a flying/clinging/small form after polymorph.
+const AMULET_OF_YENDOR_TRAP = 213; // mkobj.js AMULET_OF_YENDOR
 export function immune_to_trap(mon, ttype) {
     const is_you = (mon === game.u);
     const pm = is_you ? youmonst_data_pub() : mon?.data;
@@ -224,7 +225,10 @@ export function immune_to_trap(mon, ttype) {
     case TELEP_TRAP:
         // C: In_endgame(&u.uz) || mon_has_amulet(mon) -> CLEARLY_IMMUNE.  There
         // is no mon_has_amulet() in this port and the Amulet is never carried.
-        if (In_endgame(game.u?.uz)) return TRAP_CLEARLY_IMMUNE;
+        if (In_endgame(game.u?.uz)
+            || (is_you ? (game.u?.invent || game.invent || []) : (mon?.minvent || []))
+                .some((o) => o.otyp === AMULET_OF_YENDOR_TRAP))
+            return TRAP_CLEARLY_IMMUNE;
         return TRAP_NOT_IMMUNE;
     case POLY_TRAP:
         // C: resists_magm(mon) -> HIDDEN_IMMUNE for the hero (never CLEARLY).
@@ -1520,18 +1524,18 @@ async function trapeffect_rust_trap(trap, _trflags) {
 
     switch (rn2(5)) {
     case 0:
-        await pline('A gush of water hits you on the head!');
+        await pline(`A gush of water hits you on the ${body_part(HEAD)}!`);
         await water_damage(game.uarmh, game.uarmh ? helm_simple_name(game.uarmh) : null, true);
         break;
     case 1:
-        await pline('A gush of water hits your left arm!');
+        await pline(`A gush of water hits your left ${body_part(ARM_BP)}!`);
         if (await water_damage(game.uarms, 'shield', true) !== ER_NOTHING) break;
         if (u?.twoweap || (game.uwep && bimanual(game.uwep)))
             await water_damage(u?.twoweap ? game.uswapwep : game.uwep, null, true);
         await water_damage(game.uarmg, game.uarmg ? gloves_simple_name(game.uarmg) : null, true);
         break;
     case 2:
-        await pline('A gush of water hits your right arm!');
+        await pline(`A gush of water hits your right ${body_part(ARM_BP)}!`);
         await water_damage(game.uwep, null, true);
         await water_damage(game.uarmg, game.uarmg ? gloves_simple_name(game.uarmg) : null, true);
         break;
@@ -1550,6 +1554,15 @@ async function trapeffect_rust_trap(trap, _trflags) {
         else if (game.uarmu)
             await water_damage(game.uarmu, 'shirt', true);
         break;
+    }
+    update_inventory();
+    if (u.Upolyd && u.umonnum === PM_IRON_GOLEM_TRAP) {
+        const dam = u.mhmax;
+        await pline('You are covered with rust!');
+        await losehp(Maybe_Half_Phys(dam), 'rusting away', KILLED_BY);
+    } else if (u.Upolyd && u.umonnum === PM_GREMLIN_TRAP && rn2(3)) {
+        const { split_mon } = await import('./potion.js');
+        await split_mon(game.youmonst || u, null);
     }
     /* C: no find_ac() here.  moveloop_core() runs it once per player input, so
        a rusted piece's AC penalty shows up only after the monsters have moved
@@ -1774,8 +1787,7 @@ const FLAMING_NAMES_WEB = new Set(['fire vortex', 'flaming sphere', 'fire elemen
 // C ref: trap.c trapeffect_web(&gy.youmonst, trap, trflags) — the hero walks
 // into a spider web.  mu_maybe_destroy_web_you() above gates an amorphous/
 // whirly/flaming/unsolid/gelatinous-cube polymorphed hero out early; webmaker()
-// is left unported (out of this batch's scope) so a hero polymorphed into a
-// cave/giant spider still gets stuck, same as before this change.  Exactly ONE
+// is checked inline (a web-making form is never caught).  Exactly ONE
 // roll fires, selected by ACURR(A_STR) — and a hero with exceptional (18/xx,
 // encoded >= 19) or merely 18 strength takes the `tim = 1` arm, which draws
 // NOTHING.  hack.c trapmove()'s TT_WEB arm (cmd.js) already runs the
@@ -1788,6 +1800,13 @@ async function trapeffect_web(trap, trflags) {
 
     seetrap(trap); // feeltrap()
     if (await mu_maybe_destroy_web_you(webmsgok, trap)) return;
+    const ydat = youmonst_data_pub();
+    if (ydat && (ydat.pmidx === PM_CAVE_SPIDER_TRAP || ydat.pmidx === PM_GIANT_SPIDER_TRAP)) { /* webmaker */
+        if (webmsgok)
+            await pline(trap.madeby_u ? 'You take a walk on your web.'
+                                      : 'There is a spider web here.');
+        return;
+    }
     if (webmsgok) {
         let verbbuf;
         if (forcetrap || viasitting) {
@@ -1852,11 +1871,15 @@ async function trapeffect_web(trap, trflags) {
 async function trapeffect_slp_gas_trap(trap, _trflags) {
     seetrap(trap);
     const { Sleep_resistance, fall_asleep } = await import('./zap.js');
-    if (Sleep_resistance()) {
+    const { monstseesu, monstunseesu } = await import('./mondata.js');
+    const { M_SEEN_SLEEP } = await import('./const.js');
+    if (Sleep_resistance() || (mflags1_of(youmonst_data_pub()) & M1_BREATHLESS) !== 0) {
         await pline('You are enveloped in a cloud of gas!');
+        monstseesu(M_SEEN_SLEEP);
     } else {
         await pline('A cloud of gas puts you to sleep!');
         await fall_asleep(-rnd(25), true);
+        monstunseesu(M_SEEN_SLEEP);
     }
     await steedintrap(trap, null);
 }
@@ -1929,14 +1952,25 @@ export async function heal_legs(how) {
 // exactly: d(2,4) damage, rn1(4,4) trap duration, then either the steed's
 // thitm() (mounted) or the rn1/rn2 wounded-legs side+timeout, then
 // exercise(A_DEX, FALSE).
-async function trapeffect_bear_trap(trap, _trflags) {
+async function trapeffect_bear_trap(trap, trflags) {
     const u = game.u;
     const A_Your = trap.madeby_u ? 'Your' : 'A';
+    const forcetrap = (trflags & FORCETRAP) !== 0 || (trflags & FAILEDUNTRAP) !== 0
+                      || ((trflags & VIASITTING) !== 0);
     const dmg = d(2, 4);
-    // Levitation/Flying, amorphous/whirly/unsolid, and small-size harmless
-    // branches are all false for the contest hero (a human Knight, riding or not).
+    if ((Levitation_fu() || Flying_fu()) && !forcetrap)
+        return;
     // C feeltrap(trap) just marks it seen for a sighted hero == seetrap().
     seetrap(trap);
+    const ydat = youmonst_data_pub();
+    if (amorphous_flag(ydat) || is_whirly(ydat) || unsolid_flag(ydat)) {
+        await pline(`${A_Your} bear trap closes harmlessly through you.`);
+        return;
+    }
+    if (!u.usteed && (ydat?.msize ?? 2) <= 1 /* MZ_SMALL */) {
+        await pline(`${A_Your} bear trap closes harmlessly over you.`);
+        return;
+    }
     set_utrap(rn1(4, 4), TT_BEARTRAP);
     if (u.usteed) {
         await pline(`${A_Your} bear trap closes on ${s_suffix(mon_nam(u.usteed))} ${mbodypart(u.usteed, FOOT)}!`);
@@ -1952,10 +1986,14 @@ async function trapeffect_bear_trap(trap, _trflags) {
     // pushes the hero over capacity) then pages it with --More-- (seed0004 step 27).
     const { update_topl } = await import('./display.js');
     await update_topl(`${A_Your} bear trap closes on your ${body_part(FOOT)}!`);
-    // No iron shoes -> wounded legs + hp loss (Maybe_Half_Phys is identity for a
-    // hero without HALF_PHDAM, i.e. every starting role).
-    await set_wounded_legs(rn2(2) ? RIGHT_SIDE : LEFT_SIDE, rn1(10, 10));
-    await losehp(dmg, 'bear trap');
+    if (u.Upolyd && (u.umonnum === PM_OWLBEAR_TRAP || u.umonnum === PM_BUGBEAR_TRAP))
+        await update_topl('You howl in anger!');
+    if (wearing_iron_shoes_u()) {
+        await update_topl(`${Yname2(game.uarmf)} protects your leg.`);
+    } else {
+        await set_wounded_legs(rn2(2) ? RIGHT_SIDE : LEFT_SIDE, rn1(10, 10));
+        await losehp(Maybe_Half_Phys(dmg), 'bear trap');
+    }
     exercise(A_DEX, false);
 }
 
@@ -2317,8 +2355,15 @@ async function trapeffect_pit(trap, trflags) {
     if (!Sokoban && (Levitation || (Flying && !plunged && !viasitting)))
         return;
     feeltrap(trap);
-    // is_clinger(gy.youmonst.data) is FALSE for every role monster, so C's
-    // "<A> pit opens up under you! / You don't fall in!" arm cannot fire.
+    if (!Sokoban && (mflags1_of(youmonst_data_pub()) & M1_CLING) !== 0 && !plunged) {
+        if (already_known) {
+            await pline(`You see ${a_your(trap.madeby_u)} ${ttype === SPIKED_PIT ? 'spiked ' : ''}pit below you.`);
+        } else {
+            await pline(`${trap.madeby_u ? 'Your' : 'A'} pit ${ttype === SPIKED_PIT ? 'full of spikes ' : ''}opens up under you!`);
+            await pline("You don't fall in!");
+        }
+        return;
+    }
     if (!Sokoban) {
         let verbbuf = '';
         if (u.usteed) {
@@ -2345,10 +2390,9 @@ async function trapeffect_pit(trap, trflags) {
         && In_quest(u?.uz) && is_qlocate(u?.uz)) {
         await update_topl('Fortunately it has a bottom after all...');
         trap.once = 1;
+    } else if (u.Upolyd && (u.umonnum === PM_PIT_VIPER_TRAP || u.umonnum === PM_PIT_FIEND_TRAP)) {
+        await update_topl("How pitiful.  Isn't that the pits?");
     }
-    // u.umonnum == PM_PIT_VIPER / PM_PIT_FIEND needs a polymorphed hero
-    // (js/hack.js keeps a ROLE index there while unpolymorphed), so the
-    // "How pitiful" line cannot fire; it draws nothing either way.
     if (relevant_spikes && wearing_iron_shoes_u()) {
         await update_topl(`Your ${xname(game.uarmf)} protects you from the sharp iron spikes.`);
         relevant_spikes = false;
@@ -2379,7 +2423,8 @@ async function trapeffect_pit(trap, trflags) {
                                    : 'fall onto poison spikes',
                                ((u?.umortality | 0) > oldumort) ? 0 : 8, false);
             }
-        } else if (!conj_pit && !deliberate && !(plunged && Flying)) {
+        } else if (!conj_pit && !deliberate
+                   && !(plunged && (Flying || (mflags1_of(youmonst_data_pub()) & M1_CLING) !== 0))) {
             /* plunging flyers take spike damage but not pit damage */
             const pitKnam = plunged ? 'deliberately plunged into a pit' : 'fell into a pit';
             await losehp(rnd(adj_pit ? 3 : 6), pitKnam, NO_KILLER_PREFIX);
@@ -2764,51 +2809,131 @@ export function keep_saddle_with_steedcorpse(steed_mid, objchn, saddle) {
 }
 
 // C ref: trap.c:726 animate_statue(statue, x, y, cause, fail_reason) — bring a
-// statue to life.  Reduced to the path a mklev()-generated STATUE_TRAP can
-// take: mk_trap_statue() builds the statue with mkcorpstat() and no omonst and
-// no oname, so use_saved_traits (montraits()) and christen_monst() are both
-// unreachable, and cause is always ANIMATE_NORMAL from a trap.
-export async function animate_statue(statue, x, y, _cause, fail_reason) {
-    const mnum = statue.corpsenm;
-    const mptr = monster_by_pmidx(mnum);
-    // cant_revive() rewrites unique/were/zombie corpsenm; a trap statue is
-    // built straight from rndmonst_adj(), so it is always revivable as itself.
-    const mon = makemon(mptr, x, y, NO_MINVENT | MM_NOMSG);
-    if (mon) await (await import('./makemon.js')).makemon_appears_msg(mon, x, y, NO_MINVENT | MM_NOMSG);
+// statue to life.  `cause` is ANIMATE_NORMAL (statue trap), ANIMATE_SHATTER or
+// ANIMATE_SPELL (stone to flesh).  RNG: cant_revive()/montraits() choose the
+// species and saved traits; a plain makemon() skips its gender draw when the
+// statue records one (CORPSTAT_MALE/FEMALE -> MM_MALE/MM_FEMALE); delobj() ends
+// with obj_resists().  fail_reason is C's `int *` out-parameter: `{ v }`.
+export async function animate_statue(statue, x, y, cause, fail_reason) {
+    const C = await import('./const.js');
+    const { cant_revive } = await import('./read.js');
+    const { has_omonst } = await import('./mkobj.js');
+    const { montraits } = await import('./zap.js');
+    const { has_oname, ONAME } = C;
+    const { msound_of, hides_under_flag: hides_under_flag_trap } = await import('./monflags_data.js');
+    const { quest_info } = await import('./questpgr.js');
+    const { christen_monst } = await import('./do_name.js');
+    const { set_malign, newcham } = await import('./makemon.js');
+    const MS_GUARDIAN = C.MS_GUARDIAN;
+    const PM_DOPPELGANGER = name_to_pmidx('doppelganger');
+    const PM_FLESH_GOLEM = name_to_pmidx('flesh golem');
+    const mnumRef = { v: statue.corpsenm };
+    let mptr = monster_by_pmidx(mnumRef.v);
+    let mon = null, shkp;
+    const historic = game.urole?.mnum === 0 /* PM_ARCHEOLOGIST */
+        && ((statue.spe | 0) & CORPSTAT_HISTORIC) !== 0;
+    let golem_xform = false, use_saved_traits;
+
+    if (await cant_revive(mnumRef, true, statue)) {
+        /* mnum has changed; we won't be animating this statue as itself */
+        if (mnumRef.v !== PM_DOPPELGANGER)
+            mptr = monster_by_pmidx(mnumRef.v);
+        use_saved_traits = false;
+    } else if (mptr?.mcls === 55 /* is_golem: S_GOLEM */ && cause === C.ANIMATE_SPELL) {
+        /* statue of any golem hit by stone-to-flesh becomes flesh golem */
+        golem_xform = (mptr.pmidx !== PM_FLESH_GOLEM);
+        mnumRef.v = PM_FLESH_GOLEM;
+        mptr = monster_by_pmidx(PM_FLESH_GOLEM);
+        use_saved_traits = (has_omonst(statue) && !golem_xform);
+    } else {
+        use_saved_traits = has_omonst(statue);
+    }
+
+    if (use_saved_traits) {
+        /* restore a petrified monster */
+        mon = await montraits(statue, { x, y }, cause === C.ANIMATE_SPELL);
+        if (mon && mon.mtame && !mon.isminion)
+            await (await import('./dog.js')).wary_dog(mon, true);
+    } else {
+        const sgend = ((statue.spe | 0) & C.CORPSTAT_GENDER);
+        let mmflags = NO_MINVENT | MM_NOMSG
+            | ((sgend === C.CORPSTAT_MALE) ? C.MM_MALE : 0)
+            | ((sgend === C.CORPSTAT_FEMALE) ? C.MM_FEMALE : 0);
+
+        /* statues of unique monsters from bones or wishing end up here
+           (cant_revive() sets mnum to be doppelganger; mptr reflects the
+           original form for use by newcham()) */
+        if ((mnumRef.v === PM_DOPPELGANGER && mptr?.pmidx !== PM_DOPPELGANGER)
+            /* block quest guards from other roles */
+            || (msound_of(mptr) === MS_GUARDIAN
+                && quest_info(MS_GUARDIAN) !== mnumRef.v)) {
+            mmflags |= C.MM_NOCOUNTBIRTH | C.MM_ADJACENTOK;
+            mon = makemon(monster_by_pmidx(PM_DOPPELGANGER), x, y, mmflags);
+            /* if hero has protection from shape changers, cham field will be
+               NON_PM; otherwise, set form to match the statue */
+            if (mon) await (await import('./makemon.js')).makemon_appears_msg(mon, x, y, mmflags);
+            if (mon && mon.cham != null && mon.cham >= 0)
+                newcham(mon, mptr);
+        } else {
+            if (cause === C.ANIMATE_SPELL)
+                mmflags |= C.MM_ADJACENTOK;
+            mon = makemon(mptr, x, y, mmflags);
+            if (mon) await (await import('./makemon.js')).makemon_appears_msg(mon, x, y, mmflags);
+        }
+    }
+
     if (!mon) {
         if (fail_reason)
-            fail_reason.v = unique_corpstat(mptr) ? AS_MON_IS_UNIQUE : AS_NO_MON;
+            fail_reason.v = unique_corpstat(monster_by_pmidx(statue.corpsenm))
+                                ? AS_MON_IS_UNIQUE : AS_NO_MON;
         return null;
     }
-    // M_AP_TYPE/seemimic: a fresh makemon is not mimicking anything yet.
-    mon.mundetected = false;
+
+    /* if statue has been named, give same name to the monster */
+    if (has_oname(statue) && !unique_corpstat(mon.data))
+        mon = christen_monst(mon, ONAME(statue));
+    /* mimic statue becomes seen mimic; other hiders won't be hidden */
+    if (mon.m_ap_type)
+        (await import('./uhitm.js')).seemimicLocal(mon);
+    else
+        mon.mundetected = false;
     mon.msleeping = 0;
-    /* trap always releases a hostile monster */
-    mon.mtame = 0;
-    mon.mpeaceful = 0;
-    // set_malign(mon) is alignment bookkeeping with no RNG.
+    if (cause === C.ANIMATE_NORMAL || cause === C.ANIMATE_SHATTER) {
+        /* trap always releases hostile monster */
+        mon.mtame = 0; /* (might be petrified pet tossed onto trap) */
+        mon.mpeaceful = 0;
+        set_malign(mon);
+    }
+
     const { is_vampshifter } = await import('./monmove.js');
     const { canspotmon } = await import('./uhitm.js');
     const { is_undead_flag } = await import('./monflags_data.js');
     const { rndmonnam, a_monnam } = await import('./do_name.js');
+    const { shk_your, xname, carried } = await import('./invent.js');
     const spot = canspotmon(mon);
     const nonliv = is_undead_flag(mon.data) || mon.data?.name === 'manes'
         || mon.data?.mcls === 55 /* S_GOLEM */ || mon.data?.mcls === 22 /* S_VORTEX */;
     const comes_to_life = !spot ? 'disappears'
+        : golem_xform ? 'turns into flesh'
         : (nonliv || is_vampshifter(mon)) ? 'moves' : 'comes to life';
-    if (x === game.u.ux && y === game.u.uy) {
-        /* C: "the|your|Manlobbi's statue [of a wombat]" -- the species is only
-           spelled out for the animate-statue spell (cause == ANIMATE_SPELL) */
-        const { yname, xname } = await import('./invent.js');
-        const nm = _cause === 2 /* ANIMATE_SPELL */ ? yname(statue)
-            : `${yname(statue).slice(0, -xname(statue).length)}statue`;
-        await pline(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${comes_to_life}!`);
+    const upstart = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+    const yourPfx = () => { const w = shk_your(statue); return w ? `${w} ` : ''; };
+    if ((x === game.u.ux && y === game.u.uy) || cause === C.ANIMATE_SPELL) {
+        /* "the|your|Manlobbi's statue [of a wombat]" */
+        shkp = shop_keeper(in_rooms(mon.mx, mon.my, SHOPBASE)[0]);
+        const statuename = yourPfx()
+            + ((cause === C.ANIMATE_SPELL
+                /* avoid "of a shopkeeper" if it's Manlobbi himself */
+                && (mon !== shkp || carried(statue)))
+                ? xname(statue) : 'statue');
+        await pline(`${upstart(statuename)} ${comes_to_life}!`);
     } else if (Hallucination_u()) { /* They don't know it's a statue */
         await pline(`The ${rndmonnam().name} suddenly seems more animated.`);
-    } else if (_cause === 1 /* ANIMATE_SHATTER */) {
-        const { yname } = await import('./invent.js');
-        await pline(`Instead of shattering, ${cansee(x, y) ? yname(statue) : 'a statue'} suddenly ${comes_to_life}!`);
-    } else { /* ANIMATE_NORMAL */
+    } else if (cause === C.ANIMATE_SHATTER) {
+        const statuename = cansee(x, y) ? yourPfx() + xname(statue) : 'a statue';
+        await pline(`Instead of shattering, ${statuename} suddenly ${comes_to_life}!`);
+    } else { /* cause == ANIMATE_NORMAL */
+        (await import('./hack.js')).set_msg_xy(x, y);
         await pline(`You find ${spot ? a_monnam(mon) : 'something'} posing as a statue.`);
         if (!spot && Blind()) {
             const { map_invisible } = await import('./display.js');
@@ -2819,12 +2944,9 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
     }
     /* if this isn't caused by a monster using a wand of striking,
        there might be consequences for the hero */
-    const historic = game.urole?.mnum === 0 /* PM_ARCHEOLOGIST */
-        && ((statue.spe | 0) & CORPSTAT_HISTORIC) !== 0;
     if (!game.context?.mon_moving) {
         /* if statue is owned by a shop, hero will have to pay for it */
-        let shkp;
-        if (_cause !== 0 /* ANIMATE_NORMAL */ && costly_spot(x, y)
+        if (cause !== C.ANIMATE_NORMAL && costly_spot(x, y)
             && (carried(statue) ? statue.unpaid : !statue.no_charge)
             && (shkp = shop_keeper(in_rooms(x, y, SHOPBASE)[0]))
             /* avoid charging for Manlobbi's statue of Manlobbi */
@@ -2848,8 +2970,18 @@ export async function animate_statue(statue, x, y, _cause, fail_reason) {
     }
     statue.cobj = [];
     m_dowear(mon, true);
+    /* in case statue is wielded and hero zaps stone-to-flesh at self */
+    if (statue.owornmask)
+        await (await import('./invent.js')).remove_worn_item(statue, true);
     delobj(statue);
     newsym(x, y);
+
+    /* avoid hiding under nothing */
+    if (x === game.u.ux && y === game.u.uy && game.u.Upolyd
+        && hides_under_flag_trap(youmonst_data_pub())
+        && !(game.level?.objects || []).some((o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y))
+        game.u.uundetected = 0;
+    if (fail_reason) fail_reason.v = AS_OK;
     return mon;
 }
 
@@ -2899,7 +3031,9 @@ export async function dofiretrap(box) {
     }
     await pline(`A ${TOWER_OF_FLAME} ${box ? 'bursts' : 'erupts'} from ${noun}!`);
     if (Fire_resistance) {
-        // shieldeff()/monstseesu() draw nothing.
+        // shieldeff() draws nothing; monstseesu() records the resistance for
+        // every monster that can see the hero (m_seenres() steers wand choice).
+        monstseesu(M_SEEN_FIRE);
         num = rn2(2);
     } else if (u?.Upolyd) {
         let alt = 0;
@@ -2916,6 +3050,7 @@ export async function dofiretrap(box) {
             game.botl = true;
         }
         if (u.mh > u.mhmax) { u.mh = u.mhmax; game.botl = true; }
+        monstunseesu(M_SEEN_FIRE);
     } else {
         const { minuhpmax, setuhpmax, losexp } = await import('./exper.js');
         const uhpmin = minuhpmax(1), olduhpmax = u.uhpmax;
@@ -2931,6 +3066,7 @@ export async function dofiretrap(box) {
             if (!u.uprops?.Drain_resistance) await losexp(null);
         }
         if (u.uhp > u.uhpmax) { u.uhp = u.uhpmax; game.botl = true; }
+        monstunseesu(M_SEEN_FIRE);
     }
     if (!num) await update_topl('You are uninjured.');
     else await losehp(num, TOWER_OF_FLAME);
@@ -3079,28 +3215,51 @@ export async function trap_ice_effects(x, y, ice_is_melting) {
 }
 
 // C ref: trap.c:5393 move_into_trap(ttmp) — a failed disarm drags the hero
-// onto the trap.  test_move()/drag_ball() are hack.c's; the only case this
-// port can hit is an ordinary adjacent step, which always succeeds, so the
-// "Fortunately, you don't move into it." arm needs a doorway/boulder squeeze
-// that #untrap cannot reach from here.
+// onto the trap (unless test_move()/drag_ball() refuse the step).
 async function move_into_trap(ttmp) {
     const u = game.u;
     const x = ttmp.tx, y = ttmp.ty;
-    u.ux0 = u.ux; u.uy0 = u.uy;
-    u.ux = x; u.uy = y;
-    u.umoved = true;
-    newsym(u.ux0, u.uy0);
-    // vision_recalc(1) / check_leash(): display + leash bookkeeping, no RNG.
-    /* marking the trap unseen forces dotrap() to treat it like a new
-       discovery */
-    ttmp.tseen = false;
-    (game.iflags = game.iflags || {}).failing_untrap =
-        (game.iflags.failing_untrap | 0) + 1;
-    await spoteffects(true);
-    game.iflags.failing_untrap--;
-    const t2 = t_at(u.ux, u.uy);
-    if (t2) t2.tseen = true;
-    exercise(A_WIS, false);
+    let bc = null;
+    /* we know there's no monster in the way and we're not trapped, but
+       need to make sure the move is not diagonally into or out of a
+       doorway; the sgn() calls are redundant since ttmp is adjacent */
+    const { test_move_quiet } = await import('./cmd.js');
+    let ok = test_move_quiet(x, y, Math.sign(x - u.ux), Math.sign(y - u.uy));
+    if (ok && u.uball && u.uchain) {
+        const { drag_ball } = await import('./ball.js');
+        bc = await drag_ball(x, y, true);
+        ok = !!bc;
+    }
+    if (ok) {
+        /* move hero and update map */
+        u.ux0 = u.ux; u.uy0 = u.uy;
+        /* set u.ux,u.uy and u.usteed->mx,my plus handle CLIPPING */
+        await (await import('./do.js')).u_on_newpos(x, y);
+        u.umoved = true;
+        newsym(u.ux0, u.uy0);
+        vision_recalc(1);
+        await (await import('./apply.js')).check_leash(u.ux0, u.uy0);
+        if (bc) {
+            const { move_bc } = await import('./ball.js');
+            await move_bc(0, bc.bc_control, bc.ballx, bc.bally, bc.chainx, bc.chainy);
+        }
+        /* marking the trap unseen forces dotrap() to treat it like a new
+           discovery and prevents pickup() -> look_here() -> check_here()
+           from giving a redundant "there is a <trap> here" message when
+           there are objects covering this trap */
+        ttmp.tseen = false;
+        (game.iflags = game.iflags || {}).failing_untrap =
+            (game.iflags.failing_untrap | 0) + 1;
+        await spoteffects(true);
+        game.iflags.failing_untrap--;
+        const t2 = t_at(u.ux, u.uy);
+        if (t2) t2.tseen = true;
+        exercise(A_WIS, false);
+    } else {
+        /* caller has just printed "Whoops..." so if hero is prevented from
+           moving, a followup message is needed */
+        await pline(`Fortunately, you don't move ${into_vs_onto(ttmp.ttyp) ? 'into' : 'onto'} it.`);
+    }
 }
 
 // C ref: trap.c:5441 try_disarm(ttmp, force_failure).
@@ -3325,8 +3484,20 @@ async function help_monster_out(mtmp, ttmp) {
             mon_nam(mtmp)} backs away skeptically.`);
         return 1;
     }
-    // touch_petrifies() cockatrice arm needs polymon()/instapetrify(); no
-    // recorded pit holds a cockatrice.
+    /* is it a cockatrice?... */
+    if (touch_petrifies_tr(mtmp.data) && !game.uarmg && !Stone_resistance_u()) {
+        const { mon_pmname } = await import('./uhitm.js');
+        const { instapetrify, polymon } = await import('./polyself.js');
+        const mtmp_pmname = mon_pmname(mtmp);
+        await pline(`You grab the trapped ${mtmp_pmname} using your bare ${makeplural(body_part(HAND))}.`);
+        if (poly_when_stoned_tr(youmonst_data_pub()) && await polymon(name_to_pmidx('stone golem'))) {
+            /* display_nhwindow(WIN_MESSAGE, FALSE) */
+        } else {
+            await instapetrify(`trying to help ${an(mtmp_pmname)} out of a pit`);
+            return 1;
+        }
+    }
+    /* need to do cockatrice check first if sleeping or paralyzed */
     if (uprob) {
         await pline(`You try to grab ${mon_nam(mtmp)}, but cannot get a firm grasp.`);
         if (mtmp.msleeping) {
@@ -3367,6 +3538,9 @@ export async function chest_trap(obj, bodypart, disarm) {
     const u = game.u;
     const Luck = (u?.uluck | 0) + (u?.moreluck | 0);
 
+    const cc = (await import('./light.js')).get_obj_location(obj, 0); /* might be carried */
+    if (cc) { obj.ox = cc.x; obj.oy = cc.y; }
+
     obj.tknown = 0;   /* for xname(); set to 1 below */
     obj.otrapped = 0; /* one-shot; clear first in case the chest kills you */
     await pline(disarm ? 'You set it off!' : 'You trigger a trap!');
@@ -3401,7 +3575,7 @@ export async function chest_trap(obj, bodypart, disarm) {
             const explodeKnam = `exploding ${xname(obj)}`; /* buf before delobj() */
             if (costly)
                 loss += await stolen_value(obj, ox, oy, !!shkp.mpeaceful, true);
-            obj.cobj = [];                            /* delete_contents() */
+            (await import('./shk.js')).delete_contents(obj);
             if (u.uball && ((u.uchain?.ox === ox && u.uchain?.oy === oy)
                 || (u.uball.where === OBJ_FLOOR && u.uball.ox === ox && u.uball.oy === oy)))
                 (await import('./read.js')).unpunish();
@@ -3445,9 +3619,15 @@ export async function chest_trap(obj, bodypart, disarm) {
             let dmg = d(4, 4);
             const orig_dmg = dmg;
             await pline('You are jolted by a surge of electricity!');
+            const { monstseesu, monstunseesu } = await import('./mondata.js');
+            const { M_SEEN_ELEC } = await import('./const.js');
             if ((await import('./zap.js')).Shock_resistance()) {
+                await (await import('./display.js')).shieldeff(u.ux, u.uy);
                 await update_topl("You don't seem to be affected.");
+                monstseesu(M_SEEN_ELEC);
                 dmg = 0;
+            } else {
+                monstunseesu(M_SEEN_ELEC);
             }
             const { destroy_items } = await import('./zap.js');
             await destroy_items(u, AD_ELEC, orig_dmg);
@@ -3626,9 +3806,13 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
                     here ? ' in it' : ''}!`);
                 return 1;
             }
-            // M_AP_FURNITURE/M_AP_OBJECT mimics: stumble_onto_mimic() is
-            // uhitm.c's; no recorded trap square holds a disguised mimic.
             const mtmp = m_at(x, y);
+            if (mtmp && (M_AP_TYPE(mtmp) === M_AP_FURNITURE
+                         || M_AP_TYPE(mtmp) === M_AP_OBJECT)) {
+                const { stumble_onto_mimic } = await import('./uhitm.js');
+                await stumble_onto_mimic(mtmp);
+                return 1;
+            }
             switch (ttmp.ttyp) {
             case BEAR_TRAP:
             case WEB:
@@ -3664,9 +3848,12 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
         for (const otmp of (game.level?.objects || [])) {
             if (!(otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y
                   && Is_box_otyp(otmp.otyp))) continue;
+            const { safe_qbuf } = await import('./pickup.js');
+            const { ansimpleoname } = await import('./invent.js');
             const q = (otmp.tknown && otmp.dknown)
-                ? `Disarm this ${xname(otmp)}?`
-                : `There is ${an(xname(otmp))} here.  Check it for traps?`;
+                ? safe_qbuf('Disarm this ', null, otmp, xname, ansimpleoname, 'a box')
+                : safe_qbuf('There is ', ' here.  Check it for traps?', otmp,
+                            obj_doname, ansimpleoname, 'a box');
             const c = await ynq(q);
             if (c === 'q') return 0;
             if (c === 'y') {
@@ -3678,7 +3865,10 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
         }
         await pline('There are no other chests or boxes here.');
     }
-    // stumble_on_door_mimic(): a mimic disguised as a door is uhitm.c's.
+    if (floor_reachable) {
+        const { stumble_on_door_mimic } = await import('./cmd.js');
+        if (await stumble_on_door_mimic(x, y)) return 1;
+    }
 
     const loc = game.level?.at(x, y);
     if (!IS_DOOR(loc?.typ ?? STONE)) {
@@ -4573,13 +4763,13 @@ export async function dotrap(trap, trflags = 0) {
         // C's escape roll is gated on a stack of conditions our old port
         // dropped: an already-seen MAGIC_PORTAL / VIBRATING_SQUARE /
         // ANTI_MAGIC draws NO rn2(5) at all, and neither does a Fumbling,
-        // bungling, plunging or pit-to-pit step.  is_clinger(gy.youmonst.data)
-        // is false for every role monster, so the `||` arm cannot fire.
+        // bungling, plunging or pit-to-pit step.
         const fumbling = !!(u?.HFumbling || u?.EFumbling);
         if (already_seen && !fumbling && !undestroyable_trap(ttype)
             && ttype !== ANTI_MAGIC && !forcebungle && !plunged
             && !conj_pit && !adj_pit
-            && !rn2(5)) {
+            && (!rn2(5) || (is_pit_ttyp(ttype)
+                            && (mflags1_of(youmonst_data_pub()) & M1_CLING) !== 0))) {
             await pline(`You escape ${trap_article(trap)} ${trapname(ttype, false)}.`);
             return;
         }
@@ -4652,6 +4842,12 @@ const PM_AIR_ELEMENTAL_TRAP = name_to_pmidx('air elemental');
 const PM_GRID_BUG_TRAP = name_to_pmidx('grid bug');
 const PM_GREMLIN_TRAP = name_to_pmidx('gremlin');
 const PM_IRON_GOLEM_TRAP = name_to_pmidx('iron golem');
+const PM_CAVE_SPIDER_TRAP = name_to_pmidx('cave spider');
+const PM_GIANT_SPIDER_TRAP = name_to_pmidx('giant spider');
+const PM_OWLBEAR_TRAP = name_to_pmidx('owlbear');
+const PM_BUGBEAR_TRAP = name_to_pmidx('bugbear');
+const PM_PIT_VIPER_TRAP = name_to_pmidx('pit viper');
+const PM_PIT_FIEND_TRAP = name_to_pmidx('pit fiend');
 // C ref: monsym.h S_VORTEX / S_GHOST / S_EEL mlet values.
 const S_VORTEX_MCLS = 22, S_GHOST_MCLS = 54, S_EEL_MCLS = 57;
 function likes_lava_trap(ptr) {

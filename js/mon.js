@@ -2510,7 +2510,7 @@ export function copy_mextra(mtmp2, mtmp1) {
     if (x1.emin) x2.emin = { ...x1.emin };
     if (x1.edog) x2.edog = { ...x1.edog };
     if (x1.ebones) x2.ebones = { ...x1.ebones };
-    if (x1.mcorpsenm != null) x2.mcorpsenm = x1.mcorpsenm;
+    if (x1.mcorpsenm != null && x1.mcorpsenm !== NON_PM) x2.mcorpsenm = x1.mcorpsenm; /* has_mcorpsenm() */
 }
 
 // ── mon.c:2649 dealloc_mextra() ─────────────────────────────────────────────

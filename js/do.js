@@ -560,10 +560,17 @@ export async function u_collide_m(mtmp) {
         await mnexto_rloc(mtmp, RLOC_NOMSG);
     }
     // C: if still a monster in the hero's way, rloc it; if that fails, limbo it.
-    const still = m_at(u.ux, u.uy);
+    let still = m_at(u.ux, u.uy);
     if (still) {
-        const mons = game.level?.monsters;
-        if (mons) { const i = mons.indexOf(still); if (i >= 0) mons.splice(i, 1); }
+        /* only say something when debugging */
+        if (game.flags?.debug)
+            await pline("(monster in hero's way)");
+        const { rloc } = await import('./teleport.js');
+        if (!(await rloc(still, RLOC_NOMSG)) || (still = m_at(u.ux, u.uy))) {
+            /* no room to move it; send it away, to return later */
+            const { m_into_limbo } = await import('./dog.js');
+            await m_into_limbo(still);
+        }
     }
 }
 
@@ -834,6 +841,16 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     if (newlevel.dnum === u.uz.dnum && newlevel.dlevel === u.uz.dlevel)
         return; // on_level(newlevel, &u.uz): nothing to do
 
+    // C ref: do.c:1593-1595 — tethered movement makes level change while
+    // trapped feasible: the buried ball comes up first, before the level is saved.
+    if (u.utrap && u.utraptype === TT_BURIEDBALL)
+        await (await import('./dig.js')).buried_ball_to_punishment();
+    // C ref: do.c:1605-1606 — a floor container or door being left behind stops
+    // being the lock-picking target; the pending beartrap/landmine set is dropped.
+    (await import('./lock.js')).maybe_reset_pick(null);
+    (await import('./apply.js')).reset_trapset();
+    // C ref: do.c:1608-1609 `svc.context.polearm.hitmon = (struct monst *) 0;`
+    if (g.context?.polearm) g.context.polearm.hitmon = null;
     // C ref: do.c:1607 — discard the context that applies to the level we're
     // leaving.  travelcc is what getpos() opens the '_' prompt's cursor on, so
     // a stale one puts the cursor on the previous level's destination instead
@@ -2401,8 +2418,10 @@ export async function dodown() {
         }
     }
 
-    // A hero still levitating cannot descend; no turn passes.
-    if (Levitation_do()) {
+    // Any levitation source stops the descent, even a blocked one (C: BLevitation
+    // is a no-op branch, "weren't actually floating after all"); no turn passes.
+    // C ref: do.c:1176 `if (HLevitation || ELevitation) {...}`.
+    if ((u.uprops?.Levitation | 0) || worn_extrinsic(LEVITATION)) {
         // C ref: do.c:1190-1197 — the two special-level wordings, then hack.c
         // floating_above(what) — "You are floating high above %s."
         if (Is_airlevel(u.uz)) {

@@ -1840,7 +1840,8 @@ function change_luck(n) {
 // treasure roll).  Both default off, matching every existing melee call site.
 export async function killed(mon, opts) {
     const nomsg = !!opts?.nomsg;
-    const skipCorpseBlock = !!opts?.nocorpse;
+    let skipCorpseBlock = !!opts?.nocorpse;
+    let burycorpse = false;
     const { update_topl } = await import('./display.js');
     const x = mon.mx, y = mon.my;
     const wasinside = !!(game.u?.uswallow && game.u?.ustuck === mon);
@@ -1868,6 +1869,21 @@ export async function killed(mon, opts) {
               : x_monnam(mon, namedpet ? 0 /*ARTICLE_NONE*/ : 1 /*ARTICLE_THE*/,
                          'poor', namedpet ? SUPPRESS_SADDLE : 0, false);
         await update_topl(`You ${nonliving(mon) ? 'destroy' : 'kill'} ${who}!`);
+    }
+
+    // C ref: mon.c xkilled() — a pit-trapped victim: a boulder already in the
+    // pit means no corpse or treasure (they would sit "on top" of the boulder
+    // about to fall in); a boulder-carrying victim has its corpse buried.
+    if (mon.mtrapped) {
+        const { t_at } = await import('./trap.js');
+        const { is_pit } = await import('./const.js');
+        const t = t_at(x, y);
+        if (t && is_pit(t.ttyp)) {
+            const { sobj_at } = await import('./invent.js');
+            const { m_carrying } = await import('./monmove.js');
+            if (sobj_at(BOULDER, x, y)) skipCorpseBlock = true;
+            if (m_carrying(mon, BOULDER)) burycorpse = true;
+        }
     }
 
     // C ref: mon.c:3525 — your pet knows who just killed it (wary_dog).
@@ -2073,8 +2089,12 @@ export async function killed(mon, opts) {
             game.zombify = (!game.thrownobj && !game.stoned && !game.uwep
                             && zombie_maker({ data: youmonst_data_uh(), mcan: false })
                             && zombie_form(mon.data) !== NON_PM);
-            await make_corpse(mon, x, y);
+            const cadaver = await make_corpse(mon, x, y, burycorpse);
             game.zombify = false; /* reset */
+            const { OBJ_BURIED } = await import('./const.js');
+            if (burycorpse && cadaver && cansee(x, y) && !mon.minvis
+                && cadaver.where === OBJ_BURIED && !nomsg)
+                await update_topl(`${s_suffix(Monnam(mon))} corpse ends up buried.`);
         }
         // C ref: mon.c:3632-3640 — killing the engulfer from inside runs
         // spoteffects(TRUE) ("poor man's expels()"): the hero, already moved
@@ -2106,8 +2126,15 @@ export async function killed(mon, opts) {
         if ((f2_0 & M2_HUMAN) && !(f2_0 & M2_HOSTILE) && (mon.malign | 0) <= 0
             && !is_mplayer(mdat0) && mdat0.pmidx !== 260
             && alignType !== A_CHAOTIC) {
+            // C ref: mon.c:3658 — murder costs the hero intrinsic telepathy.
+            if (game.u.uprops)
+                game.u.uprops.HTelepat = (game.u.uprops.HTelepat | 0) & ~0x07000000; /* ~INTRINSIC */
             change_luck(-2);
             await update_topl('You murderer!');
+            if (Blind() && !Blind_telepat()) {
+                const { see_monsters } = await import('./display.js');
+                await see_monsters(); /* Can't sense monsters any more. */
+            }
         }
         if ((mon.mpeaceful && !rn2(2)) || mon.mtame)      // mon.c:3664
             change_luck(-1);
@@ -2317,6 +2344,26 @@ export async function corpse_chance(mon, was_swallowed = false) {
         }
         return false;
     }
+    // C ref: mon.c:3199-3236 -- a gas spore always explodes on death.  The only
+    // caller that reaches here with one is gulpum()'s AD_DGST arm (was_swallowed,
+    // magr == &youmonst): the blast is contained and hurts the hero's stomach.
+    if (was_swallowed) {
+        const { mattk_list } = await import('./mhitm.js');
+        const { AT_BOOM } = await import('./monattk_data.js');
+        const boom = mattk_list(mon).find((a) => a[0] === AT_BOOM);
+        if (boom) {
+            let tmp;
+            if (boom[2]) tmp = d(boom[2], boom[3]);
+            else if (boom[3]) tmp = d((mdat.mlevel | 0) + 1, boom[3]);
+            else tmp = 0;
+            const { body_part } = await import('./invent.js');
+            await update_topl(`There is an explosion in your ${body_part(STOMACH)}!`);
+            const { losehp_do, Maybe_Half_Phys_do } = await import('./do.js');
+            await losehp_do(Maybe_Half_Phys_do(tmp),
+                            `${s_suffix(mon_pmname(mon))} explosion`, 0 /* KILLED_BY_AN */);
+            return false;
+        }
+    }
     if (level_specific_nocorpse(mdat)) return false;
     const bigOrLizard = (largemonst(mdat) || mdat.name === 'lizard') && !mon.mcloned;
     const golem = /\bgolem$/.test(mdat.name || '');
@@ -2336,7 +2383,7 @@ export async function corpse_chance(mon, was_swallowed = false) {
 // :0, mdat, x, y, CORPSTAT_INIT).  mksobj() builds the corpse object: rolls the
 // next_ident o_id, the rndmonnum() reservoir scan (overwritten with mdat after),
 // the gender rn2(2), and start_corpse_timeout().  Reuses mkobj.js verbatim.
-export async function make_corpse(mon, x, y) {
+export async function make_corpse(mon, x, y, burythem = false) {
     const mndx = mon.data?.pmidx;
     if (mndx == null) return;
     // C ref: mon.c:576 — record the gender in the corpse's overloaded spe field
@@ -2488,6 +2535,13 @@ export async function make_corpse(mon, x, y) {
         || dmgtype(mdat, AD_SEDU) || dmgtype(mdat, AD_SSEX);
     const obj = mkcorpstat(CORPSE, keeptraits ? mon : null, mndx, x, y,
                            CORPSTAT_INIT | CORPSTAT_NONE | corpstatflags);
+    if (burythem) {
+        const { bury_an_obj } = await import('./dig.js');
+        const buried = {};
+        await bury_an_obj(obj, buried);
+        newsym(x, y);
+        return buried.dealloced ? null : obj;
+    }
     named(obj);
     // C ref: mon.c:933 `stackobj(obj)` — a fresh corpse absorbs a mergable one
     // already on the square.

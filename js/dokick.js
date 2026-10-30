@@ -58,7 +58,7 @@ import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
 import { canspotmon, Monnam, mon_nam, setmangry, killed, monflee,
          attack_checks, overexertion, passive, check_caitiff, abuse_dog,
          seemimicLocal as seemimic, glyph_is_invisible } from './uhitm.js';
-import { DEADMONSTER } from './mon.js';
+import { DEADMONSTER, fmonOrder } from './mon.js';
 import { map_invisible } from './display.js';
 import { special_dmgval } from './weapon.js';
 import { goodpos, rloc_to } from './teleport.js';
@@ -68,7 +68,7 @@ import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
 import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
 import { wipe_engr_at, u_wipe_engr } from './engrave.js';
 import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
-import { is_pool, is_lava, is_pool_or_lava, is_ice } from './dbridge.js';
+import { is_pool, is_lava, is_pool_or_lava, is_ice, is_drawbridge_wall, find_drawbridge } from './dbridge.js';
 import { scatter } from './explode.js';
 import { hero_breaks, breaktest } from './dothrow.js';
 import { is_art, ART_MJOLLNIR } from './artifact.js';
@@ -280,14 +280,14 @@ function unmap_invisible(x, y) {
 // C ref: mon.c get_iter_mons(func) / get_iter_mons_xy(func, x, y) — walk fmon
 // applying the predicate; both dokick.c call sites ignore the result.
 async function get_iter_mons(fn) {
-    for (const mtmp of [...(game.level?.monsters || [])]) {
+    for (const mtmp of fmonOrder()) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
         if (await fn(mtmp)) return mtmp;
     }
     return null;
 }
 async function get_iter_mons_xy(fn, x, y) {
-    for (const mtmp of [...(game.level?.monsters || [])]) {
+    for (const mtmp of fmonOrder()) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
         if (await fn(mtmp, x, y)) return mtmp;
     }
@@ -376,10 +376,16 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     await exercise(A_STR, false);
     if (isok(x, y)) {
         if (Blind()) feel_location(x, y); /* we know we hit it */
+        if (is_drawbridge_wall(x, y) >= 0) {
+            await pline('The drawbridge is unaffected.');
+            /* update maploc to refer to the drawbridge (for kickstr) */
+            const db = find_drawbridge(x, y);
+            x = db.x;
+            y = db.y;
+            maploc = game.level?.at(x, y);
+        }
         // C ref: dokick.c:898 — the noise wakes anything within 5*5; no RNG
         // here, but the monsters it wakes go on to take (RNG-drawing) turns.
-        // is_drawbridge_wall()/find_drawbridge() only retarget gm.maploc for
-        // kickstr(); no drawbridge is kicked on the levels this reaches.
         await wake_nearto(x, y, 5 * 5);
     }
     if (rn2(3) === 0) await set_wounded_legs(RIGHT_SIDE, 5 + rnd(5));
@@ -1361,7 +1367,7 @@ async function really_kick_object(x, y) {
             otense(gk_kickedobj, 'slide')} across the ${surface(x, y)}.`);
 
     obj_extract_self(gk_kickedobj);
-    // snuff_candle(gk.kickedobj): the light-source list isn't modelled; no RNG.
+    await (await import('./apply.js')).snuff_candle(gk_kickedobj);
     newsym(x, y);
     const land = await bhit_kicked(u.dx, u.dy, range, gk_kickedobj);
     if (!gk_kickedobj) return 1; /* object broken */

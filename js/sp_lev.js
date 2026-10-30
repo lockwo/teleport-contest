@@ -321,6 +321,9 @@ export function set_levltyp_lit(x, y, typ, lit) {
     const loc = game.level?.at(x, y);
     if (!loc || typ === INVALID_TYPE || typ >= MAX_TYPE) return false;
     const oldtyp = loc.typ;
+    /* C ref: mkmaze.c set_levltyp() — CAN_OVERWRITE_TERRAIN() refuses to replace a
+       staircase or ladder (iflags.debug_overwrite_stairs is off). */
+    if (oldtyp === STAIRS || oldtyp === LADDER) return false;
     loc.typ = typ;
     // C ref: mkmaze.c set_levltyp() — `(IS_FOUNTAIN(oldtyp) != IS_FOUNTAIN(newtyp))
     // || (IS_SINK(oldtyp) != IS_SINK(newtyp))` re-tallies level.flags here, which

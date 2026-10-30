@@ -24,6 +24,7 @@ import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, ge
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE } from './const.js';
+import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
 import { fruit_from_name } from './objnam.js';
@@ -148,7 +149,7 @@ function avoid_moving_on_liquid(x, y) {
     if ((typ === hereTyp
          || (run < 2 && (!IS_LAVA(typ) || in_air))
          || game.context?.travel)
-        && in_air /* || Known_lwalking || (is_pool && Known_wwalking) */
+        && (in_air || Known_lwalking() || (is_pool(x, y) && Known_wwalking()))
         && !(typ === WATER || typ === LAVAWALL))
         return false; // liquid is safe to traverse
     if ((is_pool(x, y) || IS_LAVA(typ)) && (loc?.seenv || 0))
@@ -852,7 +853,9 @@ function test_move_trav(ux, uy, dx, dy, mode) {
         // Known_wwalking / Known_lwalking are FALSE for a hero without the
         // boots, so the "liquid is safe" escape reduces to being airborne.
         if ((tmpr?.seenv || 0) && is_pool_or_lava(x, y)) {
-            const airborne = !!(Levitation_fu() || Flying_fu());
+            const airborne = !!(Levitation_fu() || Flying_fu()
+                || (is_pool(x, y) ? Known_wwalking()
+                    : (Known_lwalking() && IS_LAVA(lev?.at(ux, uy)?.typ))));
             if (IS_WATERWALL(typ) || typ === LAVAWALL || !airborne)
                 return (mode === TEST_TRAP);
         }

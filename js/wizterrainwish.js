@@ -27,7 +27,7 @@ import {
     D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED, D_TRAPPED,
     F_LOOTED, T_LOOTED, S_LPUDDING, S_LDWASHER, S_LRING,
     TREE_LOOTED, TREE_SWARM, ICED_POOL, ICED_MOAT,
-    W_NONDIGGABLE, W_NONPASSWALL, WM_MASK,
+    W_NONDIGGABLE, W_NONPASSWALL, WM_MASK, TT_LAVA, MELT_ICE_AWAY,
     A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, Align2amask,
     IS_WALL, IS_DOOR, IS_FURNITURE, IS_FOUNTAIN, IS_SINK, IS_GRAVE, IS_POOL,
     IS_LAVA, COLNO, ROWNO,
@@ -39,6 +39,8 @@ import {
     DB_UNDER, DB_FLOOR, DB_MOAT, DB_LAVA, DB_ICE,
 } from './const.js';
 import { isok } from './hacklib.js';
+import { fix_wall_spines } from './mklev.js';
+import { is_pool, is_lava, is_ice } from './dbridge.js';
 
 // C ref: drawing.c defsyms[].explanation for S_arrow_trap..S_trapped_chest,
 // which is exactly what trap.c:7154 trapname(ttyp, TRUE) returns.  Indexed by
@@ -369,7 +371,9 @@ export function wizterrainwish(d, out) {
         lev.typ = wall;
         lev.flags = 0;
         set_wallprop_from_str(bp, lev);
-        // GAP: fix_wall_spines() re-derives the neighbours' wall modes.
+        // C ref: objnam.c:3833 — re-derive the neighbours' wall corner/T modes.
+        fix_wall_spines(Math.max(0, x - 1), Math.max(0, y - 1),
+                        Math.min(COLNO, x + 1), Math.min(ROWNO, y + 1));
         out.push('A wall.');
     } else if (sfx(bp, 'secret corridor')) {
         if (lev.typ === CORR) {
@@ -405,6 +409,18 @@ export function wizterrainwish(d, out) {
 
     if (madeterrain) {
         newsym(x, y); /* C: feel_newsym(x, y) — map the spot */
+        /* C ref: objnam.c:3876-3887 — hero started at <x,y> but might not be
+           there anymore (create lava, decline to die, get teleported away). */
+        out.push(async () => {
+            const hu = game.u;
+            if (hu.uinwater && !is_pool(hu.ux, hu.uy)) {
+                const { set_uinwater } = await import('./do.js');
+                await set_uinwater(0); /* leave the water */
+                await (await import('./display.js')).docrt();
+            } else if (hu.utrap && hu.utraptype === TT_LAVA && !is_lava(hu.ux, hu.uy)) {
+                await (await import('./trap.js')).reset_utrap_fu(false);
+            }
+        });
         recalc_block_point(x, y);
 
         /* fixups for replaced terrain that aren't handled above */
@@ -415,8 +431,14 @@ export function wizterrainwish(d, out) {
                 && !IS_DOOR(lev.typ) && lev.typ !== SDOOR)
                 lev.horizontal = false; /* also clears blessedftn, disturbed */
         }
-        // GAP: switch_terrain() — levitation/flying re-evaluation for a hero who
-        // replaced the solid stone they were phasing through.
+        // C ref: objnam.c:3891 — a replaced ICE square no longer melts away.
+        if (!is_ice(x, y))
+            out.push(async () => (await import('./timeout.js'))
+                .spot_stop_timers(x, y, MELT_ICE_AWAY));
+        // C ref: objnam.c:3910 switch_terrain() — levitation/flying
+        // re-evaluation for a hero who replaced solid stone they were phasing
+        // through.
+        out.push(async () => (await import('./trap.js')).switch_terrain());
     }
     return madeterrain || badterrain;
 }

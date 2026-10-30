@@ -1038,9 +1038,9 @@ export class NethackGame {
 
     _nextManualPrompt(sel) {
         if (sel.role < 0) return 'role';
-        if (sel.race < 0) return 'race';
-        if (sel.gender < 0) return 'gender';
-        if (sel.align < 0) return 'align';
+        if (sel.race < 0 || !validrace(sel.role, sel.race)) return 'race';
+        if (sel.gender < 0 || !validgend(sel.role, sel.race, sel.gender)) return 'gender';
+        if (sel.align < 0 || !validalign(sel.role, sel.race, sel.align)) return 'align';
         return 'ok';
     }
 
@@ -1073,19 +1073,19 @@ export class NethackGame {
         for (;;) {
             if (sel.role < 0)
                 return 'role'; // role always offered via a menu
-            if (sel.race < 0) {
+            if (sel.race < 0 || !validrace(sel.role, sel.race)) {
                 const { n, k } = count_ok_race(sel.role, sel.gender, sel.align);
-                if (n > 1) { rigid_role_checks(sel); if (sel.race < 0) return 'race'; else continue; }
+                if (n > 1) { rigid_role_checks(sel); if (sel.race < 0 || !validrace(sel.role, sel.race)) return 'race'; else continue; }
                 sel.race = k; continue;
             }
-            if (sel.gender < 0) {
+            if (sel.gender < 0 || !validgend(sel.role, sel.race, sel.gender)) {
                 const { n, k } = count_ok_gend(sel.role, sel.race, sel.align);
-                if (n > 1) { rigid_role_checks(sel); if (sel.gender < 0) return 'gender'; else continue; }
+                if (n > 1) { rigid_role_checks(sel); if (sel.gender < 0 || !validgend(sel.role, sel.race, sel.gender)) return 'gender'; else continue; }
                 sel.gender = k; continue;
             }
-            if (sel.align < 0) {
+            if (sel.align < 0 || !validalign(sel.role, sel.race, sel.align)) {
                 const { n, k } = count_ok_align(sel.role, sel.race, sel.gender);
-                if (n > 1) { rigid_role_checks(sel); if (sel.align < 0) return 'align'; else continue; }
+                if (n > 1) { rigid_role_checks(sel); if (sel.align < 0 || !validalign(sel.role, sel.race, sel.align)) return 'align'; else continue; }
                 sel.align = k; continue;
             }
             return 'ok';
@@ -1099,8 +1099,9 @@ export class NethackGame {
     // Facet-switching resets that facet (and clears any already-forced facets
     // C re-derives) so the chosen menu reappears.  When all four facets resolve,
     // the "Is this ok?" confirmation is shown.
-    async _manualCharacterSelection(sel) {
+    async _manualCharacterSelection(sel, getconfirmation = true) {
         let prompt = this._advanceForcedFacets(sel);
+        if (prompt === 'ok' && !getconfirmation) return true;
         this._renderManualPrompt(sel);
         for (;;) {
             const ch = await this._readPromptKey();
@@ -1192,6 +1193,9 @@ export class NethackGame {
             }
 
             prompt = this._advanceForcedFacets(sel);
+            /* C: getconfirmation = (picksomething && ...): a config that pinned
+               all four facets never asks "Is this ok?", even after a menu. */
+            if (prompt === 'ok' && !getconfirmation) return true;
             this._renderManualPrompt(sel);
         }
     }
@@ -1264,6 +1268,35 @@ export class NethackGame {
         return n;
     }
 
+    // C ref: pline() on the tty BASE window during genl_player_setup(): a message
+    // joins the pending topline when it fits (update_topl: n0 + len + 3 < CO - 8),
+    // otherwise the pending one is flushed with --More-- first.  The still-pending
+    // line is flushed by _flushStartupPline() before the next window opens
+    // (tty_display_nhwindow -> more()).
+    async _startupPline(msg) {
+        const cur = this._startupTopline;
+        if (cur !== undefined && cur.length + msg.length + 3 < 72) {
+            this._startupTopline = `${cur}  ${msg}`;
+            return;
+        }
+        await this._flushStartupPline();
+        this._startupTopline = msg;
+    }
+
+    async _flushStartupPline() {
+        const msg = this._startupTopline;
+        if (msg === undefined) return;
+        this._startupTopline = undefined;
+        const text = `${msg}--More--`;
+        this._renderStartupScreen(game.plname || '', text);
+        game.nhDisplay.setCursor(Math.min(text.length, 79), 0);
+        for (;;) {
+            const key = await this._readPromptKey();
+            if (key === ' ' || key === '\n' || key === '\r' || key === '\x1b') break;
+        }
+        this._renderStartupScreen(game.plname || '');
+    }
+
     // C ref: role.c genl_player_setup() makepicks loop.  Facet order is role ->
     // race -> gender -> alignment, and a facet is only (re)resolved when it is
     // unset or INVALID for the facets before it (rc-pinned "Valkyrie male" lands
@@ -1273,20 +1306,26 @@ export class NethackGame {
     // when exactly one is left, drawing NO RNG.  Returns 'menu' when C would
     // open a selection menu (more than one choice, or a missing role), which is
     // the manual-selection path.
-    _makepicks(sel, pick4u) {
+    async _makepicks(sel, pick4u) {
         const rnd = (facet) => (pick4u === 'y' || pick4u === 'a'
                                 || facet === ROLE_RANDOM);
         let k;
         if (sel.role < 0) {
             if (!rnd(sel.role)) return 'menu'; /* role is always menu-picked */
             k = pick_role(sel.race, sel.gender, sel.align, PICK_RANDOM);
-            if (k < 0) k = randrole(false);
+            if (k < 0) {
+                    await this._startupPline('Incompatible role!');
+                    k = randrole(false);
+                }
             sel.role = k;
         }
         if (sel.race < 0 || !validrace(sel.role, sel.race)) {
             if (rnd(sel.race)) {
                 k = pick_race(sel.role, sel.gender, sel.align, PICK_RANDOM);
-                if (k < 0) k = randrace(sel.role);
+                if (k < 0) {
+                    await this._startupPline('Incompatible race!');
+                    k = randrace(sel.role);
+                }
             } else {
                 const cnt = count_ok_race(sel.role, sel.gender, sel.align);
                 if (cnt.n > 1) return 'menu';
@@ -1297,7 +1336,10 @@ export class NethackGame {
         if (sel.gender < 0 || !validgend(sel.role, sel.race, sel.gender)) {
             if (rnd(sel.gender)) {
                 k = pick_gend(sel.role, sel.race, sel.align, PICK_RANDOM);
-                if (k < 0) k = randgend(sel.role, sel.race);
+                if (k < 0) {
+                    await this._startupPline('Incompatible gender!');
+                    k = randgend(sel.role, sel.race);
+                }
             } else {
                 const cnt = count_ok_gend(sel.role, sel.race, sel.align);
                 if (cnt.n > 1) return 'menu';
@@ -1308,7 +1350,10 @@ export class NethackGame {
         if (sel.align < 0 || !validalign(sel.role, sel.race, sel.align)) {
             if (rnd(sel.align)) {
                 k = pick_align(sel.role, sel.race, sel.gender, PICK_RANDOM);
-                if (k < 0) k = randalign(sel.role, sel.race);
+                if (k < 0) {
+                    await this._startupPline('Incompatible alignment!');
+                    k = randalign(sel.role, sel.race);
+                }
             } else {
                 const cnt = count_ok_align(sel.role, sel.race, sel.gender);
                 if (cnt.n > 1) return 'menu';
@@ -1370,8 +1415,19 @@ export class NethackGame {
             }
         }
 
-        if (pick4u === 'n' || this._makepicks(sel, pick4u) === 'menu') {
-            if (await this._manualCharacterSelection(sel)) {
+        const picked = pick4u === 'n' ? 'menu' : await this._makepicks(sel, pick4u);
+        // Only a menu window (manual selection or the "Is this ok?" confirmation)
+        // forces the pending message out with --More--; the full-screen intro
+        // text of a 'pick for me' start just overwrites it.
+        if (picked === 'menu' || (picksomething && pick4u !== 'a'))
+            await this._flushStartupPline();
+        else
+            this._startupTopline = undefined;
+        if (picked === 'menu') {
+            /* every facet pinned but one invalid: no "Shall I pick" prompt drew
+               the startup banner, which stays behind the corner menu */
+            if (pick4u !== 'n') this._renderStartupScreen(game.plname || '');
+            if (await this._manualCharacterSelection(sel, picksomething)) {
                 game._startup_selected_character = true;
                 apply_selection(sel);
             }

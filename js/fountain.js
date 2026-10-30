@@ -14,6 +14,12 @@ import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
 import { fruitname } from './objnam.js';
+import { fmonOrder } from './mon.js';
+import { nolimbs } from './monflags_data.js';
+import { mbodypart } from './polyself.js';
+import { Deaf_hero } from './display.js';
+import { ARM, HEAD } from './const.js';
+import { fingers_or_gloves } from './do_wear.js';
 import { makeplural } from './plural.js';
 import { hcolor, rndmonnam, mhe, mhis } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
@@ -119,7 +125,7 @@ function exist_excalibur() {
 // Always prints; water-damages the gloves (RNG) when they are worn; and
 // upgrades ER_NOTHING to ER_GREASED when it removed Glib, which is what makes
 // dipfountain's `er != ER_NOTHING && !rn2(2)` early-out fire.
-async function wash_hands() {
+export async function wash_hands() {
     let res = ER_NOTHING;
     const was_glib = Glib();
     await update_topl(`You wash your ${game.uarmg ? 'gloved ' : ''}hands in the `
@@ -127,7 +133,7 @@ async function wash_hands() {
     if (was_glib) {
         await (await import('./potion.js')).make_glib(0);
         await update_topl(
-            `Your ${game.uarmg ? 'gloves' : 'fingers'} are no longer slippery.`);
+            `Your ${fingers_or_gloves(true)} are no longer slippery.`);
     }
     if (game.uarmg) res = await water_damage(game.uarmg, null, true);
     if (was_glib && res === ER_NOTHING) res = ER_GREASED;
@@ -685,11 +691,16 @@ export async function dogushforth(drinking) {
 async function watchman_warn_fountain(mtmp) {
     if (!is_watch(mtmp?.data) || !mtmp.mpeaceful) return false;
     if (!couldsee(mtmp.mx, mtmp.my)) return false;
-    // Deaf hero gets the "waves his arms" variant instead; Deaf is never true
-    // for these heroes and mbodypart()/nolimbs() aren't ported.
     const nm = x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false);
-    await update_topl(`${nm.charAt(0).toUpperCase()}${nm.slice(1)} yells:`);
-    await update_topl('"Hey, stop using that fountain!"');
+    const Nm = `${nm.charAt(0).toUpperCase()}${nm.slice(1)}`;
+    if (!Deaf_hero()) {
+        await update_topl(`${Nm} yells:`);
+        await update_topl('"Hey, stop using that fountain!"');
+    } else {
+        const limbless = nolimbs(mtmp.data);
+        await update_topl(`${Nm} earnestly ${limbless ? 'shakes' : 'waves'} ${mhis(mtmp)} ${
+            limbless ? mbodypart(mtmp, HEAD) : makeplural(mbodypart(mtmp, ARM))}!`);
+    }
     return true;
 }
 
@@ -710,7 +721,7 @@ export async function dryup(x, y, isyou) {
     if (isyou && in_town(x, y) && !warned) {
         loc.looted = (loc.looted || 0) | F_WARNED; // SET_FOUNTAIN_WARNED
         let found = false;
-        for (const mtmp of (game.level?.monsters || [])) {
+        for (const mtmp of fmonOrder()) {
             if (!mtmp || mtmp.mhp <= 0) continue;
             if (await watchman_warn_fountain(mtmp)) { found = true; break; }
         }

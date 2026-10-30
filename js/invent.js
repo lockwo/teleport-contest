@@ -84,17 +84,22 @@ import {
     unknwn_contnr_contents,
     clear_object_timer,
     obj_absorb,
+    dealloc_obj,
 } from './mkobj.js';
+import { delete_contents as shk_delete_contents } from './shk.js';
+import { maybe_reset_pick } from './lock.js';
+import { book_disappears } from './spell.js';
 
 import { getpos, getpos_menu, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
 import { observe_object as disco_observe_object, build_discoveries_rows, discoveries_title, discover_object } from './o_init.js';
-import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx, little_to_big } from './makemon.js';
-import { MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING } from './const.js';
+import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx, little_to_big, dead_species } from './makemon.js';
+import { MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING, A_CURRENT, A_ORIGINAL } from './const.js';
 import { FROMOUTSIDE as FROMOUTSIDE_PROP } from './const.js';
 import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates_silver,
          is_neuter_flag, humanoid as humanoid_flag, nolimbs as nolimbs_flag,
          mflags1_of, mflags2_of, likes_gems_flag,
          M1_NOHEAD, M1_NOTAKE, M1_NOHANDS, M1_FLY,
+         M1_SWIM, M1_AMPHIBIOUS, M1_BREATHLESS,
          M2_DEMON, M2_UNDEAD, M2_ORC, hides_under_flag } from './monflags_data.js';
 import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
 import { enlightenment_lines, record_achievement } from './insight.js';
@@ -116,8 +121,9 @@ import { onbill, shk_scan, add_to_billobjs, shopper_financial_report, money_cnt_
          costly_spot, addtobill, stolen_value, unpaid_cost, doinvbill, oid_price_adjustment,
          check_unpaid, picked_container } from './shk.js';
 import { shop_keeper, in_rooms as in_rooms_shk } from './shkroom.js';
+import { is_drawbridge_wall } from './dbridge.js';
 import { hitval, dbon, weapon_type, weapon_descr, mon_hates_blessings } from './weapon.js';
-import { poly_when_stoned } from './mondata.js';
+import { poly_when_stoned, monstunseesu_prop } from './mondata.js';
 import { W_ART as W_ART_PROP, W_WEP as W_WEP_PROP, W_ARTI as W_ARTI_PROP, I_SPECIAL as I_SPECIAL_PROP,
          HAND, STOMACH, ONAME_VIA_NAMING, ONAME_KNOW_ARTI, ONAME_SKIP_INVUPD, HMON_APPLIED,
          ALL_FINISHED } from './const.js';
@@ -132,7 +138,7 @@ import {
     P_SKILLED, P_EXPERT,
     CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_EXTCMD, CMDQ_INT, CMDQ_USER_INPUT,
     IS_FOUNTAIN, IS_THRONE, IS_SINK, IS_GRAVE, IS_ALTAR,
-    TT_BEARTRAP, TT_INFLOOR, is_pit,
+    TT_BEARTRAP, TT_INFLOOR, is_pit, is_hole,
     AM_SHRINE, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
     TREE, IRONBARS, DRAWBRIDGE_DOWN, DBWALL, LAVAPOOL, LAVAWALL, ICE, WEB,
     POOL, MOAT, WATER,
@@ -306,7 +312,7 @@ const W_TOOL = 0x00100000;
 // high bit; W_BALL/W_CHAIN keep prop.h's real values since read.js stamps them
 // via const.js. 0x00080000 already holds W_AMUL above — reusing it made an
 // amulet answer the blindfold test (-7 on seed5006).
-const W_BLINDF = 0x00800000;
+export const W_BLINDF = 0x00800000;
 const W_BALL = 0x00200000;   // C ref: prop.h:126 — punishment ball
 const BALL_CLASS_INV = 15;   // C ref: objclass.h BALL_CLASS
 const W_CHAIN = 0x00400000;  // C ref: prop.h:127 — punishment chain
@@ -464,7 +470,6 @@ export function touch_petrifies(corpsenm) {
     const nm = monster_by_pmidx(corpsenm)?.name;
     return nm === 'cockatrice' || nm === 'chickatrice';
 }
-function dead_species(_mnum, _force) { return false; }
 // C ref: worn.c setworn() for the W_WEP/W_QUIVER/W_SWAPWEP slots — clear the old
 // occupant's worn bit, install the new object, and keep the matching u-pointer
 // in sync.  Uses the prop.h mask bits (W_WEP 0x100, W_QUIVER 0x200, W_SWAPWEP
@@ -959,6 +964,23 @@ function stop_timer(_kind, _id) { return 0; }
 function obj_to_any(obj) { return obj; }
 export function obfree(obj, merge) {
     removeObjectFromAllInventories(obj);
+    if (obj.otyp === LEASH && obj.leashmon) {
+        /* C: o_unleash(obj) */
+        for (const mtmp of fmon_list())
+            if (mtmp.m_id === (obj.leashmon | 0)) { mtmp.mleashed = 0; break; }
+        obj.leashmon = 0;
+        update_inventory();
+    }
+    if (obj.oclass === FOOD_CLASS) {
+        /* C: food_disappears(obj) */
+        const vic = game.context?.victual;
+        if (vic && obj === vic.piece) game.context.victual = { piece: null, o_id: 0 };
+        if (obj.timed) clear_object_timer(obj);
+    }
+    if (obj.oclass === SPBOOK_CLASS) book_disappears(obj);
+    if (Has_contents(obj)) shk_delete_contents(obj);
+    if (Is_container(obj)) maybe_reset_pick(obj);
+    if (obj.otyp === BOULDER) obj.next_boulder = 0;
     let shkp = null;
     if (obj.unpaid) {
         for (const mon of shk_scan(true)) {
@@ -976,22 +998,24 @@ export function obfree(obj, merge) {
         if (merge && oid_price_adjustment(obj, obj.o_id)
                 > oid_price_adjustment(merge, merge.o_id))
             merge.o_id = obj.o_id;
-        return;
-    }
-    if (!merge) {
+    } else if (!merge) {
         bp.useup = true;
         obj.unpaid = 0;
         obj.where = OBJ_FREE;
         add_to_billobjs(obj);
         return;
+    } else {
+        const bpm = onbill(merge, shkp);
+        if (bpm) { /* C: else impossible() */
+            bpm.bquan += bp.bquan;
+            const eshk = shkp.eshk;
+            const index = eshk.bill.indexOf(bp);
+            eshk.bill[index] = eshk.bill[--eshk.billct];
+            eshk.bill.length = eshk.billct;
+        }
     }
-    const bpm = onbill(merge, shkp);
-    if (!bpm) return; /* C: impossible() */
-    bpm.bquan += bp.bquan;
-    const eshk = shkp.eshk;
-    const index = eshk.bill.indexOf(bp);
-    eshk.bill[index] = eshk.bill[--eshk.billct];
-    eshk.bill.length = eshk.billct;
+    if (obj.owornmask) setnotworn(obj);   /* C: impossible("deleting worn obj") */
+    dealloc_obj(obj);
 }
 // C ref: mkobj.c splitobj():457.  The new object starts unworn, untimed and
 // unlit, then receives its own timers and light source after splitting.
@@ -1223,6 +1247,9 @@ export function worn_extrinsics_off(obj, mask) {
     const p = objects[obj.otyp]?.oc_oprop | 0;
     if (p)
         uprops_set_bits('uprops_extrinsic', p, worn_extrinsic(p) & ~pm);
+    /* C ref: worn.c:102 / :170 — nearby monsters notice the hero lost the
+       item and attempt attacks of that type again. */
+    monstunseesu_prop(p);
     const b = w_blocks(obj, mask);
     if (b)
         uprops_set_bits('uprops_blocked', b, worn_blocked(b) & ~pm);
@@ -1602,7 +1629,7 @@ function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 // C ref: hacklib.c ing_suffix() — gerund construction: split off a trailing
 // " on"/" off"/" with" particle, then double a final consonant ("tip"->"tipping"),
 // turn "ie" into "y" ("vie"->"vying"), or drop a final "e" ("grease"->"greasing").
-function ing_suffix(s) {
+export function ing_suffix(s) {
     const vowel = (c) => c !== '' && 'aeiouwy'.includes(c.toLowerCase());
     let buf = String(s), onoff = '';
     const tail = (n) => (buf.length >= n ? buf.slice(buf.length - n).toLowerCase() : '');
@@ -2479,6 +2506,12 @@ async function discoveriesRows() {
 }
 
 export async function dodiscovered() {
+    // C ref: o_init.c dodiscovered() — 'm\\' first asks for the sort order.
+    if (game.iflags?.menu_requested) {
+        const { choose_disco_sort } = await import('./o_init.js');
+        if (await choose_disco_sort(1) < 0)
+            return ECMD_OK;
+    }
     const rows = await discoveriesRows();
     if (!rows) {
         game._pending_message = note_topl('You haven\'t discovered anything yet.');
@@ -3014,9 +3047,32 @@ export function reorder_invent() {
 }
 
 export function merge_choice(objlist, obj) {
+    if (!objlist || (Array.isArray(objlist) && !objlist.length))
+        return null; /* might be checking 'obj' against empty inventory */
+    if (obj.otyp === SCR_SCARE_MONSTER) /* punt on these */
+        return null;
+    /* if this is an item on the shop floor, the attributes it will have when
+       carried are different from what they are now; prevent that from
+       eliciting an incorrect result from mergable() */
+    const save_nocharge = obj.no_charge;
+    let shkp;
+    if (objlist === game.invent && obj.where === OBJ_FLOOR
+        && (shkp = shop_keeper(shk_inside_shop(obj.ox, obj.oy))) != null) {
+        if (obj.no_charge) {
+            obj.no_charge = 0;
+        } else if (inhishop(shkp)) {
+            /* a billable object won't have its `unpaid' bit set, so would
+               erroneously seem to be a candidate to merge with a similar
+               ordinary object; once really picked up it won't merge after
+               all, so reject it now */
+            return null;
+        }
+    }
+    let found = null;
     for (const candidate of iterateObjects(objlist))
-        if (mergable(candidate, obj)) return candidate;
-    return null;
+        if (mergable(candidate, obj)) { found = candidate; break; }
+    obj.no_charge = save_nocharge;
+    return found;
 }
 
 // C ref: invent.c merged():856-942 — comparing objects can identify them
@@ -3324,7 +3380,8 @@ export function addinv_nomerge(obj) {
 }
 
 export function carry_obj_effects(obj) {
-    if (obj?.otyp === FIGURINE && obj.cursed && obj.corpsenm != null)
+    if (obj?.otyp === FIGURINE && obj.cursed && obj.corpsenm != null
+        && obj.corpsenm >= 0 && !dead_species(obj.corpsenm, true))
         attach_fig_transform_timeout(obj);
     carry_obj_effects_message(obj);
 }
@@ -4152,8 +4209,8 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
         // the stack (a cursed loadstone is never split; canletgo() reads the
         // requested count back out of corpsenm).
         if (cntgiven && cnt !== (otmp.quan || 1)) {
-            if (otmp.otyp === LOADSTONE && otmp.cursed) otmp.corpsenm = cnt;
-            else otmp = splitobj(otmp, cnt);
+            if (splittable(otmp)) otmp = splitobj(otmp, cnt);
+            else if (otmp.otyp === LOADSTONE && otmp.cursed) otmp.corpsenm = cnt;
         }
         // C ref: invent.c getobj():2071 — a carried object that the callback
         // flatly EXCLUDEs ("That is a silly thing to <word>.") is rejected with
@@ -4331,7 +4388,7 @@ export function worn_slot_clear(mask) {
     }
 }
 
-function worn_slot_set(obj, mask) {
+export function worn_slot_set(obj, mask) {
     obj.owornmask = (obj.owornmask || 0) | mask;
     // C ref: worn.c:112-131 setworn(obj, mask).  Body armor / cloak / helmet /
     // shield / gloves / boots / shirt all confer objects[].oc_oprop from here.
@@ -4573,7 +4630,7 @@ export function poly_gender() {
 // skip its own on_msg() — the ordering matters: strangulation and change print
 // the worn-confirmation line BEFORE their own message.  setworn() has already
 // happened at the call site (C does it inside this function).
-async function Amulet_on(amul) {
+export async function Amulet_on(amul) {
     const u = game.u;
     let on_msg_done = false;
     switch (amul?.otyp) {
@@ -4585,11 +4642,27 @@ async function Amulet_on(amul) {
     case AMULET_OF_YENDOR:
         break;
     case AMULET_OF_MAGICAL_BREATHING:
-        // C consults region_danger() for a poison-gas cloud; gas regions are
-        // not modelled here, so was_in_poison_gas is always FALSE (no RNG).
+    {
+        /* amulet is already on; we need to check hero's gas-cloud status
+           when it was off */
+        const { region_danger } = await import('./region.js');
+        set_worn_extrinsic(52 /* MAGICAL_BREATHING */,
+                           worn_extrinsic(52) & ~CW_AMUL);
+        const was_in_poison_gas = region_danger();
+        set_worn_extrinsic(52, worn_extrinsic(52) | CW_AMUL);
+        if (was_in_poison_gas) {
+            makeknown(AMULET_OF_MAGICAL_BREATHING);
+            await on_msg_accessory(amul);
+            on_msg_done = true;
+            await pline('You are no longer bothered by the poison gas.');
+        }
+        /* no need to check for becoming able to breathe underwater;
+           if we are underwater, we already can or we would have drowned */
         break;
+    }
     case AMULET_OF_UNCHANGING:
-        // C: if (Slimed) make_slimed(0L, NULL).  Sliming is not modelled.
+        if ((game.u?.uprops?.Slimed | 0) !== 0)
+            await (await import('./potion.js')).make_slimed(0, null);
         break;
     case AMULET_OF_CHANGE: {
         const orig_sex = poly_gender();
@@ -4684,6 +4757,18 @@ export async function Blindf_on(obj) {
         /* C ref: do_wear.c:1475 — set ball&chain variables before the hero goes blind */
         if (game.u?.uball) (await import('./ball.js')).set_bc(0);
         await (await import('./potion.js')).toggle_blindness();
+    } else if (already_blind && !Blind()) {
+        /* "You are now wearing the Eyes of the Overworld." */
+        const u = game.u;
+        if (u?.uroleplay?.blind) {
+            /* this can only happen by putting on the Eyes of the Overworld;
+               that shouldn't actually produce a permanent cure, but we
+               can't let the "blind from birth" conduct remain intact */
+            await update_topl('For the first time in your life, you can see!');
+            u.uroleplay.blind = false;
+        } else
+            await update_topl('You can see!');
+        await (await import('./potion.js')).toggle_blindness();
     }
 }
 
@@ -4735,9 +4820,11 @@ export async function Blindf_off(obj) {
             if (game.u?.uball) (await import('./ball.js')).set_bc(0);
         }
     } else if (was_blind) {
-        // gulp_blnd_check() (covered by mouth) is false here.
-        changed = true;       /* !Blind */
-        await update_topl('You can see again.');
+        // C ref: do_wear.c:1526 — an AD_BLND engulfer re-blinds the hero instead.
+        if (!await (await import('./mhitu.js')).gulp_blnd_check()) {
+            changed = true;       /* !Blind */
+            await update_topl('You can see again.');
+        }
     }
     if (changed) await (await import('./potion.js')).toggle_blindness();
 }
@@ -4860,8 +4947,26 @@ export async function Amulet_off(amul = game.uamul) {
         break;
     case AMULET_OF_MAGICAL_BREATHING:
         clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
-        // Underwater drown() and region_danger() poison gas are not modelled.
+    {
+        if (game.u?.uinwater) {
+            const f1 = mflags1_of(youmonst_data());
+            const { Swimming_fu, drown } = await import('./trap.js');
+            if (!(f1 & (M1_SWIM | M1_AMPHIBIOUS | M1_BREATHLESS))
+                && !Swimming_fu()) {
+                await pline(`You suddenly inhale an unhealthy amount of ${
+                    (await import('./do_name.js')).hliquid('water')}!`);
+                mkn = true; /* in case of life-saving */
+                await drown();
+            }
+        }
+        const { region_danger } = await import('./region.js');
+        if (region_danger()) {
+            /* "breathing": wouldn't get here otherwise */
+            await pline('You are breathing poison gas!');
+            mkn = true;
+        }
         break;
+    }
     case AMULET_OF_STRANGULATION:
         clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
         if (game.u?.uprops?.Strangled) {
@@ -4948,10 +5053,11 @@ export async function remove_worn_item(obj, unchain_ball) {
         if (obj === game.uquiver) uqwepgone();
     }
 
-    // Ball & chain (W_BALL|W_CHAIN) -> unpunish(); the hero is never Punished
-    // in the covered sessions.
-    void unchain_ball;
-    if (obj.owornmask) setnotworn(obj);   /* catchall */
+    if ((obj.owornmask || 0) & (W_BALL | W_CHAIN)) {
+        if (unchain_ball) (await import('./read.js')).unpunish();
+    } else if (obj.owornmask) {
+        setnotworn(obj);   /* catchall */
+    }
     if (game._allow_inventory_update !== undefined) update_inventory();
 }
 
@@ -4962,9 +5068,13 @@ export async function remove_worn_item(obj, unchain_ball) {
 export async function worn_item_removal(mon, obj) {
     let objbuf = doname_invent(obj);
     // convert "a/an/the <object>" to "your <object>"
-    if (objbuf.startsWith('the ')) objbuf = 'your ' + objbuf.slice(4);
-    else if (objbuf.startsWith('an ')) objbuf = 'your ' + objbuf.slice(3);
-    else if (objbuf.startsWith('a ')) objbuf = 'your ' + objbuf.slice(2);
+    /* when removing attached iron ball, caller passes 'uchain'; when
+       formatted, it will be "an iron chain (attached to you)"; change "an"
+       to "the" rather than to "your" in that situation */
+    const art = (obj === game.u?.uchain) ? 'the ' : 'your ';
+    if (objbuf.startsWith('the ')) objbuf = art + objbuf.slice(4);
+    else if (objbuf.startsWith('an ')) objbuf = art + objbuf.slice(3);
+    else if (objbuf.startsWith('a ')) objbuf = art + objbuf.slice(2);
     objbuf = objbuf.replace(' (being worn)', '');
     objbuf = objbuf.replace(' (alternate weapon; not wielded)', '');
     // "ring (on left hand)" -> "ring (from left hand)"
@@ -5200,6 +5310,18 @@ async function accessory_or_armor_on(obj) {
     // test answered "You are already wearing that!" for all of them.
     const mask = await canwearobj(obj, true);
     if (!mask) return ECMD_OK;
+    if (obj.otyp === 99 /* HELM_OF_OPPOSITE_ALIGNMENT */
+        && game.qstart_level?.dnum === game.u?.uz?.dnum) { /* in quest */
+        const u = game.u;
+        if (u.ualignbase?.[A_CURRENT] === u.ualignbase?.[A_ORIGINAL])
+            await pline('You narrowly avoid losing all chance at your goal.');
+        else /* converted */
+            await pline('You are suddenly overcome with shame and change your mind.');
+        u.ublessed = 0; /* lose your god's protection */
+        makeknown(obj.otyp);
+        game.botl = true; /* for AC after zeroing u.ublessed */
+        return ECMD_TIME;
+    }
     if (!(await retouch_wear(obj))) return ECMD_TIME; // do_wear.c:2355: costs a turn even though it didn't get worn
     // C ref: do_wear.c:2364 `gw.wasinwater = u.uinwater` — recorded BEFORE
     // setworn() because Boots_on() runs after the hero has already surfaced.
@@ -6575,6 +6697,27 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         await flash.step(bx, by);
         nh_delay_output_tick(); /* zap.c:4089 */
         if (IS_SINK(typ)) break;
+        /* limit range of ball so hero won't make an invalid move */
+        if (crange > 0 && obj?.otyp === HEAVY_IRON_BALL_OTYP) {
+            const bobj = sobj_at(BOULDER, bx, by);
+            if (bobj) {
+                if (cansee(bx, by))
+                    await pline(`${on_The(distant_name(obj, on_xname))} hits ${an(on_xname(bobj))}.`);
+                break;
+            } else if (obj === game.u.uball) {
+                const { test_move_quiet } = await import('./cmd.js');
+                if (!test_move_quiet(bx, by, dx, dy, bx - dx, by - dy)) {
+                    /* nb: it didn't hit anything directly */
+                    if (cansee(bx, by))
+                        await pline(`${on_The(distant_name(obj, on_xname))} jerks to an abrupt halt.`); /* lame */
+                    break;
+                } else if (game.level?.flags?.sokoban_rules) {
+                    const t = (await import('./trap.js')).t_at(bx, by);
+                    if (t && (is_pit(t.ttyp) || is_hole(t.ttyp)))
+                        break; /* hero falls into the trap, so ball stops */
+                }
+            }
+        }
         /* thrown missile has moved away from its starting spot */
         point_blank = false; /* affects passing through iron bars */
     }
@@ -6645,7 +6788,7 @@ const hitval_thrown = hitval;   // js/weapon.js owns the complete weapon.c:149
 
 // C ref: dothrow.c omon_adj(mon, obj, mon_notices) — target size/immobility and
 // the weapon's own to-hit value.
-function omon_adj(mon, obj, mon_notices) {
+export function omon_adj(mon, obj, mon_notices) {
     let tmp = (mon?.data?.msize ?? MZ_MEDIUM) - MZ_MEDIUM;
     if (mon.msleeping) tmp += 2;
     if (!mon.mcanmove || !mmove_of(mon.data)) {
@@ -6654,7 +6797,9 @@ function omon_adj(mon, obj, mon_notices) {
             mon.mcanmove = 1; mon.mfrozen = 0;
         }
     }
-    if (obj.otyp === BOULDER) tmp += 6;
+    /* C: switch (obj->otyp) { case HEAVY_IRON_BALL: if (obj != uball) tmp += 2; ... } */
+    if (obj.otyp === HEAVY_IRON_BALL_OTYP) { if (obj !== game.uball) tmp += 2; }
+    else if (obj.otyp === BOULDER) tmp += 6;
     else if (obj.oclass === WEAPON_CLASS || is_weptool(obj)
              || obj.oclass === GEM_CLASS)
         tmp += hitval_thrown(obj, mon);
@@ -7098,6 +7243,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
     const wep_mask = obj.owornmask || 0;
     let res = ECMD_TIME;
     for (game.m_shot.i = 1; game.m_shot.i <= game.m_shot.n; game.m_shot.i++) {
+        const twoweap = !!game.u?.twoweap; /* C: used to restore twoweapon mode if wielded weapon returns */
         let otmp = obj;
         if (obj && obj.quan > 1) {
             otmp = splitobj(obj, 1);
@@ -7118,7 +7264,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
         }
         freeinv(otmp);
         try {
-            res = await throwit(otmp, wep_mask);
+            res = await throwit(otmp, wep_mask, twoweap);
         } finally {
             game.thrownobj = null;
         }
@@ -7144,7 +7290,7 @@ const ACCFOOD = 2;
 // C ref: dothrow.c return_throw_to_inv(obj, wep_mask, twoweap, oldslot) — a
 // throw-and-return weapon coming back into the pack, re-wielded (or re-quivered)
 // into whatever slot it left.
-async function return_throw_to_inv(obj, wep_mask) {
+async function return_throw_to_inv(obj, wep_mask, twoweap) {
     obj.nomerge = 1;
     const back = addinv(obj);
     if (back) back.nomerge = 0;
@@ -7157,13 +7303,17 @@ async function return_throw_to_inv(obj, wep_mask) {
     if ((wep_mask & QW_WEP) && !game.uwep) await setuwep_c(o);
     else if ((wep_mask & QW_SWAPWEP) && !game.uswapwep) setuswapwep(o);
     else if ((wep_mask & QW_QUIVER) && !game.uquiver) setuqwep(o);
+
+    /* in case the throw ended dual-wielding, reinstate it after successful
+       catch (not needed for boomerang split/unsplit) */
+    if (twoweap && !game.u.twoweap) (await import('./wield.js')).set_twoweap(true);
     await encumber_msg();
     return o;
 }
 
 // C ref: dothrow.c throwit(obj, wep_mask, twoweap, oldslot) - one missile's
 // flight.  Split out of throw_obj() so the multishot volley can run it per shot.
-export async function throwit(otmp, wep_mask) {
+export async function throwit(otmp, wep_mask, twoweap = false) {
     const u = game.u;
     const Underwater = !!u.uinwater;
     game.notonhead = false; /* reset potentially stale value */
@@ -7221,7 +7371,7 @@ export async function throwit(otmp, wep_mask) {
             // simply comes back to the hand.
             await update_topl(`${Tobjnam_throw(otmp, 'hit')} the ${
                 ceiling_of(u.ux, u.uy)} and returns to your hand!`);
-            await return_throw_to_inv(otmp, wep_mask);
+            await return_throw_to_inv(otmp, wep_mask, twoweap);
         } else if (u.dz < 0) {
             // C ref: dothrow.c:1589 `(void) toss_up(obj, rn2(5) && !Underwater)`.
             await toss_up(otmp, rn2(5) !== 0 && !Underwater);
@@ -7256,7 +7406,7 @@ export async function throwit(otmp, wep_mask) {
         if (res.gone) return ECMD_TIME;
         if (res.caught) {
             exercise(A_DEX, true);
-            await return_throw_to_inv(otmp, wep_mask);
+            await return_throw_to_inv(otmp, wep_mask, twoweap);
             return ECMD_TIME;
         }
         // C: an uncaught boomerang continues through throwit()'s common tail
@@ -7354,8 +7504,9 @@ export async function throwit(otmp, wep_mask) {
             if (!impaired && rn2(100)) {
                 await update_topl(`${Tobjnam_throw(otmp, 'return')} to your hand!`);
                 if (((otmp.owornmask | 0) & QW_QUIVER) !== 0) setuqwep(null);
-                const back = await return_throw_to_inv(otmp, wep_mask);
+                const back = await return_throw_to_inv(otmp, wep_mask, twoweap);
                 await setuwep_c(back);
+                (await import('./wield.js')).set_twoweap(twoweap); /* u.twoweap = twoweap */
                 if (cansee(land.x, land.y)) newsym(land.x, land.y);
             } else {
                 let dmg = rn2(2);
@@ -7463,7 +7614,8 @@ export async function throwit(otmp, wep_mask) {
         const { ship_object } = await import('./dokick.js');
         if (await ship_object(otmp, land.x, land.y, false)) return ECMD_TIME;
     }
-    otmp.owornmask = 0;
+    /* C throwit() leaves owornmask alone: a thrown ball stays W_BALL ("chained to you") */
+    if (otmp !== game.uball) otmp.owornmask = 0;
     mkobj_place_object(otmp, land.x, land.y);
     otmp.where = OBJ_FLOOR;
     otmp.how_lost = LOST_THROWN;
@@ -7482,10 +7634,18 @@ export async function throwit(otmp, wep_mask) {
     // C ref: dothrow.c throwit():1838 stackobj(obj) after place_object() —
     // a thrown apple merges into an identical pile already on that square.
     stackobj(otmp);
+    // C ref: dothrow.c:1839 `if (obj == uball) drop_ball(bhitpos.x, bhitpos.y)`
+    // — the chain drags the hero toward a ball thrown out of reach.
+    if (otmp === game.uball) {
+        const { drop_ball } = await import('./ball.js');
+        await drop_ball(land.x, land.y);
+    }
     // C ref: dothrow.c:1841-1842. The landing square is redrawn only when the
     // hero can see it (an unseen square holding a warned monster would
     // otherwise redraw its warning glyph).
     if (cansee(land.x, land.y)) newsym(land.x, land.y);
+    // C ref: dothrow.c:1843 — a lit lamp or candle that lands lights its new spot.
+    if (obj_sheds_light(otmp)) game.vision_full_recalc = 1;
     return ECMD_TIME;
 }
 
@@ -12027,9 +12187,15 @@ function stairs_description(sway, stcase = true) {
         }
         return out;
     }
-    if (uz.dnum === 0 && uz.dlevel === 1 && sway.up && !game.u?.uhave?.amulet) {
-        // Up-stairs from dungeon level one: out of the dungeon.
-        return `${stairs} ${updown} out of the dungeon`;
+    if (uz.dnum === 0 && uz.dlevel === 1 && sway.up) {
+        // Up-stairs from dungeon level one: the remote side depends on whether
+        // the Amulet is being carried.
+        const amulet = !!game.u?.uhave?.amulet;
+        const onl = (lv) => !!lv && lv.dnum === sway.tolev.dnum && lv.dlevel === sway.tolev.dlevel;
+        return `${amulet ? 'branch ' : ''}${stairs} ${updown} ${!amulet ? 'out of the dungeon'
+            : (onl(game.earth_level) || onl(game.air_level)
+               || onl(game.fire_level) || onl(game.water_level))
+                ? 'to the Elemental Planes' : 'to the end game'}`;
     }
     const dname = String(game.dungeons?.[sway.tolev.dnum]?.dname || '').replace(/^The /, 'the ');
     return `branch ${stairs} ${updown} to ${dname}`;
@@ -12112,6 +12278,8 @@ export function dfeature_at(x, y, buf = '') {
             case D_BROKEN: feature = 'broken door'; break;
             default: feature = 'closed door'; break;
             }
+            /* override door description for open drawbridge */
+            if (is_drawbridge_wall(x, y) >= 0) feature = 'open drawbridge portcullis';
         }
         else if (IS_FOUNTAIN(ltyp)) feature = 'fountain';
         else if (IS_THRONE(ltyp)) feature = 'opulent throne';

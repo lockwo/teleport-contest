@@ -79,7 +79,7 @@ import { magic_negation, mpoisons_subj, diseasemu, u_slip_free,
     u_slow_down } from './mhitu.js';
 import { Blind } from './vision.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { Unaware, unconscious } from './const.js';
+import { Unaware, unconscious, G_NOCORPSE } from './const.js';
 import { night } from './calendar.js';
 import { You_hear, You_feel } from './display.js';
 
@@ -410,8 +410,13 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
         if (magr.mcan) return;
         if (completelyrusts(pd)) {
             if (ops.vis && ops.canseemon(mdef))
-                await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
-            await ops.monkilled(mdef, AD_RUST);
+                await ops.emit(`${ops.Monnam(mdef)} ${mlifesaver(mdef) ? 'starts to fall' : 'falls'} to pieces!`);
+            await ops.monkilled(mdef, AD_RUST, null);
+            if (!DEADMONSTER(mdef)) {
+                mhm.hitflags = M_ATTK_MISS;
+                mhm.done = true;
+                return;
+            }
             mhm.hitflags = M_ATTK_DEF_DIED
                 | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
@@ -461,8 +466,13 @@ export async function mhitm_ad_dcay(magr, mattk, mdef, mhm, ops) {
         if (magr.mcan) return;
         if (completelyrots(pd)) {
             if (ops.vis && ops.canseemon(mdef))
-                await ops.emit(`${ops.Monnam(mdef)} falls to pieces!`);
-            await ops.monkilled(mdef, AD_DCAY);
+                await ops.emit(`${ops.Monnam(mdef)} ${mlifesaver(mdef) ? 'starts to fall' : 'falls'} to pieces!`);
+            await ops.monkilled(mdef, AD_DCAY, null);
+            if (!DEADMONSTER(mdef)) {
+                mhm.done = true;
+                mhm.hitflags = M_ATTK_MISS;
+                return;
+            }
             mhm.hitflags = M_ATTK_DEF_DIED
                 | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
@@ -588,15 +598,23 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
             return;
         }
         if (ops.vis && ops.canseemon(mdef))
-            await ops.emit(`${ops.Monnam(mdef)} burns completely!`);
-        await ops.monkilled(mdef, AD_FIRE);
+            await ops.emit(`${ops.Monnam(mdef)} ${mlifesaver(mdef) ? 'is totally engulfed in flames' : 'burns completely'}!`);
+        await ops.monkilled(mdef, AD_FIRE, null);
+        if (!DEADMONSTER(mdef)) {
+            mhm.hitflags = M_ATTK_MISS;
+            mhm.done = true;
+            return;
+        }
         mhm.hitflags = M_ATTK_DEF_DIED
             | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
         mhm.done = true;
         return;
     }
     if (resists_fire(ops, mdef) || defended(mdef, AD_FIRE)) {
-        if (ops.vis && ops.canseemon(mdef))
+        if (is_hero(magr)) {
+            if (!Blind())
+                await ops.emit(`The fire doesn't heat ${ops.mon_nam(mdef)}!`);
+        } else if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The fire doesn't seem to burn ${ops.mon_nam(mdef)}!`);
         await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
         mhm.damage = 0;
@@ -1906,25 +1924,60 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
 const LOW_BOOTS = 163, IRON_SHOES = 164;
 
 export async function mhitm_ad_dgst(magr, mattk, mdef, mhm, ops) {
-    if (is_hero(mdef)) { mhm.damage = 0; return; }
+    if (is_hero(magr) || is_hero(mdef)) { mhm.damage = 0; return; }
     const pd = ops.permonst(mdef);
+    /* eating a Rider or its corpse is fatal */
     if (pd?.name === 'Death' || pd?.name === 'Famine' || pd?.name === 'Pestilence') {
         if (ops.vis && ops.canseemon(magr))
-            await ops.emit(`${ops.Monnam(magr)} vomits violently and drops dead!`);
+            await ops.emit(`${ops.Monnam(magr)} ${
+                pd.name === 'Famine' ? 'belches feebly, shrivels up and dies'
+                : pd.name === 'Pestilence' ? 'coughs spasmodically and collapses'
+                : 'vomits violently and drops dead'}!`);
         await ops.mondied(magr);
+        if (!DEADMONSTER(magr)) {
+            mhm.hitflags = M_ATTK_MISS; /* lifesaved */
+            mhm.done = true;
+            return;
+        } else if (magr.mtame && !ops.vis)
+            await You_feel('queasy'); /* brief_feeling */
         mhm.hitflags = M_ATTK_AGR_DIED;
         mhm.done = true;
         return;
     }
     if (game.flags?.verbose !== false && !(await import('./display.js')).Deaf_hero())
         await ops.emit('"Burrrrp!"');
+    await (await import('./cmd.js')).wake_nearto(magr.mx, magr.my, 2 * 2); /* Burrrrp! */
     mhm.damage = mdef.mhp | 0;
+    /* Use up amulet of life saving */
+    const lifesaver = mlifesaver(mdef);
+    if (lifesaver) await (await import('./muse.js')).m_useup(mdef, lifesaver);
+
     // C ref: uhitm.c:4542 `if (!corpse_chance(mdef, magr, TRUE) || DEADMONSTER(magr))
     // return;` draws the geno-frequency rn2 here, ahead of mhitm_knockback's.
     if (ops.corpse_chance && (!(await ops.corpse_chance(mdef)) || DEADMONSTER(magr)))
         return;
-    // the pet-nutrition mksobj() belongs to
-    // the caller's kill tail (js/mhitm.js killMonster).
+
+    /* Pets get nutrition from swallowing monster whole.
+     * No nutrition from G_NOCORPSE monster, eg, undead.
+     * DGST monsters don't die from undead corpses */
+    const num = pd?.pmidx;
+    if (magr.mtame && !magr.isminion
+        && !(((game.mvitals?.[num]?.mvflags | 0) | ((pd?.geno | 0) & G_NOCORPSE)) & G_NOCORPSE)) {
+        const { mksobj, set_corpsenm, dealloc_obj, CORPSE } = await import('./mkobj.js');
+        const { dog_nutrition } = await import('./dogmove.js');
+        const virtualcorpse = mksobj(CORPSE, false, false);
+        set_corpsenm(virtualcorpse, num);
+        let nutrit = dog_nutrition(magr, virtualcorpse);
+        virtualcorpse.where = 0; /* OBJ_FREE */
+        dealloc_obj(virtualcorpse);
+
+        /* only 50% nutrition, 25% of normal eating time */
+        if (magr.meating > 1)
+            magr.meating = Math.trunc((magr.meating + 3) / 4);
+        if (nutrit > 1)
+            nutrit = Math.trunc(nutrit / 2);
+        if (magr.edog) magr.edog.hungrytime = (magr.edog.hungrytime || 0) + nutrit;
+    }
     void mattk;
 }
 

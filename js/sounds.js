@@ -404,12 +404,10 @@ export async function yelp(mtmp) {
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 12);
 }
 
-// SCOPE: MS_PRIEST (priest_talk) and MS_SELL (shk_chat) are wired below;
-// MS_LEADER/MS_NEMESIS/MS_GUARDIAN (quest_chat) are also ported.  The arms
-// that still hand off to an unported subsystem — MS_RIDER
-// (both need the 3.6-tribute / urace-noun machinery) — fall through to the
-// silent ECMD_TIME tail, as does the In_endgame mplayer_talk() arm of
-// MS_HUMANOID.  Their RNG is therefore not emitted; nothing in the covered
+// SCOPE: MS_PRIEST (priest_talk), MS_SELL (shk_chat), MS_LEADER/MS_NEMESIS/
+// MS_GUARDIAN (quest_chat) and MS_RIDER are wired below.  The In_endgame
+// mplayer_talk() arm of MS_HUMANOID falls through to the silent ECMD_TIME tail,
+// so its RNG is not emitted; nothing in the covered
 // dungeon range reaches them.  wake_nearto()/aggravate()/nomul() side effects
 // of MS_TRUMPET, MS_WERE, MS_SHRIEK and MS_BONES are likewise not replicated
 // (all RNG-free in C, but they do clear msleeping, so a deep-level shrieker
@@ -774,6 +772,36 @@ export async function domonnoise(mtmp) {
             verbl_msg = `15 minutes could save you 15 ${currency(15)}.`;
         }
         break;
+    case MS_RIDER: {
+        const ms_Death = is_pm_named(ptr, 'Death');
+        let book = null;
+        if (ms_Death && !game._tribute_Deathnotice
+            && (book = (await import('./invent.js')).u_have_novel()) != null) {
+            const holder = { idx: book.novelidx ?? -1 };
+            const tribtitle = (await import('./do_name.js')).noveltitle(holder);
+            book.novelidx = holder.idx;
+            if (tribtitle) {
+                let verbuf = `Ah, so you have a copy of /${tribtitle}/.`;
+                /* no Death featured in these two, so exclude them */
+                if (tribtitle.toLowerCase() !== 'snuff'
+                    && tribtitle.toLowerCase() !== 'the wee free men')
+                    verbuf += '  I may have been misquoted there.';
+                verbl_msg = verbuf;
+            }
+            game._tribute_Deathnotice = 1;
+        } else if (ms_Death && rn2(3) && await (async () => {
+            const qb = { value: '' };
+            const ok = await (await import('./files.js')).Death_quote(qb, 1024);
+            if (ok) verbl_msg = qb.value;
+            return ok;
+        })()) {
+            /* verbl_msg set above */
+        } else if (ms_Death && !rn2(10)) {
+            pline_msg = 'is busy reading a copy of Sandman #8.';
+        } else
+            verbl_msg = 'Who do you think you are, War?';
+        break;
+    } /* case MS_RIDER */
     default:
         break;
     }
@@ -783,7 +811,11 @@ export async function domonnoise(mtmp) {
     // --More-- instead of overwriting this one.
     if (pline_msg) await update_topl(`${Monnam(mtmp)} ${pline_msg}`);
     else if (mtmp.mcan && verbl_msg_mcan) await update_topl(`"${verbl_msg_mcan}"`);
-    else if (verbl_msg) await update_topl(`"${verbl_msg}"`);
+    else if (verbl_msg) {
+        /* more 3.6 tribute: Death talks in CAPITAL LETTERS, without quotes */
+        if (is_pm_named(ptr, 'Death')) await update_topl(verbl_msg.toUpperCase());
+        else await update_topl(`"${verbl_msg}"`);
+    }
     return ECMD_TIME;
 }
 
