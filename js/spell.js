@@ -80,9 +80,7 @@ export const MAXSPELL = 42;
 export const NO_SPELL = 0;
 export const KEEN = 20000; // C ref: spell.c — full spell retention.
 
-const ECMD_OK = 0;
-const ECMD_FAIL = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME, ECMD_FAIL } from './const.js';
 
 // C ref: include/objects.h — the healing spellbook otyps.  These must match the
 // real objects[] indices (see mkobj.js SPE_* table); a wrong value both mis-keys
@@ -1788,8 +1786,12 @@ export async function cast_chain_lightning() {
 
             if (zap.strength < 2)
                 zap.strength = 0;
-            else if (u.uen > 0)
+            else if (u.uen > 0) {
+                /* C only decrements; disp.botl is not set, so the status
+                   line keeps the Pw the last bot() published */
+                if (!game.botl && !game.botlx) status_hold('uen', u.uen);
                 u.uen--; /* propagating past mons increases Pw cost a bit */
+            }
             zap.dir = DIR_LEFT(zap.dir);
             await propagate_chain_lightning(clq, zap);
 

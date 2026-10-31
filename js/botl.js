@@ -450,7 +450,11 @@ function Hallucination() {
 // the extrinsic half is invent.js's worn_extrinsic() store (prop.h
 // LEVITATION=48, FLYING=49), which the flat u.uprops fields never mirror.
 function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)) && !upv('BLevitation'); }
-function Flying() { return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFlying'); }
+function Flying() {
+    const held = game._statusHold;
+    if (held && 'fly' in held) return !!held.fly;
+    return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFlying');
+}
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return upv('Wounded_legs') > 0; }
 function Underwater() { return !!game.u?.uinwater; }

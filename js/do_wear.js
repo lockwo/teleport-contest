@@ -15,10 +15,10 @@ import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
-         TIMEOUT, ICE, ACID_RES } from './const.js';
+         TIMEOUT, FROMOUTSIDE, ICE, ACID_RES, W_TOOL, W_AMUL, GETOBJ_SUGGEST, GETOBJ_EXCLUDE } from './const.js';
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
-    W_ARMOR_WORN, W_RINGL, W_RINGR, W_AMUL,
+    W_ARMOR_WORN, W_RINGL, W_RINGR,
     worn_slot_clear, body_part, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
@@ -34,7 +34,8 @@ import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
 import { acurr_eff } from './attrib.js';
 import { has_innate } from './exper.js';
 import { uchangealign } from './pray.js';
-import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL, CQ_CANNED } from './const.js';
+import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL, CQ_CANNED,
+         ECMD_OK, ECMD_TIME, ECMD_FAIL } from './const.js';
 import { condtests, bl_bareh } from './botl.js';
 
 /* onames.h otyps (this port's objects[] numbering, verified against
@@ -377,7 +378,9 @@ export async function Boots_on() {
     }
     case LEVITATION_BOOTS: {
         const oldprop = extrinsic_levitation_except(uarmf);
-        if (!oldprop) {
+        /* C: !oldprop && !HLevitation && !(BLevitation & FROMOUTSIDE) */
+        if (!oldprop && !(game.u?.uprops?.Levitation | 0)
+            && !((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE)) {
             uarmf.known = 1;
             game.botl = true;
             makeknown(otyp);
@@ -418,7 +421,21 @@ export async function Boots_off() {
         }
         break;
     case WATER_WALKING_BOOTS:
-        await (await import('./trap.js')).spoteffects();
+    {
+        /* check for lava since fireproofed boots make it viable */
+        const { is_pool, is_lava } = await import('./dbridge.js');
+        const T = await import('./trap.js');
+        const u = game.u;
+        if ((is_pool(u.ux, u.uy) || is_lava(u.ux, u.uy))
+            && !T.Levitation_fu() && !T.Flying_fu()
+            && !game.context?.takeoff?.cancelled_don
+            /* avoid recursive call to lava_effects() */
+            && !game._in_lava_effects) {
+            /* make boots known in case you survive the drowning */
+            makeknown(otyp);
+            await T.spoteffects(true);
+        }
+    }
         break;
     case ELVEN_BOOTS:
         await toggle_stealth(otmp, oldprop_stealth, false);
@@ -432,8 +449,18 @@ export async function Boots_off() {
         break;
     }
     case LEVITATION_BOOTS:
-        await (await import('./trap.js')).float_down(0, WA_ARMF);
-        makeknown(otyp);
+        /* C: !oldprop && !HLevitation && !(BLevitation & FROMOUTSIDE)
+           && !cancelled_don -> float_down(0, 0) unless in lava_effects(),
+           else float_vs_flight() */
+        if (!extrinsic_levitation_except(otmp) && !(game.u?.uprops?.Levitation | 0)
+            && !((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE)
+            && !game.context?.takeoff?.cancelled_don) {
+            if (!game._in_lava_effects)
+                await (await import('./trap.js')).float_down(0, WA_ARMF);
+            makeknown(otyp);
+        } else {
+            (await import('./polyself.js')).float_vs_flight();
+        }
         break;
     default:
         break;
@@ -1355,8 +1382,8 @@ export function count_worn_armor() {
 // C ref: do_wear.c:3480 any_worn_armor_ok(obj) — getobj callback for blessed
 // destroy armor: suggest any worn armor even when covered.
 export function any_worn_armor_ok(obj) {
-    return (obj && ((obj.owornmask | 0) & W_ARMOR_WORN)) ? 2 /*GETOBJ_SUGGEST*/
-                                                        : -3 /*GETOBJ_EXCLUDE*/;
+    return (obj && ((obj.owornmask | 0) & W_ARMOR_WORN)) ? GETOBJ_SUGGEST
+                                                        : GETOBJ_EXCLUDE;
 }
 
 // C ref: do_wear.c:2824 do_takeoff() — remove the slot named by takeoff.what.
@@ -1408,7 +1435,7 @@ export async function do_takeoff() {
     } else if (doff.what === W_RINGR) {
         otmp = game.uright;
         if (!(await cursed_blocks(otmp))) await Ring_off(game.uright);
-    } else if (doff.what === 0x00800000 /*WORN_BLINDF*/) {
+    } else if (doff.what === W_TOOL /*WORN_BLINDF*/) {
         if (!(await cursed_blocks(game.ublindf))) await Blindf_off(game.ublindf);
     }
     doff.mask &= ~I_SPECIAL;
@@ -1425,7 +1452,7 @@ async function cursed_blocks(obj) {
 // have been initialized, so a module-level array would hit the TDZ.
 export function takeoff_order() {
     return [
-        /*WORN_BLINDF*/ 0x00800000, /*W_WEP*/ 0x100, WA_ARMS, WA_ARMG,
+        /*WORN_BLINDF*/ W_TOOL, /*W_WEP*/ 0x100, WA_ARMS, WA_ARMG,
         W_RINGL, W_RINGR, WA_ARMC, WA_ARMH, W_AMUL, WA_ARM, WA_ARMU,
         WA_ARMF, /*W_SWAPWEP*/ 0x400, /*W_QUIVER*/ 0x200, 0,
     ];
@@ -1454,7 +1481,7 @@ export async function take_off() {
         return 0;
     } else if (doff.what === 0x100 || doff.what === 0x400 || doff.what === 0x200
                || doff.what === W_AMUL || doff.what === W_RINGL
-               || doff.what === W_RINGR || doff.what === 0x00800000) {
+               || doff.what === W_RINGR || doff.what === W_TOOL) {
         doff.delay = 1;
     } else if (doff.what === WA_ARM) {
         otmp = game.uarm;
@@ -1595,14 +1622,14 @@ async function surface_dw() {
 export async function remarm_swapwep() {
     const cmd = cmdq_pop();
     const key = (cmd && cmd.typ === 0 /*CMDQ_KEY*/) ? cmd.key : '\0';
-    if (key !== '-' || !game.uswapwep) return 2 /*ECMD_FAIL*/;
+    if (key !== '-' || !game.uswapwep) return ECMD_FAIL;
     const oldbknown = game.uswapwep.bknown;
     reset_remarm();
     const t = takeoff_ctx();
     t.what = t.mask = 0x400 /*W_SWAPWEP*/;
     await do_takeoff();
     return (!game.uswapwep || game.uswapwep.bknown !== oldbknown)
-        ? 3 /*ECMD_TIME*/ : 0 /*ECMD_OK*/;
+        ? ECMD_TIME : ECMD_OK;
 }
 
 /* ---- small helpers shared with invent.js ------------------------------- */

@@ -730,7 +730,7 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
         if (obj_type === POT_ACID) {
             await deps.acid_msg?.(barsx, barsy, nodissolve);
             if (!nodissolve)
-                deps.dissolve_bars?.(barsx, barsy);
+                await deps.dissolve_bars?.(barsx, barsy);
         }
     } else {
         if (!Deaf_hero()) {
@@ -767,7 +767,7 @@ export async function hit_bars(objp, objx, objy, barsx, barsy, breakflags,
 
             if (!rn2(Math.max(2, chance))) {
                 await deps.pline?.('You break the bars apart!');
-                deps.dissolve_bars?.(barsx, barsy);
+                await deps.dissolve_bars?.(barsx, barsy);
                 noise = noise * 2;
             }
         }

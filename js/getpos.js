@@ -472,7 +472,7 @@ export async function auto_describe(cx, cy) {
             + `${(iflags_().autodescribe
                   && getpos_getvalid && !getpos_getvalid(cx, cy))
                  ? ' (invalid target)' : ''}`
-            + `${(iflags_().getloc_travelmode && !is_valid_travelpt_(cx, cy))
+            + `${(iflags_().getloc_travelmode && !(await is_valid_travelpt_(cx, cy)))
                  ? ' (no travel path)' : ''}`);
         curs_(cx, cy);
         await flush_screen_(0);

@@ -177,8 +177,7 @@ export async function nasty(summoner) {
                              && attacktype(mdata(mtmp), AT_MAGC))
                             || (s_cls === S_DEMON && m_cls === S_ANGEL)
                             || (s_cls === S_ANGEL && m_cls === S_DEMON)) {
-                            unmakemon(mtmp);
-                            mtmp = null;
+                            mtmp = await M.unmakemon(mtmp, 0); /* null */
                         }
                     }
                 }
@@ -202,15 +201,6 @@ export async function nasty(summoner) {
 
     if (count) count = monster_census() - census;
     return count;
-}
-
-// C ref: makemon.c unmakemon(mon, flags) — undo a just-made monster.
-function unmakemon(mtmp) {
-    const list = game.level?.monsters;
-    if (list) {
-        const i = list.indexOf(mtmp);
-        if (i >= 0) list.splice(i, 1);
-    }
 }
 
 // C ref: wizard.c:815 wizdeadorgone() — the Wizard leaves play for good.

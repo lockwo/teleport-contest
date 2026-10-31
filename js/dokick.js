@@ -9,6 +9,7 @@
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
 import { game, hooks } from './gstate.js';
+import { Fumbling_hero } from './youprop.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { P_NONE, P_MARTIAL_ARTS } from './const.js';
 import { ok_to_quest } from './questok.js';
@@ -85,7 +86,7 @@ import { corpse_xname, killer_xname } from './objnam.js';
 // (pickup.js/invent.js each keep the same one-liner).
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-const ECMD_OK = 0, ECMD_TIME = 1, ECMD_FAIL = 0, ECMD_CANCEL = 0;
+import { ECMD_OK, ECMD_TIME, ECMD_FAIL, ECMD_CANCEL } from './const.js';
 const S_LIZARD = 58;      // defsym.h S_LIZARD, as numbered in permonst.mcls
                           // (`mlet` on these rows is the display CHARACTER)
 const GLASS = 19;         // objects[].oc_material GLASS (mkobj.js's private copy)
@@ -432,9 +433,13 @@ export async function kick_door(x, y, avrg_attrib) {
         return;
     }
     exercise(A_DEX, true); // -> rn2(19)
-    // doorbuster (Upolyd giant) is false; a martial hero (monk/samurai) gets a
-    // +ACURR(A_DEX) bonus to the break threshold, so include it faithfully.
-    if (rnl(35) < avrg_attrib + (!martial() ? 0 : ACURR(A_DEX))) {
+    // C ref: dokick.c:927 `doorbuster = Upolyd && is_giant(gy.youmonst.data)` —
+    // a giant shatters the door without the rnl(35) roll (short-circuit); a
+    // martial hero (monk/samurai) gets a +ACURR(A_DEX) bonus to the threshold.
+    const ydata_kd = game.u?.Upolyd ? youmonst_data() : null;
+    const doorbuster = !!ydata_kd && (mflags2_of(ydata_kd) & M2_GIANT) !== 0;
+    if (doorbuster
+        || rnl(35) < avrg_attrib + (!martial() ? 0 : ACURR(A_DEX))) {
         // C: `*in_rooms(x, y, SHOPBASE) ? TRUE : FALSE` — the FIRST room letter,
         // not the buffer.  shkroom.js's in_rooms() returns an array, and an
         // empty array is truthy in JS, so the [0] is load-bearing: without it
@@ -785,7 +790,7 @@ const is_shade = (p) => p?.name === 'shade';
 const OC_BULKY_SUIT = (otyp) => otyp >= 101 /*GRAY_DRAGON_SCALE_MAIL*/
     && otyp <= 125 /*BANDED_MAIL*/;
 // C ref: youprop.h Fumbling == (HFumbling || EFumbling).
-function Fumbling() { return !!((game.u?.HFumbling || 0) || (game.u?.EFumbling || 0)); }
+function Fumbling() { return Fumbling_hero(); }
 
 // C ref: mon.c:3999 maybe_mnexto(mtmp) — mnexto() restricted to a square the
 // hero could see; draws no RNG (enexto's scan is deterministic).

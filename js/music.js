@@ -6,6 +6,7 @@
 // notes -> rn1(20,30) deafness -> awaken_monsters) is preserved exactly here.
 
 import { game, hooks } from './gstate.js';
+import { Fumbling_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import {
     isok, A_STR, A_DEX, A_WIS, COLNO, ROWNO,
@@ -39,10 +40,9 @@ const MAGIC_TOOL = new Set([MAGIC_FLUTE, FROST_HORN, FIRE_HORN,
 // C ref: hack.h:1456 — ECMD_OK 0x00, ECMD_TIME 0x01, ECMD_CANCEL 0x02,
 // ECMD_FAIL 0x04.  js/apply.js carries its OWN renumbering (ECMD_TIME 2), so
 // its dispatch translates this return value; do not compare the two directly.
-const ECMD_OK = 0x00, ECMD_TIME = 0x01;
+import { ECMD_OK, ECMD_TIME, TT_PIT, TT_BURIEDBALL } from './const.js';
 const TOOL_CLASS = 6;
 const S_SNAKE = 45, S_NYMPH = 14, S_PIERCER = 16; // defsym.h MONSYM indices
-const TT_PIT = 2, TT_BURIEDBALL = 7;
 const PM_ARCHEOLOGIST = 0;
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
@@ -64,9 +64,9 @@ function Confusion() { return uprop('Confusion', 'HConfusion') || !!game.u?.ucon
 function Hallucination() { return uprop('Hallucination', 'HHallucination') || !!game.u?.uhallu; }
 function Unchanging() { return uprop('Unchanging', 'HUnchanging'); }
 function Underwater() { return !!game.u?.uinwater; }
-function Levitation() { return uprop('Levitation', 'HLevitation', 'ELevitation'); }
-function Flying() { return uprop('Flying', 'HFlying', 'EFlying'); }
-function Fumbling() { return uprop('Fumbling', 'HFumbling', 'EFumbling'); }
+function Levitation() { return Levitation_hero(); }
+function Flying() { return Flying_hero(); }
+function Fumbling() { return Fumbling_hero(); }
 // C ref: attrib.h ACURR(x) == acurr(x), the effective attribute (not the raw u.acurr.a base).
 function ACURR(a) { return acurr_eff(a); }
 // C ref: the `fmon` chain visits monsters newest-first (makemon prepends); the
@@ -349,6 +349,11 @@ async function do_earthquake(force) {
                             await You_hear('a thump.');
                     }
                 }
+                if (m_ap_type_mu(mtmp) !== 0 /* M_AP_NOTHING */
+                    && m_ap_type_mu(mtmp) !== 3 /* M_AP_MONSTER */) {
+                    const { seemimicLocal } = await import('./uhitm.js');
+                    seemimicLocal(mtmp);
+                }
             }
             if (rn2(14 - force)) continue;
 
@@ -386,6 +391,7 @@ async function do_earthquake(force) {
                 break;
             case SCORR:
                 loc.typ = CORR;
+                (await import('./vision.js')).unblock_point(x, y);
                 if (cansee(x, y)) await update_topl('A secret corridor is revealed.');
                 await do_pit(x, y, tu_pit);
                 break;
@@ -394,7 +400,7 @@ async function do_earthquake(force) {
                 await do_pit(x, y, tu_pit);
                 break;
             case SDOOR:
-                loc.typ = DOOR;
+                (await import('./detect.js')).cvt_sdoor_to_door(loc); /* .typ = DOOR */
                 if (cansee(x, y)) await update_topl('A secret door is revealed.');
                 /* FALLTHRU */
             case DOOR:
@@ -403,6 +409,7 @@ async function do_earthquake(force) {
                     break;
                 }
                 loc.doormask = 0;
+                (await import('./vision.js')).recalc_block_point(x, y);
                 newsym(x, y);
                 if (cansee(x, y)) await update_topl('The door collapses.');
                 {
@@ -415,6 +422,16 @@ async function do_earthquake(force) {
                 break;
             }
         }
+}
+
+// C ref: monst.h M_AP_TYPE(mon): this port stores the mimic appearance type as
+// 'obj'/'furniture'/'monster' strings (makemon.js) or numeric M_AP_* (dogmove.js).
+function m_ap_type_mu(mon) {
+    const t = mon?.m_ap_type;
+    if (t === 'furniture') return 1;
+    if (t === 'obj') return 2;
+    if (t === 'mon' || t === 'monster') return 3;
+    return t | 0;
 }
 
 // C ref: mondata.h ceiling_hider(ptr) == is_hider(ptr) && (mlet == S_PIERCER
@@ -630,6 +647,7 @@ async function do_improvisation(instr) {
 export async function do_play_instrument(instr) {
     const u = game.u;
     const { xname } = await import('./invent.js');
+    const { thesimpleoname } = await import('./objnam.js');
     const { can_blow } = await import('./mondata.js');
     if (Underwater()) {
         await update_topl("You can't play music underwater!");
@@ -639,7 +657,7 @@ export async function do_play_instrument(instr) {
          || instr.otyp === TOOLED_HORN || instr.otyp === FROST_HORN
          || instr.otyp === FIRE_HORN || instr.otyp === BUGLE)
         && !can_blow()) {
-        await update_topl(`You are incapable of playing the ${xname(instr)}.`);
+        await update_topl(`You are incapable of playing ${thesimpleoname(instr)}.`);
         return ECMD_OK;
     }
     let c = 'y';

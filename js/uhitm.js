@@ -18,6 +18,7 @@
 // adopting the staged pieces is a separate, measured change.
 
 import { makeplural } from './plural.js';
+import { Fumbling_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -74,7 +75,7 @@ import { mkcorpstat, mkobj, mksobj, mksobj_at, SCR_BLANK_PAPER, CORPSE, FIGURINE
          TOOL_CLASS, GEM_CLASS, SPBOOK_CLASS, FOOD_CLASS, objects, COIN_CLASS,
          STRANGE_OBJECT, ARMOR_CLASS, GLOB_OF_GRAY_OOZE, obj_nexto, obj_meld,
          pudding_merge_message } from './mkobj.js';
-import { LEASH, UNICORN_HORN, WORM_TOOTH, STATUE, mkgold, is_flimsy } from './mkobj.js';
+import { LEASH, UNICORN_HORN, WORM_TOOTH, STATUE, mkgold, is_flimsy, clear_dknown } from './mkobj.js';
 // C object ids from mkobj.js OBJECT_DATA, for golem material remains.
 const LEATHER_ARMOR = 134, LEATHER_CLOAK = 145, SADDLE = 235, BULLWHIP = 82,
       GRAPPLING_HOOK = 260, QUARTERSTAFF = 79, SMALL_SHIELD = 150, CLUB = 77,
@@ -84,14 +85,14 @@ const LEATHER_ARMOR = 134, LEATHER_CLOAK = 145, SADDLE = 235, BULLWHIP = 82,
 const GRAY_DRAGON_SCALES_OT = 111, FIRST_GLASS_GEM_OT = 461, NUM_GLASS_GEMS_OT = 9;
 import { base_armcat } from './objarmor_data.js';
 import { mon_nocorpse, undead_to_corpse, name_to_pmidx, mon_msize } from './makemon.js';
-import { is_vampshifter } from './mon.js';
+import { is_vampshifter, qst_guardians_respond } from './mon.js';
 // C ref: mplayer.js:216-222 — exper.js's rank_of() is keyed by the true mons[]
 // offset (PM_ROGUE=8/PM_RANGER=7 match roles[].mnum); role.js's own rank_of()
 // indexes its roles[] array directly instead, which has Rogue/Ranger swapped,
 // so it returns the wrong role for exactly those two.
 import { more_experienced, newexplevel, rank_of } from './exper.js';
 import { gethungry } from './allmain.js';
-import { simpleonames, obj_is_pname } from './objnam.js';
+import { simpleonames, obj_is_pname, singular } from './objnam.js';
 import { S_NYMPH } from './symbols.js';
 import { bare_artifactname, is_art, ART_STORMBRINGER } from './artifact.js';
 import { is_weptool, simple_typename, is_plural, otense,
@@ -543,9 +544,9 @@ export async function setmangry(mtmp, via_attack) {
 
     /* attacking your own quest leader will anger his or her guardians */
     // C ref: mon.c:4312 `if (mtmp->data == &mons[quest_info(MS_LEADER)])
-    //   qst_guardians_respond();` — quest_leader_pm() above already tracks
-    // why this port's guard falls through (no MS_LEADER species available),
-    // so left unpaired with qst_guardians_respond() rather than guessed.
+    //   qst_guardians_respond();`
+    if (game.urole?.ldrnum != null && mtmp.data?.pmidx === game.urole.ldrnum)
+        await qst_guardians_respond();
 
     // C ref: mon.c:4316-4317 `if (!svc.context.mon_moving)
     //   peacefuls_respond(mtmp);` — make other peaceful monsters react.
@@ -798,7 +799,7 @@ async function hostile_attack(mtmp) {
     // C ref: uhitm.c:556-562 — a mobile leprechaun can dodge before the swing.
     if (mtmp.data?.mcls === 12 /* S_LEPRECHAUN */ && !mtmp.mfrozen
         && !helpless(mtmp) && !mtmp.mconf && mtmp.mcansee && !rn2(7)) {
-        const { m_move, MMOVE_DIED } = await import('./monmove.js');
+        const { m_move } = await import('./monmove.js');
         if (await m_move(mtmp) === MMOVE_DIED
             || mtmp.mx !== u.ux + u.dx || mtmp.my !== u.uy + u.dy) {
             await update_topl('You miss wildly and stumble forwards.');
@@ -1102,6 +1103,12 @@ async function hitum(mon) {
     const secondwep = u.twoweap ? game.uswapwep : null;
     const wepbefore = game.uwep;
     const oldumort = u.umortality | 0;
+    // C ref: uhitm.c:768 hitum() — Cleaver attacks three spots, 'mon' and one on
+    // either side of it; it can't be dual-wielded, nor used while swallowed,
+    // stuck, or as a grid bug.  hitum_cleave() returns the primary target's status.
+    if (is_art(game.uwep, ART_CLEAVER) && !u.twoweap && !u.uswallow
+        && !u.ustuck && u.umonnum !== PM_GRID_BUG_UH)
+        return await hitum_cleave(mon, mattk_of(youmonst_data_uh())[0]);
     // C ref: uhitm.c:775 — `gt.twohits = (uwep ? u.twoweap : double_punch())`.
     // 0: single hit, 1: first of two hits, 2: second of two.  hmon_hitmon()
     // copies it into hmd.twohits, where it picks the 3/4 strength bonus and the
@@ -1721,7 +1728,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
                     dynamic_multi_reason(mon, 'frozen', true);
                     game.nomovemsg = 0;
                 } else {
-                    await pline(`The blind ${mon.data?.name || 'monster'} cannot defend itself.`);
+                    await pline(`${Adjmonnam(mon, 'blind')} cannot defend itself.`);
                     if (!rn2(500)) change_luck(-1);
                 }
             } else if (Free_action()) {
@@ -2222,6 +2229,21 @@ export async function relobj(mon, x, y) {
     // what erases the dead monster's glyph.  Returning early on an empty
     // inventory left a killed gas spore (no corpse, no gear) drawn on the map.
     const repaint = () => { if (x > 0 && y >= 0) newsym(x, y); };
+    // C ref: steal.c relobj():883 — a vault guard's gold goes away rather than
+    // being dropped.
+    if (mon?.isgd && inv?.length) {
+        const { findgold } = await import('./steal.js');
+        const { pline } = await import('./display.js');
+        const gold = findgold(inv);
+        if (gold) {
+            if (canspotmon(mon))
+                await pline(`${s_suffix(Monnam(mon))} gold ${canseemon(mon)
+                    ? 'vanishes' : 'seems to vanish'}.`);
+            inv.splice(inv.indexOf(gold), 1);
+            gold.where = OBJ_FREE;
+            gold.ocarry = null;
+        }
+    }
     if (!inv || !inv.length) { repaint(); return; }
     const { flooreffects } = await import('./do.js');
     const { stackobj } = await import('./invent.js');
@@ -2408,6 +2430,9 @@ export async function make_corpse(mon, x, y, burythem = false) {
         // corpse.
         if (obj != null && game.context?.bypasses) bypass_obj(obj);
         if (obj != null && has_mgivenname(mon)) obj.oname = MGIVENNAME(mon);
+        // C ref: mon.c:931 `if (Blind && !sensemon(mtmp)) clear_dknown(obj);` —
+        // a corpse the blind hero could not perceive stays undiscovered.
+        if (obj != null && Blind() && !sensemon(mon)) clear_dknown(obj);
         return obj;
     };
     const base = undead_to_corpse(mndx);
@@ -2512,7 +2537,7 @@ export async function make_corpse(mon, x, y, burythem = false) {
         let other;
         while (obj && (other = obj_nexto(obj))) {
             await pudding_merge_message(obj, other);
-            obj = obj_meld({ obj }, { obj: other });
+            obj = await obj_meld({ obj }, { obj: other });
         }
         if (mon.mextra) mon.mextra.mgivenname = null;
         mon.mgivenname = null;
@@ -2697,6 +2722,13 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
         article = 1;
         _suppress |= 0x02; /* SUPPRESS_INVISIBLE */
     }
+    // C ref: do_name.c:850 — only a tame monster is "your"; downgrade BEFORE
+    // do_it, whose `article != ARTICLE_YOUR` test sees the downgraded value.
+    if (article === 3 && !mtmp.mtame) article = 1;
+    const do_hallu0 = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
+    const do_invis0 = !!mtmp?.minvis && !(_suppress & 0x02 /* SUPPRESS_INVISIBLE */);
+    const do_mappear0 = M_AP_TYPE(mtmp) === M_AP_MONSTER
+        && !(_suppress & 0x10 /* SUPPRESS_MAPPEARANCE */);
     // C ref: do_name.c:907 do_mappear — a monster disguised as another species
     // (the Wizard's double) is named for its appearance.
     const base = (M_AP_TYPE(mtmp) === M_AP_MONSTER && !(_suppress & 0x10 /* SUPPRESS_MAPPEARANCE */)
@@ -2725,16 +2757,17 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
         const hallu = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
         return ((!hallu ? s_one : !rn2(2)) ? 'someone' : 'something');
     }
-    if (mtmp?.isshk && !game.u?.uhallu && mtmp.m_ap_type !== 'mon') {
+    if (mtmp?.isshk && !do_hallu0 && !do_mappear0) {
+        // pathological case: "the angry Asidonhopo the blue dragon" sounds
+        // silly, so an adjective with ARTICLE_THE skips the species part
+        if (_adjective && article === 1)
+            return `the ${_adjective} ${shkname(mtmp)}`;
         let buf = shkname(mtmp);
-        if (base !== 'shopkeeper' || mtmp.minvis)
-            buf += ' the ' + (mtmp.minvis ? 'invisible ' : '') + base;
+        if (base !== 'shopkeeper' || do_invis0)
+            buf += ' the ' + (do_invis0 ? 'invisible ' : '') + base;
         return buf;
     }
 
-
-    // ARTICLE_YOUR only applies to tame monsters; otherwise downgrade to THE.
-    if (article === 3 && !mtmp.mtame) article = 1;
 
     // C ref: do_name.c x_monnam "priests and minions: don't even use this
     // function" -> priestname(), with Hallucination blocked unless do_hallu
@@ -2782,6 +2815,14 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
         // bare name: christen_monst() puts the dead hero's name on the bones
         // ghost, so "You miss Elara." must read "You miss Elara's ghost."
         // (hacklib.c s_suffix: a name already ending in 's' takes a bare "'").
+        // C ref: do_name.c:974 — a named player-monster ("Foo the Barbarian")
+        // takes its adjectives right after " the ": "<name> the <adjective>
+        // <invisible> <saddled> <rank>", and the article is dropped.
+        if (!called && mtmp?.data?.pmidx !== PM_GHOST() && is_mplayer(mtmp?.data)) {
+            const bp = given.toLowerCase().indexOf(' the ');
+            if (bp >= 0)
+                return given.slice(0, bp + 5) + adj + given.slice(bp + 5);
+        }
         const gnamed = (mtmp?.data?.pmidx === PM_GHOST())
             ? adj + (/s$/i.test(given) ? `${given}'` : `${given}'s`) + ' ghost'
             // C's l_monnam()/distant_monnam() request a species followed by
@@ -2904,7 +2945,7 @@ import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          weight } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
-import { Mgender, y_monnam, some_mon_nam, mhe, mhis } from './do_name.js';
+import { Adjmonnam, Mgender, y_monnam, some_mon_nam, mhe, mhis } from './do_name.js';
 import { mdamageu } from './mhitu.js';
 import { troll_baned, resists_poison, resists_blnd_by_arti } from './mondata.js';
 
@@ -2930,6 +2971,9 @@ const ART_CLEAVER = 4, ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16,
 
 // C ref: src/role.c roles[] order (PM_MONK/PM_SAMURAI/... are declared above).
 const PM_ROGUE = 8;
+// C ref: monst.h PM_GRID_BUG (NODIAG(mnum) == (mnum == PM_GRID_BUG)); same
+// mons[] index js/cmd.js and js/dig.js use.
+const PM_GRID_BUG_UH = 116;
 
 // C ref: include/monflag.h MZ_SMALL / MR_POISON.
 const MZ_SMALL = 1, MR_POISON = 0x20;
@@ -3067,7 +3111,7 @@ function a_monnam_uh(mtmp) { return x_monnam(mtmp, ARTICLE_A, null, 0, false); }
 // ── hero-state accessors (the ones this block needs) ───────────────────────
 function u_of() { return game.u || {}; }
 // C ref: youprop.h Fumbling/Stunned/Blind_telepat/See_invisible/Invisible.
-function Fumbling() { return (u_of().uprops?.Fumbling || 0) > 0; }
+function Fumbling() { return Fumbling_hero(); }
 function Stunned_uh() {
     if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
     return (u_of().uprops?.Stun || 0) > 0 || !!u_of().Stunned
@@ -3077,12 +3121,13 @@ function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of()
 // C ref: youprop.h Invisible == (Invis && !See_invisible); Invis includes the
 // timed HInvis intrinsic and worn extrinsics (monmove.js Invis()).
 import { Invis as Invis_uh } from './monmove.js';
+import { MMOVE_DIED } from './const.js';
 function Invisible_uh() { return Invis_uh() && !See_invisible(); }
 function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
 import { Deaf_hero as Deaf_uh } from './display.js';
 function Upolyd() { return !!u_of().Upolyd; }
 import { Hate_silver } from './invent.js';
-import { Blind_telepat } from './youprop.js';
+import { Blind_telepat, Levitation_hero, Flying_hero } from './youprop.js';
 // C ref: display.h m_next2u(mon) — adjacent to the hero.
 function m_next2u(mon) {
     const u = u_of();
@@ -3600,7 +3645,7 @@ export async function hmon_hitmon_misc_obj(hmd, mon, obj) {
                 let whom = mon_nam(mon);
                 let what = The_uh(I.xname(obj));
                 if (!hmd.thrown && (obj.quan ?? 1) > 1)
-                    what = an(I.xname(obj));
+                    what = upstart(an(singular(obj, I.xname)));
                 if (haseyes(hmd.mdat) && hmd.mdat?.pmidx !== PM_FLOATING_EYE) {
                     const { mbodypart } = await import('./monmove.js');
                     whom = `${s_suffix(whom)} ${mbodypart(mon, FACE)}`;
@@ -4736,8 +4781,8 @@ export async function m_is_steadfast(mtmp) {
     return false;
 }
 // C ref: youprop.h Flying/Levitation.
-function Flying_uh() { return (u_of().uprops?.Flying || 0) > 0; }
-function Levitation_uh() { return (u_of().uprops?.Levitation || 0) > 0; }
+function Flying_uh() { return Flying_hero(); }
+function Levitation_uh() { return Levitation_hero(); }
 
 // C ref: monst.h gy.youmonst.data — the hero's CURRENT permonst.  game.youmonst
 // is a bare `{}` in this port (restore.js:1135 cg.zeromonst), so `.data` on it

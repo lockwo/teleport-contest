@@ -49,8 +49,6 @@ export const PLINE_NOREPEAT = 1;
 export const OVERRIDE_MSGTYPE = 2;
 export const SUPPRESS_HISTORY = 4;
 export const URGENT_MESSAGE = 8;
-export const PLINE_VERBALIZE = 16;
-export const PLINE_SPEECH = 32;
 export const NO_CURS_ON_U = 64;
 
 // hack.h:721-724 msgtype_type() results.

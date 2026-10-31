@@ -16,7 +16,7 @@ import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
-import { render_map_to_grid, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
+import { mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -254,6 +254,9 @@ function key2extcmddesc(key) {
             return "synonym for 'i'";
     }
     if (key === 0o33) return 'cancel current prompt or pending prefix';
+    // misc_keys[]: NHKF_COUNT is only listed when number_pad is on.
+    if (Cmd_num_pad() && key === NHKF_COUNT_KEY)
+        return 'Prefix: for digits when preceding a command with a count';
     const e = cmdbind_get(key);
     if (e && e.txt) {
         let buf = `${e.desc} (#${e.txt})`;
@@ -972,7 +975,7 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          GPCOORDS_COMFULL, WARNCOUNT, TRAPNUM, def_warnsyms, Is_waterlevel, Is_rogue_level,
          Is_airlevel, Is_astralevel, SYM_OFF_P, SYM_NOTHING, SYM_UNEXPLORED, SYM_BOULDER,
          AM_MASK, AM_SANCTUM, Amask2align, A_CHAOTIC,
-         A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED } from './const.js';
+         A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED, ECMD_CANCEL } from './const.js';
 import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
          S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
@@ -991,6 +994,8 @@ import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
     from './display.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { engr_at } from './engrave.js';
+import { altarmask_at } from './dungeon.js';
+import { is_drawbridge_wall } from './dbridge.js';
 import { t_at, trapname } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
 import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
@@ -999,7 +1004,7 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
 import { monster_by_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
 import { costly_spot } from './shk.js';
-import { rndmonnam as rndmonnam_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
+import { rndmonnam as rndmonnam_dn, mon_pmname as mon_pmname_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
@@ -1040,6 +1045,7 @@ function pg_distu(x, y) {
 }
 function pg_next2u(x, y) { return pg_distu(x, y) <= 2; }
 import { an as pg_an } from './hacklib.js';
+import { mflags2_of, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON } from './monflags_data.js';
 function pg_the(s) { return s ? `the ${s}` : s; }
 function pg_upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
@@ -1762,7 +1768,16 @@ export function look_at_monster(mtmp, x, y, wantMonbuf = true) {
             step(MONSEEN_DETECT, 'monster detection');
             if (hs & MONSEEN_WARNMON) {
                 if (Hallucination_u()) push('paranoid delusion');
-                else push(`warned of ${makeplural(data.name || 'creature')}`);
+                else {
+                    const wt = game.context?.warntype || {};
+                    const mW = (wt.obj | 0) | (wt.polyd | 0), m2 = mflags2_of(data);
+                    const whom = (mW & M2_HUMAN & m2) ? 'human'
+                        : (mW & M2_ELF & m2) ? 'elf'
+                        : (mW & M2_ORC & m2) ? 'orc'
+                        : (mW & M2_DEMON & m2) ? 'demon'
+                        : mon_pmname_dn(mtmp);
+                    push(`warned of ${makeplural(whom)}`);
+                }
                 hs &= ~MONSEEN_WARNMON;
                 if (hs) push(', ');
             }
@@ -1794,8 +1809,7 @@ function pg_sticks(ptr) {
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
-/* vision.c:2152 howmonseen(mon) — the bitmask lookat() decodes.  MATCH_WARN_OF_MON
-   (MONSEEN_WARNMON) is omitted: this port has no warned-of-monster-type state. */
+/* vision.c:2152 howmonseen(mon) — the bitmask lookat() decodes. */
 function howmonseen(mtmp) {
     const u = game.u || {}, p = u.uprops || {};
     const useemon = canseemon_shared(mtmp);
@@ -1814,7 +1828,16 @@ function howmonseen(mtmp) {
     if (useemon && xraydist > 0 && dx * dx + dy * dy <= xraydist) how |= 16; /* XRAYVIS */
     if (p.Detect_monsters || p.HDetect_monsters || p.EDetect_monsters
         || u.HDetect_monsters || u.EDetect_monsters) how |= 32; /* DETECT */
+    if (match_warn_of_mon(mtmp)) how |= 64;                    /* WARNMON */
     return how;
+}
+
+// C ref: pager.c lookat() `glyph == mon_to_glyph(u.ustuck, rn2_on_display_rng)`.
+// The call is made (taking its Hallucination display-RNG draw) whenever
+// save_uswallow is set; the glyph kind test stands in for the equality.
+function glyph_is_ustuck(glyph, ustuck) {
+    if (ustuck) mon_to_glyph_pub(ustuck);
+    return pg_glyph_is_monster(glyph) && !glyph.isyou;
 }
 
 // C ref: pager.c:656 lookat(x, y, buf, monbuf) — the "(firstmatch)" detail
@@ -1828,7 +1851,7 @@ export function lookat(x, y) {
     const iflags = pg_iflags();
 
     if (pg_u_at(x, y) && canspotself()
-        && !(iflags.save_uswallow && pg_glyph_is_monster(glyph) && !glyph.isyou)
+        && !(iflags.save_uswallow && glyph_is_ustuck(glyph, u.ustuck))
         && (!iflags.terrainmode || (iflags.terrainmode & 0x08 /* TER_MON */) !== 0)) {
         buf = pg_self_lookat();
         // C forces the general "wizard" data.base entry for a gnomish Wizard so
@@ -1881,7 +1904,7 @@ export function lookat(x, y) {
         const symidx = pg_glyph_to_cmap(glyph);
         switch (symidx) {
         case S_altar: {
-            const amsk = (loc?.altarmask ?? loc?.flags ?? 0);
+            const amsk = altarmask_at(x, y);
             const algn = Amask2align(amsk & AM_MASK);
             /* like endgame high priests, endgame high altars are only
                recognizable when immediately adjacent */
@@ -1894,7 +1917,8 @@ export function lookat(x, y) {
             break;
         }
         case S_ndoor:
-            if (((loc?.doormask | 0) & ~D_TRAPPED) === D_BROKEN) buf = 'broken door';
+            if (is_drawbridge_wall(x, y) >= 0) buf = 'open drawbridge portcullis';
+            else if (((loc?.doormask | 0) & ~D_TRAPPED) === D_BROKEN) buf = 'broken door';
             else buf = 'doorway';
             break;
         case S_cloud:
@@ -2706,7 +2730,7 @@ export async function doquickwhatis() { return do_look(1, null); }
 export async function doidtrap() {
     const u = pg_u();
     const { getdir } = await import('./cmd.js');
-    if (!await getdir('^')) return 1;               /* ECMD_CANCEL */
+    if (!await getdir('^')) return ECMD_CANCEL;
     const x = u.ux + u.dx, y = u.uy + u.dy;
 
     const glyph = pg_glyph_at(x, y);

@@ -55,7 +55,7 @@ import {
     M1_HERBIVORE, M1_METALLIVORE, M1_ACID, M1_POIS, M2_UNDEAD, M2_MINION,
 } from './monflags_data.js';
 import { DEADMONSTER, healmon, Protection_from_shape_changers,
-    mlifesaver, set_ustuck, is_vampshifter } from './mon.js';
+    mlifesaver, set_ustuck, is_vampshifter, were_change } from './mon.js';
 import {
     STRAT_WAITFORU, W_ARMOR, W_AMUL, W_ARMH, W_ARMS, W_ARMG, W_ARMF,
     A_STR, A_INT, A_DEX, A_CON, LEFT_SIDE, RIGHT_SIDE, MSLOW, LEG,
@@ -197,10 +197,6 @@ export async function mhitm_mgc_atk_negated(magr, mdef, verbosely, ops) {
 // mhitm_mgc_atk_negated()'s `rn2(10) >= 3 * armpro` could never come out
 // un-negated for an armoured hero.
 //
-// NOTE: js/invent.js deliberately remaps some W_* bits for HERO inventory
-// (its W_AMUL is 0x00080000, const.js's is 0x00010000) — see the worn-mask
-// remap note.  The monster arm reads misc_worn_check / minvent owornmask,
-// which use the const.js layout.
 
 // ── uhitm.c:126 erode_armor ─────────────────────────────────────────────────
 // C ref: uhitm.c:126-185.  Loops rn2(5) until a slot takes the erosion: the
@@ -486,16 +482,27 @@ export async function mhitm_ad_dcay(magr, mattk, mdef, mhm, ops) {
 
 export async function mhitm_ad_dren(magr, mattk, mdef, mhm, ops) {
     const negated = await mhitm_mgc_atk_negated(magr, mdef, false, ops);
-    if (is_hero(mdef)) {
-        await ops.hitmsg(magr, mattk);
+    if (is_hero(magr)) {
+        /* uhitm */
         if (!negated && !rn2(4)) {
-            // drain_en(mhm.damage): u.uen bookkeeping; the botl Pw row belongs
-            // to the caller, so the hero arm stops after the roll.
+            const { xdrainenergym } = await import('./mhitm.js');
+            await xdrainenergym(mdef, true);
+        }
+        mhm.damage = 0;
+    } else if (is_hero(mdef)) {
+        /* mhitu */
+        await ops.hitmsg(magr, mattk);
+        if (!negated && !rn2(4)) { /* 25% chance */
+            const { drain_en } = await import('./trap.js');
+            await drain_en(mhm.damage, false);
         }
         mhm.damage = 0;
     } else {
+        /* mhitm */
         if (!negated && !rn2(4)) {
-            // xdrainenergym(): monsters have no Pw row in this port.
+            const { xdrainenergym } = await import('./mhitm.js');
+            await xdrainenergym(mdef, !!(ops.vis && ops.canspotmon(mdef)
+                                         && mattk.aatyp !== AT_ENGL));
         }
         mhm.damage = 0;
     }
@@ -620,7 +627,8 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_FIRE, orig_dmg, ops);
-    // ignite_items(): oil lamps / potions of oil catching light; no RNG.
+    /* ignite_items(mdef->minvent): ignitable lamps/candles catch fire; no RNG */
+    await (await import('./zap.js')).ignite_items(mdef.minvent);
 }
 
 export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
@@ -730,7 +738,7 @@ export async function mhitm_ad_acid(magr, mattk, mdef, mhm, ops) {
                 mhm.damage = 0;
             } else {
                 await ops.emit(`You're covered in ${hliquid('acid')}!  It burns!`);
-                ops.exercise(A_STR, false);
+                await ops.exercise(A_STR, false);
                 if (ops.monstunseesu) await ops.monstunseesu(M_SEEN_ACID);
             }
         } else {
@@ -953,15 +961,23 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
     }
     if (!night() && pa?.name === 'gremlin') return;
     if (!magr.mcan && !rn2(10)) {
-        mdef.mcan = 1;
+        mdef.mcan = 1; /* cancelled regardless of lifesave */
         clear_waitforu(mdef);
-        // were_change() needs the lycanthrope shapeshift table.
+        if (is_were_flag(pd) && pd.mcls !== S_HUMAN)
+            await were_change(mdef);
         if (pd?.name === 'clay golem') {
             if (ops.vis && ops.canseemon(mdef)) {
                 await ops.emit(`Some writing vanishes from ${ops.mon_nam(mdef)}'s head!`);
                 await ops.emit(`${ops.Monnam(mdef)} is destroyed!`);
             }
             await ops.mondied(mdef);
+            if (!DEADMONSTER(mdef)) {
+                mhm.hitflags = M_ATTK_MISS;
+                mhm.done = true;
+                return;
+            } else if (mdef.mtame && !ops.vis) {
+                await ops.emit('You have a strangely sad feeling for a moment, then it passes.'); /* brief_feeling */
+            }
             mhm.hitflags = M_ATTK_DEF_DIED
                 | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);
             mhm.done = true;
@@ -1396,7 +1412,27 @@ export async function mhitm_ad_slim(magr, mattk, mdef, mhm, ops) {
         return;
     }
     if (negated) return;
-    if (!rn2(4) && !slimeproof(pd)) mhm.damage = 0;
+    if (!rn2(4) && !slimeproof(pd)) {
+        const { munslime } = await import('./muse.js');
+        if (!await munslime(mdef, false) && !DEADMONSTER(mdef)) {
+            const { newcham_wizard_aware, name_to_pmidx } = await import('./makemon.js');
+            const { NC_SHOW_MSG, NO_NC_FLAGS } = await import('./const.js');
+            let ncflags = NO_NC_FLAGS;
+
+            if (ops.vis && ops.canseemon(mdef))
+                ncflags |= NC_SHOW_MSG;
+            await newcham_wizard_aware(mdef, monster_by_pmidx(name_to_pmidx('green slime')), ncflags);
+            mdef.mstrategy = (mdef.mstrategy | 0) & ~STRAT_WAITFORU;
+            mhm.hitflags = M_ATTK_HIT;
+        }
+        /* munslime attempt could have been fatal,
+           potentially to multiple monsters (SCR_FIRE) */
+        if (DEADMONSTER(magr))
+            mhm.hitflags |= M_ATTK_AGR_DIED;
+        if (DEADMONSTER(mdef))
+            mhm.hitflags |= M_ATTK_DEF_DIED;
+        mhm.damage = 0;
+    }
 }
 
 export async function mhitm_ad_ench(magr, mattk, mdef, mhm, ops) {
@@ -1787,7 +1823,7 @@ export async function mhitm_ad_were(magr, mattk, mdef, mhm, ops) {
             && !await mhitm_mgc_atk_negated(magr, mdef, true, ops)) {
             /* C ref: uhitm.c:4282 urgent_pline("You feel feverish.") */
             await (await import('./display.js')).urgent_topl('You feel feverish.');
-            if (ops.exercise) ops.exercise(A_CON, false);
+            if (ops.exercise) await ops.exercise(A_CON, false);
             if (ops.set_ulycn) await ops.set_ulycn(pa?.pmidx ?? -1);
             const { retouch_equipment } = await import('./artifact.js');
             await retouch_equipment(2);
@@ -1827,8 +1863,8 @@ export async function mhitm_ad_heal(magr, mattk, mdef, mhm, ops) {
                 }
                 if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
             }
-            if (!rn2(3)) exercise(A_STR, true);
-            if (!rn2(3)) exercise(A_CON, true);
+            if (!rn2(3)) await exercise(A_STR, true);
+            if (!rn2(3)) await exercise(A_CON, true);
             if ((u.uprops?.Sick | 0) > 0) {
                 const { make_sick } = await import('./potion.js');
                 await make_sick(0, null, false, 0x03 /* SICK_ALL */);
@@ -1912,7 +1948,7 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
                 // exercise accumulators.  These are RNG-bearing while their
                 // accumulators have room, so omitting them desynchronizes the
                 // following attack even when the visible wound is correct.
-                ops.exercise?.(A_STR, false);
+                await ops.exercise?.(A_STR, false);
                 ops.exercise?.(A_DEX, false);
             }
         }
@@ -1939,7 +1975,7 @@ export async function mhitm_ad_dgst(magr, mattk, mdef, mhm, ops) {
             mhm.done = true;
             return;
         } else if (magr.mtame && !ops.vis)
-            await You_feel('queasy'); /* brief_feeling */
+            await ops.emit('You have a queasy feeling for a moment, then it passes.'); /* brief_feeling */
         mhm.hitflags = M_ATTK_AGR_DIED;
         mhm.done = true;
         return;

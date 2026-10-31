@@ -14,7 +14,7 @@ import {
     BURN, COLNO, DRY, LA_DOWN, LA_UP, ROOM, ROWNO, STAIRS,
 } from '../const.js';
 import { dunlevs_in_dungeon } from '../dungeon.js';
-import { make_engr_at } from '../engrave.js';
+import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { TIN, bless, mksobj_at } from '../mkobj.js';
 import { rn2 } from '../rng.js';
@@ -133,7 +133,7 @@ export async function makemaz_mon_loca() {
             if (tin) { tin.spe = 1; tin.quan = 2; bless(tin); }
             // des.engraving({ coord=tinloc, type="burn", text="Elbereth" }) —
             // explicit coord: no RNG.
-            make_engr_at(tinloc.x, tinloc.y, 'Elbereth', 'Elbereth', 0, BURN);
+            des_engraving_at(tinloc.x, tinloc.y, 'Elbereth', 'Elbereth', BURN);
         }
 
         // des.trap() x6 — random type at a random DRY spot.

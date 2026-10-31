@@ -769,8 +769,9 @@ const ILLOBJ_CLASS = 1, TOOL_CLASS = 6, FOOD_CLASS = 7, ROCK_CLASS = 14,
 const STRANGE_OBJECT = 0, SLIME_MOLD = 285, LAST_REAL_GEM = 460;
 const CANDELABRUM_OF_INVOCATION = 262, BELL_OF_OPENING = 263,
       AMULET_OF_YENDOR = 213, SPE_BOOK_OF_THE_DEAD = 409;
-/* include/hack.h ECMD_OK; include/monsym.h NON_PM */
-const ECMD_OK = 0, NON_PM = -1;
+/* include/monsym.h NON_PM */
+const NON_PM = -1;
+import { ECMD_OK } from './const.js';
 /* include/global.h BUFSZ */
 const BUFSZ = 256;
 /* include/wintype.h */

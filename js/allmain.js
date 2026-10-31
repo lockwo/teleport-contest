@@ -2727,6 +2727,7 @@ export async function welcome(new_game) {
     }
 
     /* skip "welcome back" if restoring a doomed character */
+    const { ugenocided, udeadinside } = await import('./polyself.js');
     if (!new_game && Upolyd(u) && ugenocided()) {
         /* death via self-genocide is pending */
         await pline(`You're back, but you still feel ${udeadinside()} inside.`);
@@ -2786,11 +2787,6 @@ function align_str_wel(alignment) {
     const a = aligns.find((al) => al.value === alignment);
     return a ? a.adj : 'unaligned';
 }
-// C ref: you.h ugenocided() / polyself.c udeadinside() — the self-genocide
-// death that is pending when a poly'd hero's own species was wiped out.  No
-// port: genocide of the hero's polyform is unreachable in this port's play.
-function ugenocided() { return false; }
-function udeadinside() { return 'dead'; }
 
 // C ref: allmain.c:933 do_positionbar() — build the msdos POSITIONBAR string:
 // pairs of (marker, x) for every mapped staircase, then the hero.  Not compiled

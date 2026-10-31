@@ -1,3 +1,4 @@
+import { Invis_hero as Invis_hero_yp } from './youprop.js';
 // sounds.js — Ambient level sounds emitted once per turn.
 // C ref: sounds.c dosounds().
 //
@@ -246,9 +247,7 @@ function Is_oracle_level(uz) {
     return uz.dnum === ol.dnum && uz.dlevel === ol.dlevel;
 }
 
-// ── ECMD_* return codes (cmd.h) ──
-const ECMD_OK = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME, PLINE_SPEECH, PLINE_VERBALIZE, SOUND_TRIGGER_VERBAL } from './const.js';
 
 // C ref: include/monflag.h enum ms_sounds — mons[].msound.  Driven off the
 // generated MSOUND table (monflags_data.js), never off the monster's name or
@@ -420,6 +419,13 @@ export async function domonnoise(mtmp) {
     const ptr = mtmp?.data;
     let msound = msound_of(ptr) ?? MS_SILENT;
     const { quest_info } = await import('./questpgr.js');
+    const { nomul } = await import('./hack.js');
+    const { aggravate } = await import('./monmove.js');
+    const { wake_nearto } = await import('./cmd.js');
+    const { t_at } = await import('./trap.js');
+    const { could_seduce, doseduce } = await import('./mhitu.js');
+    const { YOUMONST } = await import('./mhitm_ad.js');
+    const { is_lminion_mon } = await import('./makemon.js');
     // C: `if (is_silent(ptr) && !mtmp->isshk) return ECMD_OK;`
     if (msound === MS_SILENT && !mtmp?.isshk) return ECMD_OK;
 
@@ -435,6 +441,8 @@ export async function domonnoise(mtmp) {
                  || same_race(ptr, hero_race_permonst()) || !!game.u?.uhallu))
         msound = MS_HUMANOID;
     else if (msound === MS_MOO && !mtmp.mtame) msound = MS_BELLOW;
+    /* silliness; formerly had a slight chance to interfere with shopping */
+    else if (game.u?.uhallu && mon_is_gecko(mtmp)) msound = MS_SELL;
 
     // C: do this BEFORE talking — the monster might teleport away, so the
     // 'I' marker has to go on its pre-teleport square.
@@ -470,10 +478,12 @@ export async function domonnoise(mtmp) {
         // XOR, so at night the howl needs rn2(13) NON-zero and by day zero.
         if (fullmoon && (!!night() !== !rn2(13))) {
             // C picks "shriek" for &mons[PM_HUMAN_WERERAT]; the human and animal
-            // were-forms share a name, so that one needs the PM_ index rather
-            // than a name compare and is left as the "howl" default.
-            await update_topl(`${Monnam(mtmp)} throws back ${mtmp.female ? 'her' : 'his'}`
-                + ' head and lets out a blood curdling howl!');
+            // were-forms share a name, so the human form is the S_HUMAN one.
+            await update_topl(`${Monnam(mtmp)} throws back ${mhis(mtmp)}`
+                + ` head and lets out a blood curdling ${
+                    (ptr?.name === 'wererat' && ptr?.mcls === 53 /* S_HUMAN */)
+                        ? 'shriek' : 'howl'}!`);
+            await wake_nearto(mtmp.mx, mtmp.my, 11 * 11);
         } else {
             pline_msg = 'whispers inaudibly.  All you can make out is "moon".';
         }
@@ -555,9 +565,11 @@ export async function domonnoise(mtmp) {
         break;
     case MS_TRUMPET:
         pline_msg = 'trumpets!';
+        await wake_nearto(mtmp.mx, mtmp.my, 11 * 11);
         break;
     case MS_SHRIEK:
         pline_msg = 'shrieks.';
+        aggravate();
         break;
     case MS_IMITATE:
         pline_msg = 'imitates you.';
@@ -565,6 +577,9 @@ export async function domonnoise(mtmp) {
     case MS_BONES:
         await update_topl(`${Monnam(mtmp)} rattles noisily.`);
         await update_topl('You freeze for a moment.');
+        nomul(-2);
+        game.multi_reason = 'scared by rattling';
+        game.nomovemsg = null;
         break;
     case MS_LAUGH:
         pline_msg = ['giggles.', 'chuckles.', 'snickers.', 'laughs.'][rn2(4)];
@@ -664,7 +679,11 @@ export async function domonnoise(mtmp) {
         else if (mtmp.mconf || mtmp.mstun)
             verbl_msg = !rn2(3) ? 'Huh?' : rn2(2) ? 'What?' : 'Eh?';
         else if (!mtmp.mcansee) verbl_msg = "I can't see!";
-        else if (mtmp.mtrapped) verbl_msg = "I'm trapped!";
+        else if (mtmp.mtrapped) {
+            const t = t_at(mtmp.mx, mtmp.my);
+            if (t) t.tseen = 1;
+            verbl_msg = "I'm trapped!";
+        }
         else if (mtmp.mhp < Math.floor(mtmp.mhpmax / 2))
             pline_msg = 'asks for a potion of healing.';
         else if (mtmp.mtame && !mtmp.isminion && moves > hungrytime)
@@ -701,6 +720,11 @@ export async function domonnoise(mtmp) {
         // could_seduce() runs doseduce(); nymphs always fall through to the
         // swval roll.  poly_gender() == mtmp->female skips the rn2(3)
         // entirely, which is the usual case (female hero, female nymph).
+        if (mtmp.data?.mcls !== S_NYMPH_MCLS
+            && could_seduce(mtmp, YOUMONST, null) === 1) {
+            await doseduce(mtmp);
+            break;
+        }
         const swval = (poly_gender() !== (mtmp.female | 0)) ? rn2(3) : 0;
         if (swval === 2) verbl_msg = 'Hello, sailor.';
         else if (swval === 1) pline_msg = 'comes on to you.';
@@ -728,7 +752,8 @@ export async function domonnoise(mtmp) {
             const { cuss } = await import('./monmove.js');
             await cuss(mtmp); /* rolls its own branch selector */
         } else {
-            verbl_msg = "We're all doomed."; /* (is_lminion: out of scope) */
+            verbl_msg = is_lminion_mon(mtmp) ? "It's not too late."
+                : "We're all doomed.";
         }
         break;
     case MS_SPELL:
@@ -876,6 +901,7 @@ function closed_door(x, y) {
 }
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
 import { vtense } from './plural.js';
+const S_NYMPH_MCLS = 14; // defsym.h S_NYMPH
 // C ref: monsym.h S_ANT / S_EEL — mons[].mlet values.  makemon.js keeps the
 // numeric class index in `mcls` (`mlet` there is the display CHARACTER), so
 // every C `ptr->mlet == S_FOO` test reads `ptr.mcls` here.
@@ -1335,8 +1361,7 @@ export function responsive_mon_at(x, y) {
 }
 // C ref: youprop.h Invisible — HInvis || EInvis.  responsive_mon_at only cares
 // whether the MONSTER can see through it, so See_invisible is not consulted.
-const Invis_hero = () => !!(game.u?.uprops?.HInvis || game.u?.uprops?.EInvis
-                            || game.u?.uinvis);
+const Invis_hero = () => Invis_hero_yp();
 
 // C ref: sounds.c:1518 reaction[3] — tiphat()'s hostile-humanoid gestures.
 const TIPHAT_REACTION = ['curses', 'gestures rudely', 'gestures offensively'];
@@ -1938,8 +1963,6 @@ export const voice = {
     gender: MALE_SND, serialno: 0, tone: 0, volume: 0, moreinfo: 0,
     nameid: null,
 };
-// C ref: pline.h PLINE_SPEECH / PLINE_VERBALIZE (gp.pline_flags).
-export const PLINE_SPEECH = 0x0001, PLINE_VERBALIZE = 0x0002;
 export const pline_flags_snd = { flags: 0 };
 
 // C ref: sounds.c:2160 set_voice(mtmp, tone, volume, moreinfo) — the
@@ -1977,7 +2000,5 @@ export function sound_speak(text) {
                                 voice.moreinfo);
     }
 }
-// C ref: sndprocs.h SOUND_TRIGGER_VERBAL.
-const SOUND_TRIGGER_VERBAL = 0x0010;
 // C ref: flag.h iflags.voices — the runtime "speak verbalized text" toggle.
 const iflags_voices = () => !!game.iflags?.voices;

@@ -29,7 +29,7 @@ import {
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
-import { currency, bimanual as inv_bimanual, W_AMUL as INV_W_AMUL } from './invent.js';
+import { currency, bimanual as inv_bimanual } from './invent.js';
 import { body_part } from './polyself.js';
 import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN } from './eat.js';
 import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
@@ -501,8 +501,7 @@ const W_ARM = 0x1, W_ARMC = 0x2, W_ARMH = 0x4, W_ARMS = 0x8, W_ARMG = 0x10,
       W_WEP = 0x100, W_QUIVER = 0x200, W_SWAPWEP = 0x400,
       W_RINGL = 0x20000, W_RINGR = 0x40000,
       W_RING = W_RINGL | W_RINGR,
-      /* js/invent.js remaps the amulet and worn-tool (blindfold) bits */
-      W_TOOL = 0x00100000 | 0x00800000,
+      W_AMUL = 0x10000, W_TOOL = 0x80000,
       W_SADDLE = 0x100000, W_BALL = 0x200000, W_CHAIN = 0x400000;
 
 /* objclass.h:12-35 obj_material_types */
@@ -1838,7 +1837,7 @@ export function doname_base(obj, doname_flags) {
     let goto_charges = false, goto_ring = false;
     switch (is_weptool(obj) ? WEAPON_CLASS : obj.oclass) {
     case AMULET_CLASS:
-        if (obj.owornmask & INV_W_AMUL)
+        if (obj.owornmask & W_AMUL)
             bp += ' (being worn)';
         break;
     case ARMOR_CLASS:

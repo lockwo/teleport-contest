@@ -245,7 +245,10 @@ export function more_experienced(exper, rexp) {
     const oldexp = u.uexp || 0;
     let newexp = oldexp + exper;
     if (newexp < 0 && exper > 0) newexp = Number.MAX_SAFE_INTEGER;
-    if (newexp !== oldexp) u.uexp = newexp;
+    if (newexp !== oldexp) {
+        u.uexp = newexp;
+        if (game.flags?.showexp) game.botl = true;
+    }
 
     const oldrexp = u.urexp || 0;
     const rexpincr = 4 * exper + (rexp || 0);

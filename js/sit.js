@@ -86,7 +86,7 @@ export async function dosit() {
     if (!(await import('./engrave.js')).can_reach_floor(false)) {
         if (u.uswallow)
             await update_topl('There are no seats in here!');
-        else if (u.uprops?.Levitation)
+        else if ((await import('./youprop.js')).Levitation_hero())
             await update_topl('You tumble in place.');
         else
             await update_topl('You are sitting on air.');
@@ -97,7 +97,7 @@ export async function dosit() {
         else
             await update_topl(`${Monnam(u.ustuck)} has no lap.`);
         return ECMD_OK;
-    } else if ((is_pool(u.ux, u.uy) && !u.uprops?.Underwater)
+    } else if ((is_pool(u.ux, u.uy) && !u.uinwater)
                || (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')
                    && (typ === FOUNTAIN || is_pool(u.ux, u.uy)))) {
         return await sit_in_water();
@@ -156,7 +156,7 @@ export async function dosit() {
             await update_topl(`You ${u.uprops?.Flying ? 'land' : 'sit down'}.`);
             await dotrap(trap, VIASITTING);
         }
-    } else if ((u.uprops?.Underwater || Is_waterlevel(u.uz))
+    } else if ((u.uinwater || Is_waterlevel(u.uz))
                && !eggs_in_water(youmonst_data_pub())) {
         if (Is_waterlevel(u.uz))
             await update_topl('There are no cushions floating nearby.');
@@ -628,5 +628,4 @@ async function lay_an_egg() {
 // objects.h FOOD("egg", ... 80 ...) oc_nutrition.
 const EGG_NUTRITION = 80;
 const SPE_REMOVE_CURSE = 395;
-const ECMD_OK = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME } from './const.js';

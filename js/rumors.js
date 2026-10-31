@@ -13,7 +13,7 @@ import { update_topl } from './display.js';
 import { ORACLES_B64 } from './oracles_data.js';
 import { outrumor, BY_ORACLE } from './engrave.js';
 
-const ECMD_OK = 0x00, ECMD_TIME = 0x01;   // hack.h:1456
+import { ECMD_OK, ECMD_TIME } from './const.js';
 const BUFSZ = 256;
 const COLNO = 80;
 

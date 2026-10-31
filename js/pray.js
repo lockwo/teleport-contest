@@ -13,7 +13,8 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
-import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear } from './display.js';
+import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, see_invisible } from './display.js';
+import { Blind_telepat, Levitation_hero, Flying_hero } from './youprop.js';
 import { align_gname, roles, aligns } from './role.js';
 import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER } from './const.js';
 import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
@@ -540,6 +541,15 @@ export async function attrcurse() {
         u[field] = (u[field] | 0) & ~INTRINSIC;
         if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
         (u.lost_innate ||= new Set()).add(field);
+        if (prop === TELEPAT) {
+            if (Blind() && !Blind_telepat())
+                await see_monsters(); /* Can't sense mons anymore! */
+        } else if (prop === SEE_INVIS && !see_invisible()) {
+            set_mimic_blocking();
+            await see_monsters();
+            /* might not be able to see self anymore */
+            newsym(u.ux, u.uy);
+        }
         if (FEEL_PROPS.has(prop)) await You_feel(msg);
         else await update_topl(prop === SEE_INVIS && Hallucination()
             ? 'You tawt you taw a puttie tat!' : msg);
@@ -800,6 +810,9 @@ async function fix_worst_trouble(trouble) {
         } else {
             u.uprops = u.uprops || {};
             u.uprops.HPasses_walls = d(4, 4) + 4;
+            /* how else could you move between packed rocks or among lattice
+               forming "solid" rock? */
+            await You_feel('much slimmer.');
         }
         break;
     }
@@ -1180,8 +1193,23 @@ async function pleased(g_align) {
         }
     }
 
-    // reset prayer timeout (kick_on_butt is 0 for a non-demigod hero).
+    // C ref: pray.c:1356-1378 — reset the prayer timeout; a demigod (and a hero
+    // who has the Hand of Elbereth) also pays rnz(1000) per kick_on_butt.
     u.ublesscnt = rnz(350);
+    let kick_on_butt = u.uevent?.udemigod ? 1 : 0;
+    if (u.uevent?.uhand_of_elbereth)
+        kick_on_butt++;
+    if (kick_on_butt)
+        u.ublesscnt += kick_on_butt * rnz(1000);
+    /* turn counter past 100000: every additional 100 turns adds 1 to the
+       prayer timeout, throttled at LARGEST_INT (C int, 2^31 - 1) */
+    if ((game.moves | 0) > 100000) {
+        let incr = Math.trunc(((game.moves | 0) - 100000) / 100);
+        const largest_ublesscnt_incr = 2147483647 - u.ublesscnt;
+        if (incr > largest_ublesscnt_incr)
+            incr = largest_ublesscnt_incr;
+        u.ublesscnt += incr;
+    }
 }
 
 // C ref: pray.c gp.p_aligntyp accessor for pleased()'s cross-altar check.
@@ -1230,11 +1258,13 @@ async function prayer_done() {
 
     if (gp.type === -2) {
         /* praying at an unaligned altar */
-        await update_topl('You hear diabolical laughter all around you...');
+        const { Deaf_hero } = await import('./display.js');
+        await update_topl(`You ${Deaf_hero() ? 'intuit' : 'hear'} diabolical laughter all around you...`);
         adjalign(-2);
-        // C also wake_nearby(FALSE), which draws nothing.  exercise() DOES:
+        // wake_nearby(FALSE) draws nothing, but wakes sleepers.  exercise() DOES draw:
         // attrib.c:59 rolls -rn2(2) for a decrement whenever |AEXE(A_WIS)| is
         // under AVAL, so calling it is not optional.
+        await (await import('./cmd.js')).wake_nearby(false);
         exercise(A_WIS, false);
         if (!In_hell(u.uz)) {
             await update_topl('Nothing else happens.');
@@ -1283,7 +1313,7 @@ async function prayer_done() {
     } else {
         /* coaligned */
         if (on_altar()) {
-            // C also pray_revive(): a tame corpse on the altar is resurrected.
+            await pray_revive();
             await water_prayer(true);
         }
         await pleased(alignment); /* nice */
@@ -2065,7 +2095,7 @@ export async function dosacrifice() {
     const altaralign = a_align(u.ux, u.uy);
 
     if (!on_altar() || u.uswallow) {
-        const over = (u.uprops?.Levitation || u.uprops?.Flying) ? 'over' : 'on';
+        const over = (Levitation_hero() || Flying_hero()) ? 'over' : 'on';
         await update_topl(`You are not ${over} an altar.`);
         return 0; // ECMD_OK
     }
@@ -2174,10 +2204,7 @@ function An_pr(s) {
     return `${/^[aeiou]/i.test(str) ? 'An' : 'A'} ${str}`;
 }
 // C ref: youprop.h Levitation.
-function Levitation_pr() {
-    const u = game.u;
-    return !!(u?.uprops?.Levitation || u?.HLevitation || u?.ELevitation);
-}
+function Levitation_pr() { return Levitation_hero(); }
 // C ref: objects.c svb.bases[SPBOOK_CLASS] — the first real spellbook otyp.
 // Derived the same way js/mkobj.js:858 classBases does (the low "generic"
 // placeholder rows below MAXOCLASSES are skipped).

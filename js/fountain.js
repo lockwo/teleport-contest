@@ -18,12 +18,13 @@ import { fmonOrder } from './mon.js';
 import { nolimbs } from './monflags_data.js';
 import { mbodypart } from './polyself.js';
 import { Deaf_hero } from './display.js';
-import { ARM, HEAD } from './const.js';
+import { ARM, HEAD, M_SEEN_FIRE } from './const.js';
+import { monstseesu, monstunseesu } from './mondata.js';
 import { fingers_or_gloves } from './do_wear.js';
 import { makeplural } from './plural.js';
 import { hcolor, rndmonnam, mhe, mhis } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
-import { Poison_resistance } from './youprop.js';
+import { Poison_resistance, Levitation_hero } from './youprop.js';
 import { newuhs, morehungry, vomit } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
@@ -147,7 +148,7 @@ export async function dipfountain(obj) {
     // is_hands ('-') dips wash the hands; the reached sessions dip real objects.
     const is_hands = obj && obj._hands;
 
-    if (u.uprops?.Levitation) {
+    if (Levitation_hero()) {
         await update_topl('You are floating high above the fountain.');
         return;
     }
@@ -310,7 +311,7 @@ export async function drinkfountain() {
     const mgkftn = (loc?.blessedftn === 1);
     const fate = rnd(30);
 
-    if (u.uprops?.Levitation) {
+    if (Levitation_hero()) {
         await update_topl('You are floating high above the fountain.');
         return;
     }
@@ -816,7 +817,7 @@ async function spawnAtHeroSquare(pmidx) {
 // (possibly empty) growth loop, so it must be called, not skipped.
 export async function drinksink() {
     const u = game.u;
-    if (u.uprops?.Levitation) {
+    if (Levitation_hero()) {
         await update_topl('You are floating high above the sink.');
         return;
     }
@@ -833,12 +834,14 @@ export async function drinksink() {
         await update_topl(`You take a sip of scalding hot ${water}.`);
         // C ref: fountain.c:614 — a fire-resistant hero gets "It seems quite
         // tasty." and takes NO damage, so the rnd(6) must not be drawn either.
-        // monstseesu/monstunseesu (M_SEEN_FIRE) is monster-memory bookkeeping
-        // with no RNG.
+        // monstseesu/monstunseesu (M_SEEN_FIRE) update what watching monsters
+        // remember of the hero's fire resistance.
         if ((await import('./zap.js')).Fire_resistance()) {
             await update_topl('It seems quite tasty.');
+            monstseesu(M_SEEN_FIRE);
         } else {
             await losehp(rnd(6), 'sipping boiling water', 1 /* KILLED_BY */);
+            monstunseesu(M_SEEN_FIRE);
         }
         break;
     case 3: {

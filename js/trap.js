@@ -3,13 +3,14 @@
 // Stripped-down version for contest: emits the same rn2/rnd/rne PRNG call
 // sequence as C during level generation so RNG parity is preserved.
 
+import { count_level_features } from './mklev.js';
 import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
 import { level_difficulty } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
 import { del_engr_at } from './engrave.js';
@@ -63,7 +64,7 @@ import {
     ANTIMAGIC, HALF_PHDAM, HALF_SPDAM, PASSES_WALLS, IRONBARS, IS_OBSTRUCTED,
     TELEPORT, TELEPORT_CONTROL, WWALKING, SWIMMING, MAGICAL_BREATHING, DISMOUNT_FELL,
     FAINTED, BUFSZ, W_NONPASSWALL, W_NONDIGGABLE, WT_TOOMUCH_DIAGONAL, Unaware, Is_earthlevel,
-    UNENCUMBERED, LEVITATION, FLYING,
+    UNENCUMBERED, LEVITATION, FLYING, FOUNTAIN, SINK,
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
@@ -83,7 +84,9 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag, strongmonst_flag, is_whirly, flaming } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
-import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
+import { S_HUMAN } from './symbols.js';
+import { GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT, ROLL, LAUNCH_UNSEEN, LAUNCH_KNOWN } from './const.js';
+import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MELT_ICE_AWAY } from './const.js';
 import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room, in_rooms, shop_keeper } from './shkroom.js';
@@ -829,8 +832,14 @@ function set_levltyp(x, y, newtyp) {
     const loc = game.level?.at?.(x, y);
     if (!loc) return false;
     if (loc.typ === STAIRS || loc.typ === LADDER) return false;
+    const oldtyp = loc.typ;
     loc.typ = newtyp;
     if (IS_LAVA(newtyp)) loc.lit = 1;
+    // C: a square gaining/losing fountain or sink status re-tallies
+    // level.flags.nfountains/nsinks (dosounds() gates its rn2(400)/rn2(300)).
+    if ((oldtyp === FOUNTAIN) !== (newtyp === FOUNTAIN)
+        || (oldtyp === SINK) !== (newtyp === SINK))
+        count_level_features();
     return true;
 }
 
@@ -1658,7 +1667,7 @@ async function trapeffect_arrow_trap(trap, _trflags) {
     const dam = dmgval(otmp, game.u);
     if (u.usteed && !rn2(2) && await steedintrap(trap, otmp)) {
         /* nothing */
-    } else if (await thitu_named(8, dam, 'arrow')) {
+    } else if (await thitu_named(8, Maybe_Half_Phys(dam), 'arrow')) {
         // Hit: the arrow is consumed (obfree).  No floor object.
     } else {
         const { stackobj } = await import('./invent.js');
@@ -1732,7 +1741,7 @@ async function trapeffect_dart_trap(trap, _trflags) {
     const oldumort = u?.umortality | 0;
     if (u.usteed && !rn2(2) && await steedintrap(trap, otmp)) {
         /* nothing */
-    } else if (await thitu_named(7, dam, 'little dart')) {
+    } else if (await thitu_named(7, Maybe_Half_Phys(dam), 'little dart')) {
         // C ref: trap.c:1281 — a poisoned dart that HITS runs poisoned() before
         // obfree().  `fatal` is 0 when the damage already triggered life-saving
         // (u.umortality rose), else 10.
@@ -2011,21 +2020,18 @@ async function domagictrap() {
     if (fate < 10) {
         /* Most of the time, it creates some monsters. */
         const cnt = rnd(4);
-        // resists_blnd(&gy.youmonst) is (Blind || Unaware) for the hero plus
-        // gaze/explosion-attack and Sunsword tests that a role monster fails —
-        // so an ALREADY-blind hero skips the message AND the rn1(5,10).
-        if (!Blind()) {
+        const { resists_blnd_u } = await import('./mhitu.js');
+        if (!resists_blnd_u()) {
             await pline('You are momentarily blinded by a flash of light!');
             // make_blinded((long) rn1(5, 10), FALSE): SETS the HBlinded timer and
             // runs toggle_blindness() (botl, vision_recalc(0), and see_monsters()
             // for an infravisible/telepathic hero so sensed monsters vanish).
             const { make_blinded_hero } = await import('./potion.js');
             await make_blinded_hero(rn1(5, 10), false);
-            // C then does `if (!Blind) Your1(vision_clears);` — Blind is now
-            // TRUE, so no second line.
+            if (!Blind()) await pline('Your vision clears.');
+        } else if (!Blind()) {
+            await You_see('a flash of light!');
         }
-        // else-if arm: `if (!Blind) You_see("a flash of light!")` — dead, since
-        // resists_blnd() was only true BECAUSE the hero is blind.
         // Deafness: !Deaf for the contest hero.  HDeaf lives on u.uprops (that
         // is what sounds.js Deaf() and timeout.js's DEAF timer read).
         const { You_hear, You_feel, Deaf_hero } = await import('./display.js');
@@ -2061,8 +2067,10 @@ async function domagictrap() {
         await (await import('./display.js')).You_hear('a low hum.');
         {
             const hp = u.uprops || {};
-            const hinv = !!hp.HInvis, einv = !!hp.EInvis;
-            if (!hinv && !einv) {
+            const hinv = !!hp.HInvis;
+            const einv = !!(hp.EInvis || u.EInvis || (await import('./invent.js')).worn_extrinsic(40 /* INVIS */));
+            const invis_now = (await import('./monmove.js')).Invis();
+            if (!invis_now) {
                 if (!Blind()) {
                     const { self_invis_message } = await import('./potion.js');
                     await self_invis_message();
@@ -2070,7 +2078,7 @@ async function domagictrap() {
             } else if (!einv && !(game.u?.Upolyd
                                   && ['stalker', 'black light'].includes(game.youmonst?.data?.name))) {
                 if (!Blind()) {
-                    if (!(hp.HSee_invisible || hp.ESee_invisible || u.formprops?.See_invisible))
+                    if (!(await import('./display.js')).see_invisible())
                         await update_topl('You can see yourself again!');
                     else
                         await update_topl("You can't see through yourself anymore.");
@@ -2431,9 +2439,9 @@ async function trapeffect_pit(trap, trflags) {
         }
         if (Punished_fu() && !carried(game.u.uball)) {
             const { unplacebc, ballfall, placebc } = await import('./ball.js');
-            unplacebc();
+            await unplacebc();
             await ballfall();
-            placebc();
+            await placebc();
         }
         if (!conj_pit) await selftouch('Falling, you');
         game.vision_full_recalc = 1;
@@ -2611,7 +2619,7 @@ async function trapeffect_poly_trap(trap, trflags) {
             ? KICKING_BOOTS : IRON_SHOES_OTYP);
         update_inventory();
         if (game.uarmf) (await import('./invent.js')).prinv(null, game.uarmf, 0);
-    } else if (u?.uprops?.Antimagic || u?.uprops?.Unchanging) {
+    } else if ((await import('./zap.js')).Antimagic() || (await import('./zap.js')).Unchanging()) {
         // shieldeff() draws nothing.
         await You_feel('momentarily different.');
         /* Trap did nothing; don't remove it --KAA */
@@ -2824,7 +2832,7 @@ export async function animate_statue(statue, x, y, cause, fail_reason) {
     const { quest_info } = await import('./questpgr.js');
     const { christen_monst } = await import('./do_name.js');
     const { set_malign, newcham } = await import('./makemon.js');
-    const MS_GUARDIAN = C.MS_GUARDIAN;
+    const MS_GUARDIAN = 38; /* monflag.h */
     const PM_DOPPELGANGER = name_to_pmidx('doppelganger');
     const PM_FLESH_GOLEM = name_to_pmidx('flesh golem');
     const mnumRef = { v: statue.corpsenm };
@@ -2990,16 +2998,23 @@ function unique_corpstat(ptr) { return ((ptr?.geno | 0) & G_UNIQ) !== 0; }
 
 // C ref: trap.c:908 activate_statue_trap(trap, x, y, shatter).
 export async function activate_statue_trap(trap, x, y, shatter) {
-    let otmp = sobj_at_floor(STATUE_OTYP, x, y);
+    // C: sobj_at(STATUE, x, y) then nxtobj(otmp, STATUE, TRUE) walks the pile
+    // top-first (nexthere order); the pile is snapshotted before deltrap().
+    const statues = [];
+    for (const o of (game.level?.objects || []))
+        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === STATUE_OTYP)
+            statues.unshift(o);
+    let si = 0;
+    let otmp = statues[si] || null;
     let mtmp = null;
     deltrap(trap);
     while (otmp) {
         const fail = { v: 0 };
         mtmp = await animate_statue(otmp, x, y, shatter ? 1 /*ANIMATE_SHATTER*/ : 0, fail);
         if (mtmp || fail.v !== AS_MON_IS_UNIQUE) break;
-        otmp = sobj_at_floor(STATUE_OTYP, x, y);
+        otmp = statues[++si] || null;
     }
-    newsym(x, y); /* feel_newsym() */
+    feel_newsym(x, y);
     return mtmp;
 }
 
@@ -3099,8 +3114,6 @@ async function trapeffect_fire_trap(trap, _trflags) {
 
 // C ref: hack.h MAXULEV — the highest experience level.
 const MAXULEV = 30;
-// C ref: monsym.h S_HUMAN — the '@' monster class.
-const S_HUMAN_CLS = 25;
 // C ref: obj.h Is_box(otmp).
 function Is_box_otyp(otyp) { return otyp === LARGE_BOX || otyp === CHEST; }
 // C ref: mondata.h mindless(ptr).
@@ -3353,7 +3366,7 @@ async function reward_untrap(ttmp, mtmp) {
     if (ttmp.madeby_u) return;
     if (rnl(10) < 8 && !mtmp.mpeaceful && !helpless_mon(mtmp) && !mtmp.mfrozen
         && !mindless_pm(mtmp.data) && !unique_corpstat(mtmp.data)
-        && mtmp.data?.mcls !== S_HUMAN_CLS) {
+        && mtmp.data?.mcls !== S_HUMAN) {
         mtmp.mpeaceful = 1;
         const { set_malign } = await import('./makemon.js');
         set_malign(mtmp);
@@ -3405,19 +3418,19 @@ async function disarm_landmine(ttmp) {
 // C ref: trap.c:5607 unsqueak_ok(obj) — getobj filter for the grease/oil the
 // squeaky-board repair wants.
 function unsqueak_ok(obj) {
-    if (!obj) return 0;                       /* GETOBJ_EXCLUDE */
-    if (obj.otyp === CAN_OF_GREASE_OTYP) return 2;  /* GETOBJ_SUGGEST */
+    if (!obj) return GETOBJ_EXCLUDE;
+    if (obj.otyp === CAN_OF_GREASE_OTYP) return GETOBJ_SUGGEST;
     if (obj.otyp === POT_OIL_OTYP && obj.dknown
-        && objects[POT_OIL_OTYP]?.oc_name_known) return 2;
-    if (obj.oclass === POTION_CLASS) return 1;      /* GETOBJ_DOWNPLAY */
-    return 0;
+        && objects[POT_OIL_OTYP]?.oc_name_known) return GETOBJ_SUGGEST;
+    if (obj.oclass === POTION_CLASS) return GETOBJ_DOWNPLAY;
+    return GETOBJ_EXCLUDE;
 }
 
 // C ref: trap.c:5630 disarm_squeaky_board(ttmp).
 async function disarm_squeaky_board(ttmp) {
     const u = game.u;
     const { getobj, useup, makeknown, consume_obj_charge } = await import('./invent.js');
-    const obj = await getobj('untrap with', unsqueak_ok, 1 /* GETOBJ_PROMPT */);
+    const obj = await getobj('untrap with', unsqueak_ok, GETOBJ_PROMPT);
     if (!obj) return 0;
 
     const bad_tool = !!obj.cursed
@@ -3453,7 +3466,7 @@ async function try_lift(mtmp, ttmp, xtra_wt, stuff) {
         await pline(`${Monnam_trap(mtmp)} is ${
             stuff ? 'carrying too much' : 'too heavy'} for you to lift.`);
         if (!ttmp.madeby_u && !mtmp.mpeaceful && mtmp.mcanmove
-            && !mindless_pm(mtmp.data) && mtmp.data?.mcls !== S_HUMAN_CLS
+            && !mindless_pm(mtmp.data) && mtmp.data?.mcls !== S_HUMAN
             && rnl(10) < 3) {
             mtmp.mpeaceful = 1;
             const { set_malign } = await import('./makemon.js');
@@ -3491,7 +3504,7 @@ async function help_monster_out(mtmp, ttmp) {
         const mtmp_pmname = mon_pmname(mtmp);
         await pline(`You grab the trapped ${mtmp_pmname} using your bare ${makeplural(body_part(HAND))}.`);
         if (poly_when_stoned_tr(youmonst_data_pub()) && await polymon(name_to_pmidx('stone golem'))) {
-            /* display_nhwindow(WIN_MESSAGE, FALSE) */
+            await (await import('./display.js')).display_nhwindow_message(); /* display_nhwindow(WIN_MESSAGE, FALSE) */
         } else {
             await instapetrify(`trying to help ${an(mtmp_pmname)} out of a pit`);
             return 1;
@@ -4124,10 +4137,8 @@ async function level_tele_trap(trap, trflags) {
     // C ref: teleport.c:1568 — confusion is applied AFTER the teleport attempt,
     // because being confused changes level_tele's "Oops..." outcome.
     if (!teleport_control) {
-        const cur = (u?.uprops?.Confusion || 0);
-        if (!u.uprops) u.uprops = {};
-        u.uprops.Confusion = cur + 3;
-        u.uconf = true;
+        const { make_confused } = await import('./potion.js');
+        await make_confused((u?.uprops?.Confusion || 0) + 3, false);
     }
 }
 
@@ -4348,7 +4359,7 @@ export function Wwalking_fu() {
     return !!(uprop_word('HWwalking') || uprop_word('EWwalking') || worn_extrinsic(WWALKING))
         && !Is_waterlevel(game.u?.uz);
 }
-function Swimming_fu() {
+export function Swimming_fu() {
     const u = game.u;
     return !!(uprop_word('HSwimming') || worn_extrinsic(SWIMMING) || u?.formprops?.Swimming
               || (u?.usteed && is_swimmer_flag(u.usteed.data)));
@@ -5080,8 +5091,8 @@ export async function drown() {
         }
         if (Punished_fu()) {
             const { unplacebc, placebc } = await import('./ball.js');
-            unplacebc();
-            placebc();
+            await unplacebc();
+            await placebc();
         }
         vision_recalc(2); /* unsee old position */
         const { set_uinwater } = await import('./do.js');
@@ -5243,8 +5254,7 @@ export async function lava_effects() {
     // C's initial usurvive test is deliberately before its wizard/debug
     // override, so debug-mode sessions still flag ordinary inventory here.
     const fire_resistance = (await import('./zap.js')).Fire_resistance();
-    const water_walking = !!(u.uprops?.Wwalking
-        || u.uprops?.HWwalking || u.uprops?.EWwalking);
+    const water_walking = Wwalking_fu();
     const hp = u.Upolyd ? (u.mh || 0) : (u.uhp || 0);
     const usurvive_initial = fire_resistance || (water_walking && dmg < hp);
     const protectedObj = !usurvive_initial ? mark_lava_inventory() : null;
@@ -5270,7 +5280,7 @@ export async function lava_effects() {
     }
 
     if (!fire_resistance) {
-        if (water_walking) {
+        if (Wwalking_fu()) {
             await update_topl(`The ${await waterbody_name(u.ux, u.uy)} here burns you!`);
             if (usurvive_initial) {
                 await losehp(dmg, 'molten lava', KILLED_BY);
@@ -5361,7 +5371,7 @@ export async function lava_effects() {
             const fireTimeout = u.uprops.HFire_resistance | 0;
             u.uprops.HFire_resistance = (fireTimeout & ~TIMEOUT)
                 | (((fireTimeout & TIMEOUT) + 5) & TIMEOUT);
-            if (!water_walking) {
+            if (!Wwalking_fu()) {
                 const walkTimeout = u.uprops.HWwalking | 0;
                 u.uprops.HWwalking = (walkTimeout & ~TIMEOUT)
                     | (((walkTimeout & TIMEOUT) + 5) & TIMEOUT);
@@ -5375,7 +5385,7 @@ export async function lava_effects() {
         // spoteffects() was no-op when called with nonzero in_lava_effects
         await spoteffects(false); // suppress auto-pickup for this landing
         return true;
-    } else if (!water_walking && (!u.utrap || u.utraptype !== TT_LAVA)) {
+    } else if (!Wwalking_fu() && (!u.utrap || u.utraptype !== TT_LAVA)) {
         u.utrap = rn1(4, 4) + (rn1(4, 12) << 8);
         u.utraptype = TT_LAVA;
         await update_topl(`You sink into the ${await waterbody_name(u.ux, u.uy)}, `
@@ -5562,6 +5572,14 @@ async function dosinkfall() {
             ? 'You wobble unsteadily for a moment.'
             : 'You gain control of your flight.');
     } else {
+        /* fake removal of levitation in advance so that final disclosure will
+           be right in case this turns out to be fatal (C: ELevitation =
+           HLevitation = 0L; restored after the loop below) */
+        u.uprops = u.uprops || {};
+        u.uprops_extrinsic = u.uprops_extrinsic || {};
+        const save_ELev = u.uprops_extrinsic[48] | 0, save_HLev = u.uprops.Levitation | 0;
+        u.uprops_extrinsic[48] = 0;
+        u.uprops.Levitation = 0;
         await pline('You crash to the floor!');
         const dmg = rn1(8, 25 - acurr_eff(A_CON));
         await losehp(Maybe_Half_Phys(dmg), fell_on_sink, NO_KILLER_PREFIX);
@@ -5576,6 +5594,8 @@ async function dosinkfall() {
                 await exercise(A_CON, false);
             }
         }
+        u.uprops_extrinsic[48] = save_ELev;
+        u.uprops.Levitation = save_HLev;
     }
 
     if (ufall || lev_boots) {
@@ -5592,6 +5612,9 @@ async function dosinkfall() {
         if (u.uprops.ELevitation !== undefined)
             u.uprops.ELevitation = (u.uprops.ELevitation | 0) & ~W_ARTI;
     }
+    /* C: HLevitation++ keeps the hero levitating while the items come off, so
+       Ring_off()/Boots_off() don't float_down() with its message */
+    if (u.uprops) u.uprops.Levitation = ((u.uprops.Levitation | 0) + 1);
     if (game.uleft?.otyp === RIN_LEVITATION_SF) {
         const obj = game.uleft;
         await Ring_off(obj);
@@ -5607,6 +5630,7 @@ async function dosinkfall() {
         await Boots_off();
         await off_msg(obj);
     }
+    if (u.uprops) u.uprops.Levitation = ((u.uprops.Levitation | 0) - 1);
     float_vs_flight();
 }
 
@@ -5697,6 +5721,18 @@ export async function spoteffects(pick) {
             }
             if (spot_pick && pit) await pickup_after_move(u.ux, u.uy);
         }
+        // C ref: hack.c:3404 — Warning alerts you to ice danger.
+        if (have_warning()) {
+            const { is_ice } = await import('./dbridge.js');
+            if (is_ice(u.ux, u.uy)) {
+                const { spot_time_left } = await import('./timeout.js');
+                const time_left = spot_time_left(u.ux, u.uy, MELT_ICE_AWAY);
+                if (time_left && time_left < 15)
+                    await pline(['The ice seems very soft and slushy.',
+                                 'You feel the ice shift beneath you!',
+                                 'The ice, is gonna BREAK!'][time_left < 5 ? 2 : time_left < 10 ? 1 : 0]);
+            }
+        }
         // C ref: hack.c:3417-3454 — a ceiling hider shares the hero's
         // destination until its surprise attack is resolved, then moves aside.
         const mtmp = m_at(u.ux, u.uy);
@@ -5744,7 +5780,6 @@ export async function spoteffects(pick) {
 // C ref: trap.c:2560 trapeffect_rolling_boulder_trap() + trap.c:3260 launch_obj().
 // The trap used to fall into dotrap()'s `default:` (seetrap only), so the
 // boulder never moved and thitu()'s rnd(20) was never drawn.
-export const ROLL = 0x0100, LAUNCH_UNSEEN = 0x0200, LAUNCH_KNOWN = 0x0400;
 
 // C ref: trap.c:3222 launch_drop_spot(obj,x,y) / :3236 launch_in_progress() /
 // :3244 force_launch_placement() — bookkeeping for a boulder/statue mid-
@@ -6183,7 +6218,12 @@ export async function openholdingtrap(mon, noticed) {
         else if (u.utraptype === TT_BURIEDBALL) buf = `You and ${y_monnam(u.usteed)} are`;
         else buf = `${noit_Monnam(u.usteed)} is`;
         await pline(`${buf} released from ${which}${trapdescr}.`);
+        game.vision_full_recalc = 1; /* vision limits can change (pit escape) */
         await reset_utrap_fu(true);
+        if (game.vision_full_recalc) {
+            vision_recalc(0);
+            game.vision_full_recalc = 0;
+        }
     } else {
         if (!mon.mtrapped) return false;
         mon.mtrapped = 0;

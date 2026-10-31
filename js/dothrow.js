@@ -11,6 +11,7 @@
 // arm in this port, and js/apply.js is a separate write-lease, so it lives here
 // beside its caller.
 import { makeplural, vtense } from './plural.js';
+import { Fumbling_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -18,8 +19,10 @@ import { rn2, rnd, rnl } from './rng.js';
 import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_cell,
          canseemon_shared, Deaf_hero, You_feel, You_hear } from './display.js';
 import { cansee, Blind } from './vision.js';
-import { TELEDS_ALLOW_DRAG, NO_KILLER_PREFIX, M_AP_TYPE, Is_airlevel, Is_waterlevel } from './const.js';
-import { BRK_FROM_INV, BRK_KNOWN_OUTCOME, BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK } from './const.js';
+import { TELEDS_ALLOW_DRAG, NO_KILLER_PREFIX, M_AP_TYPE, Is_airlevel, Is_waterlevel,
+         ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
+import { BRK_FROM_INV, BRK_KNOWN_OUTCOME, BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK,
+         Trap_Effect_Finished, Trap_Caught_Mon, Trap_Killed_Mon, Trap_Moved_Mon } from './const.js';
 import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT, IS_STWALL, W_NONPASSWALL,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
          MM_NOMSG, EYE, SHOPBASE } from './const.js';
@@ -35,6 +38,7 @@ import { objects, BOULDER, CORPSE, POTION_CLASS, GEM_CLASS, WEAPON_CLASS,
          ARMOR_CLASS, EGG, STATUE, FOOD_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
          place_object } from './mkobj.js';
 import { surface } from './dungeon.js';
+import { Levitation_hero, Flying_hero, Wwalking_hero, Passes_walls_hero } from './youprop.js';
 import { acurr_eff } from './attrib.js';
 import { night, phase_of_the_moon, FULL_MOON } from './calendar.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
@@ -44,10 +48,8 @@ import { ghitm } from './dokick.js';
 import { goodpos, enexto_gpflags, teleds } from './teleport.js';
 import { Protection_from_shape_changers, sensemon } from './mon.js';
 import { poly_when_stoned } from './mondata.js';
-import { is_pool, is_lava } from './dbridge.js';
+import { is_pool, is_lava, is_moat } from './dbridge.js';
 
-// C ref: hack.h ECMD_* result codes.
-const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 3;
 
 // onames.h otyps (mkobj.js OBJECT_DATA numbering).
 export const BULLWHIP = 82;
@@ -119,7 +121,7 @@ function closed_door(x, y) {
     return loc?.typ === 23 /* DOOR */ && ((loc.doormask || 0) & (0x04 | 0x08)) !== 0;
 }
 // C ref: youprop.h Fumbling / Glib.
-function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
+function Fumbling() { return Fumbling_hero(); }
 function Glib() { return (game.u?.uprops?.Glib || 0) > 0; }
 // C ref: role.c Role_if(PM_ARCHEOLOGIST) — role 0 in u_init.c's ordering.
 const PM_ARCHEOLOGIST = 0;
@@ -779,9 +781,8 @@ export async function tamedog(mtmp, obj, givemsg) {
     if (obj) {                          /* thrown food */
         /* defer eating until the edog extension has been set up */
         place_object(obj, mtmp.mx, mtmp.my);
-        // C passes devour=TRUE here (it halves dog_nutrition()'s hungrytime
-        // bump); js/dogmove.js's dog_eat has no devour parameter yet.
-        if (await DM.dog_eat(mtmp, mtmp.edog, obj, mtmp.mx, mtmp.my) === 2)
+        /* devour the food (might grow into larger, genocided monster) */
+        if (await DM.dog_eat(mtmp, mtmp.edog, obj, mtmp.mx, mtmp.my, true) === 2)
             return true;                /* oops, it died... */
     }
 
@@ -911,8 +912,8 @@ export async function use_whip(obj, getDir) {
     if (proficient < 0) proficient = 0;
 
     const rtyp = typ_at(rx, ry);
-    const Levitation = !!(u?.uprops?.Levitation);
-    const Flying = !!(u?.uprops?.Flying);
+    const Levitation = Levitation_hero();
+    const Flying = Flying_hero();
     const Underwater = !!u.uinwater;
 
     if (u.uswallow) {
@@ -1286,9 +1287,6 @@ const TT_WEB_TYPE = 3, TT_LAVA_TYPE = 4, TT_INFLOOR_TYPE = 5,
 const PIT_TRAP = PIT, SPIKED_PIT_TRAP = SPIKED_PIT, HOLE_TRAP = HOLE,
       TRAPDOOR_TRAP = TRAPDOOR, MAGIC_PORTAL_TRAP = MAGIC_PORTAL,
       FIRE_TRAP_TRAP = FIRE_TRAP, VIBRATING_SQUARE_TRAP = VIBRATING_SQUARE;
-// C ref: trap.h enum trap_results (trap.h:98-102) — mintrap()'s return codes.
-const Trap_Effect_Finished = 0, Trap_Caught_Mon = 1, Trap_Killed_Mon = 2,
-      Trap_Moved_Mon = 3;
 // C ref: hack.h mintrap flags: NO_TRAP_FLAGS 0, FORCEBUNGLE 0x04, HURTLING 0x80.
 const NO_TRAP_FLAGS_ = 0, FORCEBUNGLE_FLAG = 0x04, HURTLING_FLAG = 0x80;
 // C ref: prop.h W_ARM / W_ARMC / W_ARMU, as js/invent.js remaps them
@@ -1306,11 +1304,7 @@ const MM_IGNOREWATER_ = 0x00000008, MM_IGNORELAVA_ = 0x00080000;
 // C ref: hack.h WT_TOOMUCH_DIAGONAL.
 const WT_TOOMUCH_DIAGONAL_ = 600;
 
-// C ref: youprop.h Levitation / Flying / Wwalking / Passes_walls.  The port
-// keeps intrinsics/extrinsics as named uprops fields (js/dbridge.js:948
-// HProp()); it has NO B<prop> blocked-masks, so the "Levitation overrides
-// Flying" arm of C's macros cannot be expressed — see float_vs_flight() in
-// js/polyself.js for the same gap on the writing side.
+// C ref: youprop.h Levitation / Flying / Wwalking / Passes_walls (youprop.js readers).
 function uprop_any(...keys) {
     const u = game.u;
     for (const k of keys) {
@@ -1319,10 +1313,10 @@ function uprop_any(...keys) {
     }
     return 0;
 }
-const Levitation_hurtle = () => uprop_any('Levitation', 'HLevitation', 'ELevitation') > 0;
-const Flying_hurtle = () => uprop_any('Flying', 'HFlying', 'EFlying') > 0;
-const Wwalking_hurtle = () => uprop_any('Wwalking', 'HWwalking', 'EWwalking') > 0;
-const Passes_walls_hurtle = () => uprop_any('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0;
+const Levitation_hurtle = () => Levitation_hero();
+const Flying_hurtle = () => Flying_hero();
+const Wwalking_hurtle = () => Wwalking_hero();
+const Passes_walls_hurtle = () => Passes_walls_hero();
 // C ref: youprop.h Punished — the hero is chained to the heavy iron ball.
 const uball_of = () => (game.u?.uball ?? game.uball ?? null);
 const Punished_hurtle = () => !!uball_of();
@@ -1573,7 +1567,7 @@ export async function hurtle_step(arg, x, y) {
         } else if (!Is_waterlevel(u.uz) && !stopping_short) {
             /* Norep(): suppressed when identical to the previous message */
             const mv_msg = `You move over ${
-                an(typ_at(x, y) === MOAT ? 'moat' : 'pool')}.`;
+                an(is_moat(x, y) ? 'moat' : 'pool')}.`;
             if (game._prevmsg !== mv_msg) await update_topl(mv_msg);
         }
     } else if (is_lava_at(x, y) && !stopping_short) {

@@ -21,6 +21,7 @@
 // consume no RNG, so leaving them un-modelled in detail is RNG-faithful.
 
 import { game, hooks } from './gstate.js';
+import { Fumbling_hero } from './youprop.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
 import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
@@ -1029,10 +1030,10 @@ export async function poly_steed(steed, oldshape) {
 // C ref: do_wear.c u_handsy() — a hero with no hands can't apply a saddle.
 function u_handsy_std() { return true; }
 // C ref: you.h Underwater / Stone_resistance / Confusion / Fumbling / Glib.
-function Underwater_std() { return !!game.u?.uprops?.Underwater; }
+function Underwater_std() { return !!game.u?.uinwater; }
 function Stone_resistance_std() { return !!game.u?.formprops?.Stone_resistance || !!game.u?.uprops?.Stone_resistance; }
 function Confusion_std() { return !!(game.u?.uconf || game.u?.HConfusion); }
-function Fumbling_std() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
+function Fumbling_std() { return Fumbling_hero(); }
 function Glib_std() { return !!game.u?.uprops?.Glib; }
 // C ref: mondata.h touch_petrifies(ptr) — cockatrice and chickatrice only.
 function touch_petrifies_std(ptr) {

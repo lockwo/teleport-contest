@@ -1664,6 +1664,11 @@ export const PICK_RANDOM = 0;
 export const PICK_RIGID = 1;
 export const NO_TRAP_FLAGS = 0x00;
 export const HURTLING = 0x80;
+export const Trap_Effect_Finished = 0;
+export const Trap_Is_Gone = 0;
+export const Trap_Caught_Mon = 1;
+export const Trap_Killed_Mon = 2;
+export const Trap_Moved_Mon = 3;
 export const MMOVE_NOTHING = 0;
 export const MMOVE_MOVED = 1;
 export const MMOVE_DIED = 2;
@@ -1901,21 +1906,21 @@ export const DIGTYP_STATUE = 2;
 export const DIGTYP_BOULDER = 3;
 export const DIGTYP_DOOR = 4;
 export const DIGTYP_TREE = 5;
-export const DIGCHECK_PASSED = 0;
-export const DIGCHECK_PASSED_PITONLY = 1;
+export const DIGCHECK_PASSED = 1;
 export const DIGCHECK_PASSED_DESTROY_TRAP = 2;
-export const DIGCHECK_FAILED = 10;
-export const DIGCHECK_FAIL_ONLADDER = 11;
-export const DIGCHECK_FAIL_ONSTAIRS = 12;
-export const DIGCHECK_FAIL_THRONE = 13;
-export const DIGCHECK_FAIL_ALTAR = 14;
-export const DIGCHECK_FAIL_AIRLEVEL = 15;
-export const DIGCHECK_FAIL_WATERLEVEL = 16;
-export const DIGCHECK_FAIL_TOOHARD = 17;
-export const DIGCHECK_FAIL_UNDESTROYABLETRAP = 18;
-export const DIGCHECK_FAIL_CANTDIG = 19;
-export const DIGCHECK_FAIL_BOULDER = 20;
-export const DIGCHECK_FAIL_OBJ_POOL_OR_TRAP = 21;
+export const DIGCHECK_PASSED_PITONLY = 3;
+export const DIGCHECK_FAILED = 4;
+export const DIGCHECK_FAIL_ONSTAIRS = DIGCHECK_FAILED;
+export const DIGCHECK_FAIL_ONLADDER = 5;
+export const DIGCHECK_FAIL_THRONE = 6;
+export const DIGCHECK_FAIL_ALTAR = 7;
+export const DIGCHECK_FAIL_AIRLEVEL = 8;
+export const DIGCHECK_FAIL_WATERLEVEL = 9;
+export const DIGCHECK_FAIL_TOOHARD = 10;
+export const DIGCHECK_FAIL_UNDESTROYABLETRAP = 11;
+export const DIGCHECK_FAIL_CANTDIG = 12;
+export const DIGCHECK_FAIL_BOULDER = 13;
+export const DIGCHECK_FAIL_OBJ_POOL_OR_TRAP = 14;
 
 // Explosion type/source/flag constants (src/explode.c)
 // Runtime fields:
@@ -1946,14 +1951,14 @@ export const MAY_FRACTURE = 0x10;
 
 // Steed dismount reason enum (src/steed.c)
 // Runtime fields: dismount_steed(reason) reason selector.
-export const DISMOUNT_BYCHOICE = 0;
-export const DISMOUNT_THROWN = 1;
-export const DISMOUNT_KNOCKED = 2;
-export const DISMOUNT_FELL = 3;
+export const DISMOUNT_GENERIC = 0;
+export const DISMOUNT_FELL = 1;
+export const DISMOUNT_THROWN = 2;
+export const DISMOUNT_KNOCKED = 3;
 export const DISMOUNT_POLY = 4;
 export const DISMOUNT_ENGULFED = 5;
 export const DISMOUNT_BONES = 6;
-export const DISMOUNT_GENERIC = 7;
+export const DISMOUNT_BYCHOICE = 7;
 
 // Vault guard constants (src/vault.c)
 // Runtime fields: guard timers and guard activity/witness bits.
@@ -1980,16 +1985,12 @@ export const YLIM = 3;
 // Runtime fields:
 // - inventory BUC classification and filters
 // - getobj callback return categories and option flags
-export const BUC_BLESSED = 1;
-export const BUC_UNCURSED = 2;
-export const BUC_CURSED = 3;
-export const BUC_UNKNOWN = 4;
-export const GETOBJ_EXCLUDE = 0;
+export const GETOBJ_EXCLUDE = -3;
+export const GETOBJ_EXCLUDE_NONINVENT = -2;
+export const GETOBJ_EXCLUDE_INACCESS = -1;
+export const GETOBJ_EXCLUDE_SELECTABLE = 0;
 export const GETOBJ_DOWNPLAY = 1;
 export const GETOBJ_SUGGEST = 2;
-export const GETOBJ_EXCLUDE_INACCESS = 3;
-export const GETOBJ_EXCLUDE_SELECTABLE = 4;
-export const GETOBJ_EXCLUDE_NONINVENT = 5;
 export const GETOBJ_ALLOWCNT = 0x01;
 export const GETOBJ_PROMPT = 0x02;
 export const GETOBJ_NOFLAGS = 0;
@@ -2787,6 +2788,10 @@ export const NUM_TIME_FUNCS = (MELT_ICE_AWAY + 1);
 
 // ===== hack.h =====
 export const MAXLINFO = (MAXDUNGEON * MAXLEVEL);
+export const BUC_BLESSED = 0x0100;
+export const BUC_CURSED = 0x0200;
+export const BUC_UNCURSED = 0x0400;
+export const BUC_UNKNOWN = 0x0800;
 export const BUC_ALLBKNOWN = (BUC_BLESSED | BUC_CURSED | BUC_UNCURSED);
 export const BUCX_TYPES = (BUC_ALLBKNOWN | BUC_UNKNOWN);
 

@@ -1,3 +1,4 @@
+import { Half_gas_damage_hero } from './youprop.js';
 // insight.js — the ^X / end-of-game enlightenment display.
 //
 // C ref: src/insight.c enlightenment() and its section helpers
@@ -88,10 +89,9 @@ function Antimagic() {
 }
 
 
-// The four owornmask groups from_what()/cause_known() scan.  These are
-// js/invent.js's REMAPPED W_* bits, not prop.h's — see that file's header.
+// The owornmask groups from_what()/cause_known() scan (prop.h).
 const W_GIVES_PROP = W_ARMOR_MASK | 0x00020000 /*W_RINGL*/ | 0x00040000 /*W_RINGR*/
-                     | 0x00080000 /*W_AMUL*/ | 0x00100000 /*W_TOOL*/;
+                     | 0x00010000 /*W_AMUL*/ | 0x00080000 /*W_TOOL*/;
 // C ref: attrib.c abil_to_adtyp()/abil_to_spfx() — the reverse of what a worn
 // or carried ARTIFACT grants, keyed by prop.h index so what_gives_artifact()
 // below can look up which field of the artifact row to compare.  PROTECTION
@@ -3847,7 +3847,7 @@ function Amphibious() {
 }
 // C ref: youprop.h Half_gas_damage — worn/intrinsic poison-gas mitigation; no
 // covered path grants it and this port keeps no u.uprops slot for it.
-function Half_gas_damage() { return false; }
+function Half_gas_damage() { return Half_gas_damage_hero(); }
 // C ref: youprop.h Fast/Very_fast.  js/allmain.js owns the port's readers.
 function Fast() { return !!(youHaveFast() || youHaveVeryFast()); }
 function Very_fast() { return !!youHaveVeryFast(); }

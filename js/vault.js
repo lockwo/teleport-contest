@@ -41,7 +41,7 @@ import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
 import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
 import { rloc, rloc_to, RLOC_MSG, RLOC_ERR } from './teleport.js';
 import { makemon, set_malign, monster_by_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
-import { place_object, objects, weight, COIN_CLASS, BOULDER, ROCK } from './mkobj.js';
+import { place_object, objects, weight, COIN_CLASS, GEM_CLASS, BOULDER, ROCK } from './mkobj.js';
 import { stackobj, xname, currency, freeinv } from './invent.js';
 import { makeplural } from './plural.js';
 import { money_cnt_invent, hidden_gold as shk_hidden_gold } from './shk.js';
@@ -62,8 +62,6 @@ const PM_GUARD = 272;
 const PM_CROESUS = 286;
 // C ref: objects.h TIN_WHISTLE, for gd_letknow's whistle line.
 const TIN_WHISTLE = 245;
-// C ref: objects.h GEM_CLASS (fracture_rock turns a boulder into rocks).
-const GEM_CLASS = 9;
 // C ref: hack.h MM_EGD (:1154) and MM_NOMSG (:1164).
 const MM_EGD = 0x00000080;
 const MM_NOMSG = 0x00020000;
@@ -204,13 +202,9 @@ function relmon(mon) {
 async function mongone(mdef) {
     await (await import('./mon.js')).mongone(mdef);
 }
-// C ref: mon.c m_into_limbo(mtmp) -> migrate_mon(..., MIGR_APPROX_XY).  There
-// is no migrating-monster queue in js/ yet, so the monster is unlinked from
-// this level; either way it can no longer appear on a screen of this level.
-function m_into_limbo(mtmp) {
-    const mx = mtmp.mx, my = mtmp.my;
-    relmon(mtmp);
-    newsym(mx, my);
+// C ref: mon.c m_into_limbo(mtmp) — dog.js holds the real port (migrate_mon()).
+async function m_into_limbo(mtmp) {
+    await (await import('./dog.js')).m_into_limbo(mtmp);
 }
 // C ref: mon.c mpickgold(mtmp).  `flags.verbose && !mtmp->isgd` suppresses the
 // pickup line for a guard, so only the newsym fires; gd_pick_corridor_gold
@@ -414,7 +408,7 @@ async function getlin(query) {
 async function mnexto(mtmp) {
     const u = game.u;
     const cc = enexto_spawn(u.ux, u.uy, mtmp.data);
-    if (!cc) { m_into_limbo(mtmp); return; }
+    if (!cc) { await m_into_limbo(mtmp); return; }
     await rloc_to(mtmp, cc.x, cc.y);
 }
 
@@ -477,7 +471,7 @@ export async function clear_fcorr(grd, forceshow) {
         if (mtmp) {
             if (mtmp.isgd) return false;
             if (mtmp.mtame) await yelp(mtmp);
-            if (!(await rloc(mtmp, RLOC_MSG))) m_into_limbo(mtmp);
+            if (!(await rloc(mtmp, RLOC_MSG))) await m_into_limbo(mtmp);
         }
         const lev = levl_at(fcx, fcy);
         if (lev.typ === CORR && cansee(fcx, fcy)) sawcorridor = true;
@@ -958,7 +952,7 @@ export async function wallify_vault(grd) {
                 const mon = m_at(x, y);
                 if (mon && mon !== grd) {
                     if (mon.mtame) await yelp(mon);
-                    if (!(await rloc(mon, RLOC_MSG))) m_into_limbo(mon);
+                    if (!(await rloc(mon, RLOC_MSG))) await m_into_limbo(mon);
                 }
                 /* move gold at wall locations into the vault */
                 const gold = g_at(x, y);
@@ -1020,7 +1014,7 @@ export async function gd_mv_monaway(grd, nx, ny) {
     if (mtmp && mtmp !== grd) {
         if (!Deaf()) await verbalize('Out of my way, scum!');
         if (!(await rloc(mtmp, RLOC_ERR | RLOC_MSG)) || m_at(nx, ny))
-            m_into_limbo(mtmp);
+            await m_into_limbo(mtmp);
         recalc_block_point(nx, ny);
     }
 }

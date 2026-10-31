@@ -8,6 +8,7 @@
 // occupation (dig_check / dighole) is a separate unported subsystem.
 
 import { game, hooks } from './gstate.js';
+import { Fumbling_hero } from './youprop.js';
 import { rnd, rn2, rn1 } from './rng.js';
 import { hard_helmet } from './do_wear.js';
 import { newsym, feel_location, feel_newsym, You_hear, You_feel, tmp_at, fn_cmap_to_glyph } from './display.js';
@@ -928,9 +929,9 @@ function Luck() { const u = game.u || {}; return (u.uluck | 0) + (u.moreluck | 0
 
 const uprop = (nm) => (game.u?.uprops?.[nm] || 0);
 function Deaf_() { return uprop('HDeaf') > 0 || !!game.u?.Deaf; }
-function Levitation() { return !!uprop('Levitation'); }
-function Flying() { return !!uprop('Flying'); }
-function Fumbling() { return !!(game.u?.HFumbling || game.u?.EFumbling || uprop('Fumbling')); }
+function Levitation() { return Levitation_hero(); }
+function Flying() { return Flying_hero(); }
+function Fumbling() { return Fumbling_hero(); }
 function Underwater() { return !!game.u?.uinwater; }
 
 // C ref: hack.h Role_if(pm) / Race_if(pm).  The port carries the role/race
@@ -1794,6 +1795,7 @@ async function in_rooms_(x, y, typewanted) {
 }
 // C ref: hacklib.c an(str).
 import { an as an_ } from './hacklib.js';
+import { Levitation_hero, Flying_hero } from './youprop.js';
 // C ref: dig.c:490 SHOP_WALL_DMG (shk.h) — 10 * ROOM_COST, ROOM_COST == 400.
 const SHOP_WALL_DMG = 10 * 400;
 
@@ -2039,7 +2041,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
                 const { pay_for_damage } = await import('./shk.js');
                 await pay_for_damage('ruin', false);
             }
-            if (newobjs.length) impact_drop(null, x, y, 0);
+            if (newobjs.length) await impact_drop(null, x, y, 0);
             if (mtmp) {
                 /*[don't we need special sokoban handling here?]*/
                 const { count_wsegs } = await import('./worm.js');
@@ -2947,7 +2949,7 @@ export async function rot_corpse(arg, timeout) {
         }
     } else if (obj.where === OBJ_MINVENT) {
         if (obj.owornmask && obj.ocarry && obj === obj.ocarry.mw)
-            obj.owornmask = 0;           /* C: setmnotwielded() */
+            await (await import('./weapon.js')).setmnotwielded(obj.ocarry, obj); /* clears owornmask */
     } else if (obj.where === OBJ_MIGRATING) {
         /* clear destination flag so that obfree()'s check for freeing a worn
            object doesn't get a false hit */

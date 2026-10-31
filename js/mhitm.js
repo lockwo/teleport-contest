@@ -51,14 +51,14 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
 } from './monflags_data.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
 import { set_mon_data, poly_when_stoned, troll_baned, slimeproof, resists_ston, dmgtype_fromattack } from './mondata.js';
-import { G_GENOD, OBJ_FREE } from './const.js';
+import { G_GENOD, OBJ_FREE, Trap_Killed_Mon } from './const.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub, worn_extrinsic } from './invent.js';
 import { MATTK } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx, is_home_elemental, little_to_big, pmname_of_pmidx } from './makemon.js';
 // newcham/pm_to_cham: used only by the appended gulpmm()/mon_poly() below
 import { newcham, newcham_wizard_aware, pm_to_cham } from './makemon.js';
-import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger } from './mhitm_ad.js';
+import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger, golemeffects } from './mhitm_ad.js';
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
@@ -1109,8 +1109,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                 return 1;
             case AD_COLD:
                 if (mm_resists_cold(magr)) {
-                    if (mm_can_see_mon(magr))
+                    if (mm_can_see_mon(magr)) {
                         await emitMMmsg(`${Monnam(magr)} is mildly chilly.`, magr);
+                        await golemeffects(magr, AD_COLD, tmp, mm_ops());
+                    }
                     tmp = 0;
                     break;
                 }
@@ -1134,8 +1136,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                 break;
             case AD_FIRE:
                 if (mm_resists_fire(magr)) {
-                    if (mm_can_see_mon(magr))
+                    if (mm_can_see_mon(magr)) {
                         await emitMMmsg(`${Monnam(magr)} is mildly warmed.`, magr);
+                        await golemeffects(magr, AD_FIRE, tmp, mm_ops());
+                    }
                     tmp = 0;
                     break;
                 }
@@ -1144,8 +1148,10 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                 break;
             case AD_ELEC:
                 if (mm_resists_elec(magr)) {
-                    if (mm_can_see_mon(magr))
+                    if (mm_can_see_mon(magr)) {
                         await emitMMmsg(`${Monnam(magr)} is mildly tingled.`, magr);
+                        await golemeffects(magr, AD_ELEC, tmp, mm_ops());
+                    }
                     tmp = 0;
                     break;
                 }
@@ -1243,8 +1249,23 @@ export async function mdisplacem(magr, mdef, quietly) {
         }
     }
 
-    magr.mx = tx; magr.my = ty;
-    mdef.mx = fx; mdef.my = fy;
+    mm_remove_monster(fx, fy);          /* pick up from orig position */
+    if (mdef.wormno) {
+        const { remove_worm } = await import('./worm.js');
+        remove_worm(mdef);
+    } else {
+        mm_remove_monster(tx, ty);
+    }
+    mm_place_monster(magr, tx, ty);     /* put down at target spot */
+    mm_place_monster(mdef, fx, fy);
+    if (mdef.wormno) {                  /* now put down tail */
+        const { place_worm_tail_randomly } = await import('./worm.js');
+        place_worm_tail_randomly(mdef, fx, fy);
+    }
+    /* either creature might move into or out of a poison gas cloud */
+    const { update_monster_region } = await import('./region.js');
+    update_monster_region(magr);
+    update_monster_region(mdef);
 
     if (vis && !quietly) {
         // C: `is_rider(pa) ? "the" : mhis(magr)` — a Rider barges through "the"
@@ -1708,8 +1729,6 @@ function mm_remove_monster(x, y) {
 // C ref: steed.c:898 place_monster(mon, x, y) — the grid write plus the
 // coordinate write.  Only the coordinates exist here.
 function mm_place_monster(mon, x, y) { mon.mx = x; mon.my = y; mon.mstate = 0; mon.mgridoff = false; }
-
-const Trap_Killed_Mon = 2;
 
 // C ref: mhitm.c:736 gazemm(magr, mdef, mattk) — an AT_GAZE attack against
 // another monster.  Returns the same values as mdamagem().

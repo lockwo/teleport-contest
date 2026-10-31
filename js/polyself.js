@@ -9,6 +9,7 @@
 // to wiz_polyself, matching that file's existing wiz_genesis/create_particular
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
+import { Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
@@ -34,7 +35,7 @@ import { place_object, WEAPON_CLASS, is_flimsy } from './mkobj.js';
 import { helm_simple_name } from './do_wear.js';
 import { the } from './objnam.js';
 import { makesingular } from './plural.js';
-import { rndexp, newhp, newpw, adjabil, update_rank, rank_of } from './exper.js';
+import { rndexp, newhp, newpw, adjabil, update_rank, rank_of, setuhpmax } from './exper.js';
 import { newuhs } from './eat.js';
 import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx, golemhp_js as golemhp,
     is_home_elemental, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
@@ -49,6 +50,7 @@ import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE, FROMFORM, LEVITATION, FLYING } 
 import { TT_BEARTRAP, TT_WEB, TT_LAVA, TT_INFLOOR, SICK_ALL,
     DISMOUNT_POLY } from './const.js';
 import { Unaware } from './const.js';
+import { Unchanging_hero, Polymorph_control_hero } from './youprop.js';
 // C ref: hack.h enum bodypart_types — mbodypart()/body_part() selectors.
 import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
     HAIR, NOSE, STOMACH, OBJ_FLOOR } from './const.js';
@@ -637,25 +639,45 @@ async function drop_weapon(alone) {
     const u = game.u;
     if (!game.uwep) return;
     if (!alone || cantwield(u.data)) {
-        let which = is_sword(game.uwep) ? 'sword' : weapon_descr(game.uwep);
-        const otmp = game.uwep;
-        /* C: candropwep = canletgo(uwep, "") — a welded weapon is released
-           (unwielded) but stays in inventory */
+        /* C: canletgo(uwep, "") — a welded weapon is released (unwielded)
+           but stays in inventory */
         const { canletgo } = await import('./invent.js');
-        const candropwep = await canletgo(otmp, '');
+        const candropwep = await canletgo(game.uwep, '');
+        const candropswapwep = !u.twoweap || await canletgo(game.uswapwep, '');
         if (alone) {
+            const what = (candropwep && candropswapwep) ? 'drop' : 'release';
+            let which = is_sword(game.uwep) ? 'sword' : weapon_descr(game.uwep);
+            if (u.twoweap) {
+                const whichtoo = is_sword(game.uswapwep) ? 'sword'
+                                                         : weapon_descr(game.uswapwep);
+                if (which !== whichtoo) which = 'weapon';
+            }
             // C ref: polyself.c:1327 — a stacked wielded weapon pluralizes:
             // "You find you must drop your daggers!".
-            if ((game.uwep.quan || 1) !== 1) which = makeplural(which);
+            if ((game.uwep.quan || 1) !== 1 || u.twoweap) which = makeplural(which);
             // C ref: the_your[!!strncmp(which, "corpse", 6)]: "the" for a
             // corpse, else "your".
             const theYour = which.startsWith('corpse') ? 'the' : 'your';
-            const what = candropwep ? 'drop' : 'release';
             await pline(`You find you must ${what} ${theYour} ${which}!`);
         }
-        const { uwepgone } = await import('./wield.js');
+        /* if either uwep or wielded uswapwep is flagged as 'in_use' then don't
+           drop it; leave that action to the caller (or caller's caller, &c) */
+        const { uwepgone, uswapwepgone } = await import('./wield.js');
+        let otmp;
+        if (u.twoweap) {
+            otmp = game.uswapwep;
+            uswapwepgone();
+            if (!otmp.in_use && candropswapwep) await dropx(otmp);
+        }
+        otmp = game.uwep;
         await uwepgone();
-        if (!otmp.in_use && candropwep) await dropp(otmp);
+        if (!otmp.in_use && candropwep) await dropx(otmp);
+    } else {
+        const { could_twoweap } = await import('./wield.js');
+        if (!could_twoweap(u.data)) {
+            const { untwoweapon } = await import('./invent.js');
+            await untwoweapon();
+        }
     }
 }
 
@@ -1223,8 +1245,7 @@ export async function newman() {
     for (let i = 0; (u.ulevel = i) < newlvl; i++) hpmax += newhp();
     if (hpmax < u.ulevel) hpmax = u.ulevel;
     u.uhp = rounddiv((u.uhp || 0) * hpmax, u.uhpmax || 1);
-    u.uhpmax = hpmax;
-    if (u.uhp > u.uhpmax) u.uhp = u.uhpmax;
+    setuhpmax(hpmax, true); /* might reduce u.uhp */
 
     let enmax = u.uenmax || 0;
     for (let i = 0; i < oldlvl; i++) enmax -= (u.ueninc?.[i] || 0);
@@ -1706,25 +1727,13 @@ function armor_to_dragon(atyp) {
     return NON_PM;
 }
 
-// C ref: youprop.h Unchanging / Polymorph_control — intrinsic OR the extrinsic
-// a worn item confers.  This port has no u.uprops[].extrinsic word, so the worn
-// half is read off objects[].oc_oprop the way insight.c what_gives() does.
-const PROP_POLYMORPH_CONTROL = 62, PROP_UNCHANGING = 63;
-function worn_gives_prop(propidx) {
-    for (const o of (game.invent || []))
-        if ((o.owornmask || 0) && OBJECTS[o.otyp]?.oc_oprop === propidx) return true;
-    return false;
-}
-function Unchanging() {
-    return ((game.u?.uprops?.HUnchanging | 0) > 0) || worn_gives_prop(PROP_UNCHANGING);
-}
+// C ref: youprop.h Unchanging / Polymorph_control (youprop.js readers).
+const PROP_UNCHANGING = 63;
+const Unchanging = Unchanging_hero;
 // timeout.c's polymorph countdown needs the same predicate (its Unchanging arm
 // re-arms u.mtimedone instead of reverting).
 export { Unchanging as Unchanging_poly };
-function Polymorph_control() {
-    return ((game.u?.uprops?.HPolymorph_control | 0) > 0)
-        || worn_gives_prop(PROP_POLYMORPH_CONTROL);
-}
+const Polymorph_control = Polymorph_control_hero;
 function Stunned() {
     const u = game.u;
     /* HStun is timed or FROMFORM (bat, stalker): the form bit lives in u.formprops */
@@ -2151,8 +2160,7 @@ async function poly_vampyr(mntmp, controllable_poly, old_light) {
     await polyself_made_change(old_light);
 }
 
-// C ref: include/hack.h ECMD_OK(0)/ECMD_TIME(1)/ECMD_CANCEL(2).
-const ECMD_OK = 0, ECMD_TIME = 1, ECMD_CANCEL = 2;
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 
 // C ref: cmd.c getdir(), reached via zap.c's zap_getdir() idiom (dynamic import
 // keeps polyself.js off cmd.js's static import cycle).  Sets u.dx/u.dy/u.dz the
@@ -2193,10 +2201,7 @@ export async function dobreathe() {
     if (!mattk) {
         /* C: impossible("bad breath attack?") */
     } else if (!u.dx && !u.dy && !u.dz) {
-        // ubreatheu(mattk): breathing at yourself.  Deferred — it needs the
-        // per-adtyp self-damage dispatch (zap.c:3017) this port has no caller
-        // for yet.  C consumes no RNG before entering it, so the desync starts
-        // inside, not here.
+        await (await import('./zap.js')).ubreatheu(mattk);
     } else {
         // C ref: hack.h BZ_U_BREATH(BZ_OFS_AD(adtyp)) == 20 + |adtyp-AD_MAGM|%10.
         await (await import('./zap.js')).ubuzz(
@@ -2397,7 +2402,7 @@ async function dohide() {
     const u = game.u;
     const mdat = u.data;
     const ismimic = mdat?.mlet === 'm';
-    const on_ceiling = is_clinger(mdat) || !!u.uprops?.Flying;
+    const on_ceiling = is_clinger(mdat) || Flying_hero();
 
     if (u.ustuck || (u.utrap && (u.utraptype !== TT_PIT || on_ceiling))) {
         await pline(`You can't hide while you're ${!u.ustuck ? 'trapped' : 'being held'}.`);
@@ -2451,7 +2456,7 @@ async function dohide() {
         u.uundetected = 0;
         return ECMD_OK;
     }
-    if (is_hider_flag(mdat) && !u.uprops?.Flying
+    if (is_hider_flag(mdat) && !Flying_hero()
         && (Is_airlevel(u.uz) || Is_waterlevel(u.uz))) { /* floor hider */
         await pline('There is nowhere to hide beneath you.');
         u.uundetected = 0;
@@ -2494,7 +2499,7 @@ export function youhiding_buf() {
             // C: ansimpleoname(o) — article + simple object name.
             const o = obj_at_hero();
             if (o) buf += ` underneath ${an(xname(o))}`;
-        } else if (is_clinger(mdat) || u.uprops?.Flying) {
+        } else if (is_clinger(mdat) || Flying_hero()) {
             buf += ' on the ceiling';
         } else if (u.utrap && u.utraptype === TT_PIT) {
             buf += ' in a pit';
@@ -2574,7 +2579,7 @@ async function dospinweb() {
     const typ = game.level?.at?.(x, y)?.typ;
     /* disallow webs on water, lava, air & cloud */
     const reject_terrain = is_pool_or_lava(x, y) || IS_AIR(typ);
-    if (u.uprops?.Levitation || reject_terrain) {
+    if (Levitation_hero() || reject_terrain) {
         await pline(`You must be on ${reject_terrain ? 'solid' : 'the'} ground to spin a web.`);
         return ECMD_OK;
     }
@@ -2737,9 +2742,16 @@ export async function domonability() {
         return await domindblast();
     } else if (u.umonnum === PM_GREMLIN) {
         if (IS_FOUNTAIN(game.level?.at?.(u.ux, u.uy)?.typ)) {
-            // split_mon()/dryup(): deferred (split_mon does not exist here).
+            const { split_mon } = await import('./potion.js');
+            if (await split_mon(game.youmonst || u, null)) {
+                const { dryup } = await import('./fountain.js');
+                await dryup(u.ux, u.uy, true);
+            }
         } else if (is_pool(u.ux, u.uy)) {
-            // split_mon(): deferred.
+            /* is_pool: might be wearing water walking boots or amulet of
+               magical breathing */
+            const { split_mon } = await import('./potion.js');
+            await split_mon(game.youmonst || u, null);
         } else {
             await pline('There is no fountain here.');
         }

@@ -6378,8 +6378,7 @@ export async function toggle_bool_option(p) {
     return ret;
 }
 
-// C ref: include/hack.h ECMD_* -- the command-return bits.
-const ECMD_OK = 0x00, ECMD_FAIL = 0x04;
+import { ECMD_OK, ECMD_FAIL } from './const.js';
 
 // C ref: options.c get_menu_cmd_key() -- the reverse of map_menu_cmd(): given
 // an internal MENU_* char, the key the player must press for it.

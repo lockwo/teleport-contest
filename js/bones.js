@@ -259,7 +259,7 @@ export async function getbones() {
         // Any decode/graft failure: behave as if no bones (fresh makelevel).  The
         // rn2(3) above already advanced the stream identically to the no-bones
         // path, so this cannot regress a session that merely has a stray blob.
-        if (is_wizard()) { try { (await import('./display.js')).pline?.(`bones: ${e}`); } catch { /*noop*/ } }
+        if (is_wizard()) { try { await (await import('./display.js')).pline?.(`bones: ${e}`); } catch { /*noop*/ } }
         return false;
     } finally {
         if (atStartup) delete game._screenBlank;

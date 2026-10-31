@@ -29,7 +29,7 @@ import { do_mapping } from './detect.js';
 import { study_book } from './spell.js';
 import { erode_obj, obj_erode_type, Teleport_control_fu } from './trap.js';
 import { find_ac } from './u_init.js';
-import { teleds, teleok, safe_teleds, On_W_tower_level } from './teleport.js';
+import { teleds, teleok, safe_teleds, On_W_tower_level, noteleport_level } from './teleport.js';
 import { SCROLL_CLASS, SPBOOK_CLASS, SCR_BLANK_PAPER, SCR_TELEPORTATION,
          SCR_DESTROY_ARMOR, SCR_REMOVE_CURSE, SCR_ENCHANT_WEAPON,
          SCR_ENCHANT_ARMOR, SCR_CONFUSE_MONSTER, SCR_SCARE_MONSTER,
@@ -49,7 +49,7 @@ import { A_WIS, A_STR, A_CON, A_DEX, A_INT, CORR, Is_rogue_level, Is_waterlevel,
          ACCESSIBLE, IS_POOL, IS_LAVA, IS_AIR, IS_OBSTRUCTED, HI_ZAP,
          In_endgame, In_quest, POLY_REVERT, Is_earthlevel, GENOCIDED, KILLED_BY,
          KILLED_BY_AN, NO_KILLER_PREFIX, DIED, ROOM, STONE, IS_WALL, IS_DOOR,
-         G_GONE, TELEDS_TELEPORT, OBJ_FREE, PLNMSG_TOWER_OF_FLAME } from './const.js';
+         G_GONE, TELEDS_TELEPORT, OBJ_FREE, PLNMSG_TOWER_OF_FLAME, unconscious } from './const.js';
 import { S_invisible, S_WORM_TAIL, S_MIMIC_DEF, S_MIMIC, S_WORM, S_DEMON,
          S_XAN, S_EEL, S_GHOST, def_monsyms, MAXMCLASSES } from './symbols.js';
 import { wipeout_text } from './engrave.js';
@@ -63,9 +63,7 @@ import { can_chant } from './mondata.js';
 import { hcolor } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 
-const ECMD_CANCEL = 0;
-const ECMD_OK = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 
 // C ref: include/objects.h otyp (JS mkobj.js OBJECT_DATA numbering, which
 // carries SCR_MAIL like the recorder's MAIL_STRUCTURES build does).
@@ -854,14 +852,12 @@ export async function punish(sobj) {
     // C ref: read.c punish() — place ball & chain only if not swallowed; when
     // swallowed the ball and chain are placed at the next placebc().
     if (!u.uswallow) {
-        // C ref: ball.c placebc_core() — both objects go on the hero's square (the
-        // ball first, so the chain ends up above it: u.bc_order = BCPOS_CHAIN).
-        // flooreffects() can rust them, but not on a dry square, and it draws no RNG
-        // there.
-        place_object(uball, u.ux, u.uy);
-        place_object(uchain, u.ux, u.uy);
-        newsym(u.ux, u.uy);                 // placebc_core()'s newsym
-        if (Blind()) (await import('./ball.js')).set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
+        // C ref: read.c punish() -> ball.c placebc() -> placebc_core(): chain
+        // then ball go through flooreffects() (a pool splashes and may rust them)
+        // before both land on the hero's square.
+        const ballmod = await import('./ball.js');
+        await ballmod.placebc_core();
+        if (Blind()) ballmod.set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
         newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
     }
 }
@@ -1102,7 +1098,7 @@ export async function scrolltele(scroll) {
     const wizard = !!game.flags?.debug;
     // C ref: dungeon.c noteleport_level() — the level flag (plus the
     // Wizard-of-Yendor/Vlad's-Tower special cases the flag already encodes).
-    if (game.level?.flags?.noteleport && !wizard) {
+    if (noteleport_level(game.youmonst || u) && !wizard) {
         await pline_append('A mysterious force prevents you from teleporting!');
         if (scroll) learnscroll(scroll);
         return;
@@ -1121,7 +1117,7 @@ export async function scrolltele(scroll) {
     const stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.formprops?.Stunned;
     if ((((u?.uprops?.Teleport_control || 0) > 0 || Teleport_control_fu() || (scroll && scroll.blessed))
          && !stunned) || wizard) {
-        if (u?.usleep) {
+        if (unconscious()) {
             await pline_append('Being unconscious, you cannot control your teleport.');
         } else {
             const { getpos, getpos_render } = await import('./hack.js');
@@ -1182,7 +1178,7 @@ function learnscroll(sobj) {
 // the vision recalc each one takes light_hits_gremlin(mon, rnd(5)).
 export async function litroom(on, obj) {
     const u = game.u;
-    const no_op = !!(u?.uswallow || u?.uprops?.Underwater || Is_waterlevel(u?.uz));
+    const no_op = !!(u?.uswallow || u?.uinwater || Is_waterlevel(u?.uz));
     const blessed_effect = !!(obj?.oclass === SCROLL_CLASS && obj.blessed);
     const loc0 = game.level?.at(u.ux, u.uy);
     const { artifact_light } = await import('./light.js');
@@ -1392,6 +1388,14 @@ async function seffect_remove_curse(sobj) {
     // on the scroll's curse status in C.
     if (game.u?.uball && !confused)
         await unpunish();
+    // C ref: read.c seffect_remove_curse() — a buried ball is freed too.
+    if (game.u?.utrap && game.u.utraptype === 6 /* TT_BURIEDBALL */) {
+        const { buried_ball_to_freedom } = await import('./dig.js');
+        await buried_ball_to_freedom();
+        const { body_part } = await import('./invent.js');
+        const { LEG } = await import('./const.js');
+        await update_topl(`The clasp on your ${body_part(LEG)} vanishes.`);
+    }
     update_inventory();
 }
 
@@ -1430,7 +1434,7 @@ async function seffect_fire(sobj) {
     useup(sobj);
     if (!already_known) learnscrolltyp(SCR_FIRE_OTYP);
     if (confused) {
-        const underwater = !!u.uprops?.Underwater;
+        const underwater = !!u.uinwater;
         const { Fire_resistance } = await import('./zap.js');
         const { monstseesu, monstunseesu } = await import('./mondata.js');
         const { M_SEEN_FIRE } = await import('./const.js');
@@ -1453,7 +1457,7 @@ async function seffect_fire(sobj) {
         }
         return;
     }
-    if (u.uprops?.Underwater) {
+    if (u.uinwater) {
         const { hliquid } = await import('./do_name.js');
         await pline(`The ${hliquid('water')} around you vaporizes violently!`);
     } else {

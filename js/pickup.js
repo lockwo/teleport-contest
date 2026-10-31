@@ -85,12 +85,8 @@ export const UNPAID_TYPES = 0x04;
 export const WORN_TYPES = 0x10;
 export const BILLED_TYPES = 0x40;
 export const CHOOSE_ALL = 0x80;
-export const BUC_BLESSED_F = 0x100;
-export const BUC_CURSED_F = 0x200;
-export const BUC_UNCURSED_F = 0x400;
-export const BUC_UNKNOWN_F = 0x800;
-export const BUCX_TYPES = BUC_BLESSED_F | BUC_CURSED_F | BUC_UNCURSED_F
-    | BUC_UNKNOWN_F;
+import { BUCX_TYPES } from './const.js';
+export { BUCX_TYPES };
 export const JUSTPICKED = 0x1000;
 
 /* obj.h u_safe_from_fatal_corpse() test bits */
@@ -102,9 +98,6 @@ export const TIPCHECK_OK = 0, TIPCHECK_LOCKED = 1, TIPCHECK_TRAPPED = 2,
     TIPCHECK_CANNOT = 3, TIPCHECK_EMPTY = 4;
 
 export const PICK_NONE = 0, PICK_ONE = 1, PICK_ANY = 2;
-
-/* invent.c count_buc() type codes */
-const BUC_BLESSED = 1, BUC_UNCURSED = 2, BUC_CURSED = 3, BUC_UNKNOWN = 4;
 
 /* obj.h how_lost values */
 const LOST_THROWN = 1, LOST_DROPPED = 2, LOST_STOLEN = 3, LOST_EXPLODING = 4;
@@ -724,7 +717,7 @@ export async function pickup(what) {
         const here = objects_at(u.ux, u.uy);
         const OBJ_AT = here.length > 0;
         if (autopickup && (game.context?.nopick || !OBJ_AT
-                           || (is_pool(u.ux, u.uy) && !game.Underwater)
+                           || (is_pool(u.ux, u.uy) && !u.uinwater)
                            || is_lava(u.ux, u.uy))) {
             if (flags().mention_decor) await describe_decor();
             await read_engr_at(u.ux, u.uy);
@@ -1421,7 +1414,7 @@ export async function able_to_loot(x, y, looting) {
         if (steed_unskilled()) await rider_cant_reach();
         else await (await import('./engrave.js')).cant_reach_floor(x, y, false, true, false);
         return false;
-    } else if ((is_pool(x, y) && (looting || !game.Underwater)) || is_lava(x, y)) {
+    } else if ((is_pool(x, y) && (looting || !game.u?.uinwater)) || is_lava(x, y)) {
         await pline(`You cannot ${verb} things that are deep in the `
                     + `${hliquid(is_lava(x, y) ? 'lava' : 'water')}.`);
         return false;
@@ -1669,8 +1662,8 @@ export function removed_from_icebox(obj) {
 export async function observe_quantum_cat(box, makecat, givemsg) {
     const sc = "Schroedinger's Cat";
     const itsalive = !rn2(2);
-    const u = ustate();
-    if (box.where !== OBJ_FLOOR) { box.ox = u.ux; box.oy = u.uy; }
+    const loc = (await import('./light.js')).get_obj_location(box, 0);
+    if (loc) { box.ox = loc.x; box.oy = loc.y; } /* in case it's being carried */
 
     const deadcat = (box.cobj || [])[0] || null;
     const mon_moving = !!game.context?.mon_moving;

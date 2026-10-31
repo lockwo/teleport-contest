@@ -9,6 +9,7 @@
 // to richer monster behavior without per-seed special cases.
 
 import { PLNMSG_HIDE_UNDER, FACE } from "./const.js";
+import { Fumbling_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -1607,7 +1608,7 @@ function mm_aggression(magr, mdef) {
 // !closed_door(x, y).  Distinct from this file's looser mon_accessible()
 // (corpse placement), which deliberately omits the closed-door exclusion.
 // SURFACE_AT's closed-drawbridge case is not modeled.
-function accessible(x, y) {
+export function accessible(x, y) {
     const typ = terrainTyp(x, y);
     if (typ == null) return false;
     return typ >= DOOR && !closed_door_at(x, y);
@@ -2131,8 +2132,6 @@ export function mon_learns_traps(mtmp, ttyp) {
 // dispatched per type, each consuming exactly the RNG the C effect consumes.
 // Returns: 0 = Trap_Effect_Finished, 1 = Trap_Caught_Mon, 2 = Trap_Killed_Mon,
 // 3 = Trap_Moved_Mon (we never produce the latter two for the modeled types).
-export const Trap_Effect_Finished = 0, Trap_Caught_Mon = 1, Trap_Killed_Mon = 2,
-             Trap_Moved_Mon = 3;
 export async function mon_mintrap(mtmp, mintrapflags = 0) {
     const trap = t_at(mtmp.mx, mtmp.my);
     if (!trap) { mtmp.mtrapped = 0; return Trap_Effect_Finished; }
@@ -2977,7 +2976,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         if (in_sight)
             await pline_mon(mtmp, `Click!  ${Monnam(mtmp)} triggers `
                 + `${trap.tseen ? 'a rolling boulder trap' : 'something'}.`);
-        const { launch_obj, ROLL, LAUNCH_UNSEEN } = await import('./trap.js');
+        const { launch_obj } = await import('./trap.js');
         const r = await launch_obj(BOULDER, trap.launch.x, trap.launch.y,
                                    trap.launch2.x, trap.launch2.y,
                                    ROLL | (in_sight ? 0 : LAUNCH_UNSEEN));
@@ -3696,8 +3695,8 @@ export function mon_allowflags(mtmp) {
 // we only need the RNG side-effects (the mtrack-avoidance rn2(4*(cnt-j))
 // rolls at monmove.c:1963) and the resulting move, so we implement the
 // approach-the-hero path used by ordinary monsters.
-const MMOVE_NOTHING = 0, MMOVE_NOMOVES = 1, MMOVE_MOVED = 2, MMOVE_DIED = 3;
-export { MMOVE_DIED };
+import { MMOVE_NOTHING, MMOVE_NOMOVES, MMOVE_MOVED, MMOVE_DIED, MMOVE_DONE, ROLL, LAUNCH_UNSEEN,
+         Trap_Effect_Finished, Trap_Caught_Mon, Trap_Killed_Mon, Trap_Moved_Mon } from './const.js';
 
 // C ref: monmove.c m_move_aggress(mtmp, x, y) — mtmp attacks whatever occupies
 // (x,y) instead of moving there.  Returns MMOVE_DIED or MMOVE_DONE.
@@ -4194,6 +4193,9 @@ export async function m_move(mtmp) {
     }
 
     if (mmoved === MMOVE_MOVED && (nix !== omx || niy !== omy)) {
+        // C ref: monmove.c:1987 — a monster held by a sticky-polyd hero cannot move.
+        if (!u_at(nix, niy) && await itsstuck(mtmp))
+            return MMOVE_DONE;
         // C ref: monmove.c:1990 — before committing, a tunneller wields its
         // pick/axe if it needs one to dig the destination.  On the wield turn it
         // ends its move with NO move and NO RNG (invisible inside rock).
@@ -4902,12 +4904,6 @@ export async function dochug(mtmp) {
 // mhitu.c; its steed-redirect roll (mhitu.c:534 rn2(is_orc?2:4)) and the
 // hand-to-hand / weapon to-hit rolls are reproduced here in mattacku() below.
 // The trailing cuss() roll belongs to monmove.c and is reproduced as well.
-// C: hack.h MMOVE_DONE.  The numeric values in this file are NOT C's (C has
-// MOVED=1, DIED=2, DONE=3, NOMOVES=4); what matters is that they agree with
-// dogmove.js's copy, because dog_move()'s return flows straight through m_move()
-// into the `status !== MMOVE_DONE` gate below.  dogmove.js uses 5, so this must
-// too — with 4 a pet that returned MMOVE_DONE fell into the attack block.
-const MMOVE_DONE = 5;
 async function phase_four(mtmp, mdat, status, inrange, nearby, scared, panicattk) {
     const u = game.u;
     // C ref monmove.c:967 — Standard Attacks.  status != MMOVE_DONE (we never
@@ -5641,11 +5637,22 @@ async function meatobj(mtmp) {
     if (mtmp.mtame) return 0;
     const verbose = game.flags?.verbose !== false;
     let count = 0, ecount = 0, engulfMsg = '';
+    const original_ptr = mtmp.data;
     const { floor_object_name, obj_doname, distant_name_pub }
         = await import('./invent.js');
     for (const otmp of objPileAt(mtmp.mx, mtmp.my)) {
         // avoid special items (mines'/sokoban prize) — never populated here.
         if (is_mines_prize(otmp) || is_soko_prize(otmp)) continue;
+
+        // touch sensitive items: a Rider corpse is neither eaten nor engulfed
+        if (otmp.otyp === CORPSE && is_rider(monster_by_pmidx(otmp.corpsenm))) {
+            const ox = otmp.ox, oy = otmp.oy;
+            const { revive_corpse } = await import('./do.js');
+            const revived_it = await revive_corpse(otmp);
+            newsym(ox, oy);
+            if (!revived_it) continue;
+            break;
+        }
 
         // touch-sensitive / untouchable / inaccessible: neither eaten nor
         // engulfed.  (Rider corpses and the ball&chain never occur on these
@@ -5691,7 +5698,11 @@ async function meatobj(mtmp) {
                 await You_hear('a slurping sound.');
             }
             await m_consume_obj(mtmp, otmp);
+            /* in case it polymorphed or died */
+            if (mtmp.data !== original_ptr) return !mtmp.data ? 2 : 1;
         }
+        /* Engulf & devour is instant, so don't set meating */
+        if (mtmp.minvis) newsym(mtmp.mx, mtmp.my);
     }
     if (ecount > 0 && verbose) {
         if (cansee(mtmp.mx, mtmp.my) && engulfMsg)
@@ -6222,7 +6233,16 @@ export async function mattacku(mtmp, mdat) {
             /* put mtmp at hero's spot and move hero to <cc.x,.y> */
             newsym(ox, oy);
             mtmp.mx = u.ux; mtmp.my = u.uy; mtmp.mgridoff = false;
-            await teleds(cc.x, cc.y, TELEDS_ALLOW_DRAG);
+            let cc2 = cc;
+            if (mtmp.wormno) {
+                const { worm_move } = await import('./worm.js');
+                await worm_move(mtmp);
+                /* tail hasn't grown, so if it now occupies <cc.x,.y> then one
+                   of its original spots must be free */
+                if (m_at(cc2.x, cc2.y))
+                    cc2 = enexto_gpflags(u.ux, u.uy, yd, 0) || cc2;
+            }
+            await teleds(cc2.x, cc2.y, TELEDS_ALLOW_DRAG);
             set_apparxy(mtmp);
             newsym(u.ux, u.uy);
             if (yd?.mcls !== S_PIERCER_MM) return 0; /* lurkers don't attack */
@@ -6430,6 +6450,7 @@ export async function mattacku(mtmp, mdat) {
 
     const atks = mon_attacks(mdat);
     let skipnonmagc = false;
+    let j = 0;  /* C: mattacku()'s function-scope to-hit roll; AT_ENGL keeps the previous one when mspec_used skips the roll */
     // C ref mhitu.c:769 — sum[] holds each attack's M_ATTK_* result; the AT_HUGS
     // case and the end-of-iteration AGR_DIED/AGR_DONE tests both read it.
     const sum = atks.map(() => M_ATTK_MISS);
@@ -6487,7 +6508,7 @@ export async function mattacku(mtmp, mdat) {
             // contest plays, so the guard passes.
             if (!range2) {
                 if (foundyou) {
-                    const j = mhitu_dieroll = rnd(20 + i); // mhitu.c:806
+                    j = mhitu_dieroll = rnd(20 + i); // mhitu.c:806
                     if (tmp > j) {
                         // unsolid(hero)/failed_grab: the hero is never unsolid.
                         // C ref mhitu.c:810 — thick_skinned(hero) blocks a kick.
@@ -6545,7 +6566,7 @@ export async function mattacku(mtmp, mdat) {
                     const bash = is_pole(mwep) && m_next2u(mtmp);
                     await mswings_mm(mtmp, mwep, bash);
                 }
-                const j = mhitu_dieroll = rnd(20 + i); // mhitu.c:912
+                j = mhitu_dieroll = rnd(20 + i); // mhitu.c:912
                 if (tmp > j) {
                     sum[i] = await hitmu(mtmp, mdat, mattk);
                 } else {
@@ -6582,13 +6603,12 @@ export async function mattacku(mtmp, mdat) {
         case AT_ENGL:
             if (!range2) {
                 if (foundyou) {
-                    let j2 = 0;
                     if (u.uswallow
-                        || (!mtmp.mspec_used && tmp > (j2 = rnd(20 + i)))) {
+                        || (!mtmp.mspec_used && tmp > (j = rnd(20 + i)))) {
                         const { gulpmu } = await import('./mhitu.js');
                         sum[i] = await gulpmu(mtmp, mattk);
                     } else {
-                        await missmu(mtmp, tmp === j2, mattk);
+                        await missmu(mtmp, tmp === j, mattk);
                     }
                 } else if (mon_digests(mdat)) {
                     await update_topl(`${Monnam(mtmp)} gulps some air!`);
@@ -7251,7 +7271,7 @@ function Confusion_mm() { return !!game.u?.uconf; }
 // C ref: youprop.h Stunned == (HStun || EStun || FROMFORM): the timer lives in
 // u.uprops.Stun (timeout.js STUNNED); u.Stunned is only a mirror some setters skip.
 function Stunned_mm() { return !!game.u?.formprops?.Stunned || (game.u?.uprops?.Stun | 0) > 0 || !!game.u?.Stunned; }
-function Fumbling_mm() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
+function Fumbling_mm() { return Fumbling_hero(); }
 
 // C ref: mthrowu.c:532 u_catch_thrown_obj(otmp) — catch_chance also drops by
 // 20 for a Monk/Rogue, and the roll is gated behind Blind/Confusion/Stunned/
@@ -9233,7 +9253,7 @@ async function mhitm_ad_phys(mtmp, mattk, mhm) {
             && (OBJECTS[otmp.otyp]?.material === 11 /* IRON */
                 || OBJECTS[otmp.otyp]?.material === 12 /* METAL */)
             && (youmonst_data_mm()?.name === 'black pudding' || youmonst_data_mm()?.name === 'brown pudding')) {
-            if (tmp > 1) exercise(A_STR, false);
+            if (tmp > 1) await exercise(A_STR, false);
             /* inflict damage now; we know it can't be fatal */
             u.mh -= tmp;
             game.botl = true;
@@ -9522,11 +9542,11 @@ async function hitmsg(mtmp, mattk) {
     // mhitu.c:73 — a second CONSECUTIVE hit from the same monster with the same
     // attack type, and specifically from the NEXT mattk slot, says "again".
     const h = game._hitmsg || (game._hitmsg = {});
-    const again = (h.mid === mtmp.m_id && h.slot != null
+    const again = (h.mid === mtmp.m_id && h.mdat === mtmp.data && h.slot != null
                    && mattk._slot === h.slot + 1 && mattk.aatyp === h.aatyp)
         ? ' again' : '';
     await emitU(`${name} ${verb}${again}${punct}`, mtmp);
-    h.mid = mtmp.m_id; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
+    h.mid = mtmp.m_id; h.mdat = mtmp.data; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
 }
 
 // C ref: mhitu.c:85 missmu(mtmp, nearmiss, mattk) — "<The monster> misses!".
@@ -9927,24 +9947,10 @@ function mv_wakeup(mtmp, via_attack) {
 // into an eel &c) and is holding mtmp, so mtmp cannot move at all.  Note the
 // !u.uswallow guard: an engulfed monster is not "stuck to" the hero.
 export async function itsstuck(mtmp) {
-    if (mv_sticks(game.youmonst?.data) && mtmp === game.u?.ustuck
+    if (hooks.sticks(youmonst_data_mm()) && mtmp === game.u?.ustuck
         && !game.u?.uswallow) {
         await emitU(`${Monnam(mtmp)} cannot escape from you!`, mtmp);
         return true;
-    }
-    return false;
-}
-
-// C ref: mondata.h sticks(ptr) — the hero-as-monster forms that hold onto what
-// they hit (AT_HUGS / AD_STCK &c).  js/artifact.js:602 and js/dothrow.js:537
-// both carry a copy.
-function mv_sticks(ptr) {
-    if (!ptr) return false;
-    for (let i = 0; i < 6; i++) {
-        const a = mattk_of(ptr, i);
-        if (!a) continue;
-        if (a.aatyp === AT_HUGS) return true;
-        if (a.adtyp === AD_STCK) return true;
     }
     return false;
 }

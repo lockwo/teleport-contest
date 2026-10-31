@@ -554,14 +554,30 @@ export function make_engr_at(x, y, text, pristine, epoch, engr_type) {
     // C ref: engrave.c make_engr_at() — engraving exactly "Elbereth" by the
     // player (not during level creation) exercises wisdom (rn2(19) inside
     // exercise()).  During mklev it instead sets the old-style guard flag.
-    if (text === 'Elbereth' && !game.in_mklev) {
-        exercise(A_WIS, true);
+    if (text === 'Elbereth') {
+        if (game.in_mklev) ep.guardobjects = 1;
+        else exercise(A_WIS, true);
     }
     // C ref: engrave.c:452 `ep->engr_type = (e_type > 0) ? e_type : rnd(N_ENGRAVE - 1)` (the
     // wand-of-polymorph engrave passes type 0 and gets a random engraving type).
     ep.engr_type = (engr_type > 0) ? engr_type : rnd(N_ENGRAVE - 1);
     game.level.engravings.unshift(ep);
     return ep;
+}
+
+// C ref: sp_lev.c lspo_engraving() tail — des.engraving() calls make_engr_at()
+// and then overwrites guardobjects with its own option (default FALSE) and
+// sets nowipeout = !degrade (default degrade TRUE).  So a des.engraving()
+// "Elbereth" made while in_mklev does NOT get make_engr_at()'s old-style
+// guardobjects flag.  Hand-ported level files call this instead of
+// make_engr_at() for their des.engraving() lines.
+export function des_engraving_at(x, y, text, pristine, etype) {
+    make_engr_at(x, y, text, pristine, 0, etype);
+    const ep = engr_at(x, y);
+    if (ep) {
+        ep.guardobjects = false;
+        ep.nowipeout = false;
+    }
 }
 
 // C ref: hacklib.c mungspaces() — collapse runs of whitespace to one and trim.

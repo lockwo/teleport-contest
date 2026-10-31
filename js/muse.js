@@ -33,7 +33,7 @@ import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
     AD_FIRE, AD_COLD, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
-    objects as OBJECTS, place_object, weight, nextoid, add_to_container } from './mkobj.js';
+    objects as OBJECTS, place_object, weight, nextoid, add_to_container, unknow_object } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
 import { set_mon_data, slimeproof, monstseesu, monstunseesu } from './mondata.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
@@ -46,7 +46,7 @@ import { hard_helmet } from './do_wear.js';
 // (unlike a `const` arrow, which would be in its temporal dead zone here).
 import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item,
     objectsAt, mon_knows_traps, mon_learns_traps, mon_mintrap,
-    Trap_Killed_Mon, in_your_sanctuary, monflee as monflee_full, locomotion } from './monmove.js';
+    in_your_sanctuary, monflee as monflee_full, locomotion, accessible } from './monmove.js';
 // base_mmove() is likewise a hoisted `export function`, so the cycle is safe.
 import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_carry,
     mongone, sensemon, flash_mon, is_vampshifter } from './mon.js';
@@ -60,7 +60,7 @@ import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT
 import { same_race, dog_nutrition, monnear } from './dogmove.js';
 import { YMonnam, noit_mon_nam, mhe, mhim, monverbself } from './do_name.js';
 import { cansee, couldsee, Blind } from './vision.js';
-import { obj_doname, xname, makeknown, trycall, hands_obj, bimanual,
+import { obj_doname, distant_name_pub, xname, makeknown, trycall, hands_obj, bimanual,
     W_ARMOR_WORN, W_ACCESSORY_WORN, welded, youmonst_data, ansimpleoname, obj_extract_self }
     from './invent.js';
 import { observe_object } from './o_init.js';
@@ -70,7 +70,7 @@ import { resists_blnd_u } from './mhitu.js';
 import { mon_has_special, mon_has_amulet } from './monspecial.js';
 import { inhishop } from './shk.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -79,7 +79,7 @@ import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP, M_SEEN_ELEC,
     M_SEEN_ACID, M_SEEN_REFL, G_GENOD, MON_MIGRATING,
     MIGR_RANDOM, MIGR_STAIRS_UP, MIGR_STAIRS_DOWN, MIGR_LADDER_UP, MIGR_LADDER_DOWN,
-    MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, FORCEBUNGLE, Unaware, FAST,
+    MIGR_SSTAIRS, STRAT_WAITFORU, FORCETRAP, FORCEBUNGLE, Unaware, unconscious, FAST,
     NC_SHOW_MSG, NC_VIA_WAND_OR_SPELL, OBJ_FLOOR, OBJ_MINVENT } from './const.js';
 import { surface } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -649,8 +649,7 @@ async function mzapwand(mtmp, otmp, self) {
     if (!canseemon(mtmp)) {
         const range = couldsee(mtmp.mx, mtmp.my) ? (BOLT_LIM + 1) : (BOLT_LIM - 3);
         await You_hear(`a ${(mdistu(mtmp) <= range * range) ? 'nearby' : 'distant'} zap.`);
-        // C: unknow_object(otmp) — the hero loses the charge count of an unseen
-        // wand.  The port does not track remembered charge counts.
+        unknow_object(otmp); /* hero loses info when unseen obj is used */
     } else if (self) {
         // C: monverbself(mtmp, Monnam, "zap", 0) => "<Mon> zaps himself/herself/itself".
         await update_topl(`${monverbself(mtmp, Monnam(mtmp), 'zap', null)} with ${obj_doname(otmp)}!`);
@@ -667,6 +666,7 @@ async function mplayhorn(mtmp, otmp, self) {
         const range = couldsee(mtmp.mx, mtmp.my) ? (BOLT_LIM + 1) : (BOLT_LIM - 3);
         await You_hear(`a horn being played ${
             (mdistu(mtmp) <= range * range) ? 'nearby' : 'in the distance'}.`);
+        unknow_object(otmp); /* hero loses info when unseen obj is used */
     } else if (self) {
         observe_object(otmp);
         await update_topl(
@@ -1554,8 +1554,8 @@ function hero_behind_chokepoint(mtmp) {
     const c1 = { x: x + -dy, y: y + dx };
     const c2 = { x: x + dy, y: y + -dx };
 
-    if ((!isok(c1.x, c1.y) || !ACCESSIBLE(levl_typ(c1.x, c1.y)))
-        && (!isok(c2.x, c2.y) || !ACCESSIBLE(levl_typ(c2.x, c2.y))))
+    if ((!isok(c1.x, c1.y) || !accessible(c1.x, c1.y))
+        && (!isok(c2.x, c2.y) || !accessible(c2.x, c2.y)))
         return true;
     return false;
 }
@@ -2319,7 +2319,8 @@ async function mloot_container(mon, container, vismon) {
 
         container.cknown = 0;
         if (!contnr_nam)
-            contnr_nam = an(nearby ? xname(container) : xname(container));
+            contnr_nam = an(nearby ? xname(container)
+                            : distant_name_pub(container, xname, mon.mx, mon.my));
 
         /* C: obj_extract_self(xobj) "reduces container's weight"; then check
            whether mon can handle xobj and whether xobj's weight plus minvent
@@ -2599,7 +2600,7 @@ async function you_aggravate(mtmp) {
     await You_feel(`aggravated at ${noit_mon_nam(mtmp)}.`);
     // display_nhwindow(WIN_MAP, TRUE) blocks on that frame, then docrt().
     await docrt();
-    if (Unaware()) {                            // trap.c unconscious()
+    if (unconscious()) {
         game.multi = -1;
         game.nomovemsg = 'Aggravated, you are jolted into full consciousness.';
     }
@@ -2809,7 +2810,7 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
         obj.quan = 1;
         await update_topl(`${Monnam(mon)} ${
             (obj.oclass === POTION_CLASS) ? 'quaffs'
-            : tinned ? 'opens and eats the contents of' : 'eats'} ${obj_doname(obj)}.`);
+            : tinned ? 'opens and eats the contents of' : 'eats'} ${distant_name_pub(obj, obj_doname, mon.mx, mon.my)}.`);
         obj.quan = save_quan;
     } else if (!Deaf()) {
         await You_hear(`${

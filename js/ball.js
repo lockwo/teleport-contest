@@ -23,12 +23,13 @@ import { t_at } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
          DRAWBRIDGE_UP, HMON_DRAGGED, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+import { Levitation_hero } from './youprop.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
 export const BC_BALL = 0x01;
 export const BC_CHAIN = 0x02;
 // C ref: you.h — which of the pair is drawn on top when they share a square.
-const BCPOS_BALL = 0, BCPOS_CHAIN = 1, BCPOS_DIFFER = 2;
+const BCPOS_DIFFER = 0, BCPOS_CHAIN = 1, BCPOS_BALL = 2;
 
 // C ref: hacklib.c dist2 / distmin.
 const dist2 = (x0, y0, x1, y1) => (x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1);
@@ -87,46 +88,30 @@ function bc_order() {
     return BCPOS_DIFFER;
 }
 
-// C ref: ball.c placebc() — put the pair down on the hero's square.  Ball
-// first so the chain lands on top (u.bc_order = BCPOS_CHAIN).
-// NOT ported: the two flooreffects() calls (chain/ball "might rust").  They can
-// only bite over water/lava/a pit, and every recorded placebc() lands on room
-// floor; flooreffects() itself is not modelled.
-export function placebc() {
+// C ref: ball.c placebc() — put the pair down on the hero's square.  The
+// restriction gate and "bc already placed?" check live here; the placement
+// itself (flooreffects, bc_order, bglyph/cglyph pickup) is placebc_core().
+export async function placebc() {
+    if (!check_restriction(0))
+        return;
     const u = game.u;
-    if (!u?.uball || !u?.uchain) return;
-    // C ref: ball.c placebc() — `if (uchain && uchain->where != OBJ_FREE)
-    // { impossible("bc already placed?"); return; }`.  Without the guard a
-    // second placebc() puts a SECOND chain+ball on the pile, and look_here()
-    // then lists each of them twice.
-    if (u.uchain.where !== OBJ_FREE) return;
-    if (carried(u.uball)) {
-        u.bc_order = BCPOS_DIFFER;
-    } else {
-        place_object(u.uball, u.ux, u.uy);
-        u.bc_order = BCPOS_CHAIN;
+    if (u?.uchain && u.uchain.where !== OBJ_FREE) {
+        const { impossible } = await import('./display.js');
+        await impossible('bc already placed?');
+        return;
     }
-    place_object(u.uchain, u.ux, u.uy);
-    newsym(u.ux, u.uy);
+    await placebc_core();
 }
 
-// C ref: ball.c unplacebc_core() — lift the pair OFF the map (they stay owned by
-// the hero; where becomes OBJ_FREE).  Used by goto_level(): the ball and chain
-// must leave the departing level's object list before it is saved, or they stay
-// behind at the old coordinates and placebc() on arrival has nothing to undo.
-// The u.uswallow arm is waterlevel-only in C and is not reachable here.
-// (Blind's bc_felt glyph bookkeeping is not ported — see move_bc.)
-export function unplacebc() {
-    const u = game.u;
-    if (!u?.uball || !u?.uchain) return;
-    if (u.uswallow) return; /* ball&chain not unplaced while swallowed */
-    if (!carried(u.uball)) {
-        remove_object(u.uball);
-        newsym(u.uball.ox, u.uball.oy);
+// C ref: ball.c unplacebc() — lift the pair OFF the map (they stay owned by the
+// hero; where becomes OBJ_FREE).
+export async function unplacebc() {
+    if (bcrestriction) {
+        const { impossible } = await import('./display.js');
+        await impossible('unplacebc denied, restriction in place');
+        return;
     }
-    remove_object(u.uchain);
-    newsym(u.uchain.ox, u.uchain.oy);
-    u.bc_felt = 0; /* feel nothing */
+    await unplacebc_core();
 }
 
 // C ref: ball.c movobj(obj, ox, oy) — relocate a floor object in place, with a
@@ -394,7 +379,7 @@ export async function drag_ball(x, y, allow_drag = true) {
         const { pline } = await import('./display.js');
         // C ref: ball.c — a levitating hero is not yanked: it only feels a tug
         // (and the pit becomes seen), then FALLS THROUGH to the drag code below.
-        if (game.u?.uprops?.Levitation) {
+        if (Levitation_hero()) {
             await You_feel('a tug from the iron ball.');
             if (chainTrap) chainTrap.tseen = 1;
         } else {
@@ -514,7 +499,7 @@ const TT_BEARTRAP = 1, TT_PIT = 2, TT_WEB = 3, TT_LAVA = 4, TT_INFLOOR = 5,
 // C ref: include/youprop.h Punished — u.uball is set only while punished.
 function Punished() { return !!game.u?.uball; }
 // C ref: include/youprop.h Levitation.
-function Levitation() { return !!game.u?.uprops?.Levitation; }
+function Levitation() { return Levitation_hero(); }
 
 // C ref: mon.c maybe_unhide_at(x, y).
 async function maybe_unhide_at_bc(x, y) {

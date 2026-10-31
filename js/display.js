@@ -1553,11 +1553,12 @@ export function covers_objects(loc) {
     const typ = loc?.typ;
     // dbridge.c is_pool()/is_lava() also count the square under a raised
     // drawbridge whose DB_UNDER is moat or lava.
+    const underwater = !!game.u?.uinwater;
     if (typ === DRAWBRIDGE_UP) {
         const u = loc.drawbridgemask & DB_UNDER;
-        return u === DB_MOAT || u === DB_LAVA;
+        return (u === DB_MOAT && !underwater) || u === DB_LAVA;
     }
-    return typ === POOL || typ === MOAT || typ === WATER
+    return ((typ === POOL || typ === MOAT || typ === WATER) && !underwater)
         || typ === LAVAPOOL || typ === LAVAWALL;
 }
 
@@ -3272,7 +3273,9 @@ function _botConditions() {
     // rather than via invent.js's worn_extrinsic() — display.js is imported BY
     // invent.js, so a static import back would be a cycle.
     const wornExtrinsic = (prop) => ((u.uprops_extrinsic || {})[prop] | 0);
-    if ((u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)) && !u.uprops?.BFlying) out.push('Fly');
+    const flyHeld = status_held('fly', null);
+    if (flyHeld === true
+        || (flyHeld !== false && (u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)) && !u.uprops?.BFlying)) out.push('Fly');
     // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.
     // potion.js set_hallucination() writes the timer to four aliases at once.
     const halluTime = (u.uprops?.Hallucination || 0) || (u.uprops?.HHallucination || 0)
@@ -5903,6 +5906,10 @@ export function youmonst_menu_glyph() {
     const u = game.u || {};
     return what_mon(u.umonnum | 0) + (!Ugender() ? GLYPH_MON_MALE_OFF : GLYPH_MON_FEM_OFF);
 }
+// C ref: pager.c lookat() `glyph == mon_to_glyph(u.ustuck, rn2_on_display_rng)`:
+// the glyph value itself is only compared; the observable side effect is the
+// one display-RNG draw what_mon() takes while Hallucinating.
+export function mon_to_glyph_pub(mon) { return mon_to_glyph(mon); }
 function detected_mon_to_glyph(mon) {
     return what_mon(monsndx_d(mon.data))
         + ((!mon.female) ? GLYPH_DETECT_MALE_OFF : GLYPH_DETECT_FEM_OFF);

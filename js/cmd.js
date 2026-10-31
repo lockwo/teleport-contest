@@ -5,6 +5,7 @@
 // Contestants should add: search, kick, eat, drink, read, zap,
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
+import { Levitation_hero } from './youprop.js';
 import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
@@ -22,16 +23,15 @@ import { ddoinv, dismiss_invent_screen, dolook,
          renderWindowScreen, renderMenuLines, ECMD_NOTHANDLED, describe_decor,
          dotypeinv, doprtool, nohands_youmonst, notake_youmonst, wiz_identify,
          xname, otense, inv_cnt, invlet_basic, splitobj, freeinv, obj_doname, ansimpleoname,
-         obj_extract_self, youmonst_data_pub, carried_weight,
-         ECMD_TIME as I_ECMD_TIME } from './invent.js';
+         obj_extract_self, youmonst_data_pub, carried_weight } from './invent.js';
 import { makeplural } from './plural.js';
 import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
          disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object } from './mkobj.js';
 import { fobj } from './dogmove.js';
 import { doeat } from './eat.js';
-import { doapply, ECMD } from './apply.js';
+import { doapply } from './apply.js';
 import { dodrink } from './potion.js';
-import { dozap, Known_wwalking, Known_lwalking } from './zap.js';
+import { dozap, Known_wwalking, Known_lwalking, Cold_resistance as Cold_resistance_zap } from './zap.js';
 import { docast, dovspell } from './spell.js';
 import { doread } from './read.js';
 import { dohelp, dowhatdoes, dowhatdoes_core, do_screen_description, doidtrap, tty_putstr_text, pg_glyph_at } from './pager.js';
@@ -46,7 +46,7 @@ import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
          flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trapname,
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
-         launch_obj, ROLL, LAUNCH_KNOWN, Levitation_fu, Flying_fu, u_locomotion,
+         launch_obj, Levitation_fu, Flying_fu, u_locomotion,
          could_untrap, untrap_at } from './trap.js';
 import { doset, dosetSimple } from './doset.js';
 import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
@@ -82,14 +82,14 @@ import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, level_difficulty, surface, earth_sense } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM } from './const.js';
+import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, ROLL, LAUNCH_KNOWN } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
 // kick_nondoor/dokick).  cmd.js <-> dokick.js is a cycle, but every name
 // crossing it is a hoisted `function` declaration, the same way onscary() above
 // resolves cmd -> monmove -> uhitm -> allmain -> cmd.
 import { dokick } from './dokick.js';
 import { setuwep } from './wield.js';
-import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key } from './artifact.js';
+import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key, autokey } from './artifact.js';
 import { lock_action, reset_pick } from './lock.js';
 import { weapon_descr, is_pick } from './weapon.js';
 import { rloco, dotele } from './teleport.js';
@@ -722,7 +722,7 @@ async function swim_move_danger(x, y) {
     const typ = loc ? loc.typ : STONE;
     const newtyp = u_simple_floortyp(x, y);
     const liquidWall = (newtyp === WATER) || (newtyp === LAVAWALL);
-    if (u.uprops?.Underwater && (isPoolTerrain(x, y) || newtyp === WATER))
+    if (u.uinwater && (isPoolTerrain(x, y) || newtyp === WATER))
         return false;
     const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     const confused = (u.uprops?.Confusion || 0) > 0;
@@ -798,7 +798,7 @@ function blocksDiagonalDoor(ux, uy, x, y, dx, dy) {
 
 async function mention_diagonal_door(x, y) {
     const into = IS_DOOR(game.level?.at(x, y)?.typ) && !doorless_door(x, y);
-    if (game.flags?.mention_walls || (into && game.u?.uprops?.Underwater))
+    if (game.flags?.mention_walls || (into && game.u?.uinwater))
         await pline(`You can't move diagonally ${into ? 'into' : 'out of'} an intact doorway.`);
 }
 
@@ -1519,7 +1519,7 @@ export async function rhack(key) {
         // keystrokes don't leak to the command loop); the turn flag comes from
         // the dispatched command (e.g. a Throw that elapses a turn).  getdir is
         // threaded in for the Throw action's direction prompt.
-        game.context.move = (await ddoinv(getdir)) === 3 ? 1 : 0;
+        game.context.move = ((await ddoinv(getdir)) & ECMD_TIME) ? 1 : 0;
     } else if (ch === '\\') {
         await dodiscovered();
         game.context.move = 0;
@@ -1553,30 +1553,30 @@ export async function rhack(key) {
         // chosen from the menu (drop, wield, ...) is queued by itemactions() and
         // runs as its own timed command; here it runs inline and its result
         // (ECMD_TIME) sets the turn flag.
-        game.context.move = (await doprinuse(getdir)) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprinuse(getdir)) & ECMD_TIME ? 1 : 0;
     } else if (ch === '$') {
         // C ref: cmd.c { GOLD_SYM, "showgold", ..., doprgold } — show wallet gold.
         // doprgold() itself returns ECMD_OK, but with the 'm' prefix the gold
         // menu's item action (itemactions() queues it) runs as its own timed
         // command; here it runs inline, so its result sets the turn flag.
-        game.context.move = (await doprgold()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprgold()) & ECMD_TIME ? 1 : 0;
     } else if (ch === ')') {
         // C ref: cmd.c { WEAPON_SYM, "seeweapon", ..., doprwep } — wielded weapon.
-        game.context.move = (await doprwep()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprwep()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '[') {
         // C ref: cmd.c { ARMOR_SYM, "seearmor", ..., doprarm } — worn armor.
-        game.context.move = (await doprarm()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprarm()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '=') {
         // C ref: cmd.c { RING_SYM, "seerings", ..., doprring } — worn ring(s).
-        game.context.move = (await doprring()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprring()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '"') {
         // C ref: cmd.c { AMULET_SYM, "seeamulet", ..., dopramulet } — worn amulet.
-        game.context.move = (await dopramulet()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await dopramulet()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '(') {
         // C ref: cmd.c { TOOL_SYM, "seetools", doprtool, IFBURIED | GENERALCMD |
         // CMD_M_PREFIX } — the tools currently in use.  Handler was ported, key
         // was never bound.
-        game.context.move = (await doprtool()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await doprtool()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '+') {
         await dovspell();
         game.context.move = 0;
@@ -1611,7 +1611,7 @@ export async function rhack(key) {
         // look_here()'s final line: `return (!!Blind ? ECMD_TIME : ECMD_OK);`.
         // A blind ':' spends a turn; js/invent.js's look_here() already
         // computes this correctly but dolook() used to discard it here.
-        game.context.move = (await dolook()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await dolook()) & ECMD_TIME ? 1 : 0;
     } else if (ch === '@') {
         // C ref: cmd.c { '@', "autopickup", ..., dotogglepickup } -> options.c
         // dotogglepickup(): flip flags.pickup and report the new state.  No game
@@ -1636,14 +1636,14 @@ export async function rhack(key) {
         // probe in the same turn).  The first stethoscope-to-self probe is free
         // (ECMD_OK) and consumes no RNG.
         const applyRes = await doapply();
-        game.context.move = applyRes === ECMD.ECMD_TIME ? 1 : 0;
+        game.context.move = (applyRes & ECMD_TIME) ? 1 : 0;
         // C ref: cmd.c rhack():3810-3813 — ECMD_CANCEL (declined direction/
         // target prompt) runs reset_cmd_vars(TRUE), clearing CQ_REPEAT.
-        if (applyRes === ECMD.ECMD_CANCEL) game.context._getobj_cancelled = true;
+        if (applyRes & ECMD_CANCEL) game.context._getobj_cancelled = true;
     } else if (ch === 'e') {
         // C ref: cmd.c 'e' (#eat) -> eat.c doeat().  Eats carried/floor food
         // (ECMD_TIME when a bite is taken).
-        game.context.move = (await doeat()) ? 1 : 0;
+        game.context.move = ((await doeat()) & ECMD_TIME) ? 1 : 0;
         // C ref: cmd.c rhack():3814-3816 — doeat() returning ECMD_OK/CANCEL
         // runs reset_cmd_vars(), whose `gm.multi = 0` cancels the multi = -1
         // savelife() left when floorfood()'s feel_cockatrice() killed and
@@ -1652,14 +1652,14 @@ export async function rhack(key) {
     } else if (ch === 'o') {
         // C ref: cmd.c doopen -> lock.c doopen_indir(0,0): open an adjacent
         // door (reads a direction).  Sets the turn flag from doopen's result.
-        game.context.move = (await doopen_indir(0, 0)) ? 1 : 0;
+        game.context.move = ((await doopen_indir(0, 0)) & ECMD_TIME) ? 1 : 0;
         await run_canned_kick();
     } else if (ch === 'c') {
         // C ref: cmd.c doclose -> lock.c doclose(): close an adjacent door
         // (reads a direction).  ECMD_CANCEL (cancelled direction) and ECMD_OK
         // (no door / already closed) elapse no turn; closing an open door is
         // ECMD_TIME.
-        game.context.move = (await doclose()) === 2 ? 1 : 0;
+        game.context.move = ((await doclose()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 's') {
         // C ref: cmd.c dosearch -> detect.c dosearch0(0): search adjacent
         // squares for hidden doors/passages/traps; takes a turn unless
@@ -1689,7 +1689,7 @@ export async function rhack(key) {
         // the kicked square (monster / object / terrain).  Sets the turn flag
         // from dokick's ECMD result.
         const res = await dokick();
-        game.context.move = res === 1 ? 1 : 0;
+        game.context.move = (res & ECMD_TIME) ? 1 : 0;
     } else if (key === 5) { // ^E — wizard-mode detect (wizcmds.c wiz_detect)
         // C ref: cmd.c:1953 { C('e'), "wizdetect", ..., WIZMODECMD }.  Unbound
         // here, ^E fell through to "Unknown command '<ch>'." (a non-printable
@@ -1799,7 +1799,7 @@ export async function rhack(key) {
     } else if (ch === 'W') {
         // C ref: cmd.c keymap 'W' = dowear (do_wear.c).  Prompts for armor to
         // wear; ECMD_TIME (3) only when the don actually costs a turn.
-        game.context.move = (await dowear()) === 3 ? 1 : 0;
+        game.context.move = ((await dowear()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'A') {
         // C ref: cmd.c { 'A', "takeoffall", doddoremarm, 0 } (do_wear.c) — the
         // multi-item take-off/unwield command.  Under the default
@@ -1810,7 +1810,7 @@ export async function rhack(key) {
     } else if (ch === 'T') {
         // C ref: cmd.c keymap 'T' = dotakeoff (do_wear.c).  Removes worn armor
         // (a single piece comes off without a disambiguation prompt).
-        game.context.move = (await dotakeoff()) === 3 ? 1 : 0;
+        game.context.move = ((await dotakeoff()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'P') {
         // C ref: cmd.c keymap 'P' = doputon (do_wear.c).  Puts on a ring,
         // amulet, or eyewear; rings prompt for the ring-finger.  When doputon
@@ -1822,7 +1822,7 @@ export async function rhack(key) {
             await pline(`Unknown command '${ch}'.`, { suppressHistory: true });
             game.context.move = 0;
         } else {
-            game.context.move = rP === 3 ? 1 : 0;
+            game.context.move = (rP & ECMD_TIME) ? 1 : 0;
         }
     } else if (ch === 'R') {
         // C ref: cmd.c keymap 'R' = doremring (do_wear.c).  Removes a worn
@@ -1833,12 +1833,12 @@ export async function rhack(key) {
             await pline(`Unknown command '${ch}'.`, { suppressHistory: true });
             game.context.move = 0;
         } else {
-            game.context.move = rR === 3 ? 1 : 0;
+            game.context.move = (rR & ECMD_TIME) ? 1 : 0;
         }
     } else if (ch === 'p') {
         // C ref: cmd.c keymap 'p' = dopay (shk.c).  Away from a shopkeeper this
         // reports "There appears to be no shopkeeper here ..." (ECMD_OK).
-        game.context.move = (await dopay()) === 3 ? 1 : 0;
+        game.context.move = ((await dopay()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'd') {
         // C ref: cmd.c — 'd' drop an item.  do.c dodrop() prompts for the
         // item then drops it on the floor (ECMD_TIME when something is
@@ -1876,7 +1876,7 @@ export async function rhack(key) {
         // the item action chosen is queued by itemactions() and runs as its own
         // timed command; here it runs inline and its result (ECMD_TIME) sets the
         // turn flag (same as the 'i' / '*' commands above).
-        game.context.move = (await dotypeinv()) === I_ECMD_TIME ? 1 : 0;
+        game.context.move = (await dotypeinv()) & ECMD_TIME ? 1 : 0;
     } else if (key === 15) {   /* ^O */
         // C ref: cmd.c { C('o'), "overview", dooverview, IFBURIED |
         // GENERALCMD } (dungeon.c) — the dungeon-overview menu.  Another
@@ -1925,13 +1925,13 @@ export async function rhack(key) {
         game.context.move = 0;
     } else if (ch === 'q') {
         // C ref: cmd.c — 'q' quaff (drink) a potion.
-        game.context.move = (await dodrink()) ? 1 : 0;
+        game.context.move = ((await dodrink()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'z') {
         // C ref: cmd.c — 'z' zap a wand.
-        game.context.move = (await dozap()) ? 1 : 0;
+        game.context.move = ((await dozap()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'Z') {
         // C ref: cmd.c — 'Z' cast a spell.
-        game.context.move = (await docast()) ? 1 : 0;
+        game.context.move = ((await docast()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'E') {
         // C ref: cmd.c — 'E' (#engrave) -> engrave.c doengrave(): write/engrave
         // on the floor.  doengrave sets up the engraving (garble loop +
@@ -1947,21 +1947,21 @@ export async function rhack(key) {
         if (!game.context.move) game.multi = 0;
     } else if (ch === 'r') {
         // C ref: cmd.c — 'r' read a scroll or spellbook.
-        game.context.move = (await doread()) ? 1 : 0;
+        game.context.move = ((await doread()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'Q') {
         // C ref: cmd.c — 'Q' (#quiver) ready ammunition.  doquiver_core returns
         // ECMD_TIME (3) only when unwielding the primary/secondary weapon cost a
         // turn; ECMD_OK/ECMD_CANCEL take no time.
-        game.context.move = (await dowieldquiver()) === 3 ? 1 : 0;
+        game.context.move = ((await dowieldquiver()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'w') {
         // C ref: cmd.c keymap 'w' = dowield (wield.c).  Wields a weapon (or
         // nothing).  ECMD_TIME (3) when the wield consumes a turn; ECMD_OK/FAIL/
         // CANCEL take no time.
-        game.context.move = (await dowield()) === 3 ? 1 : 0;
+        game.context.move = ((await dowield()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'x') {
         // C ref: cmd.c keymap 'x' = doswapweapon (wield.c) — swap the primary
         // and secondary weapons.
-        game.context.move = (await doswapweapon()) === 3 ? 1 : 0;
+        game.context.move = ((await doswapweapon()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'X') {
         // C ref: cmd.c { 'X', "twoweapon", dotwoweapon } (wield.c).  Unbound
         // here, 'X' fell through to "Unknown command 'X'."; only the '#twoweapon'
@@ -1972,14 +1972,14 @@ export async function rhack(key) {
         // C ref: cmd.c — 't' (#throw) throw/shoot an item.  throw_obj returns
         // ECMD_TIME (3) when the throw takes a turn; getdir (the direction
         // prompt) is supplied here to keep invent.js free of a cmd import cycle.
-        game.context.move = (await dothrow(getdir)) === 3 ? 1 : 0;
+        game.context.move = ((await dothrow(getdir)) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'f') {
         // C ref: cmd.c keymap 'f' = dofire (dothrow.c).  Throws/shoots from the
         // quiver; with fireassist On a launcher in the swap slot is auto-wielded
         // (doswapweapon) before firing.  ECMD_TIME (3) when a missile is launched
         // and a turn elapses; the recorded session cancels at the direction
         // prompt so no time passes.
-        game.context.move = (await dofire(getdir)) === 3 ? 1 : 0;
+        game.context.move = ((await dofire(getdir)) & ECMD_TIME) ? 1 : 0;
     } else if (ch === '_') {
         // C ref: cmd.c — '_' (#travel) move toward a chosen map location.  The
         // recorded session cancels at the destination prompt (ESC), so no turn
@@ -1991,7 +1991,7 @@ export async function rhack(key) {
         // above, travel_walk()/travel_adjacent_step() took every elapsed turn
         // (the first forced one included) inline, so only a helpless hero's
         // leftover context.move may reach moveloop_core().
-        game.context.move = ((await dotravel_target()) === 3 && game.context.move) ? 1 : 0;
+        game.context.move = (((await dotravel_target()) & ECMD_TIME) && game.context.move) ? 1 : 0;
     } else if (ch === ';') {
         // C ref: cmd.c ';' "glance" -> pager.c do_look(1): quick farlook.
         // Cursor-positioning loop + look-at description; no game time passes.
@@ -2183,7 +2183,7 @@ export async function rhack(key) {
         // autopickup AND (via swim_move_danger) lets the hero intentionally
         // step into water/lava for this one move.
         game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
-        game.iflags && (game.iflags.menu_requested = false);
+        /* C set_move_cmd() leaves iflags.menu_requested set until the next rhack() */
         // domove() sets game.context.move itself: 1 when the hero actually
         // moves (time passes), 0 when the move is blocked (bump a wall — no
         // turn elapses).  C ref: hack.c domove() / rhack().  Do NOT override
@@ -2193,6 +2193,7 @@ export async function rhack(key) {
         // domove_attempting already 0, so no smudge/bubble nudge.
         if (game.context.forcefight) game.context.run = svc_context_run();
         await domove(DIR_DX[ch], DIR_DY[ch], !countRepeat);
+        game.iflags && (game.iflags.menu_requested = false);
         // C ref: cmd.c rhack() DOMOVE_WALK branch — forcefight is cleared right
         // after domove() so the 'F' prefix only affects this one step.
         game.context.forcefight = 0;
@@ -2659,7 +2660,7 @@ export async function b_trapped(item, hasBodypart) {
     const { losehp, Maybe_Half_Phys } = await import('./zap.js');
     await losehp(Maybe_Half_Phys(dmg), 'explosion');
     await exercise(A_STR, false); // -> rn2(2)
-    if (hasBodypart !== -1 && hasBodypart) exercise(A_CON, false); // NO_PART (false or -1) skips this rn2(2)
+    if (hasBodypart !== -1 && hasBodypart) await exercise(A_CON, false); // NO_PART (false or -1) skips this rn2(2)
     const { make_stunned_u } = await import('./mhitu.js');
     await make_stunned_u((u?.uprops?.Stun || 0) + dmg, true);
 }
@@ -2755,6 +2756,14 @@ export async function getdir(s) {
         key = (next === 0 || next === 27) ? 27 : (next | 0x80);
     }
     delete game._modal_screen;
+    // C ref: cmd.c getdir() `if (redraw_cmd(dirsym)) { docrt_flags(docrtRefresh);
+    // goto retry; }` — ^R / ^L at the direction prompt repaints and re-asks.
+    if (redraw_cmd(key)) {
+        game._pending_message = '';
+        game._toplin = 0;
+        await docrt();
+        return getdir(s);
+    }
     // C ref: tty_yn_function() clean_up: gt.toplines = prompt + key2txt(key).
     yn_prompt_history(`${prompt} `, key2txt(key));
     game._pending_message = '';
@@ -2812,6 +2821,17 @@ async function getdir_answer(key, s) {
     const d = movecmd_dir(Cmd, key, null);
     if (d >= 0) {
         const [dx, dy, dz] = DIR_XYZ[d];
+        // C ref: cmd.c getdir() `else if (is_mov && !dxdy_moveok()) {
+        // You_cant("orient yourself that direction."); return 0; }` — a grid
+        // bug (NODIAG) cannot name a diagonal.
+        if (!dz) {
+            game.u.dx = dx; game.u.dy = dy; game.u.dz = 0;
+            if (!dxdy_moveok()) {
+                await pline("You can't orient yourself that direction.");
+                game.context._getobj_cancelled = true;
+                return null;
+            }
+        }
         return getdir_confdir({ dx, dy, dz });
     }
     if (ch === '\x1b' || ch === ' ' || ch === '\r' || ch === '\n')
@@ -2955,7 +2975,11 @@ export async function doopen_indir(x, y) {
         // C ref: lock.c doopen_indir() -> get_adjacent_loc(): when getdir()
         // returns 0 (a quitchar, or an invalid-direction key after the cmdassist
         // help window), get_adjacent_loc prints "Never mind." and returns 0.
-        const dir = await getdir();
+        // C ref: lock.c:793-795 — a hero in a pit with a container underneath is
+        // offered "Open where? [.>]" in place of the default prompt.
+        const dirprompt = (u.utrap && u.utraptype === TT_PIT && container_at(u.ux, u.uy, false))
+            ? 'Open where? [.>]' : undefined;
+        const dir = await getdir(dirprompt);
         if (!dir) { await pline('Never mind.'); return 0; }
         cx = u.ux + dir.dx; cy = u.uy + dir.dy;
         /* get_adjacent_loc(NULL, NULL, ...) returns 0 silently for !isok */
@@ -3037,11 +3061,10 @@ export async function doopen_indir(x, y) {
         // default AUTOUNLOCK_APPLY_KEY (2).
         const autounlock = game.flags?.autounlock ?? 2;
         if (locked && autounlock) {
-            const tool = (autounlock & 2) ? autokey() : null; // AUTOUNLOCK_APPLY_KEY
+            const tool = (autounlock & 2) ? autokey(true) : null; // AUTOUNLOCK_APPLY_KEY
             if (tool) {
-                // pick_lock_door returns 2 when the lock-picking occupation
-                // elapsed a turn (so the caller advances monsters), 0 otherwise.
-                return await pick_lock_door(tool, cx, cy, door);
+                // C: `res = pick_lock(...) ? ECMD_TIME : ECMD_OK`
+                return (await pick_lock_door(tool, cx, cy, door)) ? ECMD_TIME : ECMD_OK;
             }
             // C ref: lock.c:884 AUTOUNLOCK_KICK — offer to kick the door open;
             // the kick is queued as a canned command, so no time passes here.
@@ -3108,7 +3131,7 @@ async function run_canned_kick() {
     cmdq_pop(CQ_CANNED);
     const res = await dokick();
     canned_kick_ran = true;
-    game.context.move = res === 1 ? 1 : 0;
+    game.context.move = (res & ECMD_TIME) ? 1 : 0;
     return true;
 }
 
@@ -3141,7 +3164,7 @@ export async function obstructed(x, y, quietly) {
 }
 
 // C ref: lock.c doclose() — the #close ('c') command: close an adjacent open
-// door.  Returns an ECMD_* code (1 CANCEL, 0 OK / no turn, 2 TIME).  The
+// door.  Returns an ECMD_* code.  The
 // nohands / pit guards are FALSE for the starter heroes.  getdir() reads the
 // direction (and shows the cmdassist window + cancels on an invalid key, which
 // is exactly what seed5002 exercises after the #search safety-block).
@@ -3150,30 +3173,30 @@ export async function doclose() {
     // C ref: lock.c:964 — refused BEFORE the pit test and BEFORE getdir().
     if (nohands_youmonst()) {
         await pline("You can't close anything -- you have no hands!");
-        return 0; // ECMD_OK
+        return ECMD_OK;
     }
     // C ref: lock.c doclose() — a hero stuck in a pit can't reach the door and
     // is refused BEFORE getdir(), so no direction key is consumed at all.
     if (u.utrap && u.utraptype === TT_PIT) {
         await pline("You can't reach over the edge of the pit.");
-        return 0; // ECMD_OK
+        return ECMD_OK;
     }
-    let res = 0; // ECMD_OK
+    let res = ECMD_OK;
     const dir = await getdir();
-    if (!dir) return 1; // ECMD_CANCEL — invalid/ESC direction, no turn
+    if (!dir) return ECMD_CANCEL; // invalid/ESC direction, no turn
 
     const x = u.ux + dir.dx, y = u.uy + dir.dy;
     // u_at(x,y) && !Passes_walls: "You are in the way!" (ECMD_TIME).  dx=dy=0
     // ('.'/'s') targets the hero's own square.
     if (x === u.ux && y === u.uy) {
         await pline('You are in the way!');
-        return 2; // ECMD_TIME
+        return ECMD_TIME;
     }
     if (!isok(x, y)) {
         await pline(`You ${Blind() ? 'feel' : 'see'} no door there.`);
         return res;
     }
-    if (await stumble_on_door_mimic(x, y)) return 2; // ECMD_TIME
+    if (await stumble_on_door_mimic(x, y)) return ECMD_TIME;
 
     // C ref: lock.c doclose() — "when choosing a direction is impaired, use a
     // turn regardless of whether a door is successfully targeted".  Without
@@ -3181,7 +3204,7 @@ export async function doclose() {
     // monster-move phase after it went missing.
     const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
     const confused = (u.uprops?.Confusion || 0) > 0;
-    if (confused || stunned) res = 2; // ECMD_TIME
+    if (confused || stunned) res = ECMD_TIME;
 
     const door = game.level?.at(x, y);
     const portcullis = door ? is_drawbridge_wall(x, y) >= 0 : false;
@@ -3194,7 +3217,7 @@ export async function doclose() {
         feel_location(x, y);
         if (remembered_glyph_sig(door) !== oldglyph
             || game.lastseentyp?.[x]?.[y] !== oldlastseentyp)
-            res = 2; // ECMD_TIME: learned something
+            res = ECMD_TIME; /* learned something */
     }
     if (portcullis || !door || !IS_DOOR(door.typ)) {
         // C ref: lock.c:1007-1017.
@@ -3240,7 +3263,7 @@ export async function doclose() {
             await pline('The door resists!');
         }
     }
-    return 2; // ECMD_TIME
+    return ECMD_TIME;
 }
 
 // C ref: include/onames.h — the lock-picking tools (mkobj.js OBJECTS rows).
@@ -3275,20 +3298,6 @@ function lock_action_str(picktyp, target) {
     if (target.door) return 'unlocking the door';
     if (target.box) return target.box.otyp === CHEST ? 'unlocking the chest' : 'unlocking the box';
     return 'picking the lock';
-}
-
-// C ref: lock.c autokey(opening) — choose an unlocking tool from inventory:
-// skeleton key, else lock pick, else credit card.  The starter rogue carries a
-// lock pick; quest-artifact handling is irrelevant for the starter inventory.
-function autokey() {
-    const inv = Array.isArray(game.invent) ? game.invent : [];
-    let key = null, pick = null, card = null;
-    for (const o of inv) {
-        if (o.otyp === SKELETON_KEY && !key) key = o;
-        else if (o.otyp === LOCK_PICK && !pick) pick = o;
-        else if (o.otyp === CREDIT_CARD && !card) card = o;
-    }
-    return key || pick || card || null;
 }
 
 // C ref: lock.c pick_lock():379-403 — resuming an interrupted previous attempt
@@ -3404,7 +3413,7 @@ export async function pick_lock(pick) {
     if (cx === u.ux && cy === u.uy) {
         // Pick the lock on a container under the hero.
         if (dir.dz < 0) {
-            await pline("There isn't any sort of lock up there.");
+            await pline(`There isn't any sort of lock up ${Levitation_hero() ? 'here' : 'there'}.`);
             return PICKLOCK_LEARNED_SOMETHING;
         }
         if (is_lava(u.ux, u.uy)) {
@@ -3597,16 +3606,15 @@ const FROMOUTSIDE_CMD = 0x04000000; // prop.h FROMOUTSIDE
 const TIMEOUT_CMD = 0x00ffffff;     // prop.h TIMEOUT
 function slippery_ice_fumbling() {
     const u = game.u;
-    const cold_res = ((u.HCold_resistance || 0) > 0)
-        || ((u.uprops?.ColdResistance || 0) > 0);
+    const cold_res = Cold_resistance_zap();
     let on_ice = !Levitation_fu()
         && (game.level?.at(u.ux, u.uy)?.typ === ICE);
     if (on_ice) {
         const uarmf = game.uarmf;
         const skater = u.usteed;
         const ptr = skater?.data || youmonst_data_pub();
-        const coldSkater = ((ptr?.mresists | skater?.mintrinsics
-                            | skater?.mextrinsics) & 0x02) !== 0;
+        const coldSkater = (skater ? ((ptr?.mresists | skater.mintrinsics
+                            | skater.mextrinsics) & 0x02) !== 0 : cold_res);
         const floater = ptr?.mlet === 'e' || ptr?.mlet === 'y';
         const clinger = (mflags1_of(ptr) & M1_CLING) !== 0;
         const whirly = ptr?.mlet === 'v' || ptr?.name === 'air elemental';
@@ -5362,7 +5370,7 @@ async function dopush(sx, sy, rx, ry, otmp, costly) {
             const easypush = hero_throws_rocks();
             if (givemesg)
                 await pline(`With ${easypush ? 'little' : 'great'} effort you move ${what}.`);
-            if (!easypush) exercise(A_STR, true);
+            if (!easypush) await exercise(A_STR, true);
         } else if (givemesg) {
             await pline(`${YMonnam(u.usteed)} moves ${what}.`);
         }
@@ -5799,7 +5807,7 @@ export async function pickup_after_move(x, y) {
     // Levitation/Flying/Wwalking): `(is_pool(u.ux,u.uy) && !Underwater) ||
     // is_lava(u.ux,u.uy)`.
     const hereLoc = game.level?.at?.(x, y);
-    if (ctx.nopick || !objAt || (isPoolTerrain(x, y) && !game.Underwater)
+    if (ctx.nopick || !objAt || (isPoolTerrain(x, y) && !game.u?.uinwater)
         || (hereLoc && IS_LAVA(hereLoc.typ))) {
         if (mentionDecor) await decor();
         await read_engr_at(x, y);
@@ -6203,7 +6211,7 @@ async function hero_displaced_by_mon(mtmp, x, y) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // C ref: hack.h:1456 — extended command return flags.
-const ECMD_OK = 0x00, ECMD_TIME = 0x01, ECMD_CANCEL = 0x02, ECMD_FAIL = 0x04;
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL } from './const.js';
 
 // C ref: func_tab.h — extended command flags.
 const IFBURIED = 0x0001, AUTOCOMPLETE = 0x0002, WIZMODECMD = 0x0004,
@@ -7427,7 +7435,7 @@ export async function makemap_prepost(pre, wiztower) {
         }
         if (u.uball) {
             await ballrelease(false);
-            unplacebc();
+            await unplacebc();
         }
         /* reset lock picking unless it's for a carried container */
         maybe_reset_pick(null);
@@ -7465,8 +7473,8 @@ export async function makemap_prepost(pre, wiztower) {
             await u_collide_m(mtmp);
         initrack();
         if (u.uball) {
-            unplacebc();
-            placebc();
+            await unplacebc();
+            await placebc();
         }
         await docrt();
         await flush_screen(1);

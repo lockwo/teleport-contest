@@ -1328,6 +1328,32 @@ export function propagate(mndx, tally, ghostly) {
     return result;
 }
 const MM_NOCOUNTBIRTH = 0x00000004;
+
+// C ref: makemon.c unmakemon(mon, mmflags) — the caller rejects makemon()'s
+// result: undo the birth count and unique-extinction, discard the monster's
+// artifacts, and remove it from the level.  Always returns null.
+export async function unmakemon(mon, mmflags) {
+    const countbirth = ((mmflags | 0) & MM_NOCOUNTBIRTH) === 0;
+    const mndx = mon.data.pmidx;
+    const e = game.mvitals?.[mndx];
+
+    /* if count has reached the limit of 255, we don't know whether that just
+       happened when creating this monster or the threshold had already been
+       reached and further increments were suppressed; assume the latter */
+    if (e && countbirth && (e.born | 0) > 0 && (e.born | 0) < 255)
+        e.born = (e.born | 0) - 1;
+    if (e && ((mon.data.geno | 0) & G_UNIQ) !== 0)
+        e.mvflags &= ~G_EXTINCT;
+
+    mon.mhp = 0; /* let discard_minvent() know that mon isn't being kept */
+    /* uncreate any artifact that the monster was provided with */
+    const { discard_minvent } = await import('./mkobj.js');
+    discard_minvent(mon, true);
+
+    const { mongone } = await import('./mon.js');
+    await mongone(mon);
+    return null;
+}
 const MM_MINVIS = 0x00100000;   // hack.h:1168
 const MS_BRIBE = 33;            // monflag.h:48
 // C ref: mondata.h is_dprince(ptr) = is_demon(ptr) && (mflags2 & M2_PRINCE).
@@ -1353,7 +1379,7 @@ export function mongets_pub(mtmp, otyp) { return mongets(mtmp, otyp); }
 // == A_LAWFUL.  mon_aligntyp() (priest.c:280) falls back to the species
 // alignment, so a plain Angel (M2_MINION, lawful) counts even when it is not
 // an isminion follower.
-function is_lminion_mon(mtmp) {
+export function is_lminion_mon(mtmp) {
     if (!mtmp?.data || !(mflags2_of(mtmp.data) & M2_MINION)) return false;
     // minion.js newemin() keeps the record on mextra, makemon.js on the flat slot
     const algn = mtmp.ispriest ? (mtmp.mextra?.epri ?? mtmp.epri)?.shralign
@@ -3092,11 +3118,23 @@ function run_cham_switch(mon) {
     case PM_VAMPIRE:
         mndx = pickvampshape(mon);
         break;
-    case NON_PM:                        /* ordinary monster */
-        // C consults worn dragon scales/mail here.  A freshly created monster
-        // has no armor yet (m_initinv runs later, and newcham disables it), so
-        // this arm leaves mndx as NON_PM and draws nothing.
+    case NON_PM: {                      /* ordinary monster */
+        // C ref: mon.c:5199 which_armor(mon, W_ARM) — worn dragon scales/mail
+        // pick that dragon.  objects[] lists the ten mails then the ten scales
+        // in the same order as the ten dragon species from PM_GRAY_DRAGON.
+        let m_armr = null;
+        for (const o of (mon.minvent || [])) if ((o.owornmask | 0) & 0x1 /* W_ARM */) { m_armr = o; break; }
+        if (m_armr) {
+            const mail0 = objects.findIndex((o) => o?.name === 'gray dragon scale mail');
+            const scale0 = objects.findIndex((o) => o?.name === 'gray dragon scales');
+            const gray = name_to_pmidx('gray dragon');
+            if (m_armr.otyp >= scale0 && m_armr.otyp < scale0 + 10)
+                mndx = gray + m_armr.otyp - scale0;
+            else if (m_armr.otyp >= mail0 && m_armr.otyp < mail0 + 10)
+                mndx = gray + m_armr.otyp - mail0;
+        }
         break;
+    }
     }
     return mndx;
 }

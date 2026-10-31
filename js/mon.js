@@ -461,7 +461,7 @@ function Deaf() { return Deaf_hero(); }
 // PM_WEREJACKAL — a wererat makes no noise.
 const PM_WEREJACKAL = 15, PM_WEREWOLF = 21;
 
-async function were_change(mon) {
+export async function were_change(mon) {
     const ptr = mon.data;
     if (!is_were(ptr)) return;
 
@@ -3034,7 +3034,7 @@ export async function unstuck(mtmp) {
         u.uy = mtmp.my;
         if (u.uball && u.uchain && u.uchain.where !== OBJ_FLOOR) {
             const { placebc } = await import('./ball.js');
-            placebc();
+            await placebc();
         }
         game.vision_full_recalc = 1;
         const { docrt } = await import('./display.js');

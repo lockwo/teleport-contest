@@ -5,10 +5,10 @@ import { game, hooks } from './gstate.js';
 import { roomAt } from './roomat.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING } from './const.js';
+import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, DISMOUNT_THROWN, DISMOUNT_GENERIC, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { mon_has_amulet } from './monspecial.js';
-import { set_malign, monster_by_pmidx, propagate } from './makemon.js';
+import { set_malign, monster_by_pmidx, propagate, name_to_pmidx } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
 import { goodpos_onscary } from './teleport.js';
@@ -436,8 +436,6 @@ const MIGR_RANDOM = 0, MIGR_APPROX_XY = 1, MIGR_EXACT_XY = 2,
       MIGR_WITH_HERO = 9, MIGR_LEFTOVERS = 8192;
 // C ref: include/trap.h MAGIC_PORTAL.
 const MAGIC_PORTAL = 17;
-// C ref: include/monsters.h PM_LONG_WORM (makemon.js MONS_NAMES index).
-const PM_LONG_WORM = 168;
 // C ref: include/worm.h MAX_NUM_WORMS — mon_leave()'s segment-count clamp.
 const MAX_NUM_WORMS = 32;
 // C ref: include/mon.h G_EXTINCT, include/global.h MAXMONNO.
@@ -462,8 +460,6 @@ const NO_MINVENT = 0x00000001, MM_IGNOREWATER = 0x00000008,
       MM_EDOG = 0x00000800, MM_MALE = 0x00008000, MM_FEMALE = 0x00010000,
       MM_NOMSG = 0x00020000;
 const RLOC_NOMSG = 0x0004;
-// C ref: include/monst.h DISMOUNT_GENERIC / DISMOUNT_THROWN.
-const DISMOUNT_THROWN = 1, DISMOUNT_GENERIC = 7;
 // C ref: include/trap.h NO_TRAP_FLAGS.
 const NO_TRAP_FLAGS = 0x00;
 
@@ -511,7 +507,10 @@ async function relmon(mon, monst_list) {
 // fails to relocate a monster occupying the hero's fixed arrival square.
 export async function m_into_limbo(mtmp) {
     mtmp.mstate = (mtmp.mstate || 0) | MON_LIMBO;
-    await migrate_to_level(mtmp, ledger_no(game.u?.uz), MIGR_EXACT_XY, null);
+    /* C: migrate_mon(mtmp, ledger_no(&u.uz), MIGR_APPROX_XY) — unstuck() and
+       mdrop_special_objs() when mtmp is still on the map, then migrate_to_level() */
+    const { migrate_mon } = await import('./mon.js');
+    await migrate_mon(mtmp, game.u?.uz, MIGR_APPROX_XY);
 }
 
 // C ref: dungeon.c:1376 ledger_no(&dlev) — the flat level index.  js/bones.js:69,
@@ -928,7 +927,7 @@ export async function mon_arrive(mtmp, when) {
 
     num_segs = mtmp.wormno;
     /* baby long worms have no tail so don't use is_longworm() */
-    if (mtmp.data?.pmidx === PM_LONG_WORM) {
+    if (mtmp.data?.pmidx === name_to_pmidx('long worm')) {
         const { get_wormno, initworm } = await import('./worm.js');
         mtmp.wormno = get_wormno();
         if (mtmp.wormno)

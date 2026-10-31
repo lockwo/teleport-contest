@@ -6,7 +6,7 @@ import { level_difficulty } from '../dungeon.js';
 import { BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
 import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
-import { make_engr_at } from '../engrave.js';
+import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { dist2, distmin } from '../hacklib.js';
 import { MM_ASLEEP, MM_NOGRP, makemon } from '../makemon.js';
@@ -335,7 +335,7 @@ export async function makemaz_soko1() {
         const pt = PLACE_PTS[rn2(PLACE_PTS.length)];
         if (percent(V.prize_pct)) soko_create_object_coord(BAG_OF_HOLDING, pt.x, pt.y, 'not-cursed', 1);
         else soko_create_object_coord(208 /* AMULET_OF_REFLECTION */, pt.x, pt.y, 'not-cursed', 1);
-        make_engr_at(q_absx(pt.x), q_absy(pt.y), 'Elbereth', null, 0, BURN);
+        des_engraving_at(q_absx(pt.x), q_absy(pt.y), 'Elbereth', null, BURN);
         soko_create_object_coord(SCR_SCARE_MONSTER, pt.x, pt.y, 'cursed');
 
         // Finalize: wallification, then flip_level_rnd (2x rn2(2)).

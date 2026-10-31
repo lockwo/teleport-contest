@@ -7,7 +7,7 @@ import {
     COLNO, ENGRAVE, FOUNTAIN, HOLE, HWALL, LADDER, MAGIC_TRAP, NO_TRAP, ROCKTRAP, ROOM, ROWNO,
     RUST_TRAP, SDOOR, SQKY_BOARD, STAIRS, TRAPDOOR, VWALL, WEB, is_pit,
 } from '../const.js';
-import { make_engr_at } from '../engrave.js';
+import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { makemon, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
 import { GEM_CLASS, POTION_CLASS, TOOL_CLASS, uncurse } from '../mkobj.js';
@@ -62,7 +62,7 @@ export async function splev_trap_random() {
 // No RNG.
 function splev_engraving(mx, my, text, etype) {
     const c = vly_abs(mx, my);
-    make_engr_at(c.x, c.y, text, text, 0, etype);
+    des_engraving_at(c.x, c.y, text, text, etype);
 }
 
 // ============================================================

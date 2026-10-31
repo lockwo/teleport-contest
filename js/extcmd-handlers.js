@@ -29,7 +29,7 @@ import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT,
-         SHOPBASE, SHOP_DOOR_COST } from './const.js';
+         SHOPBASE, SHOP_DOOR_COST, ECMD_TIME } from './const.js';
 import { mon_mr } from './monmr_data.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands, nolimbs, hides_under_flag, mflags1_of, M1_SLITHY } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
@@ -50,12 +50,12 @@ import { nomul, getpos, get_valid_jump_position, set_jumping_is_magic, is_valid_
 import { dotwoweapon } from './wield.js';
 import { doride, stucksteed } from './steed.js';
 import { doenhance } from './enhance.js';
-import { dorub, dowipe, doapply, display_jump_positions, ECMD as APPLY_ECMD } from './apply.js';
+import { dorub, dowipe, doapply, display_jump_positions } from './apply.js';
 import { readobjnam } from './readobjnam.js';
 import { hold_another_object, encumber_msg, objects_at, otense, will_feel_cockatrice,
          feel_cockatrice, obj_extract_self } from './invent.js';
 import { cxname, The, thesimpleoname, simpleonames, an } from './objnam.js';
-import { artifact_origin, is_magic_key } from './artifact.js';
+import { artifact_origin, is_magic_key, autokey, doinvoke as art_doinvoke } from './artifact.js';
 import { ONAME_WISH, ONAME_KNOW_ARTI, IRONBARS, ICE, Is_airlevel,
          Is_waterlevel, PICK_ONE } from './const.js';
 import { begin_burn } from './timeout.js';
@@ -71,7 +71,7 @@ import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
          ck_bag, is_worn_by_type, menu_class_present,
          PICK_ANY, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES, WORN_TYPES, CHOOSE_ALL,
          BUCX_TYPES, JUSTPICKED } from './pickup.js';
-import { AUTOUNLOCK_FORCE, KILLED_BY_AN, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
+import { AUTOUNLOCK_FORCE, KILLED_BY_AN, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_CONTAINED, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
 import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
@@ -1029,7 +1029,7 @@ export async function jump(magic) {
         const { known_spell, spe_Fresh, spelleffects_ext } = await import('./spell.js');
         const SPE_JUMPING = 404;
         if (known_spell(SPE_JUMPING) >= spe_Fresh)
-            return (await spelleffects_ext(SPE_JUMPING)) & 1; /* ECMD_TIME */
+            return await spelleffects_ext(SPE_JUMPING);
     }
     // C ref: apply.c jump():1994-2057 — one else-if chain, in this order.
     const u0 = game.u;
@@ -1288,7 +1288,7 @@ async function dochat() {
         await pline("You can't speak.  You're choking!");
         return 0;
     }
-    if (u.uinwater || u.uprops?.Underwater) {
+    if (u.uinwater) {
         await pline('Your speech is unintelligible underwater.');
         return 0;
     }
@@ -2686,20 +2686,6 @@ export async function use_container_held(obj) {
     return await use_container(obj, false);
 }
 
-// C ref: lock.c autokey(opening=TRUE) — pick an unlocking tool from inventory:
-// skeleton key, else lock pick, else credit card.  (The quest-artifact
-// preference ordering is irrelevant for the starter inventory.)
-function autokey_unlock() {
-    const inv = Array.isArray(game.invent) ? game.invent : [];
-    let key = null, pick = null, card = null;
-    for (const o of inv) {
-        if (o.otyp === SKELETON_KEY && !key) key = o;
-        else if (o.otyp === LOCK_PICK && !pick) pick = o;
-        else if (o.otyp === CREDIT_CARD && !card) card = o;
-    }
-    return key || pick || card || null;
-}
-
 // C ref: lock.c pick_lock() — autounlock box branch (rx/container supplied, so
 // no direction prompt; `pick` is Null, i.e. lock.c's dummypick, when only
 // AUTOUNLOCK_UNTRAP is set and no key is carried).  AUTOUNLOCK_UNTRAP offers
@@ -2789,7 +2775,7 @@ async function do_loot_one(box, more_containers, ccount = 1) {
             // if both the untrap and apply_key bits are set, the untrap attempt is
             // made first but unlocktool is set up in case "check for trap?" is declined
             let unlocktool = null;
-            if (((autounlock & 2) && (unlocktool = autokey_unlock())) || (autounlock & 1)) {
+            if (((autounlock & 2) && (unlocktool = autokey(true))) || (autounlock & 1)) {
                 const r = await pick_lock_box(unlocktool, box);
                 return r ? 1 : 0;
             }
@@ -3340,9 +3326,11 @@ async function breakchestlock(box, destroyit) {
     const { xname } = await import('./invent.js');
     await update_topl(`In fact, you've totally destroyed ${the(xname(box))}.`);
     /* Put the contents on ground at the hero's feet. */
-    const contents = box.cobj || [];
-    box.cobj = [];
-    for (const otmp of contents) {
+    while (box.cobj && box.cobj.length) {
+        const otmp = box.cobj[0];
+        otmp.where = OBJ_CONTAINED;
+        otmp.ocontainer = box;
+        obj_extract_self(otmp);
         const isPotion = otmp.oclass === 8 /*POTION_CLASS*/;
         if (!rn2(3) || isPotion) {
             await chest_shatter_msg(otmp);
@@ -3355,6 +3343,11 @@ async function breakchestlock(box, destroyit) {
             // multi-quantity: useup one, the rest fall to the floor.
             otmp.quan -= 1;
             otmp.owt = weight(otmp);
+        }
+        if (box.otyp === ICE_BOX_OTYP && otmp.otyp === CORPSE) {
+            const { start_corpse_timeout } = await import('./mkobj.js');
+            otmp.age = game.moves - otmp.age; /* actual age */
+            start_corpse_timeout(otmp);
         }
         place_object(otmp, u.ux, u.uy);
         stackobj(otmp);
@@ -3380,7 +3373,7 @@ export async function forcelock() {
     // give-up check (usedtime >= 50 || no weapon).
     if (xl.usedtime++ >= 50 || !game.uwep) {
         await update_topl('You give up your attempt to force the lock.');
-        if (xl.usedtime >= 50) exercise(xl.picktyp ? A_DEX : A_STR, true);
+        if (xl.usedtime >= 50) await exercise(xl.picktyp ? A_DEX : A_STR, true);
         game._force_box = null; game.xlock = null; return 0;
     }
 
@@ -3410,7 +3403,7 @@ export async function forcelock() {
     if (rn2(100) >= xl.chance) return 1;
 
     await update_topl('You succeed in forcing the lock.');
-    exercise(xl.picktyp ? A_DEX : A_STR, true); // -> rn2(19)
+    await exercise(xl.picktyp ? A_DEX : A_STR, true); // -> rn2(19)
     // breakchestlock(box, !picktyp && !rn2(3)).  C ref: lock.c:252.
     const destroyit = !xl.picktyp && !rn2(3);
     await breakchestlock(xl.box, destroyit);
@@ -3620,7 +3613,7 @@ const HANDLERS = {
     // menu leaked into rhack() as fresh commands and desynced everything
     // after.
     '?': doextlist,
-    invoke: doinvoke,
+    invoke: art_doinvoke,
     untrap: dountrap,
     tip: dotip,
     adjust: doorganize_extcmd,
@@ -3637,8 +3630,8 @@ const HANDLERS = {
     force: doforce,
     wizwish: wiz_wish,
     enhance: doenhance,
-    rub: dorub_extcmd,
-    wipe: dowipe_extcmd,
+    rub: dorub,
+    wipe: dowipe,
     sit: dosit,
     dip: dodip,
     offer: dosacrifice,
@@ -3733,9 +3726,9 @@ const HANDLERS = {
     // Wrapped: the function's own ECMD_* convention needs translating to
     // doextcmd()'s res===1 rule, or it needs an argument (getdir/getlin) not
     // available to a bare zero-arg call.
-    apply: doapply_extcmd,
+    apply: doapply,
     close: doclose_extcmd,
-    eat: doeat_extcmd,
+    eat: doeat,
     exploremode: exploremode_extcmd,
     fight: fight_extcmd,
     fire: fire_extcmd,
@@ -3832,24 +3825,10 @@ async function wizlevelport_extcmd() {
 // wizmondiff_extcmd above); pager.js/wizcmds.js get the same treatment for
 // the same reason (their own indirect edges back to cmd.js).
 
-// C ref: apply.c doapply() — apply.js's own ECMD_TIME is 2, not 1.
-async function doapply_extcmd() {
-    const res = await doapply();
-    return res === APPLY_ECMD.ECMD_TIME ? 1 : 0;
-}
-
-// C ref: lock.c doclose() — cmd.js's own LOCAL ECMD_TIME for doclose is 2,
-// distinct from cmd.js's module-level ECMD_TIME=1 used elsewhere in that file.
+// C ref: lock.c doclose() — lives in cmd.js (static import would close a cycle).
 async function doclose_extcmd() {
     const { doclose } = await import('./cmd.js');
-    const res = await doclose();
-    return res === 2 ? 1 : 0;
-}
-
-// C ref: eat.c doeat() — eat.js's doeat() returns a JS boolean, not a numeric
-// ECMD code (true/false, not 1/0).
-async function doeat_extcmd() {
-    return (await doeat()) ? 1 : 0;
+    return await doclose();
 }
 
 // C ref: cmd.c:952 enter_explore_mode() — cmd.js's own ECMD_TIME=1; the
@@ -3871,13 +3850,13 @@ async function fight_extcmd() {
 // exactly. getdir lives in cmd.js, reached via dynamic import.
 async function fire_extcmd() {
     const { getdir } = await import('./cmd.js');
-    return (await dofire(getdir)) === 3 ? 1 : 0;
+    return ((await dofire(getdir)) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: invent.c ddoinv() — mirrors js/cmd.js's 'i' key translation exactly.
 async function inventory_extcmd() {
     const { getdir } = await import('./cmd.js');
-    return (await ddoinv(getdir)) === 3 ? 1 : 0;
+    return ((await ddoinv(getdir)) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: cmd.c dolookaround() — lives in cmd.js; own ECMD_TIME=1, but
@@ -3898,27 +3877,27 @@ async function open_extcmd() {
 // C ref: shk.c dopay() — mirrors js/cmd.js's 'p' key translation exactly
 // (invent.js's own ECMD_TIME is 3, not 1).
 async function pay_extcmd() {
-    return (await dopay()) === 3 ? 1 : 0;
+    return ((await dopay()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: do_wear.c doputon() — mirrors js/cmd.js's 'P' key translation
 // (invent.js's own ECMD_TIME is 3, not 1); doputon() can no longer return
 // ECMD_NOTHANDLED (that raw-key guard is dead code), so no such branch here.
 async function puton_extcmd() {
-    return (await doputon()) === 3 ? 1 : 0;
+    return ((await doputon()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: wield.c doquiver_core('ready') via dowieldquiver() — mirrors
 // js/cmd.js's 'Q' key translation (invent.js's own ECMD_TIME is 3).
 async function quiver_extcmd() {
-    return (await dowieldquiver()) === 3 ? 1 : 0;
+    return ((await dowieldquiver()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: do_wear.c doremring() — mirrors js/cmd.js's 'R' key translation
 // (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1, so a bare
 // reference would misreport a cancelled prompt as a turn spent).
 async function doremring_extcmd() {
-    return (await doremring()) === 3 ? 1 : 0;
+    return ((await doremring()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: cmd.c do_repeat() (^A) — lives in cmd.js; own ECMD_TIME=1.
@@ -3944,7 +3923,7 @@ async function do_reqmenu_extcmd() {
 // context.move may reach moveloop_core().
 async function dotravel_target_extcmd() {
     const res = await dotravel_target();
-    return (res === 3 && game.context?.move) ? 1 : 0;
+    return ((res & ECMD_TIME) && game.context?.move) ? 1 : 0;
 }
 
 // C ref: cmd.c:1606 do_run() (the #run prefix, 'G') — never ported before
@@ -3998,32 +3977,28 @@ async function dosearch_extcmd() {
 // used" sentinel 1 (same translation as ddoinv_extcmd below).
 async function doprinuse_extcmd() {
     const { getdir } = await import('./cmd.js');
-    return (await doprinuse(getdir)) === 3 ? 1 : 0;
+    return ((await doprinuse(getdir)) & ECMD_TIME) ? 1 : 0;
 }
-function itemaction_time(fn) { return async () => ((await fn()) === 3 ? 1 : 0); }
+function itemaction_time(fn) { return async () => (((await fn()) & ECMD_TIME) ? 1 : 0); }
 
-// C ref: pager.c doidtrap() — no raw-key call site exists for '^' at all.
-// doidtrap()'s own CANCEL value happens to be the literal 1 (doextcmd()'s
-// "time used" sentinel), but this command never spends a turn, so its result
-// must be discarded, not passed through.  Dynamic import: pager.js has its own
-// static import FROM cmd.js, which would otherwise close a new cycle back
-// through this file.
+// C ref: pager.c doidtrap().  pager.js has its own static import FROM cmd.js,
+// which would otherwise close a new cycle back through this file, so it is
+// reached dynamically.  Its result is ECMD_CANCEL or ECMD_OK: never a turn.
 async function doidtrap_extcmd() {
     const { doidtrap } = await import('./pager.js');
-    await doidtrap();
-    return 0;
+    return await doidtrap();
 }
 
 // C ref: wield.c doswapweapon() — mirrors js/cmd.js's 'x' key translation
 // (invent.js's own ECMD_TIME is 3).
 async function doswapweapon_extcmd() {
-    return (await doswapweapon()) === 3 ? 1 : 0;
+    return ((await doswapweapon()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: do_wear.c dotakeoff() — mirrors js/cmd.js's 'T' key translation
 // (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
 async function dotakeoff_extcmd() {
-    return (await dotakeoff()) === 3 ? 1 : 0;
+    return ((await dotakeoff()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: cmd.c:4343 dotherecmdmenu() — lives in cmd.js; own ECMD_TIME(1)
@@ -4053,7 +4028,7 @@ async function dotherecmdmenu_extcmd() {
 // exactly (invent.js's own ECMD_TIME is 3; its ECMD_CANCEL is literally 1).
 async function dothrow_extcmd() {
     const { getdir } = await import('./cmd.js');
-    return (await dothrow(getdir)) === 3 ? 1 : 0;
+    return ((await dothrow(getdir)) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: cmd.c dotoggleoption() — lives in cmd.js; reachable via '#toggle'
@@ -4073,13 +4048,13 @@ async function dotoggleoption_extcmd() {
 // moveloop to continue, so honour that and nothing else.
 async function dotravel_extcmd() {
     const res = await dotravel();
-    return (res === 3 && game.context?.move) ? 1 : 0;
+    return ((res & ECMD_TIME) && game.context?.move) ? 1 : 0;
 }
 
 // C ref: do_wear.c dowear() — mirrors js/cmd.js's 'W' key translation
 // exactly (invent.js's own ECMD_TIME is 3).
 async function dowear_extcmd() {
-    return (await dowear()) === 3 ? 1 : 0;
+    return ((await dowear()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: pager.c dowhatdoes() — always returns 0 (prompts for one key,
@@ -4093,7 +4068,7 @@ async function dowhatdoes_extcmd() {
 // C ref: wield.c dowield() — mirrors js/cmd.js's 'w' key translation exactly
 // (invent.js's own ECMD_TIME is 3).
 async function dowield_extcmd() {
-    return (await dowield()) === 3 ? 1 : 0;
+    return ((await dowield()) & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: topl.c nh_doprev_message() (^P) — js/cmd.js doprev_message() ports
@@ -4757,20 +4732,9 @@ async function doquit_extcmd() {
     return await doquit();
 }
 
-// C ref: apply.c dorub()/do.c dowipe() return ECMD_* (OK=0/CANCEL=1/TIME=2).
-// The extcmd dispatcher's turn convention is "return 1 -> a turn elapses", so
-// translate ECMD_TIME into 1 (turn) and everything else into 0 (no turn).
-async function dorub_extcmd() {
-    const res = await dorub();
-    return res === APPLY_ECMD.ECMD_TIME ? 1 : 0;
-}
 async function doorganize_extcmd() {
     await doorganize();
     return 0;
-}
-async function dowipe_extcmd() {
-    const res = await dowipe();
-    return res === APPLY_ECMD.ECMD_TIME ? 1 : 0;
 }
 
 // C ref: cmd.c doextcmd().  '#' entry: read an extended command name and
@@ -4876,14 +4840,6 @@ export async function doextcmd() {
 // the command echoed and then silently did nothing.  The real cost is not the
 // missing message: the answer keystroke falls through to rhack() as a fresh
 // command, which desynchronises every later step in the session.
-
-// C ref: artifact.c:1749 doinvoke() — getobj, retouch_object, arti_invoke all
-// live in js/artifact.js.  artifact.js numbers ECMD_TIME 4; this module's
-// convention is 1 for time, 0 for none.
-async function doinvoke() {
-    const art = await import('./artifact.js');
-    return (await art.doinvoke()) === 4 ? 1 : 0;
-}
 
 // C ref: pickup.c:3505 choose_tip_container_menu() — PICK_ONE over the floor
 // containers here, plus a preselected "tip something being carried" entry.

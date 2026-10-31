@@ -3,7 +3,7 @@
 // spell), which scans the area around the hero for hidden doors, corridors,
 // traps and monsters, reveals them, and reports what (if anything) was found.
 
-import { FOOT } from './const.js';
+import { FOOT, TOE } from './const.js';
 import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
@@ -14,7 +14,7 @@ import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
 import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
          STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET,
-         Is_rogue_level } from './const.js';
+         Is_rogue_level, Is_waterlevel, Is_airlevel } from './const.js';
 import { room_discovered, update_lastseentyp } from './dungeon.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
 import { NO_COLOR, CLR_WHITE, ATR_INVERSE } from './terminal.js';
@@ -24,7 +24,7 @@ import { rnd } from './rng.js';
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
          Hallucination_u, impossible, warning_of, display_nhwindow_message } from './display.js';
-import { Blind, cansee, unblock_point, recalc_block_point, clear_area_cells } from './vision.js';
+import { Blind, cansee, unblock_point, recalc_block_point, do_clear_area_async } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
          D_NODOOR, D_BROKEN, D_ISOPEN, D_CLOSED, D_LOCKED, D_TRAPPED,
@@ -138,8 +138,8 @@ export async function findit() {
     const found = { num_sdoors: 0, num_scorrs: 0, num_traps: 0, num_mons: 0,
                     num_invis: 0, num_kept_invis: 0, num_cleared_invis: 0,
                     ft_cc: { x: 0, y: 0 } };
-    for (const [x, y] of clear_area_cells(game.u.ux, game.u.uy, BOLT_LIM))
-        await findone(x, y, found);
+    await do_clear_area_async(game.u.ux, game.u.uy, BOLT_LIM,
+                              (x, y) => findone(x, y, found), detect_override_vision());
 
     /* count that controls "reveal" punctuation; 0..4 */
     const k = (found.num_sdoors ? 1 : 0) + (found.num_scorrs ? 1 : 0)
@@ -1463,11 +1463,11 @@ export async function trap_detect(sobj) {
         }
     }
     if (!found) {
-        await strange_feeling(sobj, 'Your toes stop itching.');
+        await strange_feeling(sobj, `Your ${makeplural(body_part(TOE))} stop itching.`);
         return 1;
     }
     /* traps exist, but only under me - no separate display required */
-    await update_topl('Your toes itch.');
+    await update_topl(`Your ${makeplural(body_part(TOE))} itch.`);
     return 0;
 }
 
@@ -1646,6 +1646,12 @@ export function foundone(zx, zy, glyph) {
     // tmp_at() alternative is compiled out.
 }
 
+// C ref: vision.c do_clear_area() `override_vision`: detection sees through
+// water and cloud on the Plane of Water / Air.
+function detect_override_vision() {
+    return !!(Is_waterlevel(game.u?.uz) || Is_airlevel(game.u?.uz));
+}
+
 // C ref: detect.c:1728 openone(zx, zy, num) — the do_clear_area() callback for
 // the wand/spell of opening (openit()).  `num` is C's `int *`, boxed here as
 // { n }.
@@ -1697,10 +1703,13 @@ export async function openone(zx, zy, num) {
             newsym(zx, zy);
             num.n++;
         }
-        // C: `mon = u_at(zx,zy) ? &gy.youmonst : m_at(zx,zy);` then
-        // openholdingtrap(mon,&dummy) || openfallingtrap(mon,TRUE,&dummy).
-        // Neither trap.c routine is ported in js/trap.js, so the count they
-        // would add is missing here.
+        const { openholdingtrap, openfallingtrap } = await import('./trap.js');
+        const u = game.u;
+        const mon = (u.ux === zx && u.uy === zy) ? u : m_at(zx, zy);
+        const dummy = { value: false };
+        if (await openholdingtrap(mon, dummy)
+            || await openfallingtrap(mon, true, dummy))
+            num.n++;
         return;
     }
     const D = await import('./dbridge.js');
@@ -1729,11 +1738,9 @@ export async function openit() {
         return -1;
     }
 
-    // do_clear_area(u.ux, u.uy, BOLT_LIM, openone, &num) — clear_area_cells()
-    // is vision.js's list form of the same scan, needed because openone() is
-    // async (b_trapped / open_drawbridge are).
-    for (const [x, y] of clear_area_cells(u.ux, u.uy, BOLT_LIM))
-        await openone(x, y, num);
+    // do_clear_area(u.ux, u.uy, BOLT_LIM, openone, &num)
+    await do_clear_area_async(u.ux, u.uy, BOLT_LIM,
+                              (x, y) => openone(x, y, num), detect_override_vision());
     return num.n;
 }
 

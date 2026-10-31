@@ -544,7 +544,7 @@ export async function erase_menu_or_text(window, cw, clear) {
             await flush_screen(1);
         }
     } else {
-        docorner(cw.offx, cw.maxrow + 1, 0);
+        await docorner(cw.offx, cw.maxrow + 1, 0);
     }
 }
 
@@ -1205,7 +1205,7 @@ export function tty_wait_synch() {
     }
 }
 
-export function docorner(xmin, ymax, ystart_between_menu_pages) {
+export async function docorner(xmin, ymax, ystart_between_menu_pages) {
     const ystart = ystart_between_menu_pages || 0;
     for (let y = ystart; y < ymax; y++) {
         tty_curs(BASE_WINDOW, xmin, y);
@@ -1217,7 +1217,7 @@ export function docorner(xmin, ymax, ystart_between_menu_pages) {
         && !ystart_between_menu_pages) {
         game.disp = game.disp || {};
         game.disp.botlx = true;
-        bot();
+        await bot();
     }
 }
 

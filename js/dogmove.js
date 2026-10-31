@@ -39,7 +39,7 @@ import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
 import {
     FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, nextoid,
-    GOLD_PIECE, COIN_CLASS, BOULDER, objects as OBJECTS, is_rider_pm, weight,
+    GOLD_PIECE, COIN_CLASS, GEM_CLASS, BOULDER, objects as OBJECTS, is_rider_pm, weight,
     place_object, eaten_stat, peek_at_iced_corpse_age,
 } from './mkobj.js';
 import { may_dig } from './dig.js';
@@ -61,7 +61,7 @@ import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj
 const DOGFOOD = 0, CADAVER = 1, ACCFOOD = 2, MANFOOD = 3,
       APPORT = 4, POISON = 5, UNDEF = 6, TABU = 7;
 
-const MMOVE_NOTHING = 0, MMOVE_MOVED = 2, MMOVE_DIED = 3, MMOVE_DONE = 5;
+import { MMOVE_NOTHING, MMOVE_MOVED, MMOVE_DIED, MMOVE_DONE } from './const.js';
 
 // C ref: dogmove.c:10-12 — the pet hunger thresholds (moves past hungrytime).
 // DOG_HUNGRY used to be spelled 500 here with a comment naming DOG_HUNGRY; 500
@@ -1344,7 +1344,7 @@ export function can_carry(mtmp, obj) {
     return iquan;
 }
 // C ref: monflag.h M1_NOTAKE; defsym.h S_DRAGON / S_NYMPH; monattk.h AT_ENGL.
-const M1_NOTAKE = 0x00000800, GEM_CLASS = 9;
+const M1_NOTAKE = 0x00000800;
 
 // C ref: dogmove.c find_targ(mtmp, dx, dy, maxdist) — walk a straight line from
 // the pet, returning the first visible monster (or the hero, sentinel
@@ -1974,9 +1974,9 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
             if (tunnels(mtmp.data))
                 await emit_pet_msg(`${noit_Monnam(mtmp)} digs in.`, { x: mtmp.mx, y: mtmp.my });
             else
-                await emit_pet_msg(`${noit_Monnam(mtmp)} eats ${what}.`, { x: mtmp.mx, y: mtmp.my });
+                await emit_pet_msg(`${noit_Monnam(mtmp)} ${devour ? 'devours' : 'eats'} ${what}.`, { x: mtmp.mx, y: mtmp.my });
         } else if (seeobj) {
-            await emit_pet_msg(`It eats ${what}.`);
+            await emit_pet_msg(`It ${devour ? 'devours' : 'eats'} ${what}.`);
         }
     }
 

@@ -26,7 +26,7 @@ import {
     P_BARE_HANDED_COMBAT, P_RIDING, P_TWO_WEAPON_COMBAT, TIP_ENHANCE,
 } from './const.js';
 
-const ECMD_OK = 0;
+import { ECMD_OK } from './const.js';
 
 // Role mnums (u_init.c monster order).
 const PM_ARCHEOLOGIST = 0, PM_BARBARIAN = 1, PM_CAVE_DWELLER = 2, PM_HEALER = 3,

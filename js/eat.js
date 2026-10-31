@@ -7,7 +7,7 @@ import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear } from './display.js';
+import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear, flush_screen, display_nhwindow_message } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib, adjalign } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
          INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_DELETED, COST_BITE,
@@ -17,7 +17,7 @@ import { SICK, STONED, VOMITING, SLIMED, HUNGER } from './const.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
 import { more_experienced, newexplevel, pluslvl, has_innate, has_innate_fromoutside } from './exper.js';
-import { Poison_resistance } from './youprop.js';
+import { Poison_resistance, Wwalking_hero, Flying_hero } from './youprop.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -587,59 +587,6 @@ async function do_reset_eat() {
     await newuhs(false);
 }
 
-// C ref: eat.c:3163 gethungry() — the per-turn hunger machinery.  RNG-exact to
-// the C ordering:
-//
-//   if ((!Unaware || !rn2(10))            <- eat.c:3174, only evaluated when
-//        && (carnivorous|herbivorous|...) <- the hero is Unaware (asleep or
-//        && !Slow_digestion)              <- unconscious); an awake hero
-//       u.uhunger--;                         short-circuits and draws nothing.
-//   accessorytime = rn2(20);              <- eat.c:3191, always consumed.
-//
-// The odd/even accessorytime cases (regeneration, encumbrance, Hunger,
-// Conflict, worn rings/amulet) each burn another nutrition point and then
-// newuhs(TRUE) recomputes the hunger state — all of which used to be missing
-// from this copy, which stopped after the two rolls.
-//
-// NOTE: the live per-turn hook is allmain.js's own gethungry(); this export is
-// the canonical implementation the orchestrator can route allmain through.
-// Do NOT edit allmain.js from here.
-export async function gethungry() {
-    const u = game.u;
-    if (!u) return;
-
-    // C ref: eat.c:3167 — u.uinvulnerable / debug_hunger skip the whole thing.
-    if (u.uinvulnerable || game.iflags?.debug_hunger) return;
-
-    const unaware = !!(u.usleep || u.uunconscious || u.ufrozen);
-    // C: (!Unaware || !rn2(10)) && (carnivorous || herbivorous || metallivorous)
-    //    && !Slow_digestion.  Every role's player monster eats.
-    if (!unaware || !rn2(10)) {
-        if (!Slow_digestion()) u.uhunger = (u.uhunger ?? 900) - 1;
-    }
-
-    // C ref: eat.c:3191 — accessorytime = rn2(20); replaces (moves % 20).
-    const accessorytime = rn2(20);
-    if (accessorytime % 2) {
-        if (HRegeneration()) u.uhunger--;
-        if (_invent && _invent.near_capacity() > 1 /* SLT_ENCUMBER */)
-            u.uhunger--;
-    } else {
-        if (u.uprops?.Hunger) u.uhunger--;
-        if (u.uprops?.Conflict) u.uhunger--;
-        // cases 0/4/8/12/16: ring of slow digestion from armor, left ring,
-        // amulet, right ring, and carrying the real Amulet.  The port has no
-        // worn-ring/amulet hunger sources, so only the Amulet case can fire.
-        if (accessorytime === 16 && u.uhave?.amulet) u.uhunger--;
-    }
-    await newuhs(true);
-}
-
-// The port has no ring/armor slow digestion and no intrinsic regeneration
-// source; both predicates exist so gethungry() reads like the C.
-function Slow_digestion() { return !!game.u?.uprops?.Slow_digestion; }
-function HRegeneration() { return !!game.u?.uprops?.Regeneration; }
-
 // Hunger states (hack.h).
 const SATIATED = 0, NOT_HUNGRY = 1, HUNGRY = 2, WEAK = 3, FAINTING = 4,
       FAINTED = 5, STARVED = 6;
@@ -849,8 +796,14 @@ export async function paranoid_ynq(be_paranoid, prompt, accept_q) {
             ? (accept_q ? '[yes|no|quit]' : '[yes|no]')
             : (accept_q ? '[yes|n|q] (n)' : '[yes|n] (n)');
         let promptprefix = '', trylimit = 6, ans;
+        let pbuf = String(prompt).slice(0, 255);  /* copynchars(pbuf, prompt, BUFSZ - 1) */
         do {
-            const raw = await hooked_tty_getlin(`${promptprefix}${prompt} ${responsetype}`, null);
+            /* make sure we won't overflow a QBUFSZ (128) sized buffer:
+               chop off some at the end */
+            const k = promptprefix.length + 1 + responsetype.length;
+            if (pbuf.length + k > 127)
+                pbuf = pbuf.slice(0, 127 - k - 4) + '...?';
+            const raw = await hooked_tty_getlin(`${promptprefix}${pbuf} ${responsetype}`, null);
             ans = mungspaces(raw == null ? '\x1b' : raw);
             if (ans.toLowerCase() === 'yes') { c = 'y'; break; }
             if (ans.toLowerCase() === 'quit' || ans[0] === '\x1b') { c = 'q'; break; }
@@ -890,7 +843,7 @@ async function lesshungry_eat(num) {
             await choke(iseating ? v.piece : (game._tin_occupation ? tin_context().tin : null));
             if (iseating) reset_eat();
         }
-    } else if (u.uhunger >= 1500 && !u.uprops?.Hunger
+    } else if (u.uhunger >= 1500 && !u_Hunger()
                && (!v.eating || !v.fullwarn)) {
         await update_topl("You're having a hard time getting all of it down.");
         game.nomovemsg = "You're finally finished.";
@@ -1176,9 +1129,9 @@ export async function floorfood(verb, corpsecheck) {
     const skipfloor = !!game.iflags?.menu_requested || !can_reach_floor(true)
         || (feeding && !!u.usteed)
         || (is_pool_or_lava(u.ux, u.uy)
-            && (!!u.uprops?.Wwalking
+            && (Wwalking_hero()
                 || (u.Upolyd && (mflags1_of(_invent.youmonst_data_pub()) & M1_CLING) !== 0)
-                || (!!u.uprops?.Flying && !u_Breathless())));
+                || (Flying_hero() && !u_Breathless())));
     if (!skipfloor) {
         if (feeding && metallivorous_hero()) {
             const { t_at } = await import('./trap.js');
@@ -1319,7 +1272,7 @@ export async function doeat() {
     // C ref: eat.c:2825 — Strangled.
     if ((u.uprops?.Strangled | 0) > 0 || u.uprops?.HStrangled) {
         await pline("If you can't breathe air, how can you consume solids?");
-        return false;                              // ECMD_OK
+        return ECMD_OK_;                              // ECMD_OK
     }
 
     // C: floorfood("eat", 0) first — a heavy corpse (or any edible) at the
@@ -1329,9 +1282,9 @@ export async function doeat() {
         // C: doeat() returns ECMD_OK (not ECMD_CANCEL) when floorfood()
         // yields nothing, so the 'e' stays in CQ_REPEAT for ^A.
         game.context._getobj_cancelled = false;
-        return false;                              // ECMD_OK
+        return ECMD_OK_;                              // ECMD_OK
     }
-    if (await check_capacity()) return false;      // ECMD_OK
+    if (await check_capacity()) return ECMD_OK_;      // ECMD_OK
 
     // C ref: eat.c:2834 — blessed food detection warns about bad food.
     if (u.uedibility) {
@@ -1339,7 +1292,7 @@ export async function doeat() {
         if (res) {
             await pline(`Your ${_invent.body_part(NOSE)} stops tingling and your sense of smell returns to normal.`);
             u.uedibility = 0;
-            if (res === 1) return false;           // ECMD_OK
+            if (res === 1) return ECMD_OK_;           // ECMD_OK
         }
     }
 
@@ -1350,16 +1303,16 @@ export async function doeat() {
         if (await still_chewing(u.ux, u.uy)
             && game.level?.at(u.ux, u.uy)?.typ === IRONBARS)
             await pline('You pause to swallow.');
-        return true;                               // ECMD_TIME
+        return ECMD_TIME_;                               // ECMD_TIME
     }
     if (!is_edible(otmp)) {
         await pline('You cannot eat that!');
-        return false;                              // ECMD_OK
+        return ECMD_OK_;                              // ECMD_OK
     }
     if (otmp.owornmask & (W_ARMOR | W_TOOL | W_AMUL | W_SADDLE)) {
         /* let them eat rings */
         await pline("You can't eat something you're wearing.");
-        return false;                              // ECMD_OK
+        return ECMD_OK_;                              // ECMD_OK
     } else {
         const art = await import('./artifact.js');
         let ok;
@@ -1368,7 +1321,7 @@ export async function doeat() {
             ok = await art.retouch_object(ref, false);
             otmp = ref.obj;
         } else ok = await art.touch_artifact(otmp, game.youmonst);
-        if (!ok) return true;                      // got blasted so use a turn
+        if (!ok) return ECMD_TIME_;                      // got blasted so use a turn
     }
     // C ref: eat.c:2876 — a rust monster spits out rustproofed metal.
     if (is_metallic_eat(otmp) && hero_is_pm('rust monster') && otmp.oerodeproof) {
@@ -1395,15 +1348,15 @@ export async function doeat() {
             }
             _invent.stackobj(otmp);
         }
-        return true;                               // ECMD_TIME
+        return ECMD_TIME_;                               // ECMD_TIME
     }
     /* KMH -- Slow digestion is... indigestible */
     if (otmp.otyp === 193 /* RIN_SLOW_DIGESTION */) {
         await pline('This ring is indigestible!');
         await rottenfood_eat(otmp);
-        return true;                               // ECMD_TIME
+        return ECMD_TIME_;                               // ECMD_TIME
     }
-    if (otmp.oclass !== FOOD_CLASS) return await doeat_nonfood(otmp) ? true : false;
+    if (otmp.oclass !== FOOD_CLASS) return await doeat_nonfood(otmp) ? ECMD_TIME_ : ECMD_OK_;
 
     // C ref: eat.c:2919 — resuming the meal already in progress.  Without this
     // branch a resumed meal ran the whole fresh-food path again: a second
@@ -1420,7 +1373,7 @@ export async function doeat() {
         await update_topl(`You ${!one_bite_left ? 'resume'
                                 : 'consume the last bite of'} your meal.`);
         if (otmp) await start_eating(otmp, false);
-        return true;                               // ECMD_TIME
+        return ECMD_TIME_;                               // ECMD_TIME
     }
 
     // C ref: eat.c:2956 doeat() — tins are a special case, opened over
@@ -1428,7 +1381,7 @@ export async function doeat() {
     // game._tin_occupation; see the C ref there for the occupation wiring).
     if (otmp.otyp === TIN) {
         await start_tin(otmp);
-        return true;                                // ECMD_TIME
+        return ECMD_TIME_;                                // ECMD_TIME
     }
 
     // C ref: eat.c doeat():2962 — `if (!u.uconduct.food++) livelog_printf(
@@ -1448,7 +1401,7 @@ export async function doeat() {
     game.context = game.context || {};
     if (!otmp) {
         await do_reset_eat();
-        return true;                               // ECMD_TIME
+        return ECMD_TIME_;                               // ECMD_TIME
     }
     const v = game.context.victual = {
         piece: otmp, o_id: otmp.o_id, usedtime: 0, reqtime: 0, nmod: 0,
@@ -1461,7 +1414,7 @@ export async function doeat() {
         if (tmp === 2) {
             // used up
             game.context.victual = { piece: null, o_id: 0 };
-            return true;                           // ECMD_TIME
+            return ECMD_TIME_;                           // ECMD_TIME
         } else if (tmp) {
             dont_start = true;
         }
@@ -1509,7 +1462,7 @@ export async function doeat() {
             // egg exploded) — the meal never starts.
             if (!await fprefx(otmp)) {
                 await do_reset_eat();
-                return true;                       // ECMD_TIME
+                return ECMD_TIME_;                       // ECMD_TIME
             }
         } else {
             await update_topl(`You ${v.reqtime === 1 ? 'eat' : 'begin eating'} `
@@ -1531,7 +1484,7 @@ export async function doeat() {
     if (!dont_start) await start_eating(otmp, already_partly_eaten);
     else otmp.owt = _mkobj.weight(otmp);
     _invent.update_inventory?.();
-    return true; // ECMD_TIME — a game turn elapses (per-turn block runs next)
+    return ECMD_TIME_; // ECMD_TIME — a game turn elapses (per-turn block runs next)
 }
 
 // C ref: eat.c fprefx(otmp) — "first bite" feedback (present tense,
@@ -1781,9 +1734,9 @@ async function fpostfx(otmp) {
                 && !(poly_when_stoned_eat()
                      && await (await import('./polyself.js')).polymon(name_to_pmidx('stone golem')))) {
                 if (u && !u.uprops?.Stoned) {
-                    u.uprops = u.uprops || {};
-                    u.uprops.Stoned = 5;
-                    game._delayed_killer = `${corpse_mon_name(otmp.corpsenm)} egg`;
+                    const { KILLED_BY_AN } = await import('./const.js');
+                    await (await import('./potion.js')).make_stoned(
+                        5, null, KILLED_BY_AN, `${corpse_mon_name(otmp.corpsenm)} egg`);
                 }
             }
         }
@@ -2002,7 +1955,16 @@ async function cprefx(pm) {
         }
     } else if (nm === 'Death' || nm === 'Pestilence' || nm === 'Famine') {
         await update_topl('Eating that is instantly fatal.');
-        game._rider_death = true;
+        const { done, DIED } = await import('./end.js');
+        game._killer_name = `unwisely ate the body of ${nm}`;
+        await done(DIED);
+        /* life-saving needed to reach here */
+        await exercise(A_WIS_EAT, false);
+        const v = game.context?.victual;
+        if (v?.piece && v.piece.otyp === CORPSE /* paranoia */
+            && await (await import('./do.js')).revive_corpse(v.piece))
+            game.context.victual = { piece: null, o_id: 0 };
+        return;
     } else if (nm === 'green slime') {
         const u = game.u;
         if (u && !u.uprops?.Slimed) {
@@ -2104,8 +2066,10 @@ async function cpostfx(pm) {
             if (nm === 'stalker') {
                 const { self_invis_message } = await import('./potion.js');
                 const { newsym } = await import('./display.js');
-                if (!(u.uprops.HInvis || u.HInvis
-                      || u.uprops.EInvis || _invent.worn_extrinsic(INVIS))) {
+                /* Invis == (HInvis || EInvis) && !BInvis */
+                if (!((u.uprops.HInvis || u.HInvis
+                       || u.uprops.EInvis || _invent.worn_extrinsic(INVIS))
+                      && !_invent.worn_blocked(INVIS))) {
                     u.uprops.HInvis = ((u.uprops.HInvis | 0) & ~P_TIMEOUT)
                         | rn1(100, 50);
                     if (!_vision.Blind() && !_invent.worn_blocked(INVIS))
@@ -2164,6 +2128,10 @@ async function cpostfx(pm) {
             u.mappearance = hallu ? ORANGE : GOLD_PIECE;
             const { newsym } = await import('./display.js');
             newsym(u.ux, u.uy);
+            await flush_screen(1);                  /* curs_on_u() */
+            /* C: display_nhwindow(WIN_MAP, TRUE) -- make gold symbol show up
+               now; with a pending top line this raises its --More-- */
+            await display_nhwindow_message();
         }
         break;
     }
@@ -2595,7 +2563,7 @@ const P_TIMEOUT = 0x00FFFFFF, P_FROMOUTSIDE = 0x04000000;
 
 // hack.h ECMD_* (cmd.c return codes).  doeat() above returns a boolean; the
 // new command entry points return these so a caller can distinguish CANCEL.
-const ECMD_OK_ = 0x00, ECMD_TIME_ = 0x01, ECMD_CANCEL_ = 0x02;
+import { ECMD_OK as ECMD_OK_, ECMD_TIME as ECMD_TIME_, ECMD_CANCEL as ECMD_CANCEL_ } from './const.js';
 
 // attrib.h A_CHA (js/const.js A_CHA == 5).
 const A_CHA_EAT = 5, A_INT_EAT = 1, A_WIS_EAT = 2;
@@ -3038,7 +3006,8 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
                 await pline(`${T.do_name.Monnam(mdef)} doesn't notice.`);
             return M_ATTK_MISS_;
         } else if (is_rider_pm(pd)) {
-            magr.mhp = 0;                            /* C: mondied(magr) */
+            const { mondied_mm } = await import('./mhitm.js');
+            await mondied_mm(magr);                  /* C: mondied(magr) */
             if (T.mon.DEADMONSTER(magr)) result = M_ATTK_AGR_DIED_;
             dmg_p.value += xtra_dmg;   /* Rider damage either way */
         } else {
@@ -4023,11 +3992,15 @@ export async function edibility_prompts(otmp) {
         || otmp.otyp === GLOB_OF_GREEN_SLIME) {
         /* These checks must match those in eatcorpse() */
         stoneorslime = (ismnum(mnum) && flesh_petrifies(mnum)
-                        && !_invent.Stone_resistance_hero());
+                        && !_invent.Stone_resistance_hero()
+                        && !poly_when_stoned_eat());
 
         if (corpse_mon_name(mnum) === 'green slime'
-            || otmp.otyp === GLOB_OF_GREEN_SLIME)
-            stoneorslime = !u?.uprops?.HUnchanging;
+            || otmp.otyp === GLOB_OF_GREEN_SLIME) {
+            const { slimeproof } = await import('./mondata.js');
+            stoneorslime = !(u?.uprops?.HUnchanging || u?.uprops?.EUnchanging)
+                           && !slimeproof(_invent.youmonst_data_pub());
+        }
 
         if (cadaver && !nonrotting_corpse(mnum)) {
             const age = _mkobj.peek_at_iced_corpse_age(otmp);

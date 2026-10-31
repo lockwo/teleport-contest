@@ -55,7 +55,7 @@ import { m_at, newsym, impossible, map_location } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
 import { set_corpsenm } from './mkobj.js';
-import { make_engr_at, random_engraving, wipe_engr_at, get_rnd_epitaph,
+import { make_engr_at, des_engraving_at, random_engraving, wipe_engr_at, get_rnd_epitaph,
          make_grave } from './engrave.js';
 import {
     RANDOM_CLASS, WEAPON_CLASS, ARMOR_CLASS, RING_CLASS, FOOD_CLASS,
@@ -2928,16 +2928,8 @@ function makecorridors() {
 function generate_stairs_room_good(croom, phase) {
     if (!croom || croom.hx < 0) return false;
     if (!croom.needjoining && phase >= 0) return false;
-    let hasDown = false, hasUp = false;
-    for (let st = game.stairs; st; st = st.next) {
-        const inRoom = st.sx >= croom.lx && st.sx <= croom.hx
-            && st.sy >= croom.ly && st.sy <= croom.hy;
-        if (!inRoom) continue;
-        if (st.up) hasUp = true; else hasDown = true;
-    }
-    if (phase >= 1 && (hasDown || hasUp)) return false;
-    if (croom.rtype !== OROOM && !(phase < 2 && croom.rtype === THEMEROOM)) return false;
-    return true;
+    if (!((!has_dnstairs(croom) && !has_upstairs(croom)) || phase < 1)) return false;
+    return croom.rtype === OROOM || (phase < 2 && croom.rtype === THEMEROOM);
 }
 
 function generate_stairs_find_room() {
@@ -5609,7 +5601,7 @@ async function makemaz_castle() {
         }
 
         // des.engraving({ coord=loc, type="burn", text="Elbereth" }) — no RNG.
-        make_engr_at(loc.x, loc.y, 'Elbereth', null, 0, BURN);
+        des_engraving_at(loc.x, loc.y, 'Elbereth', null, BURN);
         // des.object({ id="scroll of scare monster", coord=loc, buc="cursed" })
         {
             const s = mksobj_at(SCR_SCARE_MONSTER, loc.x, loc.y, true, true);
@@ -5938,36 +5930,12 @@ function castle_bad_location(x, y, nlx, nly, nhx, nhy) {
 async function castle_place_branch() {
     const branchp = is_branchlev();
     if (!branchp) return;
-    const croom = castle_find_branch_room();
+    const croom = generate_stairs_find_room();
     if (!croom) return;
     const m = { x: 0, y: 0 };
     if (!somexyspace(croom, m)) return;
     await place_branch(branchp, m.x, m.y);
 }
-
-// C ref: mklev.c generate_stairs_find_room() — three relaxation phases over the
-// room list; the first phase with any candidate draws one rn2(candidates).
-function castle_find_branch_room() {
-    const g = game;
-    const nroom = g.level?.nroom || 0;
-    if (!nroom) return null;
-    for (let phase = 2; phase > -1; phase--) {
-        const cand = [];
-        for (let i = 0; i < nroom; i++)
-            if (castle_stairs_room_good(g.level.rooms[i], phase)) cand.push(i);
-        if (cand.length) return g.level.rooms[cand[rn2(cand.length)]];
-    }
-    return g.level.rooms[rn2(nroom)];
-}
-
-// C ref: mklev.c generate_stairs_room_good().
-function castle_stairs_room_good(croom, phase) {
-    if (!croom) return false;
-    if (!(croom.needjoining || phase < 0)) return false;
-    if (!((!has_dnstairs(croom) && !has_upstairs(croom)) || phase < 1)) return false;
-    return croom.rtype === OROOM || (phase < 2 && croom.rtype === THEMEROOM);
-}
-
 
 // C ref: mklev.c makelevel() `In_quest(&u.uz)` branch — a quest-branch level
 // that isn't one of the three named levels (start/locate/goal) dispatches to

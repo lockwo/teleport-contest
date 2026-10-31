@@ -88,7 +88,7 @@ export function show_beam_cell(x, y, dx, dy, beamtype) {
 }
 import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
          restore_cham, unstuck } from './mon.js';
-import { MON_WEP, is_vampshifter, monflee } from './monmove.js';
+import { MON_WEP, is_vampshifter, monflee, Invis as Invis_hero_mm } from './monmove.js';
 import { killed, canspotmon, mon_nam, Monnam, x_monnam,
          mon_pmname, disguised_as_mon, disguised_as_non_mon } from './uhitm.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
@@ -129,9 +129,7 @@ export function obj_resists(obj, ochance, achance) {
     return chance < (obj?.oartifact ? achance : ochance);
 }
 
-const ECMD_CANCEL = 0;
-const ECMD_OK = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, FM_FMON } from './const.js';
 
 // C ref: objclass.h oc_dir values.
 const NODIR = 1;
@@ -741,14 +739,8 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
                items in case they're not weapons; for other slots it might
                return multiple bits (ring left|right); narrow that down to
                the bit(s) currently in use */
-            /* wearslot() answers in prop.h bits; invent.js stamps owornmask with
-               its own amulet/eyewear bits, so translate those two */
-            const ws = wornjs.wearslot(otmp);
-            const slotmask = (ws & ~(W_AMUL | W_TOOL))
-                | ((ws & W_AMUL) ? inv.W_AMUL : 0)
-                | ((ws & W_TOOL) ? inv.W_BLINDF : 0);
             const new_wornmask = ((old_wornmask & W_WEAPONS) !== 0)
-                ? old_wornmask : (slotmask & old_wornmask);
+                ? old_wornmask : (wornjs.wearslot(otmp) & old_wornmask);
             await inv.remove_worn_item(obj, true);
             /* if the new form can be worn in the same slot, make it so */
             if ((new_wornmask & W_WEP) !== 0) {
@@ -4333,6 +4325,8 @@ export async function catch_lit(obj) {
         && obj.cursed && !rn2(2))
         return false;
     if (obj.where === OBJ_INVENT || cansee(loc.x, loc.y)) {
+        if (obj.where === OBJ_FLOOR && cansee(loc.x, loc.y))
+            (await import('./hack.js')).set_msg_xy(loc.x, loc.y);
         const plural = (obj.quan || 1) > 1;
         const verb = Blind() ? (plural ? 'feel' : 'feels') : (plural ? 'catch' : 'catches');
         const name = yname(obj);
@@ -4735,13 +4729,13 @@ export async function zapyourself(obj, ordinary) {
         let didmerge;
         do {
             didmerge = false;
-            const inv = invent_list();
-            for (let i = 0; !didmerge && i < inv.length; i++) {
-                const otmp = inv[i];
+            const items = invent_list();
+            for (let i = 0; !didmerge && i < items.length; i++) {
+                const otmp = items[i];
                 if (otmp.owornmask)
                     continue;
-                for (let j = i + 1; j < inv.length; j++) {
-                    if (merged(otmp, inv[j])) {
+                for (let j = i + 1; j < items.length; j++) {
+                    if (merged(otmp, items[j])) {
                         didmerge = true;
                         break;
                     }
@@ -4860,8 +4854,8 @@ export function Antimagic() { return !!(game.u?.formprops?.Antimagic || game.u?.
                                         || game.u?.uprops?.HAntimagic
                                         || worn_extrinsic(ANTIMAGIC)); }
 function Half_spell_damage(){ return (game.u?.uprops?.HHalf_spell_damage|| 0) > 0; }
-function Unchanging()       { return (game.u?.uprops?.HUnchanging       || 0) > 0; }
-function Invis()            { return !!(game.u?.uprops?.HInvis); }
+export function Unchanging()       { return (game.u?.uprops?.HUnchanging       || 0) > 0 || !!worn_extrinsic(63 /* UNCHANGING */); }
+function Invis()            { return Invis_hero_mm(); }
 function Teleport_control() { return !!game.u?.formprops?.Teleport_control || (game.u?.uprops?.HTeleport_control || 0) > 0 || Teleport_control_fu(); }
 function Stunned()          { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
 // C ref: hack.h dist2(x0,y0,x1,y1).
@@ -5494,7 +5488,7 @@ export async function ustatusline() {
     if (Blind()) {
         info += ', blind';
         if (u.ucreamed) {
-            if ((u.ucreamed | 0) < (u.blinded | 0) || game.ublindf
+            if ((u.ucreamed | 0) < (u.blinded | 0) || (game.ublindf && game.ublindf.otyp !== 232 /* LENSES */)
                 || !!(mflags1_of(await youmonst_data_z()) & M1_NOEYES))
                 info += ', cover';
             info += 'ed by sticky goop';
@@ -5962,7 +5956,6 @@ export async function revive(corpse, by_hero) {
     if (has_omid(corpse)) {
         const m_id = OMID(corpse);
         const { find_mid } = await import('./light.js');
-        const FM_FMON = 0x2;   /* mon.h find_mid() flags */
         const ghost = find_mid(m_id, FM_FMON);
         if (ghost && ghost.data?.pmidx === (await PM_('ghost'))) {
             if (canseemon_z(ghost))

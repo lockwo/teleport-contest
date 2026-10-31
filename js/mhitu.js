@@ -106,8 +106,6 @@ const perceives = (ptr) => perceives_flag(ptr);
 // `MONSYM(idx, ...) sym = idx`), which is what permonst.mcls stores.
 const S_NYMPH = 14;   // defsym.h:310
 const AMULET_OF_GUARDING = 210;   // js/mkobj.js objects[] index
-// js/invent.js:192 W_AMUL — the hero-inventory remap, NOT prop.h's value.
-const W_AMUL_HERO = 0x00080000;
 
 // C ref: monst.h m_seenres(mon, bit) — this monster has watched the hero
 // shrug off that effect and will stop using the matching attack.
@@ -185,7 +183,7 @@ export async function u_slip_free(mtmp, mattk) {
 
     // C: uarmc ? uarmc : uarm, else uarmu; AD_DRIN looks at uarmh instead.
     // Read the port's own slot caches (js/invent.js setworn) rather than
-    // rescanning owornmask — the hero chain uses invent.js's REMAPPED W_* bits.
+    // rescanning owornmask.
     let obj = game.uarmc || game.uarm;
     if (!obj) obj = game.uarmu;
     if (mattk.adtyp === AD_DRIN) obj = game.uarmh;
@@ -194,9 +192,13 @@ export async function u_slip_free(mtmp, mattk) {
         && (!obj.cursed || rn2(3))) {
         const { Monnam } = await import('./uhitm.js');
         const { xname } = await import('./invent.js');
+        const { cloak_simple_name } = await import('./do_wear.js');
+        /* avoid "slippery slippery cloak" for an undiscovered oilskin cloak */
+        const what = (obj.greased || OBJECTS[obj.otyp]?.oc_name_known)
+            ? xname(obj) : cloak_simple_name(obj);
         await emitU(`${Monnam(mtmp)} ${(mattk.adtyp === AD_WRAP)
             ? 'slips off of' : 'grabs you, but cannot hold onto'} your ${
-            obj.greased ? 'greased' : 'slippery'} ${xname(obj)}!`);
+            obj.greased ? 'greased' : 'slippery'} ${what}!`);
         if (obj.greased && !rn2(2)) {
             await emitU('The grease wears off.');
             obj.greased = 0;
@@ -223,17 +225,12 @@ export function magic_negation(mon) {
     let gotprot = is_you ? (EProtection() !== 0) : (ptr?.name === 'high cleric');
 
     const chain = is_you ? (game.invent || []) : (mon.minvent || []);
-    // js/invent.js REMAPS the amulet bit for HERO inventory (0x00080000, which
-    // is const.js's W_TOOL); the body-armour bits 0x01..0x40 agree between the
-    // two layouts.  Testing const.js's W_AMUL against a hero amulet answers
-    // FALSE, so pick the mask by which chain is being walked.
-    const AMUL_BIT = is_you ? W_AMUL_HERO : W_AMUL;
     for (const o of chain) {
         const wornmask = o.owornmask || 0;
         if (wornmask & W_ARMOR) {
             const armpro = OBJECTS[o.otyp]?.oc_can | 0;
             if (armpro > mc) mc = armpro;
-        } else if (wornmask & AMUL_BIT) {
+        } else if (wornmask & W_AMUL) {
             via_amul = (o.otyp === AMULET_OF_GUARDING);
         }
         if (is_you || gotprot) continue;
@@ -492,13 +489,13 @@ export async function hitmsg(mtmp, mattk) {
         default: verb = 'hits'; break;
         }
         const h = game._hitmsg || (game._hitmsg = {});
-        const again = (h.mid === mtmp.m_id && h.slot != null
+        const again = (h.mid === mtmp.m_id && h.mdat === mtmp.data && h.slot != null
                        && mattk._slot === h.slot + 1
                        && mattk.aatyp === h.aatyp) ? ' again' : '';
         await emitU(`${Monst_name} ${verb}${again}${punct}`, mtmp);
     }
     const h = game._hitmsg || (game._hitmsg = {});
-    h.mid = mtmp.m_id; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
+    h.mid = mtmp.m_id; h.mdat = mtmp.data; h.slot = mattk._slot; h.aatyp = mattk.aatyp;
 }
 
 
@@ -690,7 +687,7 @@ export async function gulpmu(mtmp, mattk) {
         // swallow and puts the wrong square under later newsym()s.
         // C ref mhitu.c:1308 — `if (Punished) unplacebc();` ball&chain go away
         // (off the floor/fobj) for the whole swallow; unstuck() puts them back.
-        if (u.uball) (await import('./ball.js')).unplacebc();
+        if (u.uball) await (await import('./ball.js')).unplacebc();
         const omx = mtmp.mx, omy = mtmp.my;
         mtmp.mtrapped = 0;               /* no longer on the old trap */
         mtmp.mx = u.ux; mtmp.my = u.uy;
@@ -749,7 +746,7 @@ export async function gulpmu(mtmp, mattk) {
                 // original monster square, not the hero's square.
                 mtmp.mx = omx; mtmp.my = omy;
                 await minstapetrify(mtmp, true);
-                if (u.uball) (await import('./ball.js')).placebc();
+                if (u.uball) await (await import('./ball.js')).placebc();
                 u.ustuck = null;
                 u.uswallow = 0;
                 return DEADMONSTER(mtmp) ? M_ATTK_AGR_DIED : M_ATTK_MISS;
@@ -981,8 +978,10 @@ export async function explmu(mtmp, mattk, ufound) {
     const { Monnam, canspotmon } = await import('./uhitm.js');
 
     if (!ufound) {
+        const { is_waterwall } = await import('./dbridge.js');
         await emitU(`${canseemon_shared(mtmp) ? Monnam(mtmp) : 'It'
-            } explodes at a spot in thin air!`);
+            } explodes at a spot in ${is_waterwall(mtmp.mux, mtmp.muy)
+            ? 'empty water' : 'thin air'}!`);
     } else {
         await hitmsg(mtmp, mattk);
     }
@@ -1017,7 +1016,12 @@ export async function explmu(mtmp, mattk, ufound) {
         }
         break;
     case AD_HALU:
-        not_affected = not_affected || Blind();
+        {
+            const hptr = youmonst_data();
+            not_affected = not_affected || Blind()
+                || (hptr?.name === 'black light' || hptr?.name === 'violet fungus'
+                    || dmgtype_ptr(hptr, AD_STUN));
+        }
         if (ufound && !not_affected) {
             if (!Hallucination())
                 await emitU('You are caught in a blast of kaleidoscopic light!');
@@ -1912,12 +1916,14 @@ export async function cloneu() {
         NO_MINVENT | MM_EDOG | MM_NOMSG);
     if (!mon) return null;
     mon.mcloned = 1;
-    mon.mgivenname = game.plname;
+    mon.mgivenname = game.plname;          /* christen_monst(mon, plname) */
+    const { initedog } = await import('./dothrow.js');
+    initedog(mon, true);
     mon.m_lev = mdat.mlevel | 0;
     mon.mhpmax = u.mhmax | 0;
     mon.mhp = Math.trunc((u.mh | 0) / 2);
     u.mh -= mon.mhp;
-    game.disp_botl = true;
+    game.botl = true;                      /* disp.botl = TRUE */
     return mon;
 }
 

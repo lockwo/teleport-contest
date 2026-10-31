@@ -22,6 +22,7 @@
 // dog.c mon_arrive are not otherwise available in the JS engine).
 
 import { makeplural } from './plural.js';
+import { Fumbling_hero, Flying_hero, Levitation_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
 import { A_STR, Unaware, COST_DEGRD } from './const.js';
@@ -59,7 +60,7 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          NON_PM, G_GENOD, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES, UTOTYPE_NONE,
          UTOTYPE_DEFERRED, UTOTYPE_ATSTAIRS, UTOTYPE_FALLING, UTOTYPE_PORTAL,
          UTOTYPE_RMPORTAL, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX,
-         MIGR_EXACT_XY, I_SPECIAL, TIMEOUT, INTRINSIC, W_ARTI, LEVITATION, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, TT_BURIEDBALL } from './const.js';
+         MIGR_EXACT_XY, DISMOUNT_FELL, I_SPECIAL, TIMEOUT, INTRINSIC, W_ARTI, LEVITATION, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, TT_BURIEDBALL } from './const.js';
 import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_more, y_n, newsym,
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
@@ -659,10 +660,8 @@ export async function maybe_wail() {
 // C ref: youprop.h Fumbling / Flying — the two transit modifiers do.c:1776-1781
 // tests.  Fumbling comes from HFumbling/EFumbling (allmain.js reads the same
 // pair); Flying/Levitation are carried in u.uprops by polyself.js/potion.js.
-function Fumbling_do() { return !!(game.u?.HFumbling || game.u?.EFumbling); }
-function Flying_do() {
-    return !!(game.u?.HFlying || game.u?.EFlying || game.u?.uprops?.Flying);
-}
+function Fumbling_do() { return Fumbling_hero(); }
+function Flying_do() { return Flying_hero(); }
 function Levitation_do() {
     return !!(game.u?.uprops?.Levitation || worn_extrinsic(LEVITATION))
         && !(game.u?.uprops?.BLevitation || worn_blocked(LEVITATION));
@@ -927,7 +926,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // pickup(1) draws no "Things that are here:" menu (seed4500 step 772) and
     // the first move on the new level takes drag_ball()'s teleport arm instead
     // of "nothing moved".
-    if (Punished_do()) unplacebc();
+    if (Punished_do()) await unplacebc();
     // C ref: mon.c mon_leaving_level() (relmon() from keepdogs()) ends with
     // newsym(mx, my) at the follower's STALE coordinates, now that it is off
     // the map; a hallucinating hero draws map_object()'s random-object pick
@@ -1235,7 +1234,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             /* falling off steed has its own losehp() call */
             if (u.usteed) {
                 const { dismount_steed } = await import('./steed.js');
-                await dismount_steed(3 /* DISMOUNT_FELL, const.js */);
+                await dismount_steed(DISMOUNT_FELL);
             } else {
                 await losehp_do(Maybe_Half_Phys_do(rnd(3)),
                     at_ladder ? 'falling off a ladder' : 'tumbling down a flight of stairs', KILLED_BY);
@@ -1261,7 +1260,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // the ball and chain are the FIRST things on the arrival square's pile.
     // Position matters: at goto_level's tail instead (after losedogs) the pile
     // order is wrong and seed4500 loses 4 steps to gain 2.
-    if (Punished_do()) placebc();
+    if (Punished_do()) await placebc();
 
     // Bring the pet(s) along.  C ref: do.c goto_level() -> losedogs().  C's
     // real losedogs() interleaves 3 delivery steps around the mydogs/
@@ -2026,9 +2025,9 @@ export async function level_tele(readLevel, immediate = false) {
 
         if (game._killer_name) {
             ; /* arrival in heaven is pending */
-        } else if (u.uprops?.Levitation) {
+        } else if (Levitation_hero()) {
             escape_by_flying = 'float gently down to earth';
-        } else if (u.uprops?.Flying) {
+        } else if (Flying_hero()) {
             escape_by_flying = 'fly down to the ground';
         } else {
             await pline("Unfortunately, you don't know how to fly.");
@@ -2970,7 +2969,7 @@ export async function flooreffects(obj, x, y, verb) {
         const g1 = { obj }, g2 = { obj: null };
         while (g1.obj && (g2.obj = MO.obj_nexto_xy(g1.obj, x, y, true)) != null) {
             await MO.pudding_merge_message(g1.obj, g2.obj);
-            MO.obj_meld(g1, g2);
+            await MO.obj_meld(g1, g2);
         }
         res = !g1.obj;
     } else if (game.context?.mon_moving && IS_ALTAR(game.level?.at(x, y)?.typ)
@@ -3389,7 +3388,7 @@ export async function obj_no_longer_held(obj) {
     if (!obj) {
         return;
     } else if (Has_contents(obj)) {
-        for (let contents = obj.cobj; contents; contents = contents.nobj)
+        for (const contents of obj.cobj)
             await obj_no_longer_held(contents);
     }
     switch (obj.otyp) {

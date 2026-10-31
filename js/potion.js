@@ -693,7 +693,7 @@ export async function potionbreathe_hero(obj) {
         // transformation but won't cure lycanthropy.
         const ulycn = u.ulycn ?? -1;
         if (Upolyd() && u.data?.pmidx === name_to_pmidx('gremlin')) {
-            await split_mon(game.youmonst, null);
+            await split_mon(u, null);
         } else if (ulycn >= 0) {
             const { you_were, you_unwere } = await import('./polyself.js');
             if (obj.blessed && Upolyd() && u.data?.pmidx === ulycn)
@@ -762,9 +762,7 @@ export async function healup(nhp, nxtra, curesick, cureblind) {
     game.botl = true;
 }
 
-const ECMD_CANCEL = 0;
-const ECMD_OK = 0;
-const ECMD_TIME = 1;
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 
 // C ref: potion.c drink_ok — getobj callback: only potions are suggested.
 // drink_ok_extra is C's file static, bumped once for every dungeon-feature quaff
@@ -956,10 +954,13 @@ async function peffect_sickness(otmp) {
                 await poisontell(typ, false);
                 await adjattrib(typ, Poison_resistance() ? -1 : -rn1(4, 3), 1);
             }
+            const contaminant = `${Poison_resistance() ? 'mildly ' : ''}${
+                otmp.fromsink ? 'contaminated tap water' : 'contaminated potion'}`;
+            const kfmt = otmp.fromsink ? KILLED_BY : KILLED_BY_AN;
             if (!Poison_resistance())
-                await losehp(rnd(10) + 5 * (otmp.cursed ? 1 : 0), 'contaminated potion');
+                await losehp(rnd(10) + 5 * (otmp.cursed ? 1 : 0), contaminant, kfmt);
             else
-                await losehp(1 + rn2(2), 'mildly contaminated potion');
+                await losehp(1 + rn2(2), contaminant, kfmt);
             if (game.program_state?.gameover) return; /* losehp()->done() never returns */
             await exercise(A_CON, false);
         }

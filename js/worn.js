@@ -9,7 +9,7 @@
 // item choices.
 import { game } from './gstate.js';
 import { newsym, set_msg_mon, canseemon_shared as canseemon_wn } from './display.js';
-import { objects, is_flimsy } from './mkobj.js';
+import { objects, is_flimsy, RING_CLASS, FOOD_CLASS, GEM_CLASS, BALL_CLASS, CHAIN_CLASS } from './mkobj.js';
 import {
     mflags1_of, humanoid,
     M1_NOHANDS, M1_MINDLESS, M1_ANIMAL, M1_SLITHY,
@@ -18,6 +18,7 @@ import {
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU, W_AMUL, W_ART,
     W_ARMOR, W_ARTI, W_RINGL, W_RINGR, W_WEP, W_SWAPWEP, W_QUIVER, W_TOOL,
     W_SADDLE, W_BALL, W_CHAIN, I_SPECIAL, DISMOUNT_FELL,
+    POISON_RES, ACID_RES, STONE_RES, INVIS, FAST,
 } from './const.js';
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
@@ -255,7 +256,7 @@ function bimanual(o) {
 
 const MUMMY_WRAPPING = 138, SPEED_BOOTS = 166, HELM_OF_OPPOSITE_ALIGNMENT = 99,
     DUNCE_CAP = 94, AMULET_OF_LIFE_SAVING = 202, AMULET_OF_REFLECTION = 208;
-const MFAST = 2;
+const MFAST = 2, MSLOW = 1;
 
 // C ref: worn.c w_blocks(o, m) — only the mummy-wrapping/INVIS arm can apply to
 // a monster (CORNUTHAUM's CLAIRVOYANT and the artifact lenses' BLINDED are both
@@ -264,23 +265,16 @@ function blocks_invis(obj) { return obj?.otyp === MUMMY_WRAPPING; }
 
 // C ref: worn.c:572 altprop(o) — a worn alchemy smock confers BOTH poison and
 // acid resistance; oc_oprop supplies one, this returns the other.
-const POISON_RES_P = 6, ACID_RES_P = 7, STONE_RES_P = 8, INVIS_P = 40, FAST_P = 64;
 function altprop(o) {
     return (objects[o.otyp]?.name === 'alchemy smock')
-        ? (POISON_RES_P + ACID_RES_P - (objects[o.otyp].oc_oprop | 0)) : 0;
+        ? (POISON_RES + ACID_RES - (objects[o.otyp].oc_oprop | 0)) : 0;
 }
 // C ref: prop.h:25 res_to_mr(r) — FIRE_RES..STONE_RES map onto MR_FIRE..MR_STONE.
-function res_to_mr(r) { return (r >= 1 && r <= STONE_RES_P) ? (1 << (r - 1)) : 0; }
+function res_to_mr(r) { return (r >= 1 && r <= STONE_RES) ? (1 << (r - 1)) : 0; }
 
 // C ref: worn.c update_mon_extrinsics(mon, obj, on, silently) — armor being
-// worn or taken off.  mon.mextrinsics collects the MR_* bits worn gear grants;
-// mondata.js resists_* read it.  Properties with no monster effect (stealth,
-// telepathy, protection, displacement, ...) fall in the C `default:`-less arms
-// below; ANTIMAGIC/REFLECTING are tested from the worn item directly.
-const MONSTER_NO_EFFECT_PROPS = new Set([
-    12 /*ANTIMAGIC*/, 65 /*REFLECTING*/, 59 /*PROTECTION*/, 35 /*CLAIRVOYANT*/,
-    42 /*STEALTH*/, 30 /*TELEPAT*/, 48 /*LEVITATION*/, 49 /*FLYING*/,
-    50 /*WWALKING*/, 41 /*DISPLACED*/, 36 /*FUMBLING*/, 58 /*JUMPING*/]);
+// worn or taken off.  mon.mextrinsics collects the MR_* bits worn gear grants
+// (props 1..8 correspond to the MR_xxx mask values); mondata.js resists_* read it.
 export function update_mon_extrinsics(mon, obj, on, silently) {
     const unseen = !canseemon_wn(mon);
     let which = objects[obj.otyp]?.oc_oprop | 0;
@@ -288,18 +282,18 @@ export function update_mon_extrinsics(mon, obj, on, silently) {
     if (which || altwhich) {
         for (;;) {
             if (on) {
-                if (which === INVIS_P) {
+                if (which === INVIS) {
                     mon.minvis = mon.invis_blkd ? 0 : 1;
-                } else if (which === FAST_P) {
+                } else if (which === FAST) {
                     mon_fast_recalc(mon);
-                } else if (!MONSTER_NO_EFFECT_PROPS.has(which)) {
+                } else if (which >= 1 && which <= STONE_RES) {
                     mon.mextrinsics = (mon.mextrinsics | 0) | res_to_mr(which);
                 }
-            } else if (which === INVIS_P) {
+            } else if (which === INVIS) {
                 mon.minvis = mon.perminvis ? 1 : 0;
-            } else if (which === FAST_P) {
+            } else if (which === FAST) {
                 mon_fast_recalc(mon);
-            } else if (which >= 1 && which <= STONE_RES_P) {
+            } else if (which >= 1 && which <= STONE_RES) {
                 /* keep the bit if some other worn item still confers it */
                 const other = (mon.minvent || []).some((o) =>
                     o !== obj && (o.owornmask | 0)
@@ -636,10 +630,6 @@ export function armcat_to_wornmask(cat) {
 // C ref: mkobj.js OBJECT_DATA indices for the tools/food wearslot() names.
 const BLINDFOLD = 233, TOWEL = 234, SADDLE_OTYP = 235, LENSES = 232,
     TIN_OPENER = 239, MEAT_RING = 270;
-// C ref: objclass.h oclass values (RING_CLASS/FOOD_CLASS/GEM_CLASS/BALL_CLASS/
-// CHAIN_CLASS are not among this file's existing four).
-const RING_CLASS = 4, FOOD_CLASS = 7, GEM_CLASS = 13, BALL_CLASS = 14,
-    CHAIN_CLASS = 15;
 
 // ─── worn.c:282 wearslot(obj) ──────────────────────────────────────────────
 // A bitmask of the equipment slot(s) a given item might be worn in.
@@ -829,7 +819,21 @@ export async function extract_from_minvent(mon, obj, do_extrinsics, silently) {
     obj.owornmask = 0;
     if (unwornmask) {
         if (!DEADMONSTER(mon) && do_extrinsics) {
+            const oldspeed = mon.mspeed | 0;
             update_mon_extrinsics(mon, obj, false, silently);
+            /* C ref: worn.c mon_adjust_speed(mon, 0, obj) FAST arm — give_msg is
+               !in_mklev, and update_mon_extrinsics() sets in_mklev when silent */
+            if (!silently && obj.otyp === SPEED_BOOTS && (mon.mspeed | 0) !== oldspeed
+                && (await import('./mon.js')).mmove_of(mon.data)
+                && !(mon.mfrozen || mon.msleeping) && canseemon_wn(mon)) {
+                const howmuch = ((mon.mspeed | 0) + oldspeed === MFAST + MSLOW) ? 'much ' : '';
+                const { pline } = await import('./display.js');
+                set_msg_mon(mon);
+                await pline((mon.mspeed | 0) === MFAST
+                    ? `${Monnam_u(mon)} is suddenly moving ${howmuch}faster.`
+                    : `${Monnam_u(mon)} seems to be moving ${howmuch}slower.`);
+                (await import('./zap.js')).learnwand(obj);
+            }
             /* C ref: worn.c update_mon_extrinsics() tail — `if (!on && mon ==
                u.usteed && obj->otyp == SADDLE) dismount_steed(DISMOUNT_FELL)`.
                The JS function is sync (m_dowear creation callers), so the only

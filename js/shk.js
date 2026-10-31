@@ -1077,25 +1077,26 @@ export async function insufficient_funds(shkp, item, cost) {
     return false;
 }
 
-// C ref: shk.c reject_purchase(shkp, obj, intact_quan):2418 — the shk refuses
-// to sell the intact half of a partly used stack.  C names the used-up half
-// with simpleonames(); this port has no simpleonames(), so xname() stands in
-// (it differs only for an artifact/named/charged item, which a partly used
-// stack can't be).
-async function reject_purchase(shkp, obj, intact_quan) {
-    const { xname } = await import('./invent.js');
-    const save_quan = obj.quan;
-    obj.quan = intact_quan - save_quan;
-    const which = save_quan > 1 ? 'these' : 'this one';
-    const other = xname(obj);
-    obj.quan = save_quan;
+// C ref: shk.c reject_purchase(shkp, obj, billed_quan):2418 — the shk refuses
+// to sell the intact half of a partly used stack; the used-up half is named
+// with simpleonames() and, for a contained object, the container with
+// thesimpleoname().
+async function reject_purchase(shkp, obj, billed_quan) {
+    const { simpleonames, thesimpleoname } = await import('./objnam.js');
+    const intact_quan = obj.quan;
+    /* temporarily change obj to refer to the used up portion */
+    obj.quan = billed_quan - intact_quan;
     if (!Deaf() && !muteshk(shkp)) {
+        const which = (obj.where === OBJ_CONTAINED)
+            ? `the one${intact_quan === 1 ? '' : 's'} in ${thesimpleoname(obj.ocontainer || find_container_of(obj))}`
+            : ((intact_quan > 1) ? 'these' : 'this one');
         await verbalize(`${ANGRY(shkp) ? 'Pay' : 'Please pay'} for the other ${
-            other} before buying ${which}.`);
+            simpleonames(obj)} before buying ${which}.`);
     } else {
         await update_topl(`${Shknam(shkp)} ${ANGRY(shkp) ? 'angrily ' : ''}${
-            'points out'} your bill for the other ${other} first.`);
+            'points out'} your bill for the other ${simpleonames(obj)} first.`);
     }
+    obj.quan = intact_quan;
 }
 
 // C ref: shk.c sortbill_cmp(vptr1, vptr2):1497 — used-up entries first, then
@@ -1191,7 +1192,10 @@ export function update_bill(indx, ibillct, ibill, eshkp, bp, paiditem) {
         return;
     }
     paiditem.unpaid = 0;
-    if (paiditem.where === OBJ_ONBILL) paiditem.where = OBJ_FREE;
+    if (paiditem.where === OBJ_ONBILL) {
+        obj_extract_self(paiditem); /* off the billobjs chain */
+        dealloc_obj(paiditem);
+    }
     const slot = eshkp.bill.indexOf(bp);
     const newebillct = (eshkp.billct || 0) - 1;
     // C: `*bp = eshkp->bill_p[eshkp->billct]` is a struct copy, not an alias.
@@ -3281,8 +3285,8 @@ export async function litter_scatter(litter, x, y, shkp) {
         if (!Deaf() && !muteshk(shkp))
             await verbalize('Get your junk out of my wall!');
         const { unplacebc, placebc } = await import('./ball.js');
-        unplacebc(); /* pick 'em up */
-        placebc();   /* put 'em down */
+        await unplacebc(); /* pick 'em up */
+        await placebc();   /* put 'em down */
     }
 
     for (;;) {

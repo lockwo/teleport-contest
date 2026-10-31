@@ -962,6 +962,28 @@ export function do_clear_area(scol, srow, range, func) {
     for (const [x, y] of clear_area_cells(scol, srow, range)) func(x, y);
 }
 
+// C ref: vision.c do_clear_area() for an async callback: couldsee() is read at
+// the moment each cell is visited, as in C, because func() may print a message
+// (pline() runs vision_recalc(0) first) that changes what the hero could see
+// for the cells still to come, e.g. being released from a pit.
+// `override_vision` is C's `detecting(func) && (Is_waterlevel || Is_airlevel)`.
+export async function do_clear_area_async(scol, srow, range, func, override_vision = false) {
+    if (scol !== game.u?.ux || srow !== game.u?.uy || range < 1) return;
+    if (game.vision_full_recalc) {
+        vision_recalc(0); /* recalc vision if dirty */
+        game.vision_full_recalc = 0;
+    }
+    const limits = circle_data.slice(circle_start[range]);
+    const maxY = Math.min(srow + range, ROWNO - 1);
+    for (let y = Math.max(srow - range, 0); y <= maxY; y++) {
+        const offset = limits[Math.abs(y - srow)];
+        const minX = Math.max(scol - offset, 1);
+        const maxX = Math.min(scol + offset, COLNO - 1);
+        for (let x = minX; x <= maxX; x++)
+            if (couldsee(x, y) || override_vision) await func(x, y);
+    }
+}
+
 // Same cell set as do_clear_area, returned as a list instead of driving a
 // synchronous callback — for callers (e.g. fountain.js gush()) whose per-cell
 // work is async and must be awaited in order, which a bare callback loop

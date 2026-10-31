@@ -52,7 +52,7 @@ function unported(what) {
 }
 
 const BUFSZ = 256;              /* global.h */
-const ECMD_OK = 0x00;           /* hack.h */
+import { ECMD_OK } from './const.js';
 const SYSCF_FILE = 'sysconf';   /* config.h:234 */
 const LL_NONE = 0x0000;         /* global.h:493 */
 

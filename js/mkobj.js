@@ -2026,8 +2026,25 @@ export function weight(otmp) {
 // two orders, so each placement is stamped and dogmove's fobj() walk sorts by it.
 let _fobj_seq = 0;
 export function stamp_fobj(otmp) { otmp.fobj_seq = ++_fobj_seq; }
+// C ref: do.c:893 obj_no_longer_held(), reached from place_object() before the
+// object joins the floor chain: an ordinary crysknife reverts to a worm tooth
+// (a fixed one only 10% of the time, the single RNG draw), contents first.
+// C bills costly_alteration() beforehand, but the object is OBJ_FREE here and
+// only an unpaid one is billed, which no crysknife can be (a shop's crysknives
+// reverted when the shop stocked them).  js/do.js obj_no_longer_held() is the
+// awaitable copy for the throw/unwear callers.
+const CRYSKNIFE_NLH = 43;
+function obj_no_longer_held_floor(obj) {
+    if (!obj) return;
+    if (Array.isArray(obj.cobj)) for (const contents of obj.cobj) obj_no_longer_held_floor(contents);
+    if (obj.otyp === CRYSKNIFE_NLH && (!obj.oerodeproof || !rn2(10))) {
+        obj.otyp = WORM_TOOTH;
+        obj.oerodeproof = 0;
+    }
+}
 export function place_object(otmp, x, y) {
     if (!otmp) return otmp;
+    obj_no_longer_held_floor(otmp);
     if (game.level) {
         if (!Array.isArray(game.level.objects)) game.level.objects = [];
         const objs = game.level.objects;
@@ -2087,7 +2104,8 @@ export function add_to_container(container, otmp) {
     if (!Array.isArray(container.cobj)) container.cobj = [];
     if (container.where !== OBJ_INVENT
         && container.where !== OBJ_MINVENT) {
-        otmp.ocarry = null;                    /* obj_no_longer_held */
+        obj_no_longer_held_floor(otmp);
+        otmp.ocarry = null;
     }
     for (const candidate of container.cobj)
         if (hooks.merged(candidate, otmp)) return candidate;
@@ -3398,13 +3416,20 @@ export function obj_nexto_xy(obj, x, y, recurs) {
     return null;
 }
 
-// C ref: invent.c mergable(otmp, obj) reduced to the glob case: globs of the
-// same type always merge (that is why they keep dknown set).
+// C ref: invent.c mergable(otmp, obj) as far as the glob case reaches: the
+// type/nomerge test, then blessed/cursed must agree and no exploding or
+// differently-lost object merges, and only then `if (obj->globby) return TRUE`.
+const LOST_NONE_MK = 0, LOST_EXPLODING_MK = 4;
 function mergable_glob(otmp, obj) {
-    if (!otmp || !obj || otmp.otyp !== obj.otyp) return false;
+    if (!otmp || !obj || obj === otmp || obj.otyp !== otmp.otyp
+        || obj.nomerge || otmp.nomerge) return false;
+    if (!!obj.cursed !== !!otmp.cursed || !!obj.blessed !== !!otmp.blessed) return false;
+    if ((obj.how_lost | 0) === LOST_EXPLODING_MK || (otmp.how_lost | 0) === LOST_EXPLODING_MK)
+        return false;
+    if ((otmp.how_lost | 0) !== LOST_NONE_MK && (obj.how_lost | 0) !== (otmp.how_lost | 0))
+        return false;
     if (obj.globby) return true;
     return otmp.oclass === obj.oclass && !otmp.oeaten === !obj.oeaten
-        && !!otmp.cursed === !!obj.cursed && !!otmp.blessed === !!obj.blessed
         && (otmp.spe | 0) === (obj.spe | 0);
 }
 
@@ -3442,16 +3467,36 @@ export function obj_absorb(o1ref, o2ref) {
 // C ref: mkobj.c obj_meld(obj1, obj2) — the heavier glob absorbs the lighter
 // one, except that a floor glob always wins against a free (being-dropped) one.
 // The equal-weight tie-break is rn2(2).
-export function obj_meld(o1ref, o2ref) {
+export async function obj_meld(o1ref, o2ref) {
     const otmp1 = o1ref?.obj, otmp2 = o2ref?.obj;
     if (!otmp1 || !otmp2 || otmp1 === otmp2) return null;
     const isfloor = (o) => o.where === OBJ_FLOOR;
     const isfree = (o) => o.where === OBJ_FREE;
+    let ox = 0, oy = 0; /* coordinates for the glob that goes away */
+    let result;
     if (!(isfloor(otmp2) && isfree(otmp1))
         && ((otmp1.owt | 0) > (otmp2.owt | 0)
-            || ((otmp1.owt | 0) === (otmp2.owt | 0) && rn2(2))))
-        return obj_absorb(o1ref, o2ref);
-    return obj_absorb(o2ref, o1ref);
+            || ((otmp1.owt | 0) === (otmp2.owt | 0) && rn2(2)))) {
+        if (isfloor(otmp2)) { ox = otmp2.ox; oy = otmp2.oy; }
+        result = obj_absorb(o1ref, o2ref);
+    } else {
+        if (isfloor(otmp1)) { ox = otmp1.ox; oy = otmp1.oy; }
+        result = obj_absorb(o2ref, o1ref);
+    }
+    /* callers really ought to take care of this; glob melding is a
+       bookkeeping issue rather than a display one */
+    if (ox) {
+        const { cansee } = await import('./vision.js');
+        if (cansee(ox, oy)) {
+            const { newsym } = await import('./display.js');
+            newsym(ox, oy);
+        }
+        /* a hides-under monster might be hiding under the glob that went away;
+           if there's nothing else there to hide under, force it out of hiding */
+        const { maybe_unhide_at } = await import('./monmove.js');
+        maybe_unhide_at(ox, oy);
+    }
+    return result;
 }
 
 // C ref: mkobj.c:3818 — the hero notices floor or inventory globs coalescing.

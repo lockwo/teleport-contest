@@ -37,8 +37,8 @@ import {
     TEMPLE, DELPHI, ROOMOFFSET, MAXNROFROOMS, VIBRATING_SQUARE,
     IS_DRAWBRIDGE, DB_UNDER, DB_ICE, DB_LAVA, DB_MOAT,
     DB_DIR, DB_WEST, DB_EAST, DB_NORTH, DB_SOUTH,
-    MSA_NONE, AM_MASK, AM_SHRINE, Amask2align, MCORPSENM, NON_PM,
-    M_AP_FURNITURE, SVALL, VISITED, MAXLINFO, BUFSZ,
+    MSA_NONE, AM_MASK, AM_SHRINE, Amask2align, NON_PM,
+    M_AP_FURNITURE, M_AP_TYPE, SVALL, VISITED, MAXLINFO, BUFSZ,
     COUNTING, WRITING, FREEING,
     MENU_ITEMFLAGS_NONE, MENU_ITEMFLAGS_SKIPMENUCOLORS, MENU_BEHAVE_STANDARD,
     PICK_NONE, PICK_ONE, ASCENDED, ESCAPED,
@@ -1122,7 +1122,8 @@ export function print_dungeon_lines() {
 function pd_portal_expected(M, uz) {
     if (!uz) return false;
     const planes = M.dungeons?.[uz.dnum]?.dname === 'The Elemental Planes';
-    if (planes) return true;
+    /* Is_earthlevel || Is_waterlevel || Is_firelevel || Is_airlevel: not Astral */
+    if (planes && !Is_astralevel(uz)) return true;
     const q = (M.sp_levchn || []).find((l) => /-strt$/.test(l.proto));
     if (q && q.dlevel.dnum === uz.dnum && q.dlevel.dlevel === uz.dlevel) return true;
     // at_dgn_entrance("The Quest") / Is_knox()
@@ -1183,6 +1184,8 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     };
 
     const entries = build_levtport_menu(M);
+    /* tty_display_nhwindow(NHW_MENU): a pending top line is paged first */
+    await (await import('./display.js')).display_nhwindow_message();
 
     // The menu title occupies the inverse first row; in the tty menu the title
     // is emitted by end_menu() as the menu's prompt heading.  process_menu_window
@@ -1477,6 +1480,7 @@ function br_string2(br) {
 // C ref: hacklib.c an() — every shop_string() result starts with a letter, so
 // the vowel test is the whole rule here (no "the"/"some" special cases).
 import { an as an_dg } from './hacklib.js';
+import { Levitation_hero, Flying_hero } from './youprop.js';
 
 function shop_string(rtype) {
     const idx = rtype - SHOPBASE;
@@ -1840,7 +1844,7 @@ export function surface(x, y) {
         return Is_waterlevel(uz) ? 'air bubble'
                                  : (levtyp === CLOUD) ? 'cloud' : 'air';
     else if (is_pool(x, y))
-        return (u.uprops?.Underwater && !Is_waterlevel(uz))
+        return (u.uinwater && !Is_waterlevel(uz))
             ? 'bottom' : hliquid('water');
     else if (is_ice(x, y))
         return 'ice';
@@ -1989,8 +1993,8 @@ function maxledgerno() {
 
 // C ref: youprop.h:103/240 Blind / Levitation / Flying, rm.h:538 Sokoban,
 // you.h Upolyd.  Six other files keep the same one-line private copies.
-function Levitation() { return !!game.u?.uprops?.Levitation; }
-function Flying() { return !!game.u?.uprops?.Flying; }
+function Levitation() { return Levitation_hero(); }
+function Flying() { return Flying_hero(); }
 function Upolyd() { return !!game.u?.Upolyd; }
 function Sokoban() { return !!game.level?.flags?.sokoban_rules; }
 
@@ -2055,20 +2059,27 @@ function canseemon(mtmp) {
 
 // C ref: mextra.h:234 has_mcorpsenm(mon), pray.c:2490 altarmask_at(x, y).
 // dig.js:683's private copy drops the M_AP_FURNITURE arm; this one keeps it.
-function has_mcorpsenm(mon) {
-    return !!mon?.mextra && MCORPSENM(mon) !== NON_PM;
+// This port stores a mimic's m_ap_type as 'furniture' (a string) and its
+// MCORPSENM as mon.mcorpsenm (makemon.js set_mimic_sym), so test through
+// M_AP_TYPE() and read either spelling of the field.
+function mimic_mcorpsenm(mon) {
+    const mc = mon?.mextra?.mcorpsenm ?? mon?.mcorpsenm;
+    return (mc == null || mc === NON_PM) ? NON_PM : mc;
 }
-function altarmask_at(x, y) {
+export function altarmask_at(x, y) {
     let res = 0;
 
     if (isok(x, y)) {
         const mon = m_at(x, y);
 
-        if (mon && mon.m_ap_type === M_AP_FURNITURE
-            && mon.mappearance === S_altar)
-            res = has_mcorpsenm(mon) ? MCORPSENM(mon) : 0;
-        else if (IS_ALTAR(game.level?.at(x, y)?.typ))
-            res = game.level.at(x, y).altarmask | 0;
+        if (mon && M_AP_TYPE(mon) === M_AP_FURNITURE
+            && mon.mappearance === S_altar) {
+            const mc = mimic_mcorpsenm(mon);
+            res = (mc !== NON_PM) ? mc : 0;
+        } else if (IS_ALTAR(game.level?.at(x, y)?.typ)) {
+            const loc = game.level.at(x, y);
+            res = (loc.altarmask ?? loc.flags ?? 0) | 0;
+        }
     }
     return res;
 }

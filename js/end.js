@@ -246,8 +246,11 @@ async function deps() {
 async function savelife(_how) {
     const u = game.u;
     if ((u.ulevel ?? 1) < 1) u.ulevel = 1;
-    // minuhpmax(10): ensure uhpmax is at least 10 (it already exceeds that here).
-    if ((u.uhpmax ?? 0) < 10) u.uhpmax = 10;
+    {
+        const { minuhpmax, setuhpmax } = await import('./exper.js');
+        const uhpmin = minuhpmax(10);
+        if ((u.uhpmax ?? 0) < uhpmin) setuhpmax(uhpmin, true);
+    }
     const con = (await import('./attrib.js')).acurr_eff(4); // ACURR(A_CON)
     const givehp = 50 + 10 * Math.trunc(con / 2);
     u.uhp = Math.min(u.uhpmax, givehp);
@@ -481,9 +484,14 @@ async function done(how) {
     // C ref: end.c:1023 done() — `if (how == TRICKED)`: a wizard-mode hero
     // survives (the killer name is cleared, paniclog() has no file here).
     if (how === TRICKED) {
-        game._killer_name = '';
+        const killer = svk_killer();
+        if (killer.name || game._killer_name) {
+            killer.name = '';       /* paniclog("trickery", killer.name) has no file here */
+            game._killer_name = '';
+        }
         if (is_wizard()) {
             await d.update_topl('You are a very tricky wizard, it seems.');
+            killer.format = KILLED_BY_AN; /* reset to 0 */
             return;
         }
     }
@@ -1814,7 +1822,7 @@ function putstr(win, _attr, str) {
 
 // C ref: allmain.c gh.hero_seq == (svm.moves << 3) + hero moves this turn;
 // mirrors the private js/apply.js:213.  gd.done_seq lives on the game state.
-function hero_seq() { return ((game.moves | 0) << 3); }
+function hero_seq() { return game.hero_seq ?? ((game.moves | 0) << 3); }
 
 // ── done1 / done_intr / done_hangup: the signal entry points ────────────────
 

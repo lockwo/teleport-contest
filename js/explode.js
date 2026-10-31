@@ -177,32 +177,16 @@ async function engulfer_explosion_msg(adtyp, olet) {
     }
 }
 
-// C ref: mon.c ugolemeffects(damtype, dam) — a poly'd hero who is a flesh or
-// iron golem heals instead of taking elec/fire.  No RNG.
-function ugolemeffects(damtype, dam) {
-    const u = game.u;
-    if (!u || !Upolyd()) return;
-    const nm = u.umonnum_name || u.mdat?.name || u.data?.name;
-    let heal = 0;
-    if (damtype === AD_ELEC && nm === 'flesh golem') heal = Math.floor((dam + 5) / 6);
-    else if (damtype === AD_FIRE && nm === 'iron golem') heal = dam;
-    if (heal) {
-        u.mh = Math.min((u.mh | 0) + heal, u.mhmax | 0);
-        game.disp = game.disp || {};
-        game.disp.botl = true;
-    }
-}
-
-// C ref: mon.c golemeffects(mon, damtype, dam).  No RNG.
+// C ref: mon.c golemeffects(mon, damtype, dam) — js/mhitm_ad.js owns the port
+// (flesh golem: elec heals, fire/cold slows; iron golem: elec slows, fire heals).
 async function golemeffects(mon, damtype, dam) {
-    const nm = mdata(mon)?.name;
-    let heal = 0;
-    if (nm === 'flesh golem') { if (damtype === AD_ELEC) heal = Math.floor((dam + 5) / 6); }
-    else if (nm === 'iron golem') { if (damtype === AD_FIRE) heal = dam; }
-    else return;
-    if (heal) {
-        mon.mhp = Math.min((mon.mhp | 0) + heal, mon.mhpmax | 0);
-    }
+    const { golemeffects: golemeffects_ad } = await import('./mhitm_ad.js');
+    const { Monnam } = await import('./uhitm.js');
+    await golemeffects_ad(mon, damtype, dam, {
+        permonst: (m) => mdata(m),
+        emit: (msg) => update_topl(msg),
+        Monnam,
+    });
 }
 
 // C ref: mondata.c monstseesu()/monstunseesu() — every monster that can see the
@@ -474,7 +458,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
         }
         await destroy_items(u, adtyp, dam);
 
-        ugolemeffects(adtyp, damu);
+        await (await import('./polyself.js')).ugolemeffects(adtyp, damu);
         if (uhurt === 2) {
             if (grabbing && dist2(grabxy.x, grabxy.y, x, y) <= 2) damu *= 2;
             if (Upolyd()) u.mh = (u.mh | 0) - damu;

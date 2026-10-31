@@ -55,7 +55,7 @@ import {
     W_NORTH, W_SOUTH, W_EAST, W_WEST, AM_NONE,
     ARMORSHOP, SCROLLSHOP, POTIONSHOP, WEAPONSHOP, FOODSHOP, RINGSHOP,
     WANDSHOP, TOOLSHOP, BOOKSHOP, FODDERSHOP, CANDLESHOP,
-    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED } from './const.js';
+    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED, ONAME_LEVEL_DEF } from './const.js';
 // readobjnam() is how C's obj.new(<name>) resolves an item name (via the same
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
 // so this is not a cycle.
@@ -5441,9 +5441,6 @@ export function create_object(o, croom) {
 
 // C ref: sp_lev.c:195 MAX_CONTAINMENT.
 const MAX_CONTAINMENT = 10;
-
-// C ref: obj.h ONAME_LEVEL_DEF -- oname() flag for a level-file-supplied name.
-const ONAME_LEVEL_DEF = 0x04;
 
 
 // Resolve an otyp from its objects.h name rather than hardcoding the index:

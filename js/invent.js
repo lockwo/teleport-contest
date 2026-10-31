@@ -79,12 +79,15 @@ import {
     // C ref: timeout.c attach_fig_transform_timeout() — carry_obj_effects()
     // starts the real rnd(9000)+200 FIG_TRANSFORM timer, not a flag.
     attach_fig_transform_timeout,
+    stop_object_timer,
     erosion_matters,
     container_weight,
     unknwn_contnr_contents,
     clear_object_timer,
     obj_absorb,
     dealloc_obj,
+    copy_oextra,
+    free_omid,
 } from './mkobj.js';
 import { delete_contents as shk_delete_contents } from './shk.js';
 import { maybe_reset_pick } from './lock.js';
@@ -93,8 +96,8 @@ import { book_disappears } from './spell.js';
 import { getpos, getpos_menu, getpos_render, travel_adjacent_step, ia_checkfile_name, checkfile, nomul } from './hack.js';
 import { observe_object as disco_observe_object, build_discoveries_rows, discoveries_title, discover_object } from './o_init.js';
 import { monster_by_pmidx, pmname_of_pmidx, name_to_pmidx, little_to_big, dead_species } from './makemon.js';
-import { MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING, A_CURRENT, A_ORIGINAL } from './const.js';
-import { FROMOUTSIDE as FROMOUTSIDE_PROP } from './const.js';
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL, MV_KNOWS_EGG, NON_PM, GFILTER_VIEW, GLOC_INTERESTING, A_CURRENT, A_ORIGINAL } from './const.js';
+import { FROMOUTSIDE as FROMOUTSIDE_PROP, FIG_TRANSFORM } from './const.js';
 import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates_silver,
          is_neuter_flag, humanoid as humanoid_flag, nolimbs as nolimbs_flag,
          mflags1_of, mflags2_of, likes_gems_flag,
@@ -148,11 +151,12 @@ import {
     MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL,
     TIMEOUT, isok, STRAT_WAITMASK, SELL_NORMAL, SELL_DELIBERATE,
     // prop.h property indices, for the setworn()/setnotworn() extrinsic
-    // bookkeeping below.  W_AMUL/W_TOOL are imported under CW_ names because
-    // this file's own W_AMUL/W_TOOL constants are REMAPPED bits (see the
-    // worn-mask block at line 240) and the extrinsic word must speak prop.h.
+    // bookkeeping below.
     INVIS, CLAIRVOYANT, BLINDED, LEVITATION, FLYING,
-    W_AMUL as CW_AMUL, W_TOOL as CW_TOOL, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
+    GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_NONINVENT, GETOBJ_EXCLUDE_INACCESS,
+    GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST,
+    SORTLOOT_INVLET, SORTLOOT_LOOT, SORTLOOT_PACK, SORTLOOT_INUSE, SORTLOOT_PETRIFY,
+    W_AMUL, W_TOOL, W_ACCESSORY, W_SADDLE, BUC_BLESSED, BUC_CURSED, BUC_UNCURSED, BUC_UNKNOWN, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED, OBJ_ONBILL } from './const.js';
 import { engr_at, wipe_engr_at, read_engr_at, u_wipe_engr } from './engrave.js';
 import { shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
@@ -180,8 +184,7 @@ import { pickup, pickup_prinv_prefix, allow_category, add_valid_menu_class,
          BY_NEXTHERE, AUTOSELECT_SINGLE, USE_INVLET, INVORDER_SORT,
          SIGNAL_NOMENU, SIGNAL_ESCAPE,
          INCLUDE_VENOM, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES,
-         WORN_TYPES, BILLED_TYPES, CHOOSE_ALL, BUC_BLESSED_F, BUC_CURSED_F,
-         BUC_UNCURSED_F, BUC_UNKNOWN_F, JUSTPICKED,
+         WORN_TYPES, BILLED_TYPES, CHOOSE_ALL, JUSTPICKED,
          safe_qbuf, yn_pending_more,
          def_char_to_objclass as pickup_def_char_to_objclass } from './pickup.js';
 // C ref: src/do_wear.c — the per-slot on/off side effects, wearability checks
@@ -193,7 +196,7 @@ import {
     Shirt_on, Shirt_off, Armor_on, Armor_off, Armor_gone, dragon_armor_handling,
     will_weld as will_weld_dw, is_gloves, is_boots, is_helmet, hard_helmet,
     fingers_or_gloves, gloves_simple_name, cloak_simple_name, suit_simple_name,
-    helm_simple_name, armor_simple_name, reset_remarm, cancel_don, donning, takeoff_ctx,
+    helm_simple_name, armor_simple_name, reset_remarm, cancel_don, cancel_doff, donning, takeoff_ctx,
     glibr, stuck_ring, unchanger, count_worn_armor, any_worn_armor_ok, set_wear,
     wielding_corpse, adj_abon, toggle_stealth, toggle_displacement, armcat_of,
 } from './do_wear.js';
@@ -206,7 +209,7 @@ import {
 import { body_part as poly_body_part, float_vs_flight } from './polyself.js';
 import { twoweapon_action_ok, setuwep as setuwep_c } from './wield.js';
 import * as DT from './dothrow.js';
-import { Blind_telepat } from './youprop.js';
+import { Blind_telepat, Levitation_hero } from './youprop.js';
 // monattk_data.js is a pure data/predicate leaf (no top-level side effects), so
 // this edge cannot reorder anything observable.
 import { attacktype_fordmg, AT_ENGL, AD_DGST } from './monattk_data.js';
@@ -251,28 +254,11 @@ export const invlet_basic = 52;
 // comparison (=== hands_obj) distinguishes it from a real inventory object.
 export const hands_obj = { otyp: 0, oclass: 0, _hands: true };
 
-export const SORTLOOT_INVLET = 0x01;
-export const SORTLOOT_LOOT = 0x02;
-export const SORTLOOT_PACK = 0x04;
-export const SORTLOOT_INUSE = 0x08;
-export const SORTLOOT_PETRIFY = 0x10;
+export { SORTLOOT_INVLET, SORTLOOT_LOOT, SORTLOOT_PACK, SORTLOOT_INUSE, SORTLOOT_PETRIFY };
 
-export const GETOBJ_EXCLUDE = -3;
-export const GETOBJ_EXCLUDE_NONINVENT = -2;
-export const GETOBJ_EXCLUDE_INACCESS = -1;
-export const GETOBJ_EXCLUDE_SELECTABLE = 0;
-export const GETOBJ_DOWNPLAY = 1;
-export const GETOBJ_SUGGEST = 2;
+export { GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_NONINVENT, GETOBJ_EXCLUDE_INACCESS,
+         GETOBJ_EXCLUDE_SELECTABLE, GETOBJ_DOWNPLAY, GETOBJ_SUGGEST };
 
-export const BUC_BLESSED = 1;
-export const BUC_UNCURSED = 2;
-export const BUC_CURSED = 3;
-export const BUC_UNKNOWN = 4;
-
-export const ECMD_OK = 0;
-export const ECMD_CANCEL = 1;
-export const ECMD_FAIL = 2;
-export const ECMD_TIME = 3;
 // Not a NetHack ECMD value: a JS-only sentinel meaning "this command handler
 // declined; treat the key as unhandled" so the dispatcher prints the same
 // "Unknown command '<k>'." it would have without the handler.  Used to keep the
@@ -298,25 +284,15 @@ const W_WEP = 0x00000100;
 const W_QUIVER = 0x00000200;
 const W_SWAPWEP = 0x00000400;
 const W_ARMOR = 0x0000007f;  /* W_ARM|W_ARMC|W_ARMH|W_ARMS|W_ARMG|W_ARMF|W_ARMU */
-// C ref: prop.h — accessory worn-mask bits.  These MUST NOT collide with the
-// WA_ARMOR_ALL (0x7f) armor-slot bits used by armor_slot_mask()/worn_slot_get();
-// the original low-bit values (0x10/0x20/0x40/0x100) overlapped WA_ARMS/G/F and
-// WORN_SHIRT, which was harmless only while no accessory was ever worn.  Now
-// that 'P'/'R' can wear rings/amulets/eyewear, use distinct high bits.
+// C ref: prop.h — the accessory/punishment worn-mask bits are const.js's own, so
+// owornmask means the same thing in every module.  C stamps blindfold, towel and
+// lenses with W_TOOL (u.ublindf).
 export const W_RINGL = 0x00020000;
 export const W_RINGR = 0x00040000;
-export const W_AMUL = 0x00080000;
-const W_TOOL = 0x00100000;
-// W_BLINDF was 0x00200000 == prop.h:126 W_BALL, harmless until doname() needed
-// to distinguish a worn blindfold from a chained iron ball. Moved to a free
-// high bit; W_BALL/W_CHAIN keep prop.h's real values since read.js stamps them
-// via const.js. 0x00080000 already holds W_AMUL above — reusing it made an
-// amulet answer the blindfold test (-7 on seed5006).
-export const W_BLINDF = 0x00800000;
+export const W_BLINDF = W_TOOL;
 const W_BALL = 0x00200000;   // C ref: prop.h:126 — punishment ball
 const BALL_CLASS_INV = 15;   // C ref: objclass.h BALL_CLASS
 const W_CHAIN = 0x00400000;  // C ref: prop.h:127 — punishment chain
-const W_ACCESSORY = W_RINGL | W_RINGR | W_AMUL | W_BLINDF;
 const W_WEAPONS = W_WEP | W_SWAPWEP | W_QUIVER;
 // C ref: prop.h:152-160 — the per-slot armor bits, which must be the same ones
 // armor_slot_mask() stamps (WA_ARM..WA_ARMU below), not a parallel high-bit set:
@@ -330,8 +306,6 @@ const WORN_BOOTS = 0x00000020;  /* W_ARMF */
 const WORN_SHIRT = 0x00000040;  /* W_ARMU */
 const WORN_AMUL = W_AMUL;
 const WORN_BLINDF = W_BLINDF;
-const W_SADDLE = 0x00008000;
-const W_ART = 0x00010000;
 
 // C ref: obj.h:481-486 — LOST_NONE 0, LOST_THROWN 1, LOST_DROPPED 2,
 // LOST_STOLEN 3, LOST_EXPLODING 4.  LOST_EXPLODING was 2 (i.e. LOST_DROPPED),
@@ -771,7 +745,11 @@ export async function docall(obj) {
         game._pending_message = '';
         game._toplin = 0;
     }
-    const qbuf = `Call ${docall_xname(obj)}:`;
+    // C ref: do_name.c docall() — fromsink is the "sink water" kludge; otherwise
+    // safe_qbuf() keeps the prompt within QBUFSZ.
+    const qbuf = (obj.oclass === POTION_CLASS && obj.fromsink)
+        ? `Call a stream of ${DESCR_BY_OTYP[objects[obj.otyp]?.oc_descr_idx ?? obj.otyp]} fluid:`
+        : safe_qbuf('Call ', ':', obj, docall_xname, simpleonames, 'thing');
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const raw = await hooked_tty_getlin(qbuf, null);
     // The taste message was acknowledged (--More--) and getlin overwrote the
@@ -1021,7 +999,7 @@ export function obfree(obj, merge) {
 // unlit, then receives its own timers and light source after splitting.
 export function splitobj(obj, cnt) {
     if (!obj || cnt <= 0 || cnt >= (obj.quan || 1)) return obj;
-    const split = { ...obj, quan: cnt, owornmask: 0, pickup_prev: 0 };
+    const split = { ...obj, quan: cnt, owornmask: 0, pickup_prev: 0, oextra: null };
     if (split.timed) split.timed = 0;
     if (split.lamplit) split.lamplit = 0;
     split.o_id = nextoid(obj, split);
@@ -1029,6 +1007,8 @@ export function splitobj(obj, cnt) {
     obj.owt = weight(obj);
     split.owt = weight(split);
     if (obj.unpaid) splitbill(obj, split);
+    copy_oextra(split, obj);
+    if (has_omid(split)) free_omid(split); /* only one association with m_id */
     const inv = inventoryArray();
     const ix = inv.indexOf(obj);
     if (ix >= 0) inv.splice(ix + 1, 0, split);
@@ -1104,6 +1084,12 @@ export function obj_extract_self(obj) {
         const bix = Array.isArray(blist) ? blist.indexOf(obj) : -1;
         if (bix >= 0) blist.splice(bix, 1);
     }
+    if (obj.where === OBJ_ONBILL) {
+        /* C: extract_nobj(obj, &gb.billobjs) */
+        const bl = game.billobjs;
+        const bi = Array.isArray(bl) ? bl.indexOf(obj) : -1;
+        if (bi >= 0) bl.splice(bi, 1);
+    }
     if (obj.ocarry) {
         const inv = obj.ocarry.minvent;
         const index = inv.indexOf(obj);
@@ -1127,20 +1113,9 @@ export function obj_extract_self(obj) {
 // rows, verified against the recorder's objects.h), so the table drives this;
 // nothing here hardcodes an otyp except C's own w_blocks() special cases.
 //
-// MASK VOCABULARY.  The extrinsic word must speak prop.h, because js/artifact.js
-// set_artifact_intrinsic() already owns the W_ART bit in the same store and
-// js/worn.js reads it.  This file's owornmask bits are a REMAPPED set (see the
-// block at line 240): the armor bits, W_WEP/W_QUIVER/W_SWAPWEP and W_RINGL/
-// W_RINGR happen to equal prop.h's, but this file's W_AMUL is 0x00080000
-// (prop.h's W_TOOL) and its W_BLINDF is 0x00800000 (not a prop.h bit at all,
-// C puts facewear in W_TOOL).  prop_wornmask() is the one place that reconciles
-// the two vocabularies; do not skip it.
 function prop_wornmask(mask) {
-    let m = (mask | 0) & (W_ARMOR | W_WEAPONS | W_RINGL | W_RINGR
-                          | W_BALL | W_CHAIN);
-    if (mask & W_AMUL) m |= CW_AMUL;
-    if (mask & W_BLINDF) m |= CW_TOOL;
-    return m;
+    return (mask | 0) & (W_ARMOR | W_WEAPONS | W_RINGL | W_RINGR | W_AMUL | W_TOOL
+                         | W_BALL | W_CHAIN);
 }
 
 // C ref: worn.c:38 w_blocks(o, m) — "This only allows for one blocking item per
@@ -1288,22 +1263,23 @@ export function setnotworn(obj) {
         game.u.twoweap = false;
         if (game.flags?.weaponstatus) game.botl = true;
     }
-    if (obj === game.uamul) game.uamul = null;
-    if (obj === game.uleft) game.uleft = null;
-    if (obj === game.uright) game.uright = null;
-    if (obj === game.ublindf) game.ublindf = null;
-    if (obj === game.uarm) game.uarm = null;
-    if (obj === game.uarmc) game.uarmc = null;
-    if (obj === game.uarmh) game.uarmh = null;
-    if (obj === game.uarms) game.uarms = null;
-    if (obj === game.uarmg) game.uarmg = null;
-    if (obj === game.uarmf) game.uarmf = null;
-    if (obj === game.uarmu) game.uarmu = null;
-    if (obj === game.uwep) game.uwep = null;
-    if (obj === game.uswapwep) game.uswapwep = null;
-    if (obj === game.uquiver) game.uquiver = null;
-    if (obj === game.uball) game.uball = null;
-    if (obj === game.uchain) game.uchain = null;
+    // C ref: worn.c setnotworn() — for each slot the object occupies,
+    // cancel_doff(obj, wp->w_mask) first (wearing or removal may be in progress
+    // or pending via 'A'), then clear the slot pointer.
+    const slots = [
+        ['uarm', WA_ARM], ['uarmc', WA_ARMC], ['uarmh', WA_ARMH],
+        ['uarms', WA_ARMS], ['uarmg', WA_ARMG], ['uarmf', WA_ARMF],
+        ['uarmu', WA_ARMU], ['uleft', W_RINGL], ['uright', W_RINGR],
+        ['uwep', W_WEP], ['uswapwep', W_SWAPWEP], ['uquiver', W_QUIVER],
+        ['uamul', W_AMUL], ['ublindf', W_BLINDF], ['uball', W_BALL],
+        ['uchain', W_CHAIN],
+    ];
+    for (const [slot, mask] of slots) {
+        if (obj === game[slot]) {
+            cancel_doff(obj, mask);
+            game[slot] = null;
+        }
+    }
     // C ref: worn.c:168-175 — drop the property this object was conferring
     // through EVERY slot it occupied, before the mask is cleared.
     worn_extrinsics_off(obj, obj.owornmask | 0);
@@ -3298,10 +3274,12 @@ export function addinv_core0(obj, other_obj = null, update_perm_invent = true) {
     }
     addinv_core1(obj);
     const inv = inventoryArray();
-    if (other_obj) {
-        const ix = inv.indexOf(other_obj);
-        if (ix >= 0) inv.splice(ix, 0, obj);
-        else inv.push(obj);
+    /* C: for addinv_before(); a removed object being reinserted goes back in
+       front of 'other_obj' (the item that followed it) without merging; if
+       that item is gone, fall through to the ordinary merge/insert code */
+    const before_ix = other_obj ? inv.indexOf(other_obj) : -1;
+    if (before_ix >= 0) {
+        inv.splice(before_ix, 0, obj);
     } else {
         // C ref: invent.c addinv_core0:1099-1106 -- merge with the quiver in
         // preference to any other inventory slot (quiver and wielded weapon
@@ -3545,6 +3523,7 @@ export function freeinv_core(obj) {
     }
     if (obj.otyp === LOADSTONE) curse(obj);
     else if (confers_luck(obj)) { set_moreluck(); game.botl = true; }
+    else if (obj.otyp === FIGURINE && obj.timed) stop_object_timer(obj, FIG_TRANSFORM);
     return invoke_off;
 }
 
@@ -4647,9 +4626,9 @@ export async function Amulet_on(amul) {
            when it was off */
         const { region_danger } = await import('./region.js');
         set_worn_extrinsic(52 /* MAGICAL_BREATHING */,
-                           worn_extrinsic(52) & ~CW_AMUL);
+                           worn_extrinsic(52) & ~W_AMUL);
         const was_in_poison_gas = region_danger();
-        set_worn_extrinsic(52, worn_extrinsic(52) | CW_AMUL);
+        set_worn_extrinsic(52, worn_extrinsic(52) | W_AMUL);
         if (was_in_poison_gas) {
             makeknown(AMULET_OF_MAGICAL_BREATHING);
             await on_msg_accessory(amul);
@@ -4988,7 +4967,11 @@ export async function Amulet_off(amul = game.uamul) {
         const { is_pool_or_lava } = await import('./dbridge.js');
         const u = game.u;
         const was_flying = Flying_fu();
-        clearworn_accessory(amul); await off_msg(amul); early_off_msg = true;
+        clearworn_accessory(amul);
+        /* C: nothing before the 'You land.' pline sets disp.botl, so the
+           status line still shows 'Fly' at off_msg()'s --More-- */
+        if (was_flying && !Flying_fu()) status_hold('fly', true);
+        await off_msg(amul); early_off_msg = true;
         // C float_vs_flight() "probably not needed here".
         if (was_flying && !Flying_fu()) {
             game.botl = true;
@@ -5022,20 +5005,19 @@ export async function remove_worn_item(obj, unchain_ball) {
 
     // obj->in_use guards emergency_disrobe()/lava_effects() from dropping or
     // destroying the item mid-removal; neither is reachable here.
+    const oldinuse = obj.in_use;
+    obj.in_use = 1;
     const armorMask = (obj.owornmask || 0) & WA_ARMOR_ALL;
     if (armorMask) {
         // C ref: steal.c:241 — the theft path runs the SAME <Armor>_off()
         // routines 'T' does, so a stolen helm of brilliance gives its INT/WIS
         // back and stolen elven boots print the stealth message.
-        const oldinuse = obj.in_use;
-        obj.in_use = 1;
         const off_fn = armor_off_fn(obj);
         if (off_fn) await off_fn();
         else {
             obj.owornmask = (obj.owornmask || 0) & ~armorMask;
             worn_slot_clear(armorMask);
         }
-        obj.in_use = oldinuse;
         // no find_ac() — see accessory_or_armor_on (do_wear.c:2377).
     } else if ((obj.owornmask || 0) & W_AMUL) {
         // C ref: steal.c remove_worn_item() calls the same Amulet_off() the 'R'
@@ -5058,6 +5040,7 @@ export async function remove_worn_item(obj, unchain_ball) {
     } else if (obj.owornmask) {
         setnotworn(obj);   /* catchall */
     }
+    obj.in_use = oldinuse;
     if (game._allow_inventory_update !== undefined) update_inventory();
 }
 
@@ -5262,7 +5245,9 @@ async function accessory_or_armor_on(obj) {
             // setworn() the ring, then Ring_on() applies its effect, then on_msg().
             setworn_accessory(obj, mask);
             await Ring_on(obj);
-            await on_msg_accessory(obj);
+            /* C: is_worn(obj) -- always true here except when putting on a ring
+               of levitation at a sink location (dosinkfall() removed it) */
+            if (obj.owornmask) await on_msg_accessory(obj);
             if (game._allow_inventory_update !== undefined) update_inventory();
             return ECMD_TIME;
         } else if (amulet) {
@@ -6234,9 +6219,13 @@ async function ready_weapon(wep) {
                     : 'can no longer wield two weapons at once'}.`);
             }
         }
+        /* KMH -- Talking artifacts are finally implemented */
+        if (wep.oartifact) {
+            const { arti_speak } = await import('./artifact.js');
+            res |= await arti_speak(wep); /* sets ECMD_TIME bit if artifact speaks */
+        }
         // C ref: wield.c:245-250 — a light-emitting artifact (Sunsword)
-        // starts shining as it is wielded.  (arti_speak() for talking
-        // artifacts is still not modelled.)
+        // starts shining as it is wielded.
         const L = await import('./light.js');
         if (L.artifact_light(wep) && !wep.lamplit) {
             const { begin_burn } = await import('./timeout.js');
@@ -7242,6 +7231,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
 
     const wep_mask = obj.owornmask || 0;
     let res = ECMD_TIME;
+    let oldslot = null;
     for (game.m_shot.i = 1; game.m_shot.i <= game.m_shot.n; game.m_shot.i++) {
         const twoweap = !!game.u?.twoweap; /* C: used to restore twoweapon mode if wielded weapon returns */
         let otmp = obj;
@@ -7250,6 +7240,12 @@ async function throw_obj(obj, dir, shotlimit = 0) {
         } else {
             otmp = obj;
             if (!otmp) break;
+            /* C: oldslot = obj->nobj, the item that follows it in invent
+               (for a thrown-and-returned weapon with !fixinv) */
+            {
+                const invl = inventoryArray();
+                oldslot = invl[invl.indexOf(otmp) + 1] ?? null;
+            }
             if (otmp.owornmask) {
                 // C ref: dothrow.c throw_obj():262 `if (otmp->owornmask)
                 // remove_worn_item(otmp, FALSE);` - throwing the LAST of a
@@ -7264,7 +7260,7 @@ async function throw_obj(obj, dir, shotlimit = 0) {
         }
         freeinv(otmp);
         try {
-            res = await throwit(otmp, wep_mask, twoweap);
+            res = await throwit(otmp, wep_mask, twoweap, oldslot);
         } finally {
             game.thrownobj = null;
         }
@@ -7290,30 +7286,55 @@ const ACCFOOD = 2;
 // C ref: dothrow.c return_throw_to_inv(obj, wep_mask, twoweap, oldslot) — a
 // throw-and-return weapon coming back into the pack, re-wielded (or re-quivered)
 // into whatever slot it left.
-async function return_throw_to_inv(obj, wep_mask, twoweap) {
-    obj.nomerge = 1;
-    const back = addinv(obj);
-    if (back) back.nomerge = 0;
-    const o = back || obj;
-    // C ref: dothrow.c:1890 — addinv() may have autoquivered it; a weapon that
-    // came out of a weapon slot must not end up in the quiver instead.
-    if (((o.owornmask | 0) & QW_QUIVER) !== 0
-        && (((o.owornmask | 0) | (wep_mask | 0)) & (QW_WEP | QW_SWAPWEP)) !== 0)
-        setuqwep(null);
-    if ((wep_mask & QW_WEP) && !game.uwep) await setuwep_c(o);
-    else if ((wep_mask & QW_SWAPWEP) && !game.uswapwep) setuswapwep(o);
-    else if ((wep_mask & QW_QUIVER) && !game.uquiver) setuqwep(o);
+async function return_throw_to_inv(obj, wep_mask, twoweap, oldslot = null) {
+    let otmp = null;
 
-    /* in case the throw ended dual-wielding, reinstate it after successful
-       catch (not needed for boomerang split/unsplit) */
-    if (twoweap && !game.u.twoweap) (await import('./wield.js')).set_twoweap(true);
+    /* if 'obj' is from a stack split, we can put it back by undoing split so
+       there's no chance of merging with some other compatible stack */
+    const osp = game.context?.objsplit;
+    if (osp && (obj.o_id === osp.parent_oid || obj.o_id === osp.child_oid)) {
+        const inv = inventoryArray();
+        inv.unshift(obj);
+        obj.where = OBJ_INVENT;
+        syncInventory(inv);
+        otmp = unsplitobj(obj);
+        if (!otmp) {
+            const inv2 = inventoryArray();
+            const ix = inv2.indexOf(obj);
+            if (ix >= 0) inv2.splice(ix, 1);
+            syncInventory(inv2);
+            obj.where = OBJ_FREE;
+        } else {
+            obj = otmp;
+        }
+    }
+
+    /* if 'obj' wasn't from a stack split or if it wouldn't merge back then it
+       needs to be added to invent; don't merge with any other stack */
+    if (!otmp) {
+        obj.nomerge = 1; /* redundant unless 'oldslot' somehow went away */
+        obj = addinv_before(obj, oldslot);
+        obj.nomerge = 0;
+
+        /* in case addinv() autoquivered */
+        if (((obj.owornmask | 0) & QW_QUIVER) !== 0
+            && (((obj.owornmask | 0) | (wep_mask | 0)) & (QW_WEP | QW_SWAPWEP)) !== 0)
+            setuqwep(null);
+        if ((wep_mask & QW_WEP) && !game.uwep) await setuwep_c(obj);
+        else if ((wep_mask & QW_SWAPWEP) && !game.uswapwep) setuswapwep(obj);
+        else if ((wep_mask & QW_QUIVER) && !game.uquiver) setuqwep(obj);
+
+        /* in case the throw ended dual-wielding, reinstate it after
+           successful catch (not needed for boomerang split/unsplit) */
+        if (twoweap && !game.u.twoweap) (await import('./wield.js')).set_twoweap(true);
+    }
     await encumber_msg();
-    return o;
+    return obj;
 }
 
 // C ref: dothrow.c throwit(obj, wep_mask, twoweap, oldslot) - one missile's
 // flight.  Split out of throw_obj() so the multishot volley can run it per shot.
-export async function throwit(otmp, wep_mask, twoweap = false) {
+export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
     const u = game.u;
     const Underwater = !!u.uinwater;
     game.notonhead = false; /* reset potentially stale value */
@@ -7371,7 +7392,7 @@ export async function throwit(otmp, wep_mask, twoweap = false) {
             // simply comes back to the hand.
             await update_topl(`${Tobjnam_throw(otmp, 'hit')} the ${
                 ceiling_of(u.ux, u.uy)} and returns to your hand!`);
-            await return_throw_to_inv(otmp, wep_mask, twoweap);
+            await return_throw_to_inv(otmp, wep_mask, twoweap, oldslot);
         } else if (u.dz < 0) {
             // C ref: dothrow.c:1589 `(void) toss_up(obj, rn2(5) && !Underwater)`.
             await toss_up(otmp, rn2(5) !== 0 && !Underwater);
@@ -7395,6 +7416,8 @@ export async function throwit(otmp, wep_mask, twoweap = false) {
         const em = u.ustuck;
         game.bhitpos = { x: em.mx, y: em.my };
         land = { x: em.mx, y: em.my, mon: em };
+        /* C: if (tethered_weapon) tmp_at(DISP_TETHER, obj_to_glyph(obj)) */
+        if (tethered_weapon) land.flash = tmp_at_flash(otmp, true);
     } else if (otmp.otyp === BOOMERANG_OTYP && !Underwater) {
         if (recoil) await DT.hurtle(-u.dx, -u.dy, 1, true);
         // C ref: dothrow.c:1601 — a boomerang does NOT fly in a straight line,
@@ -7406,7 +7429,7 @@ export async function throwit(otmp, wep_mask, twoweap = false) {
         if (res.gone) return ECMD_TIME;
         if (res.caught) {
             exercise(A_DEX, true);
-            await return_throw_to_inv(otmp, wep_mask, twoweap);
+            await return_throw_to_inv(otmp, wep_mask, twoweap, oldslot);
             return ECMD_TIME;
         }
         // C: an uncaught boomerang continues through throwit()'s common tail
@@ -7503,21 +7526,29 @@ export async function throwit(otmp, wep_mask, twoweap = false) {
             else await DT.sho_obj_return_to_u(otmp); /* display its flight */
             if (!impaired && rn2(100)) {
                 await update_topl(`${Tobjnam_throw(otmp, 'return')} to your hand!`);
-                if (((otmp.owornmask | 0) & QW_QUIVER) !== 0) setuqwep(null);
-                const back = await return_throw_to_inv(otmp, wep_mask, twoweap);
+                /* C: obj = addinv_before(obj, oldslot); encumber_msg(); */
+                const back = addinv_before(otmp, oldslot);
+                await encumber_msg();
+                /* addinv autoquivers an aklys if quiver is empty;
+                   if obj is quivered, remove it before wielding */
+                if (((back.owornmask | 0) & QW_QUIVER) !== 0) setuqwep(null);
                 await setuwep_c(back);
                 (await import('./wield.js')).set_twoweap(twoweap); /* u.twoweap = twoweap */
                 if (cansee(land.x, land.y)) newsym(land.x, land.y);
             } else {
                 let dmg = rn2(2);
                 if (!dmg) {
-                    await update_topl(`${Tobjnam_throw(otmp, 'return')} back to you, landing ${
-                        (u?.uprops?.Levitation) ? 'beneath' : 'at'} your ${
-                        makeplural(body_part(5 /*FOOT*/))}.`);
+                    const lev = Levitation_hero() ? 'beneath' : 'at';
+                    const foot = makeplural(body_part(5 /*FOOT*/));
+                    await update_topl(Blinded_hero()
+                        ? `Something lands ${lev} your ${foot}.`
+                        : `${Tobjnam_throw(otmp, 'return')} back to you, landing ${lev} your ${foot}.`);
                 } else {
                     dmg += rnd(3);
-                    await update_topl(`${Tobjnam_throw(otmp, 'fly')} back toward you, hitting your ${
-                        body_part(0 /*ARM*/)}!`);
+                    await update_topl(Blinded_hero()
+                        ? `${Tobjnam_throw(otmp, 'hit')} your ${body_part(0 /*ARM*/)}!`
+                        : `${Tobjnam_throw(otmp, 'fly')} back toward you, hitting your ${
+                            body_part(0 /*ARM*/)}!`);
                     if (otmp.oartifact) {
                         const { artifact_hit } = await import('./artifact.js');
                         const mdmg = { d: dmg };
@@ -8123,8 +8154,7 @@ export async function dofire(getDir) {
         // then lands here.
         if (game.uwep && is_pole(game.uwep)) {
             const A = await import('./apply.js');
-            const r = await A.use_pole(game.uwep, true);
-            return r === A.ECMD.ECMD_TIME ? ECMD_TIME : ECMD_OK;
+            return await A.use_pole(game.uwep, true);
         }
         // C ref: dothrow.c:516 `} else if (uwep && uwep->otyp == BULLWHIP) {
         // return use_whip(uwep); }` — the Archeologist starts wielding a
@@ -8989,16 +9019,16 @@ export async function query_category(qstr, olist, qflags, how) {
     if ((qflags & UNPAID_TYPES) && count_unpaid(chain)) do_unpaid = true;
     if (qflags & BILLED_TYPES) do_usedup = true;
     if (qflags & WORN_TYPES) { do_worn = true; ofilter = is_worn; }
-    if ((qflags & BUC_BLESSED_F) && count_buc(chain, BUC_BLESSED, ofilter)) {
+    if ((qflags & BUC_BLESSED) && count_buc(chain, BUC_BLESSED, ofilter)) {
         do_blessed = true; num_buc_types++;
     }
-    if ((qflags & BUC_CURSED_F) && count_buc(chain, BUC_CURSED, ofilter)) {
+    if ((qflags & BUC_CURSED) && count_buc(chain, BUC_CURSED, ofilter)) {
         do_cursed = true; num_buc_types++;
     }
-    if ((qflags & BUC_UNCURSED_F) && count_buc(chain, BUC_UNCURSED, ofilter)) {
+    if ((qflags & BUC_UNCURSED) && count_buc(chain, BUC_UNCURSED, ofilter)) {
         do_uncursed = true; num_buc_types++;
     }
-    if ((qflags & BUC_UNKNOWN_F) && count_buc(chain, BUC_UNKNOWN, ofilter)) {
+    if ((qflags & BUC_UNKNOWN) && count_buc(chain, BUC_UNKNOWN, ofilter)) {
         do_buc_unknown = true; num_buc_types++;
     }
     if (qflags & JUSTPICKED) num_justpicked = count_justpicked(chain);
@@ -9212,8 +9242,8 @@ async function menu_drop(retry) {
         all_categories = false;
         const picks = await query_category('Drop what type of items?',
             inventoryArray(),
-            UNPAID_TYPES | ALL_TYPES | CHOOSE_ALL | BUC_BLESSED_F | BUC_CURSED_F
-            | BUC_UNCURSED_F | BUC_UNKNOWN_F | JUSTPICKED | INCLUDE_VENOM,
+            UNPAID_TYPES | ALL_TYPES | CHOOSE_ALL | BUC_BLESSED | BUC_CURSED
+            | BUC_UNCURSED | BUC_UNKNOWN | JUSTPICKED | INCLUDE_VENOM,
             PICK_ANY);
         /* no non-autopick category filters specified */
         if (!picks.length) return ECMD_OK;
@@ -9885,18 +9915,21 @@ async function pickup_checks() {
         return -2; /* loot the monster inventory */
     }
     const typ0 = game.level?.at(x, y)?.typ;
+    const { Wwalking_fu, Flying_fu } = await import('./trap.js');
+    /* C: Wwalking || is_floater || is_clinger || (Flying && !Breathless) */
+    const over_liquid = Wwalking_fu() || (Flying_fu() && !Breathless_hero());
     if (IS_POOL_TYP(typ0)) {
-        if (u.uprops?.Wwalking || u.uprops?.Flying) {
+        if (over_liquid) {
             game._pending_message = note_topl(`You cannot dive into the ${(await import('./do_name.js')).hliquid('water')} to pick things up.`);
             return 0;
-        } else if (!game.Underwater) {
+        } else if (!game.u?.uinwater) {
             game._pending_message =
                 "You can't even see the bottom, let alone pick up something.";
             return 0;
         }
     }
     if (typ0 === LAVAPOOL) {
-        if (u.uprops?.Wwalking || u.uprops?.Flying) {
+        if (over_liquid) {
             game._pending_message = note_topl("You can't reach the bottom to pick things up.");
             return 0;
         }
@@ -11265,21 +11298,18 @@ async function itemactions_run(otmp, act, getDir) {
         // C ref: itemactions_pushkeys IA_READ_OBJ -> cmdq_add_ec(doread).
         seedInvlet();
         const rd = await import('./read.js');
-        /* read.js numbers ECMD_TIME 1; this module's is 3. */
-        return (await rd.doread()) === 1 ? ECMD_TIME : ECMD_OK;
+        return ((await rd.doread()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
     }
     case IA_ENGRAVE_OBJ: {
         // doengrave lives in engrave.js; load it on demand.  It reads the
         // stylus via getobj, which consumes the pre-seeded invlet.
         seedInvlet();
         const eng = await import('./engrave.js');
-        /* engrave.js numbers ECMD_TIME 1; this module's is 3. */
         return (await eng.doengrave()) === 1 ? ECMD_TIME : ECMD_OK;
     }
     case IA_TWOWEAPON: {
         // C ref: itemactions_pushkeys IA_TWOWEAPON -> cmdq_add_ec(dotwoweapon).
         const { dotwoweapon } = await import('./wield.js');
-        /* wield.js numbers ECMD_TIME 1; this module's is 3. */
         return (await dotwoweapon()) === 1 ? ECMD_TIME : ECMD_OK;
     }
     case IA_INVOKE_OBJ: {
@@ -11287,9 +11317,7 @@ async function itemactions_run(otmp, act, getDir) {
         // with the object's invlet pushed ahead of it for getobj().
         seedInvlet();
         const { doinvoke } = await import('./artifact.js');
-        const r = await doinvoke();
-        // artifact.js numbers ECMD_TIME 4; this module's is 1.
-        return (r === 4) ? ECMD_TIME : ECMD_OK;
+        return ((await doinvoke()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
     }
     case IA_ADJUST_OBJ:
         await recordRepeat('doorganize');
@@ -11308,21 +11336,21 @@ async function itemactions_run(otmp, act, getDir) {
         if (otmp === game.uwep) return await dowield();
         if (otmp === game.uswapwep) {
             const { remarm_swapwep } = await import('./do_wear.js');
-            return (await remarm_swapwep()) === 3 ? ECMD_TIME : ECMD_OK;
+            return (await remarm_swapwep()) & ECMD_TIME ? ECMD_TIME : ECMD_OK;
         }
         if (otmp === game.uquiver) return await dowieldquiver();
         return ECMD_OK; /* donull */
     }
     case IA_APPLY_OBJ: {
         seedInvlet();
-        const { doapply, ECMD: AECMD } = await import('./apply.js');
-        return (await doapply()) === AECMD.ECMD_TIME ? ECMD_TIME : ECMD_OK;
+        const { doapply } = await import('./apply.js');
+        return (await doapply()) & ECMD_TIME ? ECMD_TIME : ECMD_OK;
     }
     case IA_DIP_OBJ: {
         // C: #altdip (dip_into) — the potion is the first getobj answer.
         seedInvlet();
         const { dip_into } = await import('./potion.js');
-        return (await dip_into()) === 1 ? ECMD_TIME : ECMD_OK;
+        return ((await dip_into()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
     }
     case IA_EAT_OBJ: {
         // C: starts with the m-prefix so floor food is ignored.
@@ -11330,7 +11358,7 @@ async function itemactions_run(otmp, act, getDir) {
         const { doeat } = await import('./eat.js');
         const iflags = game.iflags || (game.iflags = {});
         iflags.menu_requested = true;
-        try { return (await doeat()) ? ECMD_TIME : ECMD_OK; }
+        try { return ((await doeat()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK; }
         finally { iflags.menu_requested = false; }
     }
     case IA_FIRE_OBJ:
@@ -11349,7 +11377,7 @@ async function itemactions_run(otmp, act, getDir) {
         const { dodrink } = await import('./potion.js');
         const iflags = game.iflags || (game.iflags = {});
         iflags.menu_requested = true;
-        try { return (await dodrink()) ? ECMD_TIME : ECMD_OK; }
+        try { return ((await dodrink()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK; }
         finally { iflags.menu_requested = false; }
     }
     case IA_QUIVER_OBJ:
@@ -11357,8 +11385,8 @@ async function itemactions_run(otmp, act, getDir) {
         return (await dowieldquiver()) === ECMD_TIME ? ECMD_TIME : ECMD_OK;
     case IA_RUB_OBJ: {
         seedInvlet();
-        const { dorub, ECMD: AECMD } = await import('./apply.js');
-        return (await dorub()) === AECMD.ECMD_TIME ? ECMD_TIME : ECMD_OK;
+        const { dorub } = await import('./apply.js');
+        return (await dorub()) & ECMD_TIME ? ECMD_TIME : ECMD_OK;
     }
     case IA_TAKEOFF_OBJ:
         seedInvlet();
@@ -11377,7 +11405,7 @@ async function itemactions_run(otmp, act, getDir) {
     case IA_ZAP_OBJ: {
         seedInvlet();
         const { dozap } = await import('./zap.js');
-        return (await dozap()) ? ECMD_TIME : ECMD_OK;
+        return ((await dozap()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
     }
     case IA_WHATIS_OBJ: {
         // C: dowhatis with 'i' (item from inventory) and the invlet queued ->
@@ -11901,11 +11929,19 @@ export function tally_BUCX(list, by_nexthere, bcp, ucp, ccp, xcp, ocp, jcp) {
     }
 }
 
-export function count_contents(container, nested, quantity, everything, _newdrop) {
+export function count_contents(container, nested, quantity, everything, newdrop) {
     let count = 0;
+    let shoppy = false;
+    if (!everything && !newdrop) {
+        let topc = container;
+        while (topc.where === OBJ_CONTAINED && topc.ocontainer) topc = topc.ocontainer;
+        if (topc.where === OBJ_FLOOR)
+            shoppy = costly_spot(topc.ox, topc.oy);
+    }
     for (const obj of iterateObjects(container?.cobj)) {
-        if (nested && Has_contents(obj)) count += count_contents(obj, nested, quantity, everything, false);
-        if (everything || obj.unpaid) count += quantity ? (obj.quan || 1) : 1;
+        if (nested && Has_contents(obj)) count += count_contents(obj, nested, quantity, everything, newdrop);
+        if (everything || obj.unpaid || (shoppy && !obj.no_charge))
+            count += quantity ? (obj.quan || 1) : 1;
     }
     return count;
 }
@@ -12056,10 +12092,10 @@ export async function dotypeinv() {
             traditional = false;
             i = UNPAID_TYPES;
             if (billx) i |= BILLED_TYPES;
-            if (bc.value) i |= BUC_BLESSED_F;
-            if (uc.value) i |= BUC_UNCURSED_F;
-            if (cc.value) i |= BUC_CURSED_F;
-            if (xc.value) i |= BUC_UNKNOWN_F;
+            if (bc.value) i |= BUC_BLESSED;
+            if (uc.value) i |= BUC_UNCURSED;
+            if (cc.value) i |= BUC_CURSED;
+            if (xc.value) i |= BUC_UNKNOWN;
             if (jc.value) i |= JUSTPICKED;
             i |= INCLUDE_VENOM;
             /* PICK_ONE, and neither ALL_TYPES nor CHOOSE_ALL: no 'A'
@@ -12234,7 +12270,7 @@ export function ice_descr(x, y) {
     const lev = game.level?.at?.(x, y);
     if (lev?.typ !== ICE) return `[ice:${lev?.typ}?]`;
     if (dx * dx + dy * dy > neardist
-        || (!cansee(x, y) && (!at_hero || u?.uprops?.Levitation))) {
+        || (!cansee(x, y) && (!at_hero || Levitation_hero()))) {
         return waterbody_name_for_ice(x, y);
     }
     const time_left = spot_time_left(x, y, MELT_ICE_AWAY);
@@ -12334,7 +12370,7 @@ export async function describe_decor() {
     // C: "we don't mention 'ordinary' doors but do mention broken ones (and
     // closed ones, which will only happen for Passes_walls)".  Underwater and
     // the ice-over-pool transition also suppress the feature.
-    if (doorhere || game.Underwater) dfeature = null;
+    if (doorhere || game.u?.uinwater) dfeature = null;
 
     const prevDecor = game.iflags?.prev_decor ?? STONE;
     // C ref: pickup.c describe_decor() returns `res`, which is FALSE on this
@@ -12370,7 +12406,7 @@ export async function describe_decor() {
             && decorMsg.length + pend.length + 3 >= 80 - 8)
             await topl_more();
         await update_topl(decorMsg);
-    } else if (!game.Underwater) {
+    } else if (!game.u?.uinwater) {
         // C ref: pickup.c describe_decor():411 — no feature to announce at
         // the new spot; if the PREVIOUS spot was a pool/lava/ice and this one
         // isn't (and something else, e.g. lookat()'s own room message, hasn't
@@ -12406,6 +12442,8 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     const here = objects_at(x, y);
     const otmp = here[0] || null;
     let dfeature = dfeature_at(x, y);
+    if (dfeature && dfeature === 'pool of water' && game.u?.uinwater)
+        dfeature = null;
     const verb = Blind_for_wear() ? 'feel' : 'see';
     const picked_some = (lookhere_flags & LOOKHERE_PICKED_SOME) !== 0;
     // C ref: invent.c look_here():4117 — skip 'dfeature' when the caller already
@@ -13318,7 +13356,15 @@ export async function display_minventory(mon, dflags, title) {
     const dflt = `${s_suffix(noit_Monnam(mon))} ${do_all ? 'possessions' : 'armament'}:`;
     const ttl = title || dflt;
     if (!have_any) { invdisp_nothing(ttl, '(none)'); return null; }
-    const objs = do_all ? minv : minv.filter(worn_wield_only);
+    /* C ref: invent.c display_minventory() -> pickup.c query_objlist(INVORDER_SORT):
+       sortloot(SORTLOOT_LOOT for the default sortloot 'l' (no USE_INVLET),
+       | SORTLOOT_PACK), so a monster's armor lists helm, gloves, boots, shield,
+       cloak, shirt, suit and each subclass by name, not in minvent order. */
+    const sortloot_opt = flags().sortloot ?? 'l';
+    const sortflags = ((sortloot_opt === 'f' || sortloot_opt === 'l') ? SORTLOOT_LOOT : 0)
+        | (flags().sortpack !== false ? SORTLOOT_PACK : 0);
+    const objs = sortloot(do_all ? minv : minv.filter(worn_wield_only), sortflags, false)
+        .map((sli) => sli.obj).filter(Boolean);
     const rows = [[ttl, '']];   /* tty_end_menu: prompt line then a blank */
     let ch = 'a', first = true;
     const nextCh = () => { const c = ch; ch = c === 'z' ? 'A' : String.fromCharCode(c.charCodeAt(0) + 1); return c; };
@@ -13357,8 +13403,44 @@ export async function display_minventory(mon, dflags, title) {
     await select_inventory_menu(rows, new Map());
     return null;
 }
-export function cinv_doname(obj) { return obj?.otrapped ? `trapped ${doname(obj)}` : doname(obj); }
-export function cinv_ansimpleoname(obj) { return obj?.otrapped ? `a trapped ${simpleonames(obj)}` : ansimpleoname(obj); }
+/* C ref: hacklib.c strsubst() — replace the FIRST occurrence only. */
+function strsubst_first(bp, orig, repl) {
+    const i = bp.indexOf(orig);
+    return i < 0 ? bp : bp.slice(0, i) + repl + bp.slice(i + orig.length);
+}
+// C ref: invent.c cinv_doname() — a container name for cinventory_display(),
+// inserting "trapped" before the lock state of a trapped box.
+export function cinv_doname(obj) {
+    let result = doname(obj);
+    if (obj?.otrapped && result.length + 'trapped '.length <= 127) {
+        const lc = result.toLowerCase();
+        const p = lc.indexOf(' locked'), q = lc.indexOf(' unlocked');
+        if (p >= 0 && (q < 0 || p < q))
+            result = result.slice(0, p) + strsubst_first(result.slice(p), ' locked ', ' trapped locked ');
+        else if (q >= 0)
+            result = result.slice(0, q) + strsubst_first(result.slice(q), ' unlocked ', ' trapped unlocked ');
+        /* might need to change "an" to "a" */
+        result = strsubst_first(result, 'an trapped ', 'a trapped ');
+    }
+    return result;
+}
+// C ref: invent.c cinv_ansimpleoname() — used by safe_qbuf() when the full
+// doname() result is too long.  The article tests are C's, strncmp() sense
+// included (a non-zero result means "does not start with").
+export function cinv_ansimpleoname(obj) {
+    let result = ansimpleoname(obj);
+    if (obj?.otrapped) {
+        if (!result.startsWith('a '))
+            result = strsubst_first(result, 'a ', 'a trapped ');
+        else if (!result.startsWith('an '))
+            result = strsubst_first(result, 'an ', 'an trapped ');
+        else if (!result.startsWith('the '))
+            result = strsubst_first(result, 'the ', 'the trapped ');
+        else
+            result = 'trapped ' + result; /* insert at beginning */
+    }
+    return result;
+}
 // C ref: invent.c display_cinventory() — a probed container's contents in
 // inventory style (PICK_NONE, INVORDER_SORT, menu-assigned letters).  The
 // title goes through safe_qbuf() with cinv_doname() so a long container name

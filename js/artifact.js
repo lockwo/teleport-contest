@@ -45,7 +45,7 @@ import { make_hallucinated_state, queue_hallucination_transition } from './potio
 async function observe_object(obj) { (await import('./o_init.js')).observe_object(obj); }
 async function mbodypart(mon, part) { return (await import('./polyself.js')).mbodypart(mon, part); }
 async function body_part(part) { return (await import('./polyself.js')).body_part(part); }
-import { mflags1_of, mflags2_of, mflags3_of, msound_of, M1_AMORPHOUS, M1_NOHEAD, M2_UNDEAD, M2_WERE, M2_ELF, M2_ORC, M2_DEMON, M2_GIANT, M2_LORD, M2_PRINCE, M2_HUMAN, M2_DWARF, M2_GNOME, noncorporeal, is_undead_flag as is_undead, is_were_flag as is_were, is_demon_flag as is_demon, is_golem, nonliving } from './monflags_data.js';
+import { mflags1_of, mflags2_of, mflags3_of, msound_of, MS_NEMESIS, M1_AMORPHOUS, M1_NOHEAD, M2_UNDEAD, M2_WERE, M2_ELF, M2_ORC, M2_DEMON, M2_GIANT, M2_LORD, M2_PRINCE, M2_HUMAN, M2_DWARF, M2_GNOME, noncorporeal, is_undead_flag as is_undead, is_were_flag as is_were, is_demon_flag as is_demon, is_golem, nonliving } from './monflags_data.js';
 import {
     MATTK,
     AT_ENGL, AT_HUGS, AT_MAGC,
@@ -53,20 +53,18 @@ import {
     AD_ACID, AD_BLND, AD_STUN, AD_SLOW, AD_PLYS, AD_DRLI, AD_STON, AD_STCK,
     AD_WRAP, AD_WERE, AD_DISE, AD_HALU,
 } from './monattk_data.js';
-// prop.h W_* bits.  NOTE: js/invent.js deliberately REMAPS these (QW_WEP
-// 0x100, QW_SWAPWEP 0x400) — const.js carries the real prop.h values and is
-// the right source here.
+// prop.h W_* bits: const.js carries the real values.
 import { has_innate } from './exper.js';
 import { Poison_resistance } from './youprop.js';
 import { invocation_pos } from './trap.js';
 import {
     W_ART, W_ARTI, W_WEP, W_SWAPWEP, W_QUIVER, W_BALL, W_SADDLE,
     W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG, W_ARMF, W_ARMU,
-    W_AMUL, W_RINGL, W_RINGR, W_TOOL,
+    W_AMUL, W_RINGL, W_RINGR, W_TOOL, SHOPBASE,
     ONAME_VIA_NAMING, ONAME_WISH, ONAME_GIFT, ONAME_VIA_DIP, ONAME_LEVEL_DEF,
     ONAME_BONES, ONAME_RANDOM, ONAME_KNOW_ARTI,
     D_TRAPPED, IS_DOOR, A_CON, A_WIS, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, I_SPECIAL,
-    In_quest, NECK, MIGR_RANDOM, PL_PSIZ } from './const.js';
+    In_quest, NECK, MIGR_RANDOM, PL_PSIZ, ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // artifact.h SPFX_* — special-effect bits
@@ -139,7 +137,7 @@ const RACE_HATEMASK = [
 
 // defsym.h MONSYM indices: artilist[].mtype for SPFX_DCLAS, plus the few
 // mlet tests the predicates below need.
-const S_IMP = 9, S_VORTEX = 22, S_GHOST = 26, S_DRAGON = 30, S_OGRE = 41,
+const S_IMP = 9, S_VORTEX = 22, S_DRAGON = 30, S_OGRE = 41,
     S_TROLL = 46, S_VAMPIRE = 48, S_GOLEM = 55;
 // color.h
 const NO_COLOR = 8, CLR_RED = 1, CLR_BRIGHT_BLUE = 12;
@@ -155,8 +153,6 @@ const WEAPON_CLASS = 2, ARMOR_CLASS = 3, RING_CLASS = 4, AMULET_CLASS = 5,
 const F_UNIQUE = 64;
 // prop.h TIMEOUT
 const TIMEOUT = 0x00ffffff;
-// cmd.h ECMD_ result codes
-const ECMD_OK = 0, ECMD_CANCEL = 1, ECMD_TIME = 4;
 // decl.c c_common_strings — pline1(nothing_happens) / nothing_seems_to_happen.
 const NOTHING_HAPPENS = "Nothing happens.";
 
@@ -205,6 +201,7 @@ const AMULET_OF_ESP = otyp_by_name('amulet of ESP');
 const AMULET_OF_GUARDING = otyp_by_name('amulet of guarding');
 const SKELETON_KEY = otyp_by_name('skeleton key');
 const CREDIT_CARD = otyp_by_name('credit card');
+const LOCK_PICK = otyp_by_name('lock pick');
 const MIRROR = otyp_by_name('mirror');
 const CRYSTAL_BALL = otyp_by_name('crystal ball');
 const LENSES = otyp_by_name('lenses');
@@ -906,7 +903,7 @@ export function find_artifact(otmp) {
 // spot in front of the door and ignores whether a shopkeeper is present.
 function inside_shop(x, y) {
     for (const r of game.level?.rooms || []) {
-        if (!r || !r.rtype || r.rtype < 8 /* SHOPBASE */) continue;
+        if (!r || !r.rtype || r.rtype < SHOPBASE) continue;
         if (x >= r.lx - 1 && x <= r.hx + 1 && y >= r.ly - 1 && y <= r.hy + 1)
             return true;
     }
@@ -2636,6 +2633,36 @@ export function is_magic_key(mon, obj) {
     return false;
 }
 
+// C ref: lock.c autokey(opening) — pick a tool for autounlock.  `opening` true:
+// key, pick or card; false: key or pick.  The other role's quest artifact (the
+// Rogue's Master Key, the Tourist's Expensive Camera is not a tool) is only
+// used when nothing else is carried.
+export function autokey(opening) {
+    let key = null, pick = null, card = null;
+    let akey = null, apick = null, acard = null;
+    const inv = Array.isArray(game.invent) ? game.invent : invent_list();
+    for (const o of inv) {
+        if ((o.oartifact | 0) >= ART_ORB_OF_DETECTION
+            && o.oartifact !== quest_artifact_num()) {
+            if (o.otyp === SKELETON_KEY) { if (!akey) akey = o; }
+            else if (o.otyp === LOCK_PICK) { if (!apick) apick = o; }
+            else if (o.otyp === CREDIT_CARD) { if (!acard) acard = o; }
+        } else if (o.otyp === SKELETON_KEY) {
+            if (!key || is_magic_key(youmonst(), o)) key = o;
+        } else if (o.otyp === LOCK_PICK) {
+            if (!pick) pick = o;
+        } else if (o.otyp === CREDIT_CARD) {
+            if (!card) card = o;
+        }
+    }
+    if (!opening) card = acard = null;
+    /* only resort to other role's quest artifact if no other choice */
+    if (!key && !pick && !card) key = akey;
+    if (!pick && !card) pick = apick;
+    if (!card) card = acard;
+    return key || pick || card || null;
+}
+
 // C ref: artifact.c has_magic_key() — is 'mon' (default: the hero) carrying it?
 export function has_magic_key(mon) {
     const key = artilist[ART_MASTER_KEY_OF_THIEVERY].otyp;
@@ -2660,8 +2687,10 @@ export function count_surround_traps(x, y) {
             if (!isok(dx, dy)) continue;
             const t = trap_at(dx, dy);
             if (t) {
+                /* the hero's own square shows the hero, not the trap */
                 const covered = floor_objects_at(dx, dy).length > 0
-                    || mon_at(dx, dy) != null;
+                    || mon_at(dx, dy) != null
+                    || (dx === game.u?.ux && dy === game.u?.uy);
                 if (t.tseen && !covered) continue;
                 ++ret;
                 continue;
@@ -2698,7 +2727,7 @@ const MKOT_HEAT = ["cool", "slightly warm", "warm", "very warm",
 export async function mkot_trap_warn() {
     if (!game.uarmg && is_art(game.uwep, ART_MASTER_KEY_OF_THIEVERY)) {
         const ntraps = count_surround_traps(game.u.ux, game.u.uy);
-        if (ntraps !== game.mkot_trap_warn_count) {
+        if (ntraps !== (game.mkot_trap_warn_count | 0)) {
             const idx = Math.min(ntraps, MKOT_HEAT.length - 1);
             await update_topl(`The Key feels ${MKOT_HEAT[idx]}${(ntraps > 3) ? '!' : '.'}`);
         }
@@ -2894,9 +2923,6 @@ async function dismount_steed() {
 function On_stairs(x, y) { return stairway_at(x, y) != null; }
 // const.js engulfing_u(mon)
 function engulfing_u(mon) { return !!game.u?.uswallow && game.u?.ustuck === mon; }
-// sounds.h MS_NEMESIS == 23; msound_of() reads the generated table so the
-// index can't drift (that table already had 18 off-by-one entries once).
-const MS_NEMESIS = 23;
 function msound_is_nemesis(ptr) { return msound_of(ptr) === MS_NEMESIS; }
 
 // prop.h u.uprops[prop].extrinsic / .intrinsic — this port has no struct prop,

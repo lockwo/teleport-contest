@@ -4431,12 +4431,29 @@ export async function do_look_full() {
     //    PICK_ONE loop (wintty.c process_menu_window + xwaitforspace) lives in
     //    pager.js: a key that is neither a selector nor a menu command rings
     //    the bell and is re-read with the menu still displayed.
-    const { whatis_menu_pick } = await import('./pager.js');
-    const i = await whatis_menu_pick(render_whatis_menu);
-    // Redraw the map under the dismissed menu before any prompt is shown.
-    game._pending_message = '';
-    game._toplin = 0;
-    await flush_screen(1);
+    // C ref: pager.c do_look() `if ((cmdq = cmdq_pop()) != 0) { if (cq.typ ==
+    // CMDQ_KEY) i = cq.key; else cmdq_clear(CQ_CANNED); goto dowhatiscmd; }` --
+    // a queued key answers the menu; any other queued entry leaves i = '\0'
+    // (the `default:` arm returns ECMD_OK).
+    const { cmdq_pop, cmdq_clear } = await import('./invent.js');
+    const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY } = await import('./const.js');
+    const cq = cmdq_pop(game.in_doagain ? CQ_REPEAT : CQ_CANNED);
+    let i;
+    if (cq) {
+        i = '\0';
+        if (cq.typ === CMDQ_KEY)
+            i = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
+        else cmdq_clear(CQ_CANNED);
+    } else {
+        const { whatis_menu_pick } = await import('./pager.js');
+        i = await whatis_menu_pick(render_whatis_menu);
+        // Redraw the map under the dismissed menu before any prompt is shown.
+        game._pending_message = '';
+        game._toplin = 0;
+        await flush_screen(1);
+    }
+
+    if (i === 'y') i = '/';   // C: case 'y' falls through to case '/'
 
     if (i === '?') {
         // C do_look case '?': getlin("Specify what? (type the word)"), then

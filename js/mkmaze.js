@@ -22,7 +22,7 @@ import { place_object } from './mkobj.js';
 import { enexto_spawn } from './makemon.js';
 import { rndmonnum } from './mkobj.js';
 import { goodpos, rloc_to, RLOC_NOMSG } from './teleport.js';
-import { placebc, unplacebc } from './ball.js';
+import { unplacebc_and_covet_placebc, lift_covet_and_placebc } from './ball.js';
 import { create_gas_cloud } from './region.js';
 import { S_air, S_cloud, S_water } from './symbols.js';
 
@@ -665,8 +665,7 @@ export async function movebubbles() {
         if (g.u?.uball) {
             // C ref: ball.c:222 unplacebc_and_covet_placebc() — rnd(400) is the
             // restriction cookie, and it IS part of the stream.
-            bcpin = rnd(400);
-            unplacebc();
+            bcpin = await unplacebc_and_covet_placebc();
         }
         // "Pick up everything inside of a bubble then fill all bubble
         // locations."  Uses the PREVIOUS call's `up`, before the toggle below.
@@ -705,8 +704,7 @@ export async function movebubbles() {
 
     /* put attached ball&chain back */
     if (water && g.u?.uball) {
-        void bcpin;                      // C: lift_covet_and_placebc(bcpin)
-        placebc();
+        await lift_covet_and_placebc(bcpin);
     }
     g.vision_full_recalc = 1;
 }

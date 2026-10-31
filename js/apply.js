@@ -22,10 +22,12 @@
 // hero_seq differ on the first use, giving the free ECMD_OK.
 
 import { makeplural } from './plural.js';
+import { Levitation_hero, Fumbling_hero, Passes_walls_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
-import { CQ_CANNED, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT } from './const.js';
+import { CQ_CANNED, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
+         ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
 
@@ -50,7 +52,9 @@ import {
 import {
     EXPL_MAGICAL, EXPL_FIERY, EXPL_FROSTY, N_DIRS, xdir, ydir,
     DIGCHECK_FAILED, DIGCHECK_FAIL_BOULDER, PIT, HOLE, ROOM, ICE,
-    MELT_ICE_AWAY, NO_MM_FLAGS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT } from './const.js';
+    MELT_ICE_AWAY, NO_MM_FLAGS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT,
+    GETOBJ_SUGGEST, GETOBJ_EXCLUDE, GETOBJ_EXCLUDE_INACCESS } from './const.js';
+import { S_EYE, S_LIGHT } from './symbols.js';
 import { surface as surface_word, ceiling as ceiling_dg } from './dungeon.js';
 
 // C ref: include/onames.h — STETHOSCOPE object type index (mkobj.js OBJECTS
@@ -81,11 +85,6 @@ const SACK_OTYP = 217, OILSKIN_SACK_OTYP = 218, BAG_OF_HOLDING_OTYP = 219;
 const LARGE_BOX_OTYP = 214, CHEST_OTYP = 215, ICE_BOX_OTYP = 216,
       BAG_OF_TRICKS_OTYP = 220;
 
-// ECMD result codes (cmd.h).  doapply() returns one of these; the caller maps
-// ECMD_TIME -> game turn elapsed.
-const ECMD_OK = 0;
-const ECMD_CANCEL = 1;
-const ECMD_TIME = 2;
 
 // Lazily-imported deps (invent.js / display.js pull cmd.js transitively, so we
 // avoid a static import cycle).
@@ -184,7 +183,7 @@ function apply_ok(obj) {
 // counter) is game.moves in the port; before the first turn elapses it is the
 // startup value, distinct from the init-0 stethoscope_seq below.
 function hero_seq() {
-    return (game.moves || 0) << 3;
+    return game.hero_seq ?? ((game.moves || 0) << 3);
 }
 
 const MZ_TINY = 0, MZ_SMALL = 1, MZ_MEDIUM = 2, MZ_LARGE = 3, MZ_HUGE = 4,
@@ -259,7 +258,7 @@ async function use_stethoscope(obj) {
     game.context.stethoscope_seq = seq;
 
     const { update_topl } = await import('./display.js');
-    const { m_at, newsym, map_invisible } = await import('./display.js');
+    const { m_at, newsym, map_invisible, feel_newsym } = await import('./display.js');
     const u = game.u;
 
     // C ref: apply.c:361 — the up/down arm.  Aiming '>' at the floor probes
@@ -319,7 +318,7 @@ async function use_stethoscope(obj) {
     const rx = u.ux + d.dx, ry = u.uy + d.dy;
 
     // C ref: apply.c:407 — isok() bounds check.  Off-map -> "faint typing noise".
-    if (rx < 0 || rx > 79 || ry < 0 || ry > 21) {
+    if (!isok(rx, ry)) {
         await _display.You_hear('a faint typing noise.');
         return ECMD_OK;
     }
@@ -334,11 +333,10 @@ async function use_stethoscope(obj) {
             if (!spotted) await update_topl(`There is ${mnm} hidden there.`);
             mtmp.mundetected = 0;
             newsym(mtmp.mx, mtmp.my);
-        } else if (mtmp.m_ap_type && mtmp.mappearance != null) {
+        } else if (mtmp.m_ap_type && mtmp.mappearance) {
             // C ref: apply.c:410 — a disguised monster (mimic) is exposed.
             //   "That <thing> is really <a monster>."
-            const what = stethoscope_appearance(mtmp);
-            const use_plural = false; // boots/gloves/lenses plural not exercised
+            const { what, plural: use_plural } = await stethoscope_appearance(mtmp);
             await seemimic(mtmp);
             await update_topl(
                 `${use_plural ? 'Those' : 'That'} ${what} ${use_plural ? 'are' : 'is'} really ${mnm}.`);
@@ -366,14 +364,14 @@ async function use_stethoscope(obj) {
         await _display.You_hear('a hollow sound.  This must be a secret door!');
         cvt_sdoor_to_door(lev);
         _vision.recalc_block_point(rx, ry);
-        newsym(rx, ry);
+        feel_newsym(rx, ry);
         return res.v;
     }
     if (lev && lev.typ === SCORR) {
         await _display.You_hear('a hollow sound.  This must be a secret passage!');
         lev.typ = CORR; lev.flags = 0;
         _vision.unblock_point(rx, ry);
-        newsym(rx, ry);
+        feel_newsym(rx, ry);
         return res.v;
     }
 
@@ -438,9 +436,8 @@ async function its_dead(rx, ry, resp) {
     const CORPSE_OTYP = 265; // mkobj.js OBJECT_DATA — corpse
     const { monster_by_pmidx } = await import('./makemon.js');
     const { can_reach_floor } = await import('./engrave.js');
-    const objs = [];
-    for (const o of (game.level?.objects || []))
-        if (o && o.where === OBJ_FLOOR && o.ox === rx && o.oy === ry) objs.push(o);
+    /* topmost first == C's nexthere order */
+    const objs = _invent.objects_at(rx, ry);
     let corpse = objs.find((o) => o.otyp === CORPSE_OTYP) || null;
     let statue = objs.find((o) => o.otyp === STATUE_OTYP) || null;
     if (!can_reach_floor(true)) { /* levitation or unskilled riding */
@@ -539,18 +536,38 @@ async function seemimic(mtmp) {
 // "<what>" the disguised monster was pretending to be.  For an object appearance
 // it is simple_typename(mappearance) (objnam.c: the bare type name with any
 // trailing description stripped); for furniture it is the cmap explanation.
-function stethoscope_appearance(mtmp) {
-    if (mtmp.m_ap_type === 'furniture') {
-        // defsyms[mappearance].explanation — not exercised by the owned
-        // sessions' object-mimics; fall back to a generic word.
-        return 'thing';
+async function stethoscope_appearance(mtmp) {
+    const { M_AP_TYPE, M_AP_FURNITURE, M_AP_MONSTER } = await import('./const.js');
+    const t = M_AP_TYPE(mtmp);
+    if (t === M_AP_FURNITURE) {
+        const { defsyms } = await import('./symbols.js');
+        return { what: defsyms[mtmp.mappearance]?.explanation ?? 'thing', plural: false };
     }
-    // M_AP_OBJECT: simple_typename(mappearance) — the plain object type name.
-    try {
-        return _invent.simple_typename(mtmp.mappearance);
-    } catch (_e) {
-        return 'thing';
+    if (t === M_AP_MONSTER) {
+        /* ignore Hallucination here */
+        const { monster_by_pmidx } = await import('./makemon.js');
+        const { mon_pmname } = await import('./do_name.js');
+        const pm = monster_by_pmidx(mtmp.mappearance);
+        return { what: pm ? mon_pmname({ data: pm, female: !!mtmp.female }) : 'thing',
+                 plural: false };
     }
+    const otyp = mtmp.mappearance;
+    const { init_dummyobj, SLIME_MOLD } = await import('./mkobj.js');
+    const { is_boots, is_gloves } = await import('./do_wear.js');
+    const odummy = init_dummyobj({}, otyp, 1);
+    // The mimic's MCORPSENM (a slime mold's fruit id) lives on mon.mcorpsenm
+    // in this port (makemon.js set_mimic_sym).
+    const mcorpsenm = mtmp.mextra?.mcorpsenm ?? mtmp.mcorpsenm;
+    let what;
+    if (otyp === SLIME_MOLD && mcorpsenm != null && mcorpsenm >= 0) {
+        const { simpleonames } = await import('./objnam.js');
+        odummy.spe = mcorpsenm;
+        what = simpleonames(odummy);
+    } else {
+        what = _invent.simple_typename(otyp);
+    }
+    return { what,
+             plural: is_boots(odummy) || is_gloves(odummy) || otyp === LENSES };
 }
 
 // C ref: objclass.h OBJ_DESCR(objects[i]) — the (shuffled) appearance word.
@@ -583,8 +600,8 @@ export async function doapply() {
     let res = await doapply_obj(ref.obj);
     /* This assumes that anything that potentially destroyed obj has kept
      * track of it and cleared oartifact before this point. */
-    if (ref.obj.oartifact && res !== ECMD_CANCEL
-        && ((await arti_speak(ref.obj)) & 0x01))
+    if (ref.obj.oartifact && !(res & ECMD_CANCEL)
+        && ((await arti_speak(ref.obj)) & ECMD_TIME))
         res = ECMD_TIME; /* sets the time bit if the artifact speaks */
     return res;
 }
@@ -621,12 +638,8 @@ async function doapply_obj(obj) {
 
     // C ref apply.c:4361 — applying a magic marker writes a scroll/spellbook.
     if (obj.otyp === MAGIC_MARKER) {
-        // write.js (cmd.h numbering: ECMD_TIME 1, ECMD_CANCEL 2) -> this file's.
         const { dowrite } = await import('./write.js');
-        const r = await dowrite(obj);
-        if (r & 0x01) return ECMD_TIME;
-        if (r & 0x02) return ECMD_CANCEL;
-        return ECMD_OK;
+        return await dowrite(obj);
     }
 
     // C ref: apply.c `case TINNING_KIT: use_tinning_kit(obj); break;` — res is
@@ -651,10 +664,7 @@ async function doapply_obj(obj) {
     // pass the code straight through.
     if (obj.otyp === TIN_OPENER) {
         const { use_tin_opener } = await import('./eat.js');
-        const r = await use_tin_opener(obj);
-        if (r & 0x01) return ECMD_TIME;
-        if (r & 0x02) return ECMD_CANCEL;
-        return ECMD_OK;
+        return await use_tin_opener(obj);
     }
 
     // C ref apply.c:4258 — applying a cream pie immerses the hero's face in it.
@@ -684,6 +694,8 @@ async function doapply_obj(obj) {
         // springs its trap instead.  (js/extcmd-handlers.js owns the menu
         // half of use_container(); this preamble is the part a carried BOX
         // needs, since bags are never locked or trapped.)
+        // C ref: pickup.c:2988 `if (!u_handsy()) return ECMD_OK;` precedes all of it.
+        if (!(await (await import('./pickup.js')).u_handsy())) return ECMD_OK;
         if (!obj.lknown) {
             obj.lknown = 1;
             _invent.update_inventory();
@@ -728,11 +740,7 @@ async function doapply_obj(obj) {
     // do_play_instrument() (music.c, now ported in full).
     if (INSTRUMENT_OTYPS.has(obj.otyp)) {
         const { do_play_instrument } = await import('./music.js');
-        // music.js returns the REAL hack.h codes (ECMD_TIME 0x01); this file
-        // renumbers them (ECMD_TIME 2) and cmd.js compares against THIS file's
-        // ECMD export, so translate rather than passing the value through.
-        const r = await do_play_instrument(obj);
-        return (r & 0x01) ? ECMD_TIME : ECMD_OK;
+        return await do_play_instrument(obj);
     }
 
     // C ref: apply.c:4396 `case FLINT: case LUCKSTONE: case LOADSTONE:
@@ -745,8 +753,7 @@ async function doapply_obj(obj) {
     // starts wielding theirs in slot a).  use_whip() lives in dothrow.js, which
     // reached it only from dofire()'s empty-quiver arm; without this branch the
     // apply path fell through to "Sorry, I don't know how to use that." and
-    // swallowed the direction key that follows.  dothrow.js uses its own ECMD
-    // numbering (ECMD_TIME === 3), so translate rather than pass through.
+    // swallowed the direction key that follows.
     if (obj.otyp === BULLWHIP_OTYP) {
         // C ref: apply.c use_whip(): an unwielded whip is wielded first, then
         // `cmdq_add_ec(CQ_CANNED, doapply); cmdq_add_key(CQ_CANNED,
@@ -757,8 +764,7 @@ async function doapply_obj(obj) {
             return ECMD_OK;
         }
         const DT = await import('./dothrow.js');
-        const r = await DT.use_whip(obj, () => _cmd.getdir());
-        return r === 3 ? ECMD_TIME : (r ? ECMD_CANCEL : ECMD_OK);
+        return await DT.use_whip(obj, () => _cmd.getdir());
     }
 
     // C ref apply.c:4337 `case CANDELABRUM_OF_INVOCATION: use_candelabrum(obj);
@@ -853,8 +859,7 @@ async function doapply_obj(obj) {
     if (obj.otyp === SADDLE_OTYP) {
         const { use_saddle } = await import('./steed.js');
         // steed.js returns the hack.h bits (ECMD_TIME 0x01, ECMD_CANCEL 0x02)
-        const r = await use_saddle(obj);
-        return (r & 0x01) ? ECMD_TIME : (r & 0x02) ? ECMD_CANCEL : ECMD_OK;
+        return await use_saddle(obj);
     }
     if (obj.otyp === CAN_OF_GREASE) return await use_grease(obj);
     if (obj.otyp === GRAPPLING_HOOK) return await use_grapple(obj);
@@ -970,9 +975,9 @@ async function flip_coin(obj) {
         await _display.pline('It tumbles away.');
         lose_coin = true;
     } else if (ap_Glib() || ap_Fumbling() || (dex < 10 && !rn2(dex))) {
-        const A = await ap_load();
+        /* fingers_or_gloves(FALSE): never the gloves, whatever is worn */
         await _display.pline(`It slips between your ${
-            !game.uarmg ? makeplural('finger') : A.do_wear.gloves_simple_name(game.uarmg)}.`);
+            makeplural(_invent.body_part(3 /* FINGER */))}.`);
         lose_coin = true;
     }
     if (lose_coin) {
@@ -1712,6 +1717,11 @@ export async function use_pole(obj, autohit) {
     await loadDeps();
     const u = game.u;
 
+    /* Are you allowed to use the pole? */
+    if (u.uswallow) {
+        await _display.pline(not_enough_room);
+        return ECMD_OK;
+    }
     if (obj !== game.uwep) {
         // C ref: apply.c:3443 — an unwielded polearm is wielded first
         // ("You now wield a lance."), then doapply is re-queued on the canned
@@ -1875,7 +1885,6 @@ async function pole_cmap_name(x, y) {
     return (cm >= 0 && cm < MAXPCHARS && defsyms[cm]) ? defsyms[cm].explanation : null;
 }
 
-export const ECMD = { ECMD_OK, ECMD_CANCEL, ECMD_TIME };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // apply.c, translated but DELIBERATELY NOT WIRED UP.
@@ -2018,8 +2027,10 @@ function ap_prop(name) {
     return (p[`H${name}`] | 0) || (p[name] | 0) || 0;
 }
 function ap_Underwater() { return !!game.u?.uinwater; }
-function ap_Levitation() { return ap_prop('Levitation') > 0; }
-function ap_Fumbling() { return ap_prop('Fumbling') > 0; }
+function ap_Levitation() { return Levitation_hero(); }
+/* youprop.h: Fumbling == (HFumbling || EFumbling); EFumbling is the worn-item
+   (fumble boots / gauntlets of fumbling) extrinsic */
+function ap_Fumbling() { return Fumbling_hero(); }
 function ap_Glib() { return ap_prop('Glib') > 0; }
 function ap_Confusion() { return ((game.u?.uconf | 0) > 0) || ap_prop('Confusion') > 0; }
 function ap_Stunned() { return ((game.u?.ustun | 0) > 0) || ap_prop('Stun') > 0; }
@@ -2027,14 +2038,15 @@ function ap_Hallucination() {
     return !!game.Hallucination || !!game.u?.uhallu || ap_prop('Hallucination') > 0;
 }
 function ap_Blinded() { return (game.u?.blinded | 0) > 0; }
-function ap_Invis() { return ap_prop('Invis') > 0; }
-function ap_See_invisible() { return ap_prop('See_invisible') > 0; }
+function ap_Invis() { return !!_ap.monmove.Invis(); }
+function ap_See_invisible() { return !!_ap.display.see_invisible(); }
 function ap_Free_action() { return ap_prop('Free_action') > 0 || !!_invent?.Free_action(); }
-function ap_Passes_walls() { return ap_prop('Passes_walls') > 0; }
+function ap_Passes_walls() { return Passes_walls_hero(); }
 function ap_Upolyd() { return !!game.u?.Upolyd; }
 function ap_ucreamed() { return game.u?.ucreamed | 0; }
-// C ref: youprop.h Wounded_legs — u.uprops[WOUNDED_LEGS].
-function ap_Wounded_legs() { return ap_prop('Wounded_legs') > 0; }
+// C ref: youprop.h Wounded_legs == (HWounded_legs || EWounded_legs); trap.js
+// set_wounded_legs() stores both words on u itself.
+function ap_Wounded_legs() { return !!((game.u?.HWounded_legs | 0) || (game.u?.EWounded_legs | 0)); }
 // C ref: attrib.h ATEMP(x) — the temporary attribute delta.
 function ap_ATEMP(i) { return game.u?.atemp?.a?.[i] | 0; }
 // C ref: hacklib.c sgn(x).
@@ -2301,7 +2313,8 @@ async function ap_xkilled(mtmp, flags) {
 // block keeps private copies of these one-liners.
 function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 function ap_an(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
-function ap_the(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
+// C ref: objnam.c the().
+import { the as ap_the } from './objnam.js';
 function ap_The(s) { return ap_upstart(ap_the(s)); }
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js
 // (an absent subject is treated as plural by this file's callers).
@@ -3589,8 +3602,8 @@ export async function splash_lit(obj) {
             uhearit = A.vision.couldsee(x, y) && ap_distu(x, y) < 5 * 5;
             const mf = await import('./monflags_data.js');
             dunk = !!A.dbridge.is_pool(x, y)
-                && ((!mf.is_flyer_flag(mtmp.data) && mtmp.data?.mcls !== 5 /* S_EYE */
-                     && mtmp.data?.mcls !== 17 /* S_LIGHT */)
+                && ((!mf.is_flyer_flag(mtmp.data) && mtmp.data?.mcls !== S_EYE
+                     && mtmp.data?.mcls !== S_LIGHT)
                     || ap_Is_waterlevel());
             snuff = false;
         }
@@ -3975,6 +3988,7 @@ export async function use_unicorn_horn(optr) {
 // rolls.
 export async function fig_transform(arg, timeout) {
     const A = await ap_load();
+    const { locomotion } = await import('./monmove.js');
     const figurine = arg?.a_obj ?? arg;
     let redraw = false, suppress_see = false;
 
@@ -4013,7 +4027,7 @@ export async function fig_transform(arg, timeout) {
 
         if (mtmp.mundetected) {
             if (ap_hides_under(mtmp.data) && mshelter) {
-                and_vanish = ` and crawl under ${A.invent.xname(mshelter)}`;
+                and_vanish = ` and ${locomotion(mtmp.data, 'crawl')} under ${(await import('./objnam.js')).doname_c(mshelter)}`;
             } else if (mtmp.data?.mcls === S_MIMIC || mtmp.data?.mcls === S_EEL) {
                 suppress_see = true;
             } else {
@@ -4024,9 +4038,9 @@ export async function fig_transform(arg, timeout) {
         switch (figurine.where) {
         case OBJ_INVENT:
             if (A.vision.Blind() || suppress_see)
-                await A.display.You_feel(`${c_something} drop from your pack!`);
+                await A.display.You_feel(`${c_something} ${locomotion(mtmp.data, 'drop')} from your pack!`);
             else
-                await A.display.You_see(`${monnambuf} drop out of your pack${
+                await A.display.You_see(`${monnambuf} ${locomotion(mtmp.data, 'drop')} out of your pack${
                     and_vanish}!`);
             break;
 
@@ -4050,7 +4064,7 @@ export async function fig_transform(arg, timeout) {
                     ? `${s_suffix(A.do_name.a_monnam(mcarry))} pack`
                     : (mcarry && A.dbridge.is_pool(mcarry.mx, mcarry.my))
                       ? 'empty water' : 'thin air';
-                await A.display.You_see(`${monnambuf} drop out of ${
+                await A.display.You_see(`${monnambuf} ${locomotion(mtmp.data, 'drop')} out of ${
                     carriedby}${and_vanish}!`);
             }
             break;
@@ -4158,22 +4172,21 @@ export async function use_figurine(optr) {
 // Note grease_ok(NULL) SUGGESTs, which is what puts the "- your hands" entry on
 // the prompt.  RNG-free, and sync so it can be handed to getobj().
 export function grease_ok(obj) {
-    const GETOBJ_SUGGEST_A = 2, GETOBJ_EXCLUDE_A = -3, GETOBJ_EXCLUDE_INACCESS_A = -1;
 
     if (!obj)
-        return GETOBJ_SUGGEST_A;
+        return GETOBJ_SUGGEST;
 
     /* note: if changing the list of ungreasable objects, also change
        special_throne_effect in sit.c */
     if (obj.oclass === COIN_CLASS)
-        return GETOBJ_EXCLUDE_A;
+        return GETOBJ_EXCLUDE;
 
     if (ap_inaccessible_equipment_quiet(obj))
-        return GETOBJ_EXCLUDE_INACCESS_A;
+        return GETOBJ_EXCLUDE_INACCESS;
 
     /* Possible extension: don't suggest greasing objects which are already
      * greased. */
-    return GETOBJ_SUGGEST_A;
+    return GETOBJ_SUGGEST;
 }
 
 // C ref: apply.c:2603 use_grease(obj).  RNG, in order: rn2(2) for the
@@ -4437,10 +4450,9 @@ export function snickersnee_used_dist_attk(obj) {
 
 // C ref: apply.c:3606 jelly_ok(obj) — the getobj() callback for royal jelly.
 export function jelly_ok(obj) {
-    const GETOBJ_SUGGEST_A = 2, GETOBJ_EXCLUDE_A = -3;
     if (obj && obj.otyp === EGG)
-        return GETOBJ_SUGGEST_A;
-    return GETOBJ_EXCLUDE_A;
+        return GETOBJ_SUGGEST;
+    return GETOBJ_EXCLUDE;
 }
 
 // C ref: apply.c:3615 use_royal_jelly(&obj) — rub royal jelly on an egg.

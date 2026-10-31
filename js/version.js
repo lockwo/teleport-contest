@@ -99,8 +99,7 @@ import {
 
 /* include/global.h BUFSZ */
 const BUFSZ = 256;
-/* include/hack.h ECMD_OK */
-const ECMD_OK = 0;
+import { ECMD_OK } from './const.js';
 /* include/flag.h:99-101 */
 const VI_NUMBER = 1, VI_NAME = 2, VI_BRANCH = 4;
 /* include/hack.h:892-897 uptodate() flags */

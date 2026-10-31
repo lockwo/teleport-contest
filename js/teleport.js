@@ -10,6 +10,7 @@
 // Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
 import { acurr_eff } from './attrib.js';
+import { Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
@@ -22,7 +23,7 @@ import { known_spell, spelleffects } from './spell.js';
 import { morehungry } from './eat.js';
 import { hero_liquid_goodpos } from './trap.js';
 import { In_hell } from './dungeon.js';
-import { In_endgame } from './const.js';
+import { In_endgame, Trap_Effect_Finished, Trap_Moved_Mon } from './const.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -543,8 +544,6 @@ import { within_bounded_area } from './rect.js';
 import { in_out_region } from './region.js';
 import { see_monsters, see_nearby_objects } from './display.js';
 
-// C ref: trap.h:96 enum trap_result.
-const Trap_Effect_Finished = 0, Trap_Moved_Mon = 3;
 // C ref: monsym.h — mons[].mlet values goodpos_onscary() and mlevel_tele_trap()
 // test.  (S_EEL_MCLS above is the same table.)
 const S_HUMAN_MCLS = 53, S_ANGEL_MCLS = 27, S_VAMPIRE_MCLS = 48,
@@ -788,7 +787,7 @@ export async function teleds(nux, nuy, teleds_flags) {
         if (!carried_(uball_()) && distmin_(nux, nuy, uball_().ox, uball_().oy) <= 2)
             ball_still_in_range = true;    /* don't have to move the ball */
         else if (!allow_drag)
-            B.unplacebc();                 /* have to move the ball */
+            await B.unplacebc();                 /* have to move the ball */
     }
     reset_utrap_(false);
     was_swallowed = u.uswallow;            /* set_ustuck(Null) clears uswallow */
@@ -819,7 +818,7 @@ export async function teleds(nux, nuy, teleds_flags) {
             /* dragging fails if hero is encumbered beyond 'burdened'; uball
                might've been cleared via drag_ball -> spoteffects -> dotrap */
             ball_active = (Punished_() && uball_()?.where !== OBJ_FREE);
-            if (ball_active) B.unplacebc();  /* to match placebc() below */
+            if (ball_active) await B.unplacebc();  /* to match placebc() below */
         }
     }
 
@@ -828,7 +827,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     const { fill_pit } = await import('./trap.js');
     await fill_pit(u.ux0, u.uy0);
     if (ball_active && uchain_() && uchain_().where === OBJ_FREE)
-        B.placebc();          /* put back the ball&chain if taken off map */
+        await B.placebc();          /* put back the ball&chain if taken off map */
     const { update_player_regions } = await import('./region.js');
     update_player_regions();
     /*
@@ -1602,8 +1601,8 @@ function mons_by_idx_(_idx) { return null; }
 const S_MIMIC_MCLS = 13;                       /* defsym.h MONSYM(13,'m',MIMIC) */
 // C ref: uprop.h Levitation/Flying/Passes_walls/Punished/Teleportation.
 function HProp_tp(name) { return (game.u?.uprops?.[name] | 0); }
-function Levitation_() { return HProp_tp('HLevitation') > 0 || HProp_tp('ELevitation') > 0; }
-function Flying_() { return HProp_tp('HFlying') > 0 || HProp_tp('EFlying') > 0; }
+function Levitation_() { return Levitation_hero(); }
+function Flying_() { return Flying_hero(); }
 function Passes_walls_() { return !!game.u?.formprops?.Passes_walls || HProp_tp('HPasses_walls') > 0; }
 function Punished_() { return !!game.u?.uball; }
 function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0 || worn_extrinsic(TELEPORT_PROP); }

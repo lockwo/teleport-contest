@@ -447,8 +447,13 @@ export async function check_special_room(newlev) {
             // C ref: hack.c:3685 — this is a normal room-entry event, not a
             // quest message.  It can therefore page a prior arrival/quest
             // topline before leaving its own line pending.
-            await update_topl(midnight() ? 'Run away!  Run away!'
-                : 'You have an uncanny feeling...');
+            if (midnight()) {
+                const { u_locomotion } = await import('./trap.js');
+                const run = u_locomotion('Run');
+                await update_topl(`${run} away!  ${run} away!`);
+            } else {
+                await update_topl('You have an uncanny feeling...');
+            }
             break;
         case BEEHIVE:
             await update_topl('You enter a giant beehive!');

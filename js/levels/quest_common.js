@@ -10,7 +10,7 @@ import {
     A_NEUTRAL, ENGRAVE, LADDER, NO_TRAP, ROCKTRAP,
     STAIRS, WEB,
 } from '../const.js';
-import { make_engr_at } from '../engrave.js';
+import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { artilist } from '../artifact.js';
 import {
@@ -192,7 +192,7 @@ export async function quest_trap_typed_at(ttyp, mx, my) {
 // for an explicit text.
 export function quest_engraving_random(text, etyp = ENGRAVE) {
     const c = quest_getloc_coord_rnd(LOC_DRY, false);
-    make_engr_at(c.x, c.y, text, text, 0, etyp);
+    des_engraving_at(c.x, c.y, text, text, etyp);
 }
 
 // C ref: sp_lev.c create_object() for a des.object table carrying an `id`, an
