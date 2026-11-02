@@ -18,7 +18,7 @@ import { DEADMONSTER, fmonOrder, wake_nearto_core, genus, is_vampshifter } from 
 import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { findgd } from './vault.js';
-import { update_topl, You_hear, Deaf_hero } from './display.js';
+import { update_topl, verbalize, You_hear, Deaf_hero } from './display.js';
 import {
     msound_of, mflags2_of, M2_MAGIC, is_elf_flag, is_dwarf_flag, is_gnome_flag,
     is_orc_flag, is_human_flag, is_giant_flag,
@@ -278,11 +278,6 @@ function hero_money_cnt() {
     return sum;
 }
 
-// C ref: polyself.c poly_gender() — 2 when the current form is neuter or not
-// humanoid, else flags.female.  Un-poly'd the hero is always humanoid.
-function poly_gender() {
-    return game.flags?.female ? 1 : 0;
-}
 
 // C ref: include/mondata.h likes_magic(ptr) = (mflags2 & M2_MAGIC).
 const likes_magic = (ptr) => (mflags2_of(ptr) & M2_MAGIC) !== 0;
@@ -322,18 +317,6 @@ const H_SOUNDS = [
     'twang', 'toot', 'gargle', 'hoot', 'warble',
 ];
 
-// C ref: objnam.c vtense((char *) 0, verb) — 3rd-person singular.
-function vtense_sing_snd(verb) {
-    const last = verb[verb.length - 1];
-    const prev = verb.length >= 2 ? verb[verb.length - 2] : '';
-    if (last === 'z' || last === 'x' || last === 's'
-        || (last === 'h' && (prev === 'c' || prev === 's'))
-        || (verb.length === 2 && last === 'o'))
-        return verb + 'es';
-    if (last === 'y' && !'aeiou'.includes(prev)) return verb.slice(0, -1) + 'ies';
-    return verb + 's';
-}
-
 // C ref: sounds.c:401 growl(mtmp) — the noise a monster makes when the hero
 // wakes it by hitting it (mon.c:4353 `if (was_sleeping) growl(mtmp)`).
 // RNG-free unless hallucinating, but the wake_nearto(mlevel * 18) tail clears
@@ -360,12 +343,12 @@ export async function growl(mtmp) {
     // C ref: growl() — `if (canseemon(mtmp) || !Deaf) pline(...)`; the wake_nearto
     // below runs either way.
     if (canseemon_shared(mtmp) || !Deaf_hero()) {
-        await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+        await update_topl(`${Monnam(mtmp)} ${vtense(null, verb)}!`);
         game.last_msg = PLNMSG_GROWL; // sounds.c:417 iflags.last_msg
         // C ref: growl() — `if (gc.context.run) nomul(0);` inside the same block.
         if (game.context?.run) (await import('./hack.js')).nomul(0);
     }
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
 }
 
@@ -396,10 +379,10 @@ export async function yelp(mtmp) {
         }
     }
     if (!verb) return;
-    await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(verb)}!`);
+    await update_topl(`${Monnam(mtmp)} ${vtense(null, verb)}!`);
     // C ref: yelp() — `if (gc.context.run) nomul(0);` after the message.
     if (game.context?.run) (await import('./hack.js')).nomul(0);
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 12);
 }
 
@@ -421,7 +404,7 @@ export async function domonnoise(mtmp) {
     const { quest_info } = await import('./questpgr.js');
     const { nomul } = await import('./hack.js');
     const { aggravate } = await import('./monmove.js');
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     const { t_at } = await import('./trap.js');
     const { could_seduce, doseduce } = await import('./mhitu.js');
     const { YOUMONST } = await import('./mhitm_ad.js');
@@ -725,7 +708,7 @@ export async function domonnoise(mtmp) {
             await doseduce(mtmp);
             break;
         }
-        const swval = (poly_gender() !== (mtmp.female | 0)) ? rn2(3) : 0;
+        const swval = ((await import('./invent.js')).poly_gender() !== (mtmp.female | 0)) ? rn2(3) : 0;
         if (swval === 2) verbl_msg = 'Hello, sailor.';
         else if (swval === 1) pline_msg = 'comes on to you.';
         else pline_msg = 'cajoles you.';
@@ -769,7 +752,7 @@ export async function domonnoise(mtmp) {
         else if (game.uarmc || game.uarm || game.uarmh || game.uarms
                  || game.uarmg || game.uarmf)
             // C picks the Healer-specific line via Role_if(PM_HEALER).
-            verbl_msg = ((game.urole?.mnum ?? game.u?.umonnum) === PM_HEALER)
+            verbl_msg = ((game.urole?.mnum) === PM_HEALER)
                 ? "Doc, I can't help you unless you cooperate."
                 : 'Please undress so I can examine you.';
         else if (game.uarmu) verbl_msg = 'Take off your shirt, please.';
@@ -803,7 +786,7 @@ export async function domonnoise(mtmp) {
         if (ms_Death && !game._tribute_Deathnotice
             && (book = (await import('./invent.js')).u_have_novel()) != null) {
             const holder = { idx: book.novelidx ?? -1 };
-            const tribtitle = (await import('./do_name.js')).noveltitle(holder);
+            const tribtitle = (await import('./mkobj.js')).noveltitle(holder);
             book.novelidx = holder.idx;
             if (tribtitle) {
                 let verbuf = `Ah, so you have a copy of /${tribtitle}/.`;
@@ -901,6 +884,7 @@ function closed_door(x, y) {
 }
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
 import { vtense } from './plural.js';
+import { youmonst_data as youmonst_data_snd } from './invent.js';
 const S_NYMPH_MCLS = 14; // defsym.h S_NYMPH
 // C ref: monsym.h S_ANT / S_EEL — mons[].mlet values.  makemon.js keeps the
 // numeric class index in `mcls` (`mlet` there is the display CHARACTER), so
@@ -1162,10 +1146,10 @@ export async function whimper(mtmp) {
         }
     }
     if (whimper_verb) {
-        await update_topl(`${Monnam(mtmp)} ${vtense_sing_snd(whimper_verb)}.`);
+        await update_topl(`${Monnam(mtmp)} ${vtense(null, whimper_verb)}.`);
         const { nomul } = await import('./hack.js');
         if (game.context?.run) nomul(0);
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 6);
     }
 }
@@ -1185,7 +1169,7 @@ export async function beg(mtmp) {
     } else if ((msound_of(ptr) ?? MS_SILENT) >= MS_HUMANOID) {
         if (!canspotmon(mtmp)) map_invisible(mtmp.mx, mtmp.my);
         set_voice(mtmp, 0, 80, 0);
-        await update_topl('"I\'m hungry."'); /* verbalize() */
+        await verbalize("I'm hungry.");
     } else {
         /* covers the MS_* block between animal and humanoid, plus MS_SILENT */
         if (canspotmon(mtmp))
@@ -1259,16 +1243,6 @@ export function maybe_gasp(mon) {
     return null;
 }
 
-// C ref: gy.youmonst.data == &mons[u.umonnum].  Mirrors js/invent.js
-// youmonst_data(): u.umonnum holds the 0-based ROLE index in this port, so an
-// un-poly'd hero needs the PM_ARCHEOLOGIST (331) offset.  hero_permonst()
-// above skips that offset — it reads mons[role index], which is a jackal for a
-// Wizard — so maybe_gasp() does not reuse it.
-function youmonst_data_snd() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
-}
 
 // C ref: sounds.c:616 cry_sound(mtmp) — for egg hatching (timeout.c:1121);
 // the caller applies the "ing" suffix.  RNG-free.
@@ -1327,16 +1301,8 @@ export function mon_is_gecko(mon) {
     return false;
 }
 
-// C ref: monst.h M_AP_TYPE(mon).  js/makemon.js stores the mimic appearance
-// type as the STRINGS 'obj'/'furniture' while js/dogmove.js quickmimic() stores
-// the numeric M_AP_* — accept both rather than answer FALSE for half the tree.
-function m_ap_type_of(mon) {
-    const t = mon?.m_ap_type;
-    if (t === 'obj') return M_AP_OBJECT;
-    if (t === 'furniture') return M_AP_FURNITURE;
-    if (t === 'mon' || t === 'monster') return M_AP_MONSTER;
-    return t | 0;
-}
+// C ref: monst.h M_AP_TYPE(mon).
+function m_ap_type_of(mon) { return (mon?.m_ap_type | 0) & 7; }
 
 // C ref: sounds.c:1247 dotalk() — the #chat command; a bare wrapper around
 // dochat(), whose single port lives in js/extcmd-handlers.js (reached here

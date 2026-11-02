@@ -25,12 +25,13 @@ import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
     AD_PEST,
+    sticks,
 } from './monattk_data.js';
 import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u, You_hear } from './display.js';
 import { cansee, couldsee } from './vision.js';
 import { is_undead_flag, is_demon_flag, nonliving, is_demon_flag as is_demon } from './monflags_data.js';
 import { has_innate } from './exper.js';
-import { Poison_resistance } from './youprop.js';
+import { Poison_resistance, Half_physical_damage_hero, Deaf_hero, Antimagic_hero } from './youprop.js';
 import { rndmonnam } from './do_name.js';
 import { s_suffix } from './hacklib.js';
 
@@ -75,19 +76,19 @@ function uprop(...names) {
 // full blast C shrugs off.  Read the store directly: js/invent.js cannot be
 // imported here without an import cycle.
 function wornprop(prop) { return ((game.u?.uprops_extrinsic || {})[prop] | 0) !== 0; }
-function Antimagic() { return !!game.u?.formprops?.Antimagic || uprop('Antimagic', 'HAntimagic', 'EAntimagic') || !!game.u?.Antimagic || wornprop(ANTIMAGIC); }
+function Antimagic() { return Antimagic_hero(); }
 function Fire_resistance() { return !!game.u?.formprops?.Fire_resistance || uprop('Fire_resistance', 'HFire_resistance', 'EFire_resistance') || has_innate('HFire_resistance') || wornprop(FIRE_RES); }
 function Cold_resistance() { return !!game.u?.formprops?.Cold_resistance || uprop('Cold_resistance', 'HCold_resistance', 'ECold_resistance') || has_innate('HCold_resistance') || wornprop(COLD_RES); }
 export function Shock_resistance() { return !!game.u?.formprops?.Shock_resistance || uprop('Shock_resistance', 'HShock_resistance', 'EShock_resistance') || has_innate('HShock_resistance') || wornprop(SHOCK_RES); }
 export function Acid_resistance() { return !!game.u?.formprops?.Acid_resistance || uprop('Acid_resistance', 'HAcid_resistance', 'EAcid_resistance', 'AcidResistance') || wornprop(ACID_RES); }
 function Disint_resistance() { return !!game.u?.formprops?.Disint_resistance || uprop('Disint_resistance', 'HDisint_resistance', 'EDisint_resistance') || has_innate('HDisint_resistance') || wornprop(DISINT_RES); }
 function Invulnerable() { return uprop('Invulnerable') || !!game.u?.uinvulnerable; }
-function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf') || !!game.u?.Deaf; }
+function Deaf() { return Deaf_hero(); }
 // C ref: you.h Upolyd == (u.mtimedone != 0).
 function Upolyd() { return !!(game.u?.mtimedone) || !!game.u?.Upolyd; }
 // C ref: youprop.h Maybe_Half_Phys(dmg).
 function Maybe_Half_Phys(dmg) {
-    return uprop('Half_physical_damage', 'HHalf_physical_damage') ? Math.trunc((dmg + 1) / 2) : dmg;
+    return Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 
 // ── flag helpers ───────────────────────────────────────────────────────────
@@ -275,7 +276,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     let grabbed = false, grabbing = false;
     const grabxy = { x: 0, y: 0 };
     if (u?.ustuck && !u.uswallow) {
-        if (Upolyd() && (await import('./uhitm.js')).sticks(youmonst_data())) grabbing = true;
+        if (Upolyd() && sticks(youmonst_data())) grabbing = true;
         else grabbed = true;
         grabxy.x = u.ustuck.mx; grabxy.y = u.ustuck.my;
     }
@@ -400,7 +401,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
                     mtmp.mhp = (mtmp.mhp | 0) - itemdmg;
                 } else {
                     let mdam = dam;
-                    if (resist(mtmp, olet, 0, false)) {
+                    if (await resist(mtmp, olet, 0, false)) {
                         if (cansee(xx, yy) || inside_engulfer)
                             await update_topl(`${Monnam(mtmp)} resists the ${str}!`);
                         mdam = Math.floor((dam + 1) / 2);
@@ -530,7 +531,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     // max(dam*dam, 50)).  RNG-free, but it wakes sleeping monsters and a woken
     // monster picks different m_move moduli from here on.
     {
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         let noise = dam * dam;
         if (noise < 50) noise = 50;
         if (inside_engulfer) noise = Math.floor((noise + 3) / 4);
@@ -592,7 +593,7 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
             if (otmp.otyp === BOULDER) {
                 if (cansee(sx, sy)) await update_topl('The boulder breaks apart.');
                 else await You_hear('stone breaking.');
-                fracture_rock(otmp, weight);
+                await (await import('./zap.js')).fracture_rock(otmp);
                 place_object(otmp, sx, sy);
                 const { sobj_at } = await import('./invent.js');
                 const other = sobj_at(BOULDER, sx, sy);
@@ -607,7 +608,7 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
                 if (strap && strap.ttyp === STATUE_TRAP) deltrap(strap);
                 if (cansee(sx, sy)) await update_topl('The statue crumbles.');
                 else await You_hear('stone crumbling.');
-                await break_statue(otmp, weight);
+                await (await import('./zap.js')).break_statue(otmp);
                 place_object(otmp, sx, sy);
             }
             newsym(sx, sy);
@@ -700,33 +701,6 @@ function closed_door_at(x, y) {
     return loc?.typ === 23 /* DOOR */ && ((loc.doormask | 0) & (0x04 | 0x08)) !== 0;
 }
 
-// C ref: zap.c:5537 fracture_rock(obj) — a boulder/statue becomes a pile of
-// rocks.  rn1(60, 7) is the one draw.
-function fracture_rock(obj, weight) {
-    obj.otyp = ROCK;
-    obj.oclass = GEM_CLASS;
-    obj.quan = rn1(60, 7);
-    obj.owt = weight ? weight(obj) : obj.owt;
-    obj.dknown = 0; obj.bknown = 0; obj.rknown = 0;
-    obj.known = 1;
-    obj.oextra = null;
-    return obj;
-}
-
-// C ref: zap.c:5582 break_statue(obj) — spill the statue's contents, then
-// fracture it.  The STATUE_TRAP arm needs activate_statue_trap().
-async function break_statue(obj, weight) {
-    const { place_object } = await import('./mkobj.js');
-    const { obj_extract_self } = await import('./invent.js');
-    while (obj.cobj && obj.cobj.length) {
-        const item = obj.cobj[0];
-        obj_extract_self(item);
-        place_object(item, obj.ox, obj.oy);
-    }
-    obj.spe = 0;
-    fracture_rock(obj, weight);
-    return true;
-}
 
 // C ref: explode.c:962 splatter_burning_oil(x, y, diluted_oil).
 // ZT_SPELL(ZT_FIRE) = 11.

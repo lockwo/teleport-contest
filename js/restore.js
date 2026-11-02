@@ -19,6 +19,7 @@
 // restoring segment's own runtime environment (display handle, capture hook,
 // wall-clock datetime) untouched.
 
+import { ledger_no } from './dungeon.js';
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { monster_by_pmidx, propagate, set_malign, adj_erinys,
@@ -33,9 +34,11 @@ import { saveFileKey, savelev, store_plname_in_file, SAVE_KEY_PREFIX } from './s
 import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
+import { S_UNICORN } from './symbols.js';
 import { check_special_room } from './shkroom.js';
 import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { encumber_msg, xname, useup, uwep_unweapon } from './invent.js';
+import { change_luck } from './attrib.js';
 import { read_engr_at } from './engrave.js';
 import { run_object_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
@@ -185,7 +188,7 @@ function welcome_back_message() {
 //     save file with the pantheon already chosen, which is why the recorded
 //     Priest restore draws no randrole() even though a fresh Priest game does.
 // Only the roll is mirrored here: assigning the table's fixed gender would make
-// a restored game disagree with the newgame path (fastforward.js's role_init
+// a restored game disagree with the newgame path (allmain.js's role_init
 // leaves quest_nemgend unset for the non-rolling roles), and the save blob
 // already carries whatever the saving segment computed.
 function role_init_nemgend() {
@@ -269,13 +272,13 @@ async function restore_preamble_messages() {
     game.flags.friday13 = friday_13th();
     if (moonphase === FULL_MOON) {
         msgs.push('You are lucky!  Full moon tonight.');
-        u.uluck = (u.uluck || 0) + 1; // change_luck(1)
+        change_luck(1);
     } else if (moonphase === NEW_MOON) {
         msgs.push('Be careful!  New moon tonight.');
     }
     if (friday_13th()) {
         msgs.push('Watch out!  Bad things can happen on Friday the 13th.');
-        u.uluck = (u.uluck || 0) - 1; // change_luck(-1)
+        change_luck(-1);
     }
     for (const m of msgs) {
         await pline(m);
@@ -660,11 +663,6 @@ function ismnum_rst(mnum) { return mnum >= 0 && mnum < NUMMONS_RST; }
 
 /* C ref: dungeon.c:1376 ledger_no().  js/save.js (ledger_no_sv) and
    js/bones.js keep the same private copy; all three sit below dungeon.js. */
-function ledger_no_rst(lev) {
-    const dng = game.dungeons?.[lev?.dnum ?? 0];
-    if (!dng) return null;
-    return (lev?.dlevel ?? 1) + (dng.ledger_start ?? 0);
-}
 
 /* C ref: dungeon.c assign_level()/on_level() — js/vault.js:113-114 keeps the
    same pair module-private. */
@@ -1496,7 +1494,7 @@ export async function dorecover(nhfp) {
 
     restlevelstate();
     /* savestateinlock() — #ifdef INSURANCE */
-    rtmp = await restlevelfile(ledger_no_rst(game.u?.uz));
+    rtmp = await restlevelfile(ledger_no(game.u?.uz));
     if (rtmp < 2)
         return rtmp; /* dorecover called recursively */
 
@@ -1873,7 +1871,7 @@ export async function getlev(nhfp, pid, lev) {
                        unicorns are ponies/horses, whose maligntyp is 0, so the
                        sign test excludes them. */
                     const ptr = mtmp.data;
-                    const uni = ptr?.mcls === 'u' && Math.sign(ptr.maligntyp ?? 0) !== 0;
+                    const uni = ptr?.mcls === S_UNICORN && Math.sign(ptr.maligntyp ?? 0) !== 0;
                     mtmp.mpeaceful = (uni
                         && Math.sign(game.u?.ualign?.type ?? 0)
                            === Math.sign(ptr.maligntyp ?? 0)) ? 1
@@ -1913,8 +1911,8 @@ export async function getlev(nhfp, pid, lev) {
         /* Now get rid of all the temp fruits... */
         freefruitchn(game.oldfruit); game.oldfruit = null;
 
-        if (lev > ledger_no_rst(game.medusa_level)
-            && lev < ledger_no_rst(game.stronghold_level) && !stway) {
+        if (lev > ledger_no(game.medusa_level)
+            && lev < ledger_no(game.stronghold_level) && !stway) {
             /* UNPORTED: mazexy() (mkmaze.c) — without it there is no coordinate
                to place the rescue downstair on, so this whole arm (a bones file
                from a mazy level with no down staircase) is left as the seam. */

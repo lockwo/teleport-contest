@@ -3,9 +3,10 @@
 // num_spells, the cast command entry (docast / getspell + dospellmenu) and
 // spelleffects for the healing-on-self case exercised by the gameplay sessions.
 
+import { Stunned_hero } from './youprop.js';
 import { defended } from './artifact.js';
 import { nomul } from './hack.js';
-import { MENU_TRADITIONAL } from './const.js';
+import { MENU_TRADITIONAL, EYE } from './const.js';
 import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
 import { game } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
@@ -144,7 +145,7 @@ export function initialspell(obj) {
 // C ref: spell.c skill_based_spellbook_id() — Wizards recognize spellbook
 // appearances according to their current skill in each spell school.
 export function skill_based_spellbook_id() {
-    const rolemnum = game.urole?.mnum ?? game.u?.umonnum;
+    const rolemnum = game.urole?.mnum;
     if (rolemnum !== 12) return;
     for (const [otyp, meta] of SPELL_META) {
         if (!meta.skill) continue;
@@ -177,7 +178,7 @@ async function rejectcasting() {
     const u = game.u;
     // C ref: youprop.h Stunned = HStun || EStun; HStun carries FROMFORM for a
     // stalker or bat polyform (u.formprops.Stunned, polyself.js set_uasmon()).
-    if ((u?.uprops?.Stun || 0) > 0 || !!u?.Stunned || !!u?.formprops?.Stunned) {
+    if (Stunned_hero()) {
         await pline('You are too impaired to cast a spell.');
         return true;
     }
@@ -380,16 +381,6 @@ function spell_backfire(spell) {
     game.botl = true;
 }
 
-// C ref: hack.c check_capacity(str) — near_capacity() >= EXT_ENCUMBER.
-async function check_capacity_spell(str) {
-    const { near_capacity } = await import('./invent.js');
-    if (near_capacity() >= EXT_ENCUMBER) {
-        await pline(str);
-        return true;
-    }
-    return false;
-}
-
 // C ref: eat.c morehungry(num) — u.uhunger -= num; newuhs(TRUE).  newuhs can
 // draw (the FAINTING rn2(20 - uhunger/10)), so skipping the hunger cost of
 // casting shifts the whole later stream, not just the botl hunger word.
@@ -437,7 +428,7 @@ async function spelleffects_check(spell) {
     } else if (ACURR(A_STR) < 4 && spellid(spell) !== SPE_RESTORE_ABILITY) {
         await pline('You lack the strength to cast spells.');
         return { fail: true, code: ECMD_OK, energy };
-    } else if (await check_capacity_spell(
+    } else if (await (await import('./invent.js')).check_capacity(
                    'Your concentration falters while carrying so much stuff.')) {
         return { fail: true, code: ECMD_TIME, energy };
     }
@@ -915,12 +906,7 @@ async function confused_book(spellbook) {
 // C ref: youprop.h Sleep_resistance (HSleep_resistance || ESleep_resistance).
 // The innate source (elf from level 4, monk from level 1) is never persisted
 // as a stored uprops flag, so OR in has_innate()'s pure derivation.
-function Sleep_resistance_hero() {
-    if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u;
-    return ((u?.uprops?.HSleep_resistance ?? u?.uprops?.Sleep_resistance ?? 0) > 0)
-        || has_innate('HSleep_resistance');
-}
+async function Sleep_resistance_hero() { return (await import('./zap.js')).Sleep_resistance(); }
 // C ref: objnam.c objdescr_is(obj, descr) — compare the SHUFFLED appearance.
 function objdescr_is_spell(obj, descr) {
     const idx = objects[obj?.otyp]?.oc_descr_idx;
@@ -946,15 +932,19 @@ export async function study_book(spellbook) {
     // the hero fall asleep".  This runs BEFORE everything else and always draws
     // rnd(25) for a book whose (shuffled) appearance is "dull", so omitting it
     // desynchronises the stream for every read of that appearance, asleep or not.
-    if (!confused && !Sleep_resistance_hero() && objdescr_is_spell(spellbook, 'dull')) {
+    if (!confused && !await Sleep_resistance_hero() && objdescr_is_spell(spellbook, 'dull')) {
         const oc_level = spell_level_of(booktype);
         let dullbook = rnd(25) - ACURR(A_WIS);
         const sb0 = game.context?.spbook;
         if (sb0?.delay && spellbook === sb0.book)
             dullbook -= rnd(oc_level);
         if (dullbook > 0) {
-            // eyecount(youmonst) is 2 for every playable form -> plural.
-            await pline("This book is so dull that you can't keep your eyes open.");
+            const { body_part, youmonst_data } = await import('./invent.js');
+            const { eyecount } = await import('./polyself.js');
+            const { makeplural } = await import('./plural.js');
+            let eyes = body_part(EYE);
+            if (eyecount(youmonst_data()) > 1) eyes = makeplural(eyes);
+            await pline(`This book is so dull that you can't keep your ${eyes} open.`);
             dullbook += rnd(2 * oc_level);
             // C ref: spell.c study_book() -> timeout.c fall_asleep().
             // Setting usleep makes gethungry() use its Unaware rn2(10) path.
@@ -987,7 +977,7 @@ export async function study_book(spellbook) {
     if (booktype === SPE_NOVEL) {
         // C ref: spell.c study_book() — 3.6 tribute: obtain the current Terry
         // Pratchett book title (rn2(41) on every read, even once novelidx is set).
-        const { noveltitle } = await import('./do_name.js');
+        const { noveltitle } = await import('./mkobj.js');
         const novidx = { idx: spellbook.novelidx ?? -1 };
         const tribtitle = noveltitle(novidx);
         spellbook.novelidx = novidx.idx;

@@ -13,23 +13,24 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
-import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, see_invisible } from './display.js';
-import { Blind_telepat, Levitation_hero, Flying_hero } from './youprop.js';
-import { align_gname, roles, aligns } from './role.js';
-import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER } from './const.js';
+import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, verbalize } from './display.js';
+import { See_invisible_hero } from './youprop.js';
+import { Blind_telepat, Levitation_hero, Flying_hero, Half_spell_damage_hero, Wounded_legs_hero } from './youprop.js';
+import { align_gname, align_str, roles, aligns } from './role.js';
+import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER, is_pool_or_lava } from './const.js';
 import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
 import { summon_furies } from './makemon.js';
 import { retouch_equipment, confers_luck } from './artifact.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
-    Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMIN, LUCKMAX, MM_NOMSG,
+    Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
-import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE } from './const.js';
+import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE, FOOT, EYE, STOMACH } from './const.js';
 import { which_armor } from './worn.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
     FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
-import { adjalign, exercise, adjattrib, Fixed_abil } from './attrib.js';
+import { adjalign, exercise, adjattrib, Fixed_abil, change_luck } from './attrib.js';
 import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
 import { heal_legs } from './trap.js';
 import { hcolor, a_monnam } from './do_name.js';
@@ -41,7 +42,6 @@ import { curse, uncurse, unbless, bless, mkobj, place_object, BALL_CLASS, CHAIN_
     objects as OBJECTS } from './mkobj.js';
 import { livelog_printf, LL_ALIGNMENT, LL_CONDUCT, LL_MINORAC, LL_DIVINEGIFT, LL_ARTIFACT } from './livelog.js';
 import { throws_rocks_flag } from './monflags_data.js';
-import { is_pool_or_lava } from './dbridge.js';
 import { mflags2_of, is_undead_flag, likes_gems_flag,
     M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC } from './monflags_data.js';
 import { attacktype_fordmg, AT_ENGL, AD_BLND } from './monattk_data.js';
@@ -65,8 +65,6 @@ const TROUBLE_PUNISHED = -1, TROUBLE_FUMBLING = -2, TROUBLE_CURSED_ITEMS = -3,
     TROUBLE_CONFUSED = -10, TROUBLE_HALLUCINATION = -11;
 // C ref: eat.h hunger states.
 const HUNGRY = 2, WEAK = 3;
-// C ref: attrib.h ATTRMIN(A_WIS) for a non-Gnome/Human hero is 3.
-const ATTRMIN = 3;
 // C ref: obj.h WT_IRON_BALL_INCR (js/read.js:67); W_BALL/W_CHAIN from const.js.
 const WT_IRON_BALL_INCR = 160;
 
@@ -83,7 +81,7 @@ function praystate() {
 // and Ranger (mnum 7, array 8) — using the mnum gave a chaotic Ranger the
 // Rogue's "Kos" instead of "Mars".
 function roleMnum() {
-    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 0;
+    const mnum = game.urole?.mnum ?? 0;
     const i = roles.findIndex((r) => r.mnum === mnum);
     return (i >= 0) ? i : mnum;
 }
@@ -116,18 +114,6 @@ function ugod_is_angry() {
 // C ref: angrygods()'s gy.youmonst.data->mlet == S_HUMAN test.
 function heroIsHuman() {
     return !game.u?.Upolyd;
-}
-
-// C ref: attrib.c change_luck(n).  The clamp used to be +/-13; C's you.h:467-468
-// put LUCKMAX/LUCKMIN at +/-10, and Luck feeds angrygods()'s `maxanger` (as
-// -Luck), so an over-wide clamp picks a different rn2() MODULUS for every
-// rebuke a hero suffers after three change_luck(-3)s.  js/invent.js,
-// js/dokick.js, js/uhitm.js and js/do_wear.js all already use +/-10.
-function change_luck(n) {
-    const u = game.u;
-    u.uluck = (u.uluck || 0) + n;
-    if (u.uluck < 0 && u.uluck < LUCKMIN) u.uluck = LUCKMIN;
-    if (u.uluck > 0 && u.uluck > LUCKMAX) u.uluck = LUCKMAX;
 }
 
 function ABASE(i) { return game.u?.acurr?.a?.[i] ?? 0; }
@@ -228,7 +214,7 @@ function Cursed_obj_any(otmp, symname) { return !!otmp && OBJECTS[otmp.otyp]?.sy
 // C ref: allmain.c Wounded_legs (HWounded_legs || EWounded_legs).
 function Wounded_legs() {
     const u = game.u;
-    return !!((u?.HWounded_legs || 0) || (u?.EWounded_legs || 0));
+    return Wounded_legs_hero();
 }
 
 /*
@@ -398,41 +384,6 @@ async function gods_angry(g_align) {
     await godvoice(g_align, 'Thou hast angered me.');
 }
 
-// C ref: pline.c verbalize(line) — wraps line in double quotes.
-async function verbalize(line) {
-    await update_topl(`"${line}"`);
-}
-
-// C ref: attrib.c adjattrib(A_WIS, -1, FALSE).  ABASE is what moves; when the
-// decrement would push it under ATTRMIN the excess is taken out of AMAX with a
-// rn2() roll instead — that draw was previously dismissed as unreachable, but a
-// hero who angers a god repeatedly does grind A_WIS down to its floor.
-async function adjattrib_wis_loss() {
-    const u = game.u;
-    if (!u.acurr?.a) return false;
-    const old_acurr = ABASE(A_WIS), old_abase = old_acurr, old_amax = AMAX(A_WIS);
-    u.acurr.a[A_WIS] = old_abase - 1;
-    if (u.acurr.a[A_WIS] < ATTRMIN) {
-        const decr = rn2(ATTRMIN - u.acurr.a[A_WIS] + 1);
-        u.acurr.a[A_WIS] = ATTRMIN;
-        if (u.amax?.a) {
-            u.amax.a[A_WIS] = (u.amax.a[A_WIS] ?? 0) - decr;
-            if (u.amax.a[A_WIS] < ATTRMIN) u.amax.a[A_WIS] = ATTRMIN;
-        }
-    }
-    if (ABASE(A_WIS) === old_acurr) {
-        // C: msgflg==0 && flags.verbose -> one of two "no change" lines.
-        if (ABASE(A_WIS) === old_abase && AMAX(A_WIS) === old_amax)
-            await update_topl('You\'re already as foolish as you can get.');
-        else
-            await update_topl('Your innate wisdom has declined.');
-        return false;
-    }
-    if (u.aexe?.a) u.aexe.a[A_WIS] = 0; // C: AEXE(ndx) = 0 on any real change
-    game.botl = true;
-    await You_feel('foolish!');
-    return true;
-}
 
 // C ref: exper.c losexp(NULL) — the divine-anger drain.  js/exper.js owns the
 // HP/Pw/uexp arithmetic but omits C's two livelog_printf() calls, and #chronicle
@@ -458,8 +409,7 @@ export async function rndcurse() {
     let nobj = 0;
     for (const o of invent) if (o && o.oclass !== COIN_CLASS) nobj++;
     // C ref: sit.c:593 rnd(6 / ((!!Antimagic) + (!!Half_spell_damage) + 1)).
-    const half_spdam = !!(u.HHalf_spell_damage || u.EHalf_spell_damage
-        || u.uprops?.HHalf_spell_damage || D.inv.worn_extrinsic(HALF_SPDAM));
+    const half_spdam = Half_spell_damage_hero();
     let cnt = rnd(Math.trunc(6 / ((antimagic ? 1 : 0) + (half_spdam ? 1 : 0) + 1)));
     if (nobj) {
         for (; cnt > 0; cnt--) {
@@ -479,14 +429,7 @@ export async function rndcurse() {
             }
             if (otmp.blessed) unbless(otmp);
             else {
-                curse(otmp);
-                // C ref: mkobj.c:1800 curse() — a cursed alternate weapon
-                // cannot stay dual-wielded: drop_uswapwep() ("Your left hand
-                // spasms and drops ...!").
-                if (otmp === game.uswapwep && u.twoweap) {
-                    const { drop_uswapwep } = await import('./wield.js');
-                    await drop_uswapwep();
-                }
+                await curse(otmp);
             }
         }
     }
@@ -544,7 +487,7 @@ export async function attrcurse() {
         if (prop === TELEPAT) {
             if (Blind() && !Blind_telepat())
                 await see_monsters(); /* Can't sense mons anymore! */
-        } else if (prop === SEE_INVIS && !see_invisible()) {
+        } else if (prop === SEE_INVIS && !See_invisible_hero()) {
             set_mimic_blocking();
             await see_monsters();
             /* might not be able to see self anymore */
@@ -595,7 +538,7 @@ async function angrygods(resp_god) {
             `"Thou ${strayed ? 'hast strayed from the path' : 'art arrogant'}, `
             + `${heroIsHuman() ? 'mortal' : 'creature'}."`);
         await verbalize('Thou must relearn thy lessons!');
-        await adjattrib_wis_loss();
+        await adjattrib(A_WIS, -1, 0 /* FALSE: message */);
         await losexp_with_livelog();
         break;
     }
@@ -751,16 +694,16 @@ async function fix_worst_trouble(trouble) {
         // C ref: pray.c:397 — teleport should always succeed, but if not,
         // release the lava trap, then clear DISSOLVED's pending death.
         const { safe_teleds } = await import('./teleport.js');
-        const { rescued_from_terrain } = await import('./trap.js');
+        const { rescued_from_terrain, reset_utrap } = await import('./trap.js');
         const { TELEDS_NO_FLAGS, DISSOLVED } = await import('./const.js');
-        if (!(await safe_teleds(TELEDS_NO_FLAGS))) u.utrap = 0; // reset_utrap(TRUE)
+        if (!(await safe_teleds(TELEDS_NO_FLAGS))) await reset_utrap(true);
         await rescued_from_terrain(DISSOLVED);
         break;
     }
     case TROUBLE_STARVING:
         /* FALLTHRU — C shares the arm with TROUBLE_HUNGRY */
     case TROUBLE_HUNGRY:
-        await update_topl('Your stomach feels content.');
+        await update_topl(`Your ${(await import('./invent.js')).body_part(STOMACH)} feels content.`);
         init_uhunger();
         break;
     case TROUBLE_SICK:
@@ -889,7 +832,7 @@ async function fix_worst_trouble(trouble) {
         const cure_deaf = (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) & 0xffffff) > 0;
         let msgbuf = '';
         if ((u.blinded | 0) > 0) {
-            let eyes = body_part(1 /* EYE */);
+            let eyes = body_part(EYE);
             if (eyecount(youmonst_data()) !== 1) eyes = makeplural(eyes);
             msgbuf = `Your ${eyes} ${vtense_pr(eyes, 'feel')} better`;
             u.ucreamed = 0;
@@ -963,15 +906,10 @@ function setHProp_pr(key, val) {
     u[key] = val;
 }
 
-// C ref: mondata.h is_human(ptr) applied to gy.youmonst.data — the hero's
-// current form (mons[] entry), Upolyd or not.  js/artifact.js:511
-// youmonst_data() documents the same u.umonnum encoding this mirrors:
-// polymorphed, u.umonnum IS the mons[] index; otherwise it is a 0-based ROLE
-// index needing the PM_ARCHEOLOGIST offset.
-const ROLE_PM_FIRST_PR = 331; /* PM_ARCHEOLOGIST */
+// C ref: mondata.h is_human(ptr) applied to gy.youmonst.data == &mons[u.umonnum].
 function hero_is_human_pr() {
     const u = game.u;
-    const pmidx = u?.Upolyd ? (u.umonnum ?? 0) : (ROLE_PM_FIRST_PR + (u?.umonnum ?? 0));
+    const pmidx = u?.umonnum ?? 0;
     const ptr = _mkm ? _mkm.monster_by_pmidx(pmidx) : null;
     return (mflags2_of(ptr) & M2_HUMAN) !== 0;
 }
@@ -1523,11 +1461,6 @@ function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 // and the hero's own god.
 function a_gname() { return align_gname(roleMnum(), a_align(game.u.ux, game.u.uy)); }
 function u_gname() { return align_gname(roleMnum(), game.u?.ualign?.type ?? 0); }
-// C ref: align.c align_str().
-function align_str(al) {
-    return al === A_CHAOTIC ? 'chaotic' : al === A_NEUTRAL ? 'neutral'
-        : al === A_LAWFUL ? 'lawful' : al === A_NONE ? 'unaligned' : 'unknown';
-}
 // C ref: hacklib.c sgn().
 function sgn(n) { return n > 0 ? 1 : n < 0 ? -1 : 0; }
 // C ref: align.h ALIGNLIM — the alignment-record ceiling grows with the clock.
@@ -1792,23 +1725,7 @@ export async function uchangealign(newalign, reason) {
     }
 }
 
-// C ref: minion.c:405 dlord(atyp) — a demon lord of the given alignment; 20
-// tries at the JUIBLEX..YEENOGHU window, then ndemon()'s one-shot
-// mkclass_aligned().  Every one of those tries draws, so the loop is the
-// load-bearing part, not the monster it lands on.
-const PM_JUIBLEX = 303, PM_YEENOGHU = 304, NON_PM = -1;
-const S_DEMON_CLS = 56;
-function dlord(atyp) {
-    for (let tryct = !In_endgame() ? 20 : 0; tryct > 0; --tryct) {
-        const pm = rn1(PM_YEENOGHU + 1 - PM_JUIBLEX, PM_JUIBLEX);
-        const ptr = _mkm.monster_by_pmidx(pm);
-        if (!((game.mvitals?.[pm]?.mvflags | 0) & 0x03 /* G_GONE */)
-            && (atyp === A_NONE || sgn(ptr?.maligntyp | 0) === sgn(atyp)))
-            return pm;
-    }
-    const ptr = _mkm.mkclass_aligned(S_DEMON_CLS, 0, atyp);
-    return ptr ? (ptr.pmidx ?? NON_PM) : NON_PM;
-}
+const NON_PM = -1;
 // C ref: pray.c:1698 sacrifice_your_race(otmp, highaltar, altaralign).
 async function sacrifice_your_race(otmp, highaltar, altaralign) {
     const u = game.u;
@@ -1853,7 +1770,7 @@ async function sacrifice_your_race(otmp, highaltar, altaralign) {
             change_luck(altaralign === A_NONE ? -2 : 2);
             demonless_msg = 'blood coagulates';
         }
-        const pm = dlord(altaralign);
+        const pm = (await import('./minion.js')).dlord(altaralign);
         const dmon = (pm !== NON_PM)
             ? _mkm.makemon(_mkm.monster_by_pmidx(pm), u.ux, u.uy, MM_NOMSG) : null;
         if (dmon) {
@@ -1976,11 +1893,7 @@ async function offer_corpse(otmp, highaltar, altaralign) {
     u.uconduct.gnostic = (u.uconduct.gnostic || 0) + 1;
 
     {
-        const { will_feel_cockatrice, killer_xname } = await import('./invent.js');
-        if (will_feel_cockatrice(otmp, true)) {
-            const { instapetrify } = await import('./polyself.js');
-            await instapetrify(`touching ${killer_xname(otmp)} bare-handed`);
-        }
+        await (await import('./invent.js')).feel_cockatrice(otmp, true);
         const { rider_corpse_revival } = await import('./pickup.js');
         if (await rider_corpse_revival(otmp, false)) return;
     }
@@ -2073,12 +1986,14 @@ async function offer_corpse(otmp, highaltar, altaralign) {
         change_luck(luck_increase);
         if ((u.uluck | 0) < 0) u.uluck = 0;
         if ((u.uluck | 0) !== orig_luck) {
+            const { body_part } = await import('./invent.js');
+            const { makeplural } = await import('./plural.js');
             if (Blind())
-                await update_topl('You think something brushed your foot.');
+                await update_topl(`You think something brushed your ${body_part(FOOT)}.`);
             else
                 await update_topl(Hallucination()
-                    ? 'You see crabgrass at your feet.  A funny thing in a dungeon.'
-                    : 'You glimpse a four-leaf clover at your feet.');
+                    ? `You see crabgrass at your ${makeplural(body_part(FOOT))}.  A funny thing in a dungeon.`
+                    : `You glimpse a four-leaf clover at your ${makeplural(body_part(FOOT))}.`);
         }
     }
 }
@@ -2194,7 +2109,7 @@ async function loadPrayExtras() {
 }
 
 // C ref: objnam.c:2563 vtense(subj, verb) — the faithful copy lives in js/plural.js.
-import { vtense } from './plural.js';
+import { vtense, makeplural as makeplural_pr } from './plural.js';
 const vtense_pr = vtense;
 // C ref: hacklib.c upstart().
 function upstart_pr(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
@@ -2252,7 +2167,7 @@ export async function at_your_feet(str) {
     } else {
         await D.dsp.pline(`${str} ${vtense_pr(str, Blind() ? 'land' : 'appear')} `
             + `${Levitation_pr() ? 'beneath' : 'at'} your `
-            + `${D.inv.makeplural(D.inv.body_part(5 /*FOOT*/))}!`);
+            + `${makeplural_pr(D.inv.body_part(FOOT))}!`);
     }
 }
 
@@ -2592,67 +2507,6 @@ export async function pray_revive() {
     return (await D.trp.animate_statue(otmp, u.ux, u.uy, ANIMATE_SPELL, null)) != null;
 }
 
-// C ref: pray.c:2347 maybe_turn_mon_iter(mtmp) — the per-monster body of the
-// #turn command's iter_mons() walk.  js/extcmd-handlers.js:788-828 inlines a
-// reduced copy of this into doturn(); that copy omits C's is_vampshifter() arm
-// and the set_malign() after the chaotic "make peaceful" case.
-export async function maybe_turn_mon_iter(mtmp) {
-    const D = await loadPrayExtras();
-    const u = game.u;
-    /* 3.6.3: used to use cansee() here but the purpose is to prevent #turn
-       operating through walls, not to require that the hero be able to see
-       the target location */
-    let range = P_BOLT_LIM + Math.trunc((u.ulevel | 0) / 5);
-    range *= range;                              /* gt.turn_undead_range */
-    const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
-    if (!D.vis.couldsee(mtmp.mx, mtmp.my) || dx * dx + dy * dy > range)
-        return;
-
-    const ptr = mtmp.data;
-    if (!mtmp.mpeaceful
-        && (D.mfl.is_undead_flag(ptr) || is_vampshifter_pr(D, mtmp)
-            || (D.mfl.is_demon_flag(ptr) && (u.ulevel | 0) > Math.trunc(P_MAXULEV / 2)))) {
-        mtmp.msleeping = 0;
-        if ((u.uprops?.Confusion | 0) > 0 || u.uconf) {
-            if (!turn_undead_msg_cnt++)   /* C: gt.turn_undead_msg_cnt */
-                await update_topl('Unfortunately, your voice falters.');
-            mtmp.mflee = 0;
-            mtmp.mfrozen = 0;
-            mtmp.mcanmove = 1;
-        } else if (!D.zap.resist(mtmp, '\0', 0, 1 /*TELL*/)) {
-            let xlev = 6;
-            switch (ptr?.mcls) {
-            /* this is intentional, lichs are tougher than zombies */
-            case PS_LICH:    xlev += 2;  /* FALLTHRU */
-            case PS_GHOST:   xlev += 2;  /* FALLTHRU */
-            case PS_VAMPIRE: xlev += 2;  /* FALLTHRU */
-            case PS_WRAITH:  xlev += 2;  /* FALLTHRU */
-            case PS_MUMMY:   xlev += 2;  /* FALLTHRU */
-            case PS_ZOMBIE:
-                if ((u.ulevel | 0) >= xlev
-                    && !D.zap.resist(mtmp, '\0', 0, 0 /*NOTELL*/)) {
-                    if ((u.ualign?.type ?? 0) === A_CHAOTIC) {
-                        mtmp.mpeaceful = 1;
-                        D.mkm.set_malign(mtmp);
-                    } else {   /* damn them */
-                        await D.uhi.killed(mtmp);
-                    }
-                    break;
-                }
-                /* else flee — FALLTHRU */
-            default: {
-                const { monflee } = await import('./monmove.js');
-                await monflee(mtmp, 0, false, true);
-                break;
-            }
-            }
-        }
-    }
-}
-// C ref: pray.c gt.turn_undead_msg_cnt — a file static that doturn() zeroes
-// before its iter_mons() walk so only the first monster prints the falter line.
-let turn_undead_msg_cnt = 0;
-export function reset_turn_undead_msg_cnt() { turn_undead_msg_cnt = 0; }
 // C ref: monst.h:217 is_vampshifter(mon) — cham is PM_VAMPIRE,
 // PM_VAMPIRE_LEADER or PM_VLAD_THE_IMPALER.  This port stores cham as a mons[]
 // pmidx, so resolve the three rows by name once.

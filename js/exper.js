@@ -18,6 +18,7 @@ import { Goodbye } from './role.js';
 import { acurr_eff } from './attrib.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
 import { You_feel } from './display.js';
+import { exp_percent_changing } from './botl.js';
 
 // ── role / race advancement data (C: role.c roles[]/races[]) ──
 // RoleAdvance = {infix, inrnd, lofix, lornd, hifix, hirnd}; xlev is the
@@ -157,7 +158,7 @@ function enermod(en) {
 }
 
 // C ref: exper.c newpw(void) — energy gained for the next level.  At level 0
-// the rolls come from u_init/fastforward; at level >= 1 this rolls the
+// the rolls come from u_init_misc(); at level >= 1 this rolls the
 // rn1(enrnd, enfix) energy increment recorded as "@ newpw(exper.c:64)".
 export function newpw() {
     const u = game.u;
@@ -248,6 +249,8 @@ export function more_experienced(exper, rexp) {
     if (newexp !== oldexp) {
         u.uexp = newexp;
         if (game.flags?.showexp) game.botl = true;
+        /* the level may not change but a percentage highlight rule might */
+        if (!game.botl && exp_percent_changing()) game.botl = true;
     }
 
     const oldrexp = u.urexp || 0;
@@ -255,6 +258,10 @@ export function more_experienced(exper, rexp) {
     let newrexp = oldrexp + rexpincr;
     if (newrexp < 0 && rexpincr > 0) newrexp = Number.MAX_SAFE_INTEGER;
     if (newrexp !== oldrexp) u.urexp = newrexp;
+    if ((u.urexp || 0) >= (game.urole?.mnum === PM_WIZARD ? 1000 : 2000)) {
+        game.flags = game.flags || {};
+        game.flags.beginner = false;
+    }
 }
 
 // C ref: exper.c newexplevel(void) — gain a level when XP crosses threshold.

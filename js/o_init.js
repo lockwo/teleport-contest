@@ -6,15 +6,14 @@
 // This is a faithful port of the RNG call sequence emitted by the C
 // init_objects() path that runs during new-game startup, immediately before
 // dungeon init.  The exact left-to-right rn2()/rnd() order must match C so
-// that everything downstream stays in sync.  Verified against the previously
-// hardcoded fastforward_pre_mklev() replay for seed8000 (and every other
-// public session whose first divergence is downstream of o_init).
+// that everything downstream stays in sync.
 //
 // The shuffle results (oc_descr_idx / oc_color / oc_tough / material) are
 // written back onto the shared objects[] array so a renderer can later read
 // the per-appearance description / color.  Rendering itself lives in
 // display.js / invent.js and is out of scope for this file.
 
+import { ledger_no } from './dungeon.js';
 import { rn2 } from './rng.js';
 import {
     objects, GemStone, MAXOCLASSES, WEAPON_CLASS, ARMOR_CLASS, COIN_CLASS, GEM_CLASS,
@@ -415,7 +414,7 @@ const JAPANESE_ITEMS = new Map([
     [317, 'sake'],        // POT_BOOZE
 ]);
 function disco_is_samurai() {
-    return game.u?.umonnum === 9 || game.urole?.mnum === 9
+    return game.urole?.mnum === 9
         || (game.urole?.name?.m === 'Samurai');
 }
 function disco_japanese_name(otyp) {
@@ -480,7 +479,7 @@ export function knows_class(oclass) {
     if (game.u?.uroleplay?.pauper) return;
     const bases = getBases();
     const samurai = disco_is_samurai();
-    const roleMnum = game.urole?.mnum ?? game.u?.umonnum;
+    const roleMnum = game.urole?.mnum;
     const isKnight = roleMnum === 4;
     const isRanger = roleMnum === 7;
     const isRogue = roleMnum === 8;
@@ -805,31 +804,13 @@ export const oclass_prob_totals = [];
 
 // ── local stand-ins ──
 // C ref: hack.h impossible().
+import { strncmpi, strcmpi } from './hacklib.js';
 function disco_impossible(msg) { game._impossible = msg; }
-// C ref: hacklib.c strncmpi()/global.h:113 strcmpi(a,b) == strncmpi(a,b,-1).
-// Returns C's -1/0/1, which is what a qsort comparison needs.
-function strncmpi(s1, s2, n) {
-    let i = 0;
-    while (n-- !== 0) {
-        if (i >= s2.length) return (i < s1.length) ? 1 : 0; /* s1 >= s2 */
-        if (i >= s1.length) return -1;                      /* s1  < s2 */
-        const t1 = s1[i].toLowerCase(), t2 = s2[i].toLowerCase();
-        ++i;
-        if (t1 !== t2) return (t1 > t2) ? 1 : -1;
-    }
-    return 0; /* s1 == s2 */
-}
-function strcmpi(a, b) { return strncmpi(a, b, -1); }
 // C ref: hacklib.c lowc()/upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 // C ref: dungeon.c ledger_no(dlev)/maxledgerno().  The LEDGER number, not
 // depth(): every Gnomish Mines level sits ~25 ledger entries below its depth
 // (see js/mkobj.js gem_lev(), which is the verified copy of this arithmetic).
-function ledger_no(dlev) {
-    const dgns = game.dungeons;
-    if (!dgns || !dlev) return 0;
-    return (dgns[dlev.dnum ?? 0]?.ledger_start ?? 0) + (dlev.dlevel ?? 1);
-}
 function maxledgerno() {
     const dgns = game.dungeons;
     if (!dgns) return 0;

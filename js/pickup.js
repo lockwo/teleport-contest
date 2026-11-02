@@ -5,6 +5,7 @@
 // menu code that js/invent.js owns, the selection is delegated there and the
 // branch/count logic stays here, on C's line order.
 
+import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
@@ -18,7 +19,8 @@ import {
     UNENCUMBERED, OVERLOADED,
     IS_ALTAR, IS_THRONE, STONE, POOL, MOAT, WATER, LAVAPOOL,
     T_LOOTED, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, MENU_PARTIAL, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT,
-    ROT_CORPSE, REVIVE_MON, SHRINK_GLOB, OMONST } from './const.js';
+    ROT_CORPSE, REVIVE_MON, SHRINK_GLOB, OMONST,
+    is_pool, is_lava, A_WIS, HAND } from './const.js';
 import {
     COIN_CLASS, MAXOCLASSES, CORPSE, STATUE, BOULDER, LOADSTONE, GOLD_PIECE,
     SCR_SCARE_MONSTER, WAN_CANCELLATION, AMULET_OF_YENDOR, BELL_OF_OPENING,
@@ -37,10 +39,10 @@ import {
     objects_at, query_objlist_menu, splitobj,
     obj_extract_self, obfree, ynq, newsym_force, encumber_msg,
     stackobj, trycall, useup, useupf, hold_another_object,
-    remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool,
+    remove_worn_item, g_at, renderWindowScreen, bimanual, is_weptool, welded,
     weldmsg, setuswapwep, setuqwep,
     W_ARMOR_WORN, W_ACCESSORY_WORN, W_WEAPONS_WORN, dropx, dropy,
-    report_merge_discovery,
+    report_merge_discovery, carried,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { touch_artifact } from './artifact.js';
@@ -86,6 +88,7 @@ export const WORN_TYPES = 0x10;
 export const BILLED_TYPES = 0x40;
 export const CHOOSE_ALL = 0x80;
 import { BUCX_TYPES } from './const.js';
+import { youmonst_data } from './invent.js';
 export { BUCX_TYPES };
 export const JUSTPICKED = 0x1000;
 
@@ -158,9 +161,6 @@ function Is_mbag(obj) {
 function SchroedingersBox(obj) {
     return obj?.otyp === LARGE_BOX && (obj?.spe | 0) === 1;
 }
-function carried(obj) {
-    return !!obj && (obj.where === OBJ_INVENT || inventoryArray().includes(obj));
-}
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack in the
 // chain; gold inside containers is hidden_gold()'s business.
 function money_cnt(list) {
@@ -219,14 +219,6 @@ function inv_order() { return flags().inv_order || def_inv_order; }
 
 /* ── mondata.h predicates this file needs ──────────────────────────────── */
 
-/* gy.youmonst.data.  u.umonnum holds the 0-based ROLE index when not
-   polymorphed (same convention as js/invent.js and js/hack.js:579);
-   PM_ARCHEOLOGIST == 331. */
-function youmonst_data() {
-    const u = ustate();
-    if (u.Upolyd) return monster_by_pmidx(u.umonnum) || u.data || null;
-    return monster_by_pmidx(331 + (u.umonnum ?? 0)) || u.data || null;
-}
 /* mondata.h touch_petrifies(ptr) — cockatrice / chickatrice (Medusa is only
    flesh_petrifies).  Matched against the generated mons[] table, as in
    js/mon.js and js/dogmove.js. */
@@ -257,41 +249,10 @@ function freehand() {
     return !uwep || !welded(uwep)
         || (!bimanual(uwep) && (!game.uarms || !game.uarms.cursed));
 }
-/* wield.c welded():1051 -> will_weld():68 — a cursed erodeable weapon (or tin
-   opener) in the wielded slot.  welded() also sets bknown. */
-const HEAVY_IRON_BALL = 477, IRON_CHAIN = 478, TIN_OPENER = 239;
-function welded(obj) {
-    if (obj && obj === game.uwep && obj.cursed
-        && (obj.oclass === WEAPON_CLASS_P || is_weptool(obj)
-            || obj.otyp === HEAVY_IRON_BALL || obj.otyp === IRON_CHAIN
-            || obj.otyp === TIN_OPENER)) {
-        obj.bknown = 1;
-        return true;
-    }
-    return false;
-}
-const WEAPON_CLASS_P = 2;   /* objclass.h WEAPON_CLASS */
 function t_at(x, y) {
     for (const t of (game.level?.traps || [])) if (t.tx === x && t.ty === y) return t;
     return null;
 }
-/* trap.c uteetering_at_seen_pit():6648 / uescaped_shaft():6660 */
-function uteetering_at_seen_pit(trap) {
-    const u = ustate();
-    return !!(trap && is_pit(trap.ttyp) && trap.tseen
-              && u.ux === trap.tx && u.uy === trap.ty
-              && !(u.utrap && u.utraptype === TT_PIT));
-}
-function uescaped_shaft(trap) {
-    const u = ustate();
-    return !!(trap && is_hole(trap.ttyp)
-              && trap.tseen && u.ux === trap.tx && u.uy === trap.ty);
-}
-function is_pool(x, y) {
-    const typ = game.level?.at?.(x, y)?.typ;
-    return typ === POOL || typ === MOAT || typ === WATER;
-}
-function is_lava(x, y) { return game.level?.at?.(x, y)?.typ === LAVAPOOL; }
 /* hack.c losehp(n, knam, k_format) — do.js owns the complete port (botl,
    death path, killer text, polymorph arm). */
 async function losehp(n, knam, k_format) {
@@ -300,8 +261,7 @@ async function losehp(n, knam, k_format) {
 }
 /* hack.h Maybe_Half_Phys(dmg) */
 function Maybe_Half_Phys(dmg) {
-    return (game.u?.HHalf_physical_damage || game.u?.EHalf_physical_damage)
-        ? Math.trunc((dmg + 1) / 2) : dmg;
+    return Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 /* obj.h age_is_relative(o) — only lit/burnable tools track relative age. */
 const TALLOW_CANDLE = 224, WAX_CANDLE = 225, BRASS_LANTERN = 226,
@@ -525,7 +485,7 @@ export async function rider_corpse_revival(obj, remotely) {
     const { revive_corpse } = await import('./do.js');
     await revive_corpse(obj);
     const { exercise } = await import('./attrib.js');
-    exercise(3 /* A_WIS */, false);
+    exercise(A_WIS, false);
     return true;
 }
 
@@ -658,7 +618,7 @@ function ParanoidAutoAll() {
 }
 function Role_if_CLERIC() {
     const PM_CLERIC = 6;
-    return (game.urole?.mnum ?? game.u?.umonnum) === PM_CLERIC;
+    return (game.urole?.mnum) === PM_CLERIC;
 }
 
 /* pickup.c:597 allow_cat_no_uchain() — #if 0 in C; kept for parity. */
@@ -1769,7 +1729,11 @@ export async function explain_container_prompt(more_containers) {
 /* pickup.c:2943 u_handsy() */
 export async function u_handsy() {
     if (nohands_hero()) { await pline('You have no hands!'); return false; }
-    if (!freehand()) { await pline('You have no free hand.'); return false; }
+    if (!freehand()) {
+        const { body_part } = await import('./invent.js');
+        await pline(`You have no free ${body_part(HAND)}.`);
+        return false;
+    }
     return true;
 }
 

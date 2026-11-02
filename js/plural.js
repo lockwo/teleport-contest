@@ -9,21 +9,11 @@ const NUMOBUF = 12; /* objnam.c:11 */
 function impossible(_msg) { /* the C message goes to the paniclog only */ }
 
 // lowc(): lower-case a single char (ASCII).  C ref: hacklib.c lowc().
+import { strncmp, strncmpi, strcmpi } from './hacklib.js';
 export function lowc(c) {
     return c >= 'A' && c <= 'Z' ? c.toLowerCase() : c;
 }
 
-
-// strncmp / strncmpi over the first n chars.
-export function strncmp(a, b, n) {
-    return a.slice(0, n) === b.slice(0, n);
-}
-export function strncmpi(a, b, n) {
-    return a.slice(0, n).toLowerCase() === b.slice(0, n).toLowerCase();
-}
-export function strcmpi(a, b) {
-    return a.toLowerCase() === b.toLowerCase();
-}
 
 
 export const vowels = 'aeiouAEIOU';
@@ -44,7 +34,7 @@ function bstrncmpi(base, idx, str, num) {
     return base.slice(idx, idx + num).toLowerCase()
         === str.slice(0, num).toLowerCase() ? 0 : 1;
 }
-/* plain strcmpi(ptr, str) where callers guard the pointer with a length test.
+/* plain !strcmpi(ptr, str) where callers guard the pointer with a length test.
    C reads in front of the buffer if a caller's guard is wrong; JS slice() would
    silently count from the END instead, so an out-of-range index answers "no
    match" here. */
@@ -250,7 +240,7 @@ export function singplur_lookup(sb, endstring, to_plural, alt_as_is) {
     if (baselen > 5 && bstrcmpi(basestr, endstring - 5, 'craft') === 0)
         return true;
     /* avoid false hit on one_off[].plur == "lice" or .sing == "goose" */
-    if (strcmpi(basestr, 'slice') || strcmpi(basestr, 'mongoose')) {
+    if (!strcmpi(basestr, 'slice') || !strcmpi(basestr, 'mongoose')) {
         if (to_plural)
             sb.s = strcasecpy(basestr, endstring, 's');
         return true;
@@ -326,11 +316,11 @@ export function makeplural(oldstr) {
     /* pronouns: "he"/"she"/"it" -> "they", &c */
     str = '';
     for (i = 0; i <= 2; ++i) {
-        if (strcmpi(genders[i].he, oldstr))
+        if (!strcmpi(genders[i].he, oldstr))
             str = genders[3].he; /* "they" */
-        else if (strcmpi(genders[i].him, oldstr))
+        else if (!strcmpi(genders[i].him, oldstr))
             str = genders[3].him; /* "them" */
-        else if (strcmpi(genders[i].his, oldstr))
+        else if (!strcmpi(genders[i].his, oldstr))
             str = genders[3].his; /* "their" */
         if (str) {
             if (oldstr[0] === highc(oldstr[0]))
@@ -342,7 +332,7 @@ export function makeplural(oldstr) {
     str = oldstr;
     bottom: {
         /* Skip changing "pair of" to "pairs of" (objnam.c:2873) */
-        if (strncmpi(str, 'pair of ', 8))
+        if (!strncmpi(str, 'pair of ', 8))
             break bottom;
 
         /* look for "foo of bar" so that we can focus on "foo" */
@@ -383,7 +373,7 @@ export function makeplural(oldstr) {
                 break bottom;
 
             /* more of same, but not suitable for blanket loop checking */
-            if ((len === 2 && strcmpi(str, 'ya'))
+            if ((len === 2 && !strcmpi(str, 'ya'))
                 || (len >= 3 && strcmpi_at(str, spot - 2, ' ya') === 0))
                 break bottom;
         }
@@ -504,11 +494,11 @@ export function makesingular(oldstr) {
     }
     /* makeplural() of pronouns isn't reversible but we can force a singular */
     let str = '';
-    if (strcmpi(genders[3].he, oldstr))        /* "they" */
+    if (!strcmpi(genders[3].he, oldstr))        /* "they" */
         str = genders[2].he;                   /* "it" */
-    else if (strcmpi(genders[3].him, oldstr))  /* "them" */
+    else if (!strcmpi(genders[3].him, oldstr))  /* "them" */
         str = genders[2].him;                  /* also "it" */
-    else if (strcmpi(genders[3].his, oldstr))  /* "their" */
+    else if (!strcmpi(genders[3].his, oldstr))  /* "their" */
         str = genders[2].his;                  /* "its" */
     if (str) {
         if (oldstr[0] === highc(oldstr[0]))
@@ -637,12 +627,12 @@ export function vtense(subj, verb) {
     verb = String(verb);
     if (subj != null && subj !== '') {
         const s = String(subj);
-        if (!(strncmpi(s, 'a ', 2) || strncmpi(s, 'an ', 3))) {
+        if (!(!strncmpi(s, 'a ', 2) || !strncmpi(s, 'an ', 3))) {
             /* the head noun ends before a " of "/" from "/... qualifier */
             let spot = -1;
             const quals = [' of ', ' from ', ' called ', ' named ', ' labeled '];
             for (let sp = s.indexOf(' '); sp >= 0; sp = s.indexOf(' ', sp + 1)) {
-                if (quals.some((q) => strncmpi(s.slice(sp), q, q.length))) {
+                if (quals.some((q) => !strncmpi(s.slice(sp), q, q.length))) {
                     if (sp !== 0) spot = sp - 1;
                     break;
                 }
@@ -659,18 +649,18 @@ export function vtense(subj, verb) {
                 const len = spot + 1;
                 for (const spec of special_subjs) {
                     const ltmp = spec.length;
-                    if (len === ltmp && strncmpi(spec, s, len)) return vtense_sing(verb);
+                    if (len === ltmp && !strncmpi(spec, s, len)) return vtense_sing(verb);
                     /* also check for <prefix><space><special_subj>
                        to catch things like "the invisible erinys" */
                     if (len > ltmp && s[spot - ltmp] === ' '
-                        && strncmpi(spec, s.slice(spot - ltmp + 1), ltmp))
+                        && !strncmpi(spec, s.slice(spot - ltmp + 1), ltmp))
                         return vtense_sing(verb);
                 }
                 return verb;
             }
             /* 3rd person plural doesn't end in telltale 's';
                2nd person singular is "you" */
-            if (strcmpi(s, 'they') || strcmpi(s, 'you'))
+            if (!strcmpi(s, 'they') || !strcmpi(s, 'you'))
                 return verb;
         }
     }
@@ -681,8 +671,8 @@ export function vtense(subj, verb) {
 function vtense_sing(verb) {
     const len = verb.length;
     const last = lowc(verb[len - 1]);
-    if (strcmpi(verb, 'are')) return 'is';
-    if (strcmpi(verb, 'have')) return `${verb.slice(0, -2)}s`;
+    if (!strcmpi(verb, 'are')) return 'is';
+    if (!strcmpi(verb, 'have')) return `${verb.slice(0, -2)}s`;
     if (strchr('zxs', last)
         || (len >= 2 && last === 'h' && strchr('cs', lowc(verb[len - 2])))
         || (len === 2 && last === 'o'))

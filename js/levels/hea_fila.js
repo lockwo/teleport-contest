@@ -7,7 +7,7 @@ import { game } from '../gstate.js';
 import { rn2 } from '../rng.js';
 import { deltrap, t_at } from '../trap.js';
 import {
-    bigrm_wallification, gx, gy, reset_xystart_size, splev_mkstairs_at, vly_object,
+    bigrm_wallification, gx, gy, reset_xystart_size, splev_mkstairs_at, vly_object, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { quest_align_shuffle, quest_monster } from './quest_home_common.js';
 import { mkmap_mines, pri_create_trap } from './pri_loca.js';
@@ -89,7 +89,7 @@ export async function makemaz_hea_fila() {
 
     // des.level_init({ style="solidfill", fg="P" }) — one rn2(2); the fill
     // itself is wholesale overwritten by the mines init below.
-    rn2(2);                                              // sp_lev.c:2992
+    quest_level_init_solidfill();                                              // sp_lev.c:2992
 
     // des.level_flags("mazelevel", "noflip") — no hardfloor; noflip means the
     // finalize tail draws no flip rn2(2)s.

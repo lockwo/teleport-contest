@@ -4,7 +4,7 @@
 
 import { COLNO, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
-import { CHEST, mksobj, mksobj_at, weight } from '../mkobj.js';
+import { CHEST, mksobj, mksobj_at, add_to_container, container_weight } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     AMULET_OF_LIFE_SAVING, AMULET_OF_STRANGULATION, CRYSTAL_PLATE_MAIL, SPE_CHARM_MONSTER,
@@ -53,9 +53,10 @@ function tower_chest_containing(mx, my, otyp) {
     bigrm_get_location_dry();                         // get_location(DRY) loop
     const item = mksobj(otyp, true, true);
     if (chest && item) {
-        if (!Array.isArray(chest.cobj)) chest.cobj = [];
-        chest.cobj.push(item);
-        chest.owt = weight(chest);
+        /* add_to_container() links where/ocontainer, which obj_extract_self()
+           needs when a monster later loots the chest (muse.c mloot_container) */
+        add_to_container(chest, item);
+        container_weight(chest);
     }
     return chest;
 }

@@ -12,11 +12,13 @@
 // RNG; it only determines the candidate set (n / maxprob) and ordering,
 // which in turn fixes the object that the single rn2() resolves to.
 
-import { lowc, strncmp, strncmpi, strcmpi, strchr, vowels, genders, nextobuf, releaseobuf,
+import { lowc, strchr, vowels, genders, nextobuf, releaseobuf,
          setobuf, cur_obuf, makeplural, makesingular } from './plural.js';
+import { ONAME, has_oname, setONAME } from './const.js';
 import { rn2 } from './rng.js';
 import { game } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { panic } from './panic.js';
+import { s_suffix, just_an, strncmp, strncmpi, strcmpi } from './hacklib.js';
 import {
     objects,
     MAXOCLASSES,
@@ -40,7 +42,7 @@ import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifac
 import { artifact_light as light_artifact_light, arti_light_description as light_arti_light_description,
          find_mid as light_find_mid } from './light.js';
 import { peek_timer as timeout_peek_timer } from './timeout.js';
-import { noit_mon_nam as dn_noit_mon_nam } from './do_name.js';
+import { noit_mon_nam } from './do_name.js';
 import { record_price_quote as oi_record_price_quote, append_price_quote as oi_append_price_quote } from './o_init.js';
 import { CapitalMon } from './rumors.js';
 import { tshirt_text as rd_tshirt_text, apron_text as rd_apron_text,
@@ -67,6 +69,7 @@ import { monster_by_pmidx } from './makemon.js';
 import { Blind } from './vision.js';
 import { observe_object } from './o_init.js';
 import { obj_pmname } from './do_name.js';
+import { mungspaces } from './hacklib.js';
 import {
     is_unpaid, unpaid_cost, get_cost_of_shop_item, COST_CONTENTS,
 } from './shk.js';
@@ -187,13 +190,13 @@ function wishymatch(u_str, o_str, retry_inverted) {
     }
 
     // special cases (note: any " wand" suffix has already been stripped)
-    if (strncmp(o_str, 'dwarvish ', 9)) {
-        if (strncmpi(u_str, 'dwarven ', 8))
+    if (!strncmp(o_str, 'dwarvish ', 9)) {
+        if (!strncmpi(u_str, 'dwarven ', 8))
             return fuzzymatch(u_str.slice(8), o_str.slice(9), ' -', true);
-    } else if (strncmp(o_str, 'elven ', 6)) {
-        if (strncmpi(u_str, 'elvish ', 7))
+    } else if (!strncmp(o_str, 'elven ', 6)) {
+        if (!strncmpi(u_str, 'elvish ', 7))
             return fuzzymatch(u_str.slice(7), o_str.slice(6), ' -', true);
-        else if (strncmpi(u_str, 'elfin ', 6))
+        else if (!strncmpi(u_str, 'elfin ', 6))
             return fuzzymatch(u_str.slice(6), o_str.slice(6), ' -', true);
     } else if (strstri(o_str, 'helm') >= 0 && strstri(u_str, 'helmet') >= 0) {
         const buf = strsubst(u_str, 'helmet', 'helm');
@@ -201,19 +204,19 @@ function wishymatch(u_str, o_str, retry_inverted) {
     } else if (strstri(o_str, 'gauntlets') >= 0 && strstri(u_str, 'gloves') >= 0) {
         const buf = strsubst(u_str, 'gloves', 'gauntlets');
         return wishymatch(buf, o_str, true);
-    } else if (strncmp(o_str, detect_SP, detect_SP.length)) {
+    } else if (!strncmp(o_str, detect_SP, detect_SP.length)) {
         // "detect <foo>" vs "<foo> detection"
         const p = strstri(u_str, SP_detection);
         if (p >= 0 && p + SP_detection.length === u_str.length) {
             let inner = u_str.slice(0, p);
             let buf = detect_SP + inner;
-            if (strcmpi(inner, 'monster'))
+            if (!strcmpi(inner, 'monster'))
                 buf += 's';
             return fuzzymatch(buf, o_str, ' -', true);
         }
     } else if (strstri(o_str, SP_detection) >= 0) {
         // inverse: "<foo> detection" vs "detect <foo>"
-        if (strncmpi(u_str, detect_SP, detect_SP.length)) {
+        if (!strncmpi(u_str, detect_SP, detect_SP.length)) {
             const p = makesingular(u_str.slice(detect_SP.length));
             const buf = p + SP_detection;
             return fuzzymatch(buf, o_str, ' -', true);
@@ -226,7 +229,7 @@ function wishymatch(u_str, o_str, retry_inverted) {
             return fuzzymatch(buf, o_str, ' -', true);
         }
     } else if (o_str === 'aluminum') {
-        if (strcmpi(u_str, 'aluminium'))
+        if (!strcmpi(u_str, 'aluminium'))
             return fuzzymatch(u_str.slice(9), o_str.slice(8), ' -', true);
     }
 
@@ -558,7 +561,6 @@ const PM_ARCHEOLOGIST = 0, PM_CLERIC = 6, PM_SAMURAI = 9;
 function impossible(msg) {
     if (game.debugImpossible) console.warn('impossible:', msg);
 }
-function panic(msg) { throw new Error(msg); }
 
 /* hacklib.c plur(n) / ordin(n) used by objnam.c naming. */
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
@@ -578,7 +580,7 @@ function wizard() { return !!(game.flags && game.flags.debug) || !!game.wizard; 
 function moves() { return game.svm?.moves ?? game.moves ?? 0; }
 /* you.h Role_if(pm) */
 function Role_if(pm) {
-    const m = game.urole?.mnum ?? game.u?.umonnum;
+    const m = game.urole?.mnum;
     return m === pm;
 }
 /* objnam.c gd.distantname — non-zero while distant_name() formats a far object,
@@ -659,8 +661,6 @@ function Is_box(o) { return o.otyp === LARGE_BOX_ || o.otyp === CHEST_; }
 /* obj.h Is_container(o) = objects[].oc_container == objects.h F_CONTAINER */
 function Is_container(o) { return !!(objects[o.otyp]?.flags & F_CONTAINER); }
 function Has_contents(o) { return !!(o?.cobj && o.cobj.length); }
-function has_oname(o) { return !!(o && o.oname); }
-function ONAME(o) { return (o && o.oname) || ''; }
 function ismnum(m) { return m != null && m >= LOW_PM; }
 /* mondata.h type_is_pname(ptr) = (mflags2 & M2_PNAME) */
 export function type_is_pname(ptr) {
@@ -680,7 +680,6 @@ function glow_verb(cnt, ing) { return arti_glow_verb(cnt, ing); }
 function glow_color(arti) { return arti_glow_color(arti); }
 function peek_timer(kind, obj) { return timeout_peek_timer(kind, { a_void: obj, a_obj: obj }); }
 function find_mid(id, fmflags) { return light_find_mid(id, fmflags); }
-function noit_mon_nam(mtmp) { return dn_noit_mon_nam(mtmp); }
 // C ref: eat.c tin_details()
 function tin_details(obj, mnum, buf) {
     if (!obj || buf == null) return buf;
@@ -1023,49 +1022,9 @@ export function reorder_fruit(forward) {
     }
 }
 
-// ── article / possessive / whitespace helpers ─────────────────────────────
-/* hacklib.c:142 mungspaces() */
-function mungspaces(bp) {
-    let out = '', was_space = true;
-    for (let i = 0; i < bp.length; i++) {
-        let c = bp[i];
-        if (c === '\n') break;
-        if (c === '\t') c = ' ';
-        if (c !== ' ' || !was_space) out += c;
-        was_space = (c === ' ');
-    }
-    if (was_space && out.length > 0) out = out.slice(0, -1);
-    return out;
-}
 /* hacklib.c digit() */
 function digit(c) { return c >= '0' && c <= '9'; }
 
-// just_an(): "", "a " or "an " for str.  C ref: objnam.c:2108.  Note the
-// inverted sense of this file's strncmpi/strcmpi helpers (true == equal).
-function just_an(str) {
-    const c0 = lowc(str[0]);
-    if (!str[1] || str[1] === ' ') {
-        /* single letter; might be a named fruit or a musical note */
-        return strchr('aefhilmnosx', c0) ? 'an ' : 'a ';
-    }
-    if (strncmpi(str, 'the ', 4)
-        || strcmpi(str, 'molten lava')
-        || strcmpi(str, 'iron bars')
-        || strcmpi(str, 'ice'))
-        return ''; /* no article */
-    /* normal case is "an <vowel>" or "a <consonant>" */
-    if ((strchr(vowels, c0)
-         /* 'wun' initial sound */
-         && (!strncmpi(str, 'one', 3) || (str[3] && !strchr('-_ ', str[3])))
-         /* long 'u' initial sound */
-         && !strncmpi(str, 'eu', 2) /* "eucalyptus leaf" */
-         && !strncmpi(str, 'uke', 3) && !strncmpi(str, 'ukulele', 7)
-         && !strncmpi(str, 'unicorn', 7) && !strncmpi(str, 'uranium', 7)
-         && !strncmpi(str, 'useful', 6)) /* "useful tool" */
-        || (c0 === 'x' && !strchr(vowels, lowc(str[1]))))
-        return 'an ';
-    return 'a ';
-}
 /* objnam.c:2144 an() */
 export function an(str) {
     const buf = nextobuf();
@@ -1622,11 +1581,11 @@ export function xname_flags(obj, cxn_flags) {
         const at = buf.length; /* where the name starts */
         buf += ONAME(obj);
         /* downcase "The" in "<quest-artifact-item> named The ..." */
-        if (obj.oartifact && strncmp(buf.slice(at), 'The ', 4))
+        if (obj.oartifact && !strncmp(buf.slice(at), 'The ', 4))
             buf = buf.slice(0, at) + lowc(buf[at]) + buf.slice(at + 1);
     }
 
-    if (strncmpi(buf, 'the ', 4))
+    if (!strncmpi(buf, 'the ', 4))
         buf = buf.slice(4);
 
     return setobuf(gx.xnamep, buf);
@@ -1691,7 +1650,7 @@ export function minimal_xname(obj) {
         --gd_distantname;
     }
     /* undo the forced bareobj.blessed for a cleric (priest[ess]) */
-    if (strncmp(bufp, 'uncursed ', 9))
+    if (!strncmp(bufp, 'uncursed ', 9))
         bufp = bufp.slice(9);
 
     objects[otyp].oc_uname = saveobcls.oc_uname;
@@ -1753,7 +1712,7 @@ export function doname_base(obj, doname_flags) {
 
     /* xname gives "poisoned arrow", doname wants "poisoned +0 arrow"; must
        check opoisoned--someone can have a weirdly-named fruit */
-    if (strncmp(bp, 'poisoned ', 9) && obj.opoisoned) {
+    if (!strncmp(bp, 'poisoned ', 9) && obj.opoisoned) {
         bp = bp.slice(9);
         ispoisoned = true;
     }
@@ -1762,7 +1721,7 @@ export function doname_base(obj, doname_flags) {
        corresponding artifact when that happens */
     const fake_arti = (obj.otyp === SLIME_MOLD_
                        && (aname = artifact_name(bp)) != null);
-    const force_the = (fake_arti && strncmpi(aname, 'the ', 4));
+    const force_the = (fake_arti && !strncmpi(aname, 'the ', 4));
 
     prefix = '';
     if (obj.quan !== 1) {
@@ -1775,7 +1734,7 @@ export function doname_base(obj, doname_flags) {
            be taught how to strip it off again] */
         ;
     } else if (force_the || obj_is_pname(obj) || the_unique_obj(obj)) {
-        if (strncmpi(bp, 'the ', 4))
+        if (!strncmpi(bp, 'the ', 4))
             bp = bp.slice(4);
         prefix = 'the ';
     } else if (!fake_arti) {
@@ -2073,7 +2032,7 @@ export function doname_base(obj, doname_flags) {
         bp = append_price_quote(bp, obj.otyp);
     }
 
-    if (strncmp(prefix, 'a ', 2)) {
+    if (!strncmp(prefix, 'a ', 2)) {
         /* save the current prefix without "a "; might be empty */
         tmpbuf = prefix.slice(2);
         /* set prefix to "", "a ", or "an " */
@@ -2156,7 +2115,7 @@ export function killer_xname(obj) {
         return arti_bare_artifactname(obj);
 
     const save_obj = { ...obj };
-    const save_oname = has_oname(obj) ? obj.oname : null;
+    const save_oname = has_oname(obj) ? ONAME(obj) : null;
     let buf;
 
     /* killer name should be more specific than general xname; however, exact
@@ -2175,7 +2134,7 @@ export function killer_xname(obj) {
     obj.opoisoned = 0;
     /* strip user-supplied name; artifacts keep theirs */
     if (save_oname)
-        obj.oname = null;
+        setONAME(obj, null);
     /* temporarily identify the type of object */
     const save_ocknown = objects[obj.otyp].oc_name_known;
     objects[obj.otyp].oc_name_known = 1;
@@ -2202,7 +2161,7 @@ export function killer_xname(obj) {
         objects[obj.otyp].oc_uname = save_ocuname;
         Object.assign(obj, save_obj); /* restore object's core settings */
         if (save_oname)
-            obj.oname = save_oname;
+            setONAME(obj, save_oname);
     }
     return buf;
 }
@@ -2214,13 +2173,13 @@ export function the(str) {
         return 'the []';
     }
     let insert_the = false;
-    if (strncmpi(str, 'the ', 4)) {
+    if (!strncmpi(str, 'the ', 4)) {
         return lowc(str[0]) + str.slice(1);
     } else if (str[0] < 'A' || str[0] > 'Z'
                || CapitalMon(str)
                || (fruit_from_name(str, true, null)
                    && (artifact_name(str) == null
-                       || strncmpi(artifact_name(str), 'the ', 4)))) {
+                       || !strncmpi(artifact_name(str), 'the ', 4)))) {
         insert_the = true;
     } else {
         const sp = str.lastIndexOf(' ');
@@ -2295,9 +2254,9 @@ export function short_oname(obj, func, altfunc, lenlimit) {
     const long_oname = !!save_oname && save_oname.length >= 12;
     const onamebuf = long_oname ? save_oname.slice(0, SHORTLEN) + '...' : null;
     if (long_oname) {
-        obj.oname = onamebuf;
+        setONAME(obj, onamebuf);
         outbuf = func(obj);
-        obj.oname = save_oname; /* restore named string */
+        setONAME(obj, save_oname); /* restore named string */
         if (outbuf.length <= lenlimit)
             return outbuf;
     }
@@ -2305,11 +2264,11 @@ export function short_oname(obj, func, altfunc, lenlimit) {
     /* shorten both called and named strings */
     if (long_uname && long_oname) {
         ocl.oc_uname = unamebuf;
-        obj.oname = onamebuf;
+        setONAME(obj, onamebuf);
         outbuf = func(obj);
         if (outbuf.length <= lenlimit) {
             ocl.oc_uname = save_uname;
-            obj.oname = save_oname;
+            setONAME(obj, save_oname);
             return outbuf;
         }
     }
@@ -2324,7 +2283,7 @@ export function short_oname(obj, func, altfunc, lenlimit) {
     /* restore the object */
     Object.assign(obj, { bknown, rknown, greased, oeroded, oeroded2 });
     if (save_oname)
-        obj.oname = save_oname;
+        setONAME(obj, save_oname);
     if (save_uname)
         ocl.oc_uname = save_uname;
 

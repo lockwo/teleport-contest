@@ -11,7 +11,9 @@
 // arm in this port, and js/apply.js is a separate write-lease, so it lives here
 // beside its caller.
 import { makeplural, vtense } from './plural.js';
-import { Fumbling_hero } from './youprop.js';
+import { has_mgivenname } from './const.js';
+import { has_oname } from './const.js';
+import { Fumbling_hero, Half_physical_damage_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -20,10 +22,11 @@ import { m_at, newsym, update_topl, map_invisible, tmp_at_flash, tmp_at_flash_ce
          canseemon_shared, Deaf_hero, You_feel, You_hear } from './display.js';
 import { cansee, Blind } from './vision.js';
 import { TELEDS_ALLOW_DRAG, NO_KILLER_PREFIX, M_AP_TYPE, Is_airlevel, Is_waterlevel,
-         ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
+         ECMD_OK, ECMD_TIME, ECMD_CANCEL,
+    is_pool, is_lava, is_moat } from './const.js';
 import { BRK_FROM_INV, BRK_KNOWN_OUTCOME, BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK,
          Trap_Effect_Finished, Trap_Caught_Mon, Trap_Killed_Mon, Trap_Moved_Mon } from './const.js';
-import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT, IS_STWALL, W_NONPASSWALL,
+import { isok, IS_FURNITURE, IS_SINK, LAVAWALL, WATER, POOL, MOAT, IRONBARS, DOOR, TREE, IS_STWALL, W_NONPASSWALL,
          LAVAPOOL, TT_PIT, P_DAGGER, A_DEX, A_CHA, NEED_HTH_WEAPON,
          MM_NOMSG, EYE, SHOPBASE } from './const.js';
 // C ref: trap.h:57 enum trap_types — used by the hurtle_step() port below.
@@ -33,22 +36,22 @@ import { mflags1_of, mflags2_of, mflags3_of, msound_of, M1_BREATHLESS,
          M1_NOEYES, M1_WALLWALK, M2_DOMESTIC, M3_WANTSARTI, MS_LEADER,
          is_human_flag, is_demon_flag } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_WEAP, AT_ENGL, AT_HUGS,
-         AD_STCK, AD_WRAP, AD_DGST } from './monattk_data.js';
+         AD_STCK, AD_WRAP, AD_DGST, sticks } from './monattk_data.js';
 import { objects, BOULDER, CORPSE, POTION_CLASS, GEM_CLASS, WEAPON_CLASS,
          ARMOR_CLASS, EGG, STATUE, FOOD_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
          place_object } from './mkobj.js';
-import { surface } from './dungeon.js';
+import { surface, ceiling } from './dungeon.js';
 import { Levitation_hero, Flying_hero, Wwalking_hero, Passes_walls_hero } from './youprop.js';
-import { acurr_eff } from './attrib.js';
+import { acurr_eff, change_luck } from './attrib.js';
 import { night, phase_of_the_moon, FULL_MOON } from './calendar.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign,
          is_covetous, add_to_minv } from './makemon.js';
 import * as I from './invent.js';
 import { ghitm } from './dokick.js';
 import { goodpos, enexto_gpflags, teleds } from './teleport.js';
-import { Protection_from_shape_changers, sensemon } from './mon.js';
+import { redraw_worm } from './worm.js';
+import { Protection_from_shape_changers, sensemon, wake_nearto } from './mon.js';
 import { poly_when_stoned } from './mondata.js';
-import { is_pool, is_lava, is_moat } from './dbridge.js';
 
 
 // onames.h otyps (mkobj.js OBJECT_DATA numbering).
@@ -92,8 +95,6 @@ function next2u(x, y) {
     return Math.abs(x - u.ux) <= 1 && Math.abs(y - u.uy) <= 1;
 }
 
-// C ref: dungeon.c ceiling(x,y) — js/invent.js owns the one copy (ceiling_of).
-const ceiling = (x, y) => I.ceiling_of(x, y);
 
 // C ref: objnam.c Doname2(obj) — doname() with a capital first letter.
 function Doname2(obj) {
@@ -102,13 +103,8 @@ function Doname2(obj) {
 }
 // C ref: objnam.c an(s) / the(s).
 import { an } from './hacklib.js';
+import { the } from './objnam.js';
 import { helm_simple_name } from './do_wear.js';
-function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
-// C ref: objnam.c Tobjnam(obj, verb) — "The food ration stops".
-function Tobjnam(obj, verb) {
-    const nm = the_str(I.xname(obj));
-    return `${nm.charAt(0).toUpperCase()}${nm.slice(1)} ${I.otense(obj, verb)}`;
-}
 // C ref: mondata.h bigmonst(ptr) — msize >= MZ_LARGE (3).
 function bigmonst(ptr) { return (ptr?.msize ?? 2 /* MZ_MEDIUM */) >= 3; }
 // C ref: rm.h ZAP_POS(typ) — typ >= POOL; a thrown object cannot pass solid
@@ -150,13 +146,6 @@ async function pickup_one_object(otmp) {
     await I.hold_another_object(otmp, 'You drop %s!', I.doname_invent(otmp), null);
     return 1;
 }
-// C ref: trap.c reset_utrap(msg) — clear the trapped state.
-function reset_utrap(_msg) {
-    const u = game.u;
-    u.utrap = 0;
-    u.utraptype = 0;
-}
-
 // ── ok_to_throw (C ref: dothrow.c:296) ───────────────────────────────────────
 //
 // Common to dothrow() and dofire(): the count prefix becomes the volley limit,
@@ -175,7 +164,7 @@ export async function ok_to_throw() {
         await update_topl("You can't throw or shoot without hands.");
         return -1;
     }
-    if (await I.check_capacity_throw()) return -1;
+    if (await I.check_capacity()) return -1;
     return shotlimit;
 }
 
@@ -373,7 +362,7 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
 
     switch (obj.oclass === POTION_CLASS ? POT_WATER : obj.otyp) {
     case MIRROR:
-        if (hero_caused) I.change_luck(-2);
+        if (hero_caused) change_luck(-2);
         break;
     case POT_WATER: /* really, all potions */
         obj.in_use = 1; /* in case it's fatal */
@@ -406,7 +395,7 @@ export async function breakobj(obj, x, y, hero_caused, from_invent) {
     case EGG:
         /* breaking your own eggs is bad luck */
         if (hero_caused && obj.spe && (obj.corpsenm | 0) >= 0)
-            I.change_luck(-Math.min(obj.quan || 1, 5));
+            change_luck(-Math.min(obj.quan || 1, 5));
         if (obj.corpsenm === name_to_pmidx('pyrolisk'))
             explosion = true;
         break;
@@ -546,20 +535,20 @@ export async function gem_accept(mon, obj) {
     if (obj.dknown && objects[obj.otyp]?.oc_name_known) {
         /* object properly identified */
         if (is_gem) {
-            if (is_buddy) { buf += addluck; I.change_luck(5); }
-            else { buf += maybeluck; I.change_luck(rn2(7) - 3); }
+            if (is_buddy) { buf += addluck; change_luck(5); }
+            else { buf += maybeluck; change_luck(rn2(7) - 3); }
         } else { buf += nogood; nopick = true; }
-    } else if (obj.oname || objects[obj.otyp]?.oc_uname) {
+    } else if (has_oname(obj) || objects[obj.otyp]?.oc_uname) {
         /* making guesses */
         if (is_gem) {
-            if (is_buddy) { buf += addluck; I.change_luck(2); }
-            else { buf += maybeluck; I.change_luck(rn2(3) - 1); }
+            if (is_buddy) { buf += addluck; change_luck(2); }
+            else { buf += maybeluck; change_luck(rn2(3) - 1); }
         } else { buf += nogood; nopick = true; }
     } else {
         /* value completely unknown to the hero */
         if (is_gem) {
-            if (is_buddy) { buf += addluck; I.change_luck(1); }
-            else { buf += maybeluck; I.change_luck(rn2(3) - 1); }
+            if (is_buddy) { buf += addluck; change_luck(1); }
+            else { buf += maybeluck; change_luck(rn2(3) - 1); }
         } else { buf += noluck; }
     }
     if (!nopick) {
@@ -599,12 +588,6 @@ function mcls_of(ptr) {
 }
 // C ref: mondata.h is_domestic(ptr) == (mflags2 & M2_DOMESTIC).
 function is_domestic(ptr) { return (mflags2_of(ptr) & M2_DOMESTIC) !== 0; }
-// C ref: mondata.c sticks(ptr) — whether the hero's own form holds a victim.
-function sticks(ptr) {
-    return dmgtype(ptr, AD_STCK)
-        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
-        || attacktype(ptr, AT_HUGS);
-}
 function Upolyd() { return !!game.u?.Upolyd; }
 function Hallucination() {
     return ((game.u?.uprops?.Hallucination || 0) > 0) || !!game.u?.HHallucination;
@@ -671,7 +654,6 @@ export async function tamedog(mtmp, obj, givemsg) {
     if (mtmp.mfrozen) mtmp.mfrozen = Math.floor((mtmp.mfrozen + 1) / 2);
     /* end indefinite sleep; distance==1 limits the waking to mtmp */
     if (mtmp.msleeping) {
-        const { wake_nearto } = await import('./cmd.js');
         await wake_nearto(mtmp.mx, mtmp.my, 1);
     }
     /* the Wiz, Medusa and the quest nemeses aren't even made peaceful */
@@ -726,10 +708,10 @@ export async function tamedog(mtmp, obj, givemsg) {
                 const csz = monster_by_pmidx(obj.corpsenm)?.msize;
                 const big_corpse = obj.otyp === CORPSE && csz != null
                     && csz > (monster_by_pmidx(mtmp.data?.pmidx)?.msize ?? 0);
-                await update_topl(`${U.Monnam(mtmp)} catches ${the_str(I.xname(obj))}${
+                await update_topl(`${U.Monnam(mtmp)} catches ${the(I.xname(obj))}${
                     !big_corpse ? '.' : ', or vice versa!'}`);
             } else if (cansee(mtmp.mx, mtmp.my)) {
-                await update_topl(`${Tobjnam(obj, 'stop')}.`);
+                await update_topl(`${I.Tobjnam(obj, 'stop')}.`);
             }
             place_object(obj, mtmp.mx, mtmp.my); /* dog_eat expects a floor object */
             await DM.dog_eat(mtmp, mtmp.edog, obj, mtmp.mx, mtmp.my);
@@ -791,8 +773,9 @@ export async function tamedog(mtmp, obj, givemsg) {
             Hallucination() ? 'approachable' : 'friendly'}.`);
 
     newsym(mtmp.mx, mtmp.my);
-    // C's redraw_worm(mtmp) follows for a long worm; no tamable-by-food species
-    // has a wormno.
+    // C ref: dog.c tamedog() — redraw_worm() recolours a tamed long worm's tail
+    // squares as pet glyphs (wizard-mode ^G "tame long worm").
+    if (mtmp.wormno) redraw_worm(mtmp);
     if (attacktype(mtmp.data, AT_WEAP)) {
         mtmp.weapon_check = NEED_HTH_WEAPON;
         const M = await import('./monmove.js');
@@ -995,7 +978,7 @@ export async function use_whip(obj, getDir) {
             if (proficient && rn2(proficient + 2)) {
                 if (!mtmp || (cc = enexto_gpflags(rx, ry, I.youmonst_data(), 0))) {
                     await update_topl('You yank yourself out of the pit!');
-                    await reset_utrap(true); /* before teleds() in case it has no
+                    await (await import('./trap.js')).reset_utrap(true); /* before teleds() in case it has no
                                                 alternative but another trap */
                     await teleds(cc.x, cc.y, TELEDS_ALLOW_DRAG);
                     game.vision_full_recalc = 1;
@@ -1277,7 +1260,7 @@ const MZ_HUGE = 4;
 // "this step is a jump".
 const I_SPECIAL_PROP = 0x20000000;
 // C ref: rm.h IRONBARS / DOOR / TREE / POOL and D_ISOPEN.
-const IRONBARS_TYP = 21, DOOR_TYP = 23, TREE_TYP = 20, POOL_TYP = 16;
+const IRONBARS_TYP = IRONBARS, DOOR_TYP = DOOR, TREE_TYP = TREE, POOL_TYP = POOL;
 const D_ISOPEN_MASK = 0x02;
 // C ref: hack.h u.utraptype values TT_WEB / TT_LAVA / TT_INFLOOR / TT_BURIEDBALL.
 const TT_WEB_TYPE = 3, TT_LAVA_TYPE = 4, TT_INFLOOR_TYPE = 5,
@@ -1480,7 +1463,7 @@ export async function hurtle_step(arg, x, y) {
             const dmg = rnd(2 + arg.range);                 /* dothrow.c:835 */
             const { losehp_do } = await import('./do.js');
             await losehp_do(Maybe_Half_Phys_hurtle(dmg), why, KILLED_BY_);
-            await wake_nearto_hurtle(x, y, 10);
+            await wake_nearto(x, y, 10);
             return false;
         }
     }
@@ -1496,7 +1479,7 @@ export async function hurtle_step(arg, x, y) {
         /* after unhiding; combination of a_monnam() and some_mon_nam() —
            yields "someone"/"something" instead of "it" for an unseen mon */
         const mnam = U.x_monnam(mon, ARTICLE_A_, null,
-            ((mon.mgivenname || mon.mextra?.mgivenname) ? SUPPRESS_SADDLE_ : 0)
+            (has_mgivenname(mon) ? SUPPRESS_SADDLE_ : 0)
             | AUGMENT_IT_, false);
         if (!known_monster && !U.glyph_is_invisible(x, y))
             await update_topl(`You find ${mnam} by bumping into ${
@@ -1515,7 +1498,7 @@ export async function hurtle_step(arg, x, y) {
         if (touch_petrifies_ptr(ydat)
             && !which_armor_mask(mon, W_ARMU_MASK | W_ARM_MASK | W_ARMC_MASK))
             await minstapetrify_hurtle(mon, true);
-        await wake_nearto_hurtle(x, y, 10);
+        await wake_nearto(x, y, 10);
         return false;
     }
 
@@ -1539,7 +1522,7 @@ export async function hurtle_step(arg, x, y) {
     }
 
     const ox = u.ux, oy = u.uy;
-    const { u_on_newpos } = await import('./do.js');
+    const { u_on_newpos } = await import('./dungeon.js');
     await u_on_newpos(x, y); /* set u.<ux,uy>, u.usteed-><mx,my>; cliparound() */
     newsym(ox, oy);    /* update old position */
     const { vision_recalc } = await import('./vision.js');
@@ -1650,7 +1633,7 @@ export async function mhurtle_step(arg, x, y) {
         } else {
             /* steed is hurtling, move hero which will also move steed */
             u.ux0 = u.ux; u.uy0 = u.uy;
-            const { u_on_newpos } = await import('./do.js');
+            const { u_on_newpos } = await import('./dungeon.js');
             await u_on_newpos(x, y);
             newsym(u.ux0, u.uy0); /* update old position */
             const { vision_recalc } = await import('./vision.js');
@@ -1907,14 +1890,7 @@ async function wakeup_hurtle(mon, via_attack) {
 }
 // C ref: hack.h Maybe_Half_Phys(dmg) — js/zap.js:226 (unexported).
 function Maybe_Half_Phys_hurtle(dmg) {
-    return uprop_any('Half_physical_damage') ? Math.floor((dmg + 1) / 2) : dmg;
-}
-// C ref: mon.c wake_nearto(x, y, distance) == wake_nearto_core(x, y, distance,
-// FALSE): `distance` is a SQUARED distance (dist2), 0 means "everything on the
-// level", and wake_msg() names every visible sleeper it wakes.
-async function wake_nearto_hurtle(x, y, distance) {
-    const { wake_nearto_core } = await import('./mon.js');
-    await wake_nearto_core(x, y, distance, false);
+    return Half_physical_damage_hero() ? Math.floor((dmg + 1) / 2) : dmg;
 }
 // C ref: trap.c instapetrify(str) — js/polyself.js owns the port.
 async function instapetrify_hurtle(why) {

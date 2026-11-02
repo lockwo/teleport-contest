@@ -13,6 +13,7 @@
 // machinery (moveloop_turn) run between moves — so that the next nhgetch()
 // capture sees the final post-run state with the exact cumulative RNG.
 
+import { Detect_monsters_hero, Passes_walls_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { lock_action } from './lock.js';
@@ -20,10 +21,10 @@ import { visible_region_at, region_is_poisoncloud, show_region } from './region.
 import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
-import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl } from './cmd.js';
+import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON, PICK_ONE } from './const.js';
+import { A_CON, PICK_ONE, is_pool_or_lava, is_pool } from './const.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
@@ -34,7 +35,7 @@ import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
-import { Invis } from './monmove.js';
+import { Invis, m_everyturn_effect } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
@@ -67,7 +68,6 @@ import { ROOMOFFSET, MOD_ENCUMBER, SLT_ENCUMBER, FOOT, WT_SQUEEZABLE_INV,
 import { in_rooms } from './shkroom.js';
 import { inside_room } from './mkroom.js';
 import { DEADMONSTER, sensemon } from './mon.js';
-import { is_pool } from './dbridge.js';
 import { water_friction } from './mkmaze.js';
 import { xname, carrying, near_capacity, ice_descr } from './invent.js';
 import { makeplural } from './plural.js';
@@ -100,12 +100,6 @@ function closed_door(x, y) {
     return IS_DOOR(loc.typ) && (loc.doormask & (D_CLOSED | D_LOCKED));
 }
 
-// C ref: rm.h is_pool_or_lava — water/lava terrain.
-function is_pool_or_lava(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    return IS_POOL(loc.typ) || IS_LAVA(loc.typ);
-}
 
 // C ref: mondata.h NODIAG(mnum) == (mnum == PM_GRID_BUG).
 const PM_GRID_BUG = 116;
@@ -116,13 +110,8 @@ const PM_GRID_BUG = 116;
 // is seen and ignores telepathy.
 function mon_visible(mtmp) {
     if (!mtmp) return false;
-    if (mtmp.m_ap_type === 'furniture' || mtmp.m_ap_type === 'obj') return false;
-    // See_invisible is spelled three ways across this port (display.js/dogmove.js
-    // write u.see_invis, makemon.js u.uprops.See_invisible, mcastu.js
-    // u.See_invisible); reading only one would answer FALSE for a hero granted
-    // it through either of the others.
-    if (mtmp.minvis && !game.u?.see_invis && !game.u?.See_invisible
-        && !game.u?.uprops?.See_invisible)
+    if (M_AP_TYPE(mtmp) === M_AP_FURNITURE || M_AP_TYPE(mtmp) === M_AP_OBJECT) return false;
+    if (mtmp.minvis && !See_invisible_hero())
         return false;
     return !mtmp.mundetected;
 }
@@ -131,7 +120,7 @@ function mon_visible(mtmp) {
 // glyph.  defsym.h indices: S_vcdoor = 15, S_hcdoor = 16.
 const S_vcdoor = 15, S_hcdoor = 16;
 function is_door_mappear(mtmp) {
-    if (mtmp?.m_ap_type !== 'furniture') return false;
+    if (M_AP_TYPE(mtmp) !== M_AP_FURNITURE) return false;
     return mtmp.mappearance === S_vcdoor || mtmp.mappearance === S_hcdoor;
 }
 
@@ -726,19 +715,8 @@ function doorless_door(x, y) {
 // C ref: hack.h Passes_walls.  No polyform in this port sets it, and cmd.js's
 // blocksMove()/domove() ignore phasing too, so the BFS and the actual walk
 // agree; kept as a named predicate so the guards below read like C.
-function Passes_walls() { const p = game.u?.uprops; return !!game.u?.formprops?.Passes_walls || !!p?.Passes_walls || !!p?.HPasses_walls || !!p?.EPasses_walls; }
+function Passes_walls() { return Passes_walls_hero(); }
 
-// C ref: monst.h gy.youmonst.data == &mons[u.umonnum], where u_init.c:991 sets
-// umonnum = urole.mnum — a real mons[] index.  THIS port stores the 0-based ROLE
-// index there (js/u_init.js:1324), so a raw monster_by_pmidx() answered
-// "gelatinous cube" (MZ_LARGE) for a Rogue, which made
-// cant_squeeze_thru_hero() return 1 for EVERY hero and killed every diagonal
-// corridor jog in findtravelpath().  PM_ARCHEOLOGIST is 331 (js/monmove.js:6018).
-function youmonst_data() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
-}
 
 // C ref: hack.c:937 bad_rock(mdat,x,y).  tunnels(mdat) && may_dig() only
 // relaxes this for a rock-eating polyform, which no covered hero takes.
@@ -1357,7 +1335,8 @@ async function getpos_tip() {
             k = await nhgetch();
             if (k === 32 || k === 13 || k === 10 || k === 27
                 || (k >= 48 && k <= 57)
-                || MENU_RESP_CMDS.includes(String.fromCharCode(k))) break;
+                || MENU_RESP_CMDS.includes(String.fromCharCode(k))
+                || mapped_menu_cmds().includes(String.fromCharCode(k))) break;
         }
         if (k >= 48 && k <= 57) {
             count = count * 10 + (k - 48);
@@ -1369,6 +1348,9 @@ async function getpos_tip() {
         }
         // every other resp[] member is a menu command that PICK_NONE ignores
     }
+    // C ref: wintty.c erase_menu_or_text(): offx == 0 (no menu_overlay) tears
+    // the window down with docrt().
+    if ((game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false) await docrt();
     return true;
 }
 
@@ -1489,17 +1471,40 @@ function getpos_help_lines(force, goal, doingWhatIs, hasValid, hasHilite) {
 
 // Paint a wintty.c:1810 process_text_window() overlay: cl_end() from offx on
 // every row, a leading blank at offx, the text at offx+1, then the morestr row.
-function render_text_window(lines) {
+// C ref: wintty.c tty_putstr() NHW_MENU/NHW_TEXT: a line of CO or more
+// characters is stored whole (it still widens cw->maxcol) and then broken at
+// the last space at or before index CO-1, the space dropped and the rest
+// putstr()'d again.
+function tty_putstr_lines(lines, CO = 80) {
+    const out = [];
+    const put = (str) => {
+        out.push(str);
+        if (str.length + 1 > CO) {
+            let i = CO - 1;
+            while (i && str[i] !== ' ' && str[i] !== '\n') i--;
+            if (i) {
+                out[out.length - 1] = str.slice(0, i);
+                put(str.slice(i + 1));
+            }
+        }
+    };
+    for (const l of lines) put(l);
+    return out;
+}
+
+function render_text_window(srcLines) {
     const disp = game.nhDisplay;
     if (!disp?.putstr) return;
     const cols = 80;
     let maxcol = 0;
-    for (const l of lines) if (l.length + 1 > maxcol) maxcol = l.length + 1;
+    for (const l of srcLines) if (l.length + 1 > maxcol) maxcol = l.length + 1;
+    const lines = tty_putstr_lines(srcLines, cols);
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
     // wintty.c:1974 — a window as tall as the terminal drops the overlay form.
     if (lines.length >= 24) offx = 0;
-    let textCol = offx + 1;
+    // process_text_window() prints the leading blank only `if (cw->offx)`.
+    let textCol = offx ? offx + 1 : 0;
     // C ref: tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0 and the
     // screen is wiped (term_clear_screen()) rather than overlaid.  The text then
     // starts in column 0 and process_text_window()'s dmore() puts --More-- one
@@ -1519,7 +1524,7 @@ function render_text_window(lines) {
     }
     const endRow = lines.length;
     blankCols(endRow);
-    const moreCol = noOverlay ? textCol + 1 : textCol;
+    const moreCol = offx + 1;
     disp.putstr(moreCol, endRow, GETPOS_MORESTR, NO_COLOR, 0);
     disp.setCursor(moreCol + GETPOS_MORESTR.length, endRow);
 }
@@ -1628,8 +1633,7 @@ export function self_lookat() {
     // (senseself() = Unblind_telepat || Detect_monsters; being blinded may hide
     // invisibility from self).
     const p = u.uprops || {};
-    const senseself = Unblind_telepat() || !!(p.Detect_monsters || p.HDetect_monsters
-        || p.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters);
+    const senseself = Unblind_telepat() || Detect_monsters_hero();
     const inv = (Invis() && (senseself || !Blind())) ? 'invisible ' : '';
     // C ref: pager.c:112 — "include race with role unless polymorphed".  While
     // Upolyd, u.umonnum is a real mons[] index and pmname() names the FORM,
@@ -1643,7 +1647,7 @@ export function self_lookat() {
         if (u.uball) bufP += `, chained to ${ansimpleoname(u.uball)}`;
         return bufP;
     }
-    const rolemnum = u.umonnum ?? game.urole?.mnum;
+    const rolemnum = game.urole?.mnum;
     const roleDef = roles.find((r) => r.mnum === rolemnum) || {};
     const female = !!game.flags?.female;
     const roleName = (female && roleDef.name?.f) ? roleDef.name.f
@@ -1926,7 +1930,7 @@ export function is_valid_travelpt(x, y) {
 // disguise, so glyph_at()/lookat() treat it as that object.
 function shows_mimic_object(mtmp, x, y) {
     if (!mtmp || mtmp.mappearance == null) return false;
-    if (mtmp.m_ap_type !== 'obj' && mtmp.m_ap_type !== M_AP_OBJECT) return false;
+    if (M_AP_TYPE(mtmp) !== M_AP_OBJECT) return false;
     return mimic_object_glyph(mtmp).glyph?.ch === game.level?.at(x, y)?.disp_ch;
 }
 
@@ -2349,12 +2353,12 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // the long worm tail glyphs (getpos.c:455).  S_WORM_TAIL '~' is that
         // glyph's only symbol, so a hallucinated pet/monster that the display
         // rng drew as PM_LONG_WORM_TAIL is skipped as well.
-        // A visible mimic disguised as an object or furniture is named by
-        // #terrain's object jump, not the monster jump.
+        // A mimic drawn as an object or furniture has disp_monster false (the
+        // object jump names it); one shown by monster detection is drawn as
+        // the monster glyph itself, so it counts here.
         if (loc.disp_hstatue && !mtmp) return loc.disp_ch !== '~';
         return !!(mtmp && canspotmon(mtmp) && loc.disp_monster
-            && loc.disp_ch !== '~'
-            && (M_AP_TYPE(mtmp) === 0 || M_AP_TYPE(mtmp) === M_AP_MONSTER));
+            && loc.disp_ch !== '~');
     case GLOC_OBJS:
         // a hallucinated statue is displayed as a MONSTER glyph (display.h statue_to_glyph)
         if (loc.disp_hstatue && !mtmp) return false;
@@ -2436,6 +2440,9 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // the SCORR->CORR conversion is what actually flips loc.typ), so both
         // must be excluded here too — the codebase's usual `IS_WALL(typ) ||
         // typ === SDOOR` pairing (apply.js, dig.js, cmd.js, ...) was missing.
+        // A door still remembered as a wall (never seen as a door) shows a
+        // wall glyph, which C excludes (is_cmap_wall on glyph_at()).
+        if (loc.remembered_glyph?.wall) return false;
         return !(IS_WALL(loc.typ) || loc.typ === ICE || loc.typ === ROOM
                  || loc.typ === CORR || loc.typ === STONE
                  || loc.typ === SDOOR || loc.typ === SCORR
@@ -2871,7 +2878,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // docrt_flags(docrtRefresh) == redraw_map(FALSE), a RE-SEND of the
         // existing glyph buffer that flush_screen already does, so the only
         // observable half is the goal message it re-shows.
-        if (k === 0x12 /* C('r') */) {
+        if (redraw_cmd(k)) { /* ^R, or ^L under number_pad */
             if (getpos_has_hilitefunc()) await getpos_refresh();
             showGoal = true;
             continue;
@@ -3816,6 +3823,8 @@ function look_pick_description(x, y) {
 
 // C ref: objnam.c an() — prepend the indefinite article (just_an() exceptions).
 import { an } from './hacklib.js';
+import { youmonst_data } from './invent.js';
+import { mapped_menu_cmds } from './options.js';
 
 
 // ── data.base lookup (pager.c checkfile) ──────────────────────────────────
@@ -4580,9 +4589,19 @@ export async function do_look_full() {
         // data.base) fires its own --More-- via y_n.  Otherwise the NEED_MORE
         // line is flushed with --More-- by the next loop's "Pick..." or exit.
         const { text, firstmatch } = look_pick_description(cc.x, cc.y);
-        game._pending_message = text;
-        game._toplin = 1;        // NEED_MORE
-        game._yn_need_more = true;
+        // C ref: pager.c:1919 putmixed(WIN_MESSAGE, ...) -> update_topl(): a
+        // description that wraps onto a second row blocks on its own --More--
+        // right here (redotoplin()), and an ESC there sets WIN_STOP, which
+        // suppresses the next loop pass's "Pick ..." line.
+        if (wrap_topl(text).length > 1) {
+            game._toplin = 0;
+            game._pending_message = '';
+            await update_topl(text);
+        } else {
+            game._pending_message = text;
+            game._toplin = 1;        // NEED_MORE
+            game._yn_need_more = true;
+        }
         // C ref: pager.c:1941 — LOOK_QUICK (',') and LOOK_ONCE (';') skip the
         // data.base query; LOOK_VERBOSE (':') shows it without asking.
         const ans = cc.pick | 0;
@@ -4609,17 +4628,6 @@ export async function do_look_full() {
     // Clearing it unconditionally (as this used to) wiped "Done." before the
     // next screen render ever showed it.
     game.context.move = 0;
-}
-
-// C ref: teleport.c:1151-1161 — wizard teleport still pays hunger and time
-// when interference or a cancelled targeting prompt prevents the teleport.
-export async function dotele_wizard() {
-    const u = game.u;
-    (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
-    await scrolltele(null);
-    u.uhunger = (u.uhunger ?? 900) - 100;
-    await newuhs(true);
-    return 1;
 }
 
 export { getpos_tip, getpos, getpos_render, jump_landing, is_valid_jump_pos, get_valid_jump_position, jump_hilite_first_cursor, distu };
@@ -5086,15 +5094,19 @@ export async function overexert_hp() {
     }
 }
 
-// C ref: allmain.c:473-479 moveloop_core() — `if (disp.botl || disp.botlx) {
-// bot(); curs_on_u(); } else if (disp.time_botl) { timebot(); curs_on_u(); }`.
-// curs_on_u() is flush_screen(1), so a dirty status line also paints every
-// pending map glyph (a monster's trap-door fall, say) before the next
-// prompt's --More-- in a run/travel continuation.
+// C ref: allmain.c:473-481 moveloop_core() — `if (disp.botl || disp.botlx) {
+// bot(); curs_on_u(); } else if (disp.time_botl) { timebot(); curs_on_u(); }`
+// then `m_everyturn_effect(&gy.youmonst)`.  curs_on_u() is flush_screen(1), so
+// a dirty status line also paints every pending map glyph (a monster's
+// trap-door fall, say) before the next prompt's --More-- in a run/travel
+// continuation.  A hero polymorphed into a fog cloud lays down its vapour
+// (create_gas_cloud's rn2(3)) in EVERY moveloop_core() iteration, so each
+// continuation step pays it before lookaround()+domove().
 async function moveloop_bot() {
     const dirty = !!(game.botl || game.botlx || game.time_botl);
     await bot();
     if (dirty) await flush_screen(1);
+    await m_everyturn_effect(game.u);
 }
 
 export async function runmode_delay_output() {

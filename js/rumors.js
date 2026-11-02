@@ -89,11 +89,14 @@ export async function outoracle(special, delphi) {
     const start = o.loc[oracle_idx];
     if (!special) o.loc[oracle_idx] = o.loc[--o.cnt];
 
-    await update_topl(delphi
-        ? (special ? 'The Oracle scornfully takes all your gold and says:'
-                   : 'The Oracle meditates for a moment and then intones:')
-        : 'The message reads:');
-    await update_topl('');
+    const tmpwin = create_nhwindow(NHW_TEXT);
+    if (delphi)
+        putstr(tmpwin, 0, special
+            ? 'The Oracle scornfully takes all your gold and says:'
+            : 'The Oracle meditates for a moment and then intones:');
+    else
+        putstr(tmpwin, 0, 'The message reads:');
+    putstr(tmpwin, 0, '');
 
     let pos = start;
     for (;;) {
@@ -103,8 +106,11 @@ export async function outoracle(special, delphi) {
         let line = r.line;
         const nl = line.indexOf('\n');
         if (nl >= 0) line = line.slice(0, nl);
-        await update_topl(xcrypt(line));
+        putstr(tmpwin, 0, xcrypt(line));
     }
+    await display_nhwindow(null, true);
+    await display_nhwindow(tmpwin, true);
+    destroy_nhwindow(tmpwin);
 }
 
 // C ref: rumors.c:529 outrumor()'s BY_ORACLE arm — the adverb costs rn2(4),
@@ -245,32 +251,13 @@ function create_nhwindow(type) { return { type, lines: [] }; }
 function putstr(win, _attr, str) {
     if (win && win !== WIN_ERR && Array.isArray(win.lines)) win.lines.push(str);
 }
-// C ref: wintty.c tty_display_nhwindow(NHW_TEXT) — process_text_window(); the
-// WIN_MESSAGE form (win === null) just pages a pending topline.
+// C ref: wintty.c tty_display_nhwindow(NHW_TEXT) — process_text_window() with
+// tty_putstr()'s compress/wrap, which js/pager.js display_text_window() owns;
+// the WIN_MESSAGE form (win === null) just pages a pending topline.
 async function display_nhwindow(win, _blocking) {
     if (win) {
-        const inv = await import('./invent.js');
-        const { nhgetch } = await import('./input.js');
-        const { game } = await import('./gstate.js');
-        const rows = game.nhDisplay?.rows ?? 24;
-        const perPage = rows - 1;
-        const pages = [];
-        for (let i = 0; i < win.lines.length; i += perPage)
-            pages.push(win.lines.slice(i, i + perPage));
-        for (let pi = 0; pi < pages.length; pi++) {
-            // C ref: wintty.c:1844-1845 — NHW_TEXT always ends at the bottom row.
-            inv.renderWindowScreen(pages[pi], {
-                footer: '--More--', footerRow: rows - 1, footerCol: 0,
-                modal: 'textwin',
-            });
-            for (;;) {
-                const c = await nhgetch();
-                if (c === 27) { pi = pages.length; break; }   /* ESC cancels the rest */
-                if (c === 32 || c === 13 || c === 10) break;
-            }
-        }
-        // NHW_TEXT: no select_menu() bot_disabled bracket around the docrt().
-        await inv.dismiss_invent_screen(true);
+        const { display_text_window } = await import('./pager.js');
+        await display_text_window(win.lines);
     } else {
         const { display_nhwindow_message } = await import('./display.js');
         await display_nhwindow_message();

@@ -14,7 +14,7 @@ import { game } from './gstate.js';
 import { pline, hold_botl_con } from './display.js';
 import { rnd } from './rng.js';
 import {
-    update_inventory, xname, is_plural, bimanual, otense, body_part, setuswapwep, freeinv, inventoryArray,
+    update_inventory, is_plural, bimanual, otense, yobjnam, Yobjnam2, Yname2, body_part, setuswapwep, freeinv, carried,
 } from './invent.js';
 import { makeplural } from './plural.js';
 import { objects, WEAPON_CLASS, TOOL_CLASS } from './mkobj.js';
@@ -32,17 +32,6 @@ function ACURR(i) {
 // (include/hack.h:134).
 const HAND = 6;
 
-// mons[] index of the first role monster; js/hack.js keeps u.umonnum at the
-// 0-based ROLE index while not polymorphed, so it has to be added (same
-// resolution js/artifact.js:509 uses).
-const PM_ARCHEOLOGIST = 331;
-
-// C ref: monst.h gy.youmonst.data.
-function youmonst_data() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(PM_ARCHEOLOGIST + (u?.umonnum ?? 0)) || u?.data || null;
-}
 
 // C ref: mondata.h:129 could_twoweap(ptr) — more than one of the form's first
 // three attacks is AT_WEAP.  Two-weapon combat is NOT a role-name list: of the
@@ -65,9 +54,6 @@ function Glib() {
     const u = game.u || {};
     return (u.uprops?.Glib | 0) > 0;
 }
-
-// C ref: obj.h carried(o) == (o->where == OBJ_INVENT).
-function carried(obj) { return !!obj && inventoryArray().includes(obj); }
 
 // C ref: obj.h is_weptool(o) / wield.c:74 TWOWEAPOK(obj).
 function is_weptool(obj) {
@@ -98,77 +84,6 @@ export function twoweapon_action_ok(otmp) {
     return could_twoweap(youmonst_data()) && !game.uarms
         && maybe(uwep) && maybe(uswapwep);
 }
-
-// C ref: objnam.c xname() — the bare name, pluralized for a stack but with NO
-// count (the count belongs to doname()/aobjnam()).  js/invent.js's xname() is
-// "quantity-aware" and prepends obj->quan, so strip that prefix back off: the
-// recorder says "Your darts aren't suitable secondary weapons.", not
-// "Your 10 darts ...".
-function xname_c(obj) {
-    const s = xname(obj), q = obj.quan | 0;
-    return (q > 1 && s.startsWith(`${q} `)) ? s.slice(String(q).length + 1) : s;
-}
-// C ref: objnam.c:1924 cxname(obj) — xname(), except a corpse gains its monster
-// type.  can_twoweapon()'s TWOWEAPOK() test rejects a corpse before any of
-// these names is built, so xname() is the whole reachable body.
-function cxname(obj) { return xname_c(obj); }
-
-// C ref: shk.c:5862 shk_your(buf, obj) — "your " for a carried item, "the " for
-// one on the floor.  The shopkeeper-owns / monster-owns overrides need shk.c's
-// bill, which no can_twoweapon() caller can reach with an unpaid weapon in the
-// offhand slot without also being inside the shop.
-function shk_your(obj) { return carried(obj) ? 'your ' : 'the '; }
-
-// C ref: objnam.c not_fully_identified(otmp) — the fundamental ID hallmarks.
-// Anything this port does not track counts as NOT known, which is the
-// conservative answer: it keeps yobjnam()'s "your" prefix, exactly as C does
-// for an artifact that is not yet fully identified.
-function not_fully_identified(obj) {
-    if (!obj.known || !obj.dknown || !obj.bknown
-        || !objects[obj.otyp]?.oc_name_known)
-        return true;
-    if (obj.oartifact && !(game.artidisco || []).includes(obj.oartifact))
-        return true;
-    /* rknown is the only item of interest if we reach here; without it only
-       damageable (rust/burn/rot/corrode-prone) objects fall short, and every
-       artifact weapon is damageable. */
-    return !obj.rknown;
-}
-
-// C ref: objnam.c obj_is_pname(obj) — an artifact bearing its own name string
-// that the hero has fully identified.
-function obj_is_pname(obj) {
-    if (!obj.oartifact || !obj.oname) return false;
-    return !not_fully_identified(obj);
-}
-
-// artilist.h:219 — ART_ORB_OF_DETECTION, the first quest artifact.
-const ART_ORB_OF_DETECTION = 21;
-
-// C ref: objnam.c:2244 aobjnam(otmp, verb) — "<count> <cxname> <otense(verb)>".
-function aobjnam(obj, verb) {
-    let bp = cxname(obj);
-    if ((obj.quan || 1) !== 1) bp = `${obj.quan} ${bp}`;
-    if (verb) bp += ` ${otense(obj, verb)}`;
-    return bp;
-}
-
-// C ref: objnam.c:2262 yobjnam() / :2359 yname() — both prepend an ownership
-// prefix, which is left off for a carried, fully-identified, non-quest named
-// artifact ("Excalibur resists ...", not "Your Excalibur resists ...").
-function own_prefix(obj) {
-    if (!carried(obj) || !obj_is_pname(obj) || obj.oartifact >= ART_ORB_OF_DETECTION)
-        return shk_your(obj);
-    return '';
-}
-// yname() is built on cxname() and carries NO count; yobjnam() is built on
-// aobjnam() and does.
-function yname(obj) { return own_prefix(obj) + cxname(obj); }
-function yobjnam(obj, verb) { return own_prefix(obj) + aobjnam(obj, verb); }
-function highc(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
-// C ref: objnam.c:2280 Yobjnam2 / :2378 Yname2 — capitalized yobjnam()/yname().
-function Yobjnam2(obj, verb) { return highc(yobjnam(obj, verb)); }
-function Yname2(obj) { return highc(yname(obj)); }
 
 // C ref: wield.c:761 can_twoweapon().  Decide whether the hero may dual-wield;
 // every rejection prints its own reason.
@@ -306,6 +221,7 @@ import { setuqwep, addinv_nomerge, is_pole, Tobjnam, is_weptool as inv_is_weptoo
 import { is_art, artifact_light, ART_OGRESMASHER, ART_SNICKERSNEE } from './artifact.js';
 import { flush_hallucination_transitions } from './potion.js';
 import { GEM_CLASS } from './mkobj.js';
+import { youmonst_data } from './invent.js';
 
 // C ref: obj.h is_launcher/is_ammo/is_missile — oc_skill range tests, the same
 // definitions js/invent.js:455-473 uses.  Repeated here because that file keeps

@@ -5,6 +5,8 @@
 // interrupted turn resumes.
 
 import { rawPrintBias, setFinalCursor } from './rawprint.js';
+import { MGIVENNAME } from './const.js';
+import { setONAME } from './const.js';
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night, getnow, yyyymmdd } from './calendar.js';
@@ -291,8 +293,8 @@ async function savelife(_how) {
     // C ref: end.c:739 savelife() — `if (u.utrap && u.utraptype == TT_LAVA)
     // reset_utrap(FALSE)`: a hero revived out of lava is no longer stuck in it.
     if (u.utrap && u.utraptype === 4 /* TT_LAVA */) {
-        const { reset_utrap_fu } = await import('./trap.js');
-        await reset_utrap_fu(false);
+        const { reset_utrap } = await import('./trap.js');
+        await reset_utrap(false);
     }
     // C ref: end.c:741 — the arise-as-undead choice done_in_by() made for the
     // death that was just averted must not leak into a later death.
@@ -307,7 +309,8 @@ async function savelife(_how) {
         const { expels } = await import('./mhitu.js');
         await expels(u.ustuck, u.ustuck.data, true);
     } else if (u.ustuck) {
-        const { Monnam, mon_nam, sticks } = await import('./uhitm.js');
+        const { Monnam, mon_nam } = await import('./uhitm.js');
+        const { sticks } = await import('./monattk_data.js');
         const { monster_by_pmidx } = await import('./makemon.js');
         const { update_topl } = await import('./display.js');
         if (u.Upolyd && sticks(monster_by_pmidx(u.umonnum)))
@@ -350,7 +353,7 @@ async function savelife(_how) {
 // kill of an orc hero rolls no further RNG in the recording once
 // can_make_bones() returns).
 // C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;` reduced to the RACE
-// name — this port's u.umonnum holds the ROLE index, not a mons[] pmidx.
+// name.
 // Shared by make_hero_corpse_and_grave() (the corpse's species) and
 // compute_ugrave_arise() (the race's mummy/zombie form).
 function hero_race_name() {
@@ -408,8 +411,7 @@ async function make_hero_corpse_and_grave(how) {
         const { name_to_pmidx } = await import('./makemon.js');
         const { make_grave } = await import('./engrave.js');
         const { CORPSTAT_INIT } = await import('./const.js');
-        // C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;`  This port's
-        // u.umonnum holds the ROLE index, not a mons[] pmidx, so resolve the
+        // C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;`  Resolve the
         // race's monster by name (mons[] carries "human"/"elf"/"dwarf"/
         // "gnome"/"orc" as the player-race entries).
         const raceName = hero_race_name();
@@ -417,7 +419,7 @@ async function make_hero_corpse_and_grave(how) {
         const corpse = mkcorpstat(CORPSE, null, mnum ?? null, x, y,
                                   CORPSTAT_INIT);
         const plname = game.plname || game.u?.uname || 'Hero';
-        if (corpse) corpse.oname = plname;
+        if (corpse) setONAME(corpse, plname);
         // C: Sprintf(pbuf, "%s, ", plname); formatkiller(...); make_grave().
         make_grave(x, y, `${plname}, ${killer_epitaph(how)}`);
         return corpse;
@@ -678,6 +680,12 @@ async function done(how) {
             await paygd(!!stopprint, redraw);
             if (!redrawn) redraw();
         }
+        // C ref: end.c:1240 really_done() — clearpriests(): a priest away from
+        // its own shrine level must not be saved into bones.
+        if (how !== PANICKED) {
+            const { clearpriests } = await import('./priest.js');
+            await clearpriests();
+        }
 
         if (stopprint) {
             // C ref: end.c disclose() — every one of its six category blocks
@@ -784,6 +792,13 @@ async function done(how) {
             // at all (that used to skip this entirely for a 'q' answer).
             await real_death_epilogue(how, wizard || discover, !clean);
         }
+    } else {
+        // C ref: end.c:1119-1123 done() — `if (survive)` clears the killer
+        // (life saving, or a wizard/explore hero declining "Die?").
+        const killer = svk_killer();
+        killer.name = '';
+        game._killer_name = '';
+        killer.format = KILLED_BY_AN;
     }
 }
 
@@ -1205,7 +1220,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
                         discover_object(otmp.otyp, true, true, false);
                         otmp.dknown = 1; /* seen it (blindness fix) */
                         otmp.known = 1;  /* for fake amulets */
-                        otmp.oname = null;
+                        setONAME(otmp, null);
                         otmp.quan = count;
                         pbuf = `${String(count).padStart(8)} ${xname(otmp)}`
                             + ` (worth ${count * base_oc_cost(typ)} ${currency(2)}),`;
@@ -1646,7 +1661,7 @@ async function killer_text_for_monster(mtmp) {
     // <name>", a priest/minion's m_monnam(), or the species with " called
     // <name>" for a named monster.
     const { m_monnam } = await import('./do_name.js');
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
+    const given = MGIVENNAME(mtmp);
     const isghost = ptr?.name === 'ghost';
     let buf = '', by_an = true;
     if ((ptr.geno & G_UNIQ) && !(ptr.name === 'high cleric' && !mtmp.ispriest)) {

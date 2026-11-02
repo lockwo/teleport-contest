@@ -7,6 +7,7 @@
 // state and behavior that callers can move to incrementally.
 
 import { game } from './gstate.js';
+import { panic } from './panic.js';
 import { nhgetch } from './input.js';
 import { bot, cls, docrt, flush_screen, pline, show_glyph_cell } from './display.js';
 import {
@@ -44,7 +45,6 @@ const ESC = '\x1b';
 function noop() {}
 function clearlocks() {}
 function nh_terminate() {}
-function panic(msg, ...args) { throw new Error(format(msg, ...args)); }
 function impossible(msg, ...args) { game._impossible = format(msg, ...args); }
 function nhassert(cond, msg = 'assertion failed') { if (!cond) throw new Error(msg); }
 // C ref: patchlevel.h:39-44 COPYRIGHT_BANNER_A..D, verbatim including the nine
@@ -134,7 +134,6 @@ function menuitem_invert_test(op, itemflags, selected) {
     void op; void selected;
     return !(itemflags & 0x0000002);
 }
-function map_menu_cmd(ch) { return ch; }
 function AppendLongDigit(n, dgt) {
     const next = n * 10 + dgt;
     return next > Number.MAX_SAFE_INTEGER ? -1 : next;
@@ -258,7 +257,7 @@ function xwaitforspace(valid = ' ') {
     void valid;
     morc = ' '.charCodeAt(0);
 }
-function ttywindowpanic(window = WIN_ERR) { panic('Bad window Id %d (wintty.js)', window); }
+function ttywindowpanic(window = WIN_ERR) { panic(format('Bad window Id %d (wintty.js)', window)); }
 function emptyStatusField() {
     return { idx: BL_FLUSH, color: NO_COLOR, attr: ATR_NONE, x: 0, y: 0, lth: 0,
         valid: false, dirty: false, redraw: false, sanitycheck: false };
@@ -523,7 +522,7 @@ export function tty_create_nhwindow(type) {
         newwin.cols = ttyDisplay?.cols ?? displayCols();
         break;
     default:
-        panic('Tried to create window type %d', type);
+        panic(format('Tried to create window type %d', type));
     }
     return newid;
 }

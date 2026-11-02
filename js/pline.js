@@ -157,8 +157,8 @@ function msgtype_type(_line, _norep) { return MSGTYP_NORMAL; } /* options.js:295
 function flush_screen(_cursor_on_u) { /* js/display.js:2578 */ }
 function vision_recalc(_control) { /* js/vision.js:633 */ }
 function livelog_add(_ll_type, _line) { /* js/livelog.js */ }
+import { panic } from './panic.js';
 function paniclog(_type, _line) { /* files.c; no filesystem in this port */ }
-function panic(_fmt) { throw new Error('panic'); }
 function impossible(_fmt) { /* js/display.js:2660 */ }
 function isok(x, y) { return x >= 1 && x < 80 && y >= 0 && y < 21; } /* hack.h */
 

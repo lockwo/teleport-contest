@@ -1,21 +1,25 @@
 // allmain.js — Main game loop.
 // C ref: allmain.c — newgame, moveloop, moveloop_core.
 //
-// Uses fastforward.js for pre/post-mklev RNG parity on seed8000.
+// Game start-up (newgame) and the per-turn driver.
 // Real mklev.js handles level generation for screen parity.
 
+import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero } from './youprop.js';
+import { ROLE_PM_BASE } from './const.js';
 import { NetHackPanic } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
-import { mklev, l_nhcore_init, u_on_upstairs } from './mklev.js';
+import { mklev, l_nhcore_init, u_on_upstairs, makelevel_fill_and_mineralize } from './mklev.js';
 import { makedog } from './dog.js';
 import { rhack, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
 import { Hallucination_u, docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
-import { fastforward_pre_mklev, fastforward_post_mklev, fastforward_step, fastforward_step_count, fastforward_fill_mineralize } from './fastforward.js';
+import { init_objects } from './o_init.js';
+import { init_dungeons } from './dungeon.js';
+import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions, clear_regions } from './region.js';
 import { makemon_rnd_spawn, makemon_appears_msg, flush_group_newsyms } from './makemon.js';
@@ -27,18 +31,18 @@ import { age_spells } from './spell.js';
 import { newuhs } from './eat.js';
 import { adj_erinys } from './makemon.js';
 import { find_ac, u_init_skills_discoveries, moveloop_preamble_startup,
-         race_attrmin, race_attrmax, u_init_inventory_attrs } from './u_init.js';
+         race_attrmin, race_attrmax, u_init_inventory_attrs, newhp, newpw } from './u_init.js';
 import { com_pager_legacy } from './questpgr.js';
-import { roles, races, aligns, genders, Hello, rankName } from './role.js';
+import { roles, races, aligns, genders, Hello, rankName, ROLE_PRIEST, randrole, quest_monster_fixups_for_role, align_str, plname_is_generic, plnamesuffix } from './role.js';
 import { Unaware,
          ROLE_MALE, ROLE_FEMALE, NORMAL_SPEED, A_STR, A_WIS, A_INT, A_DEX, A_CON,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
     A_ORIGINAL, A_CURRENT, Upolyd,
-    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING } from './const.js';
+    Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING,
+    is_pool } from './const.js';
 import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion } from './invent.js';
 import { menuHeadAttr } from './menuattr.js';
-import { is_pool } from './dbridge.js';
-import { exercise, acurr_eff } from './attrib.js';
+import { exercise, acurr_eff, change_luck } from './attrib.js';
 import { settrack } from './track.js';
 import { nh_timeout, do_storms } from './timeout.js';
 import { genTutorialLevel } from './tutorial.js';
@@ -46,6 +50,7 @@ import { find_level } from './dungeon.js';
 import { livelog_printf, LL_ACHIEVE, LL_DEBUG } from './livelog.js';
 import { check_special_room } from './shkroom.js';
 import { runtime_info_init } from './mdlib.js';
+import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 
 const PM_KNIGHT = 4;
 const PM_WIZARD = 12;
@@ -58,26 +63,35 @@ function gameRoleMnum() {
     return roles.find((r) => r.name?.m?.toLowerCase() === name)?.mnum ?? null;
 }
 
-// Role names whose real u_init (attrs + inventory) actually runs in
-// fastforward_post_mklev (see fastforward.js) — only these have real player
-// state to render via newgame_real().  Must stay in sync with the routing in
-// fastforward_post_mklev().
-const REAL_UINIT_ROLES = new Set([
-    'wizard', 'rogue', 'samurai', 'priest',
-    'archeologist', 'barbarian', 'caveman', 'healer', 'monk',
-    'ranger', 'valkyrie', 'tourist',
-]);
-
-function gameRoleName() {
-    if (Number.isInteger(game.initrole))
-        return roles[game.initrole]?.name?.m?.toLowerCase() || '';
-    return String(game.initrole || '').toLowerCase();
+// C ref: role.c role_init() — the RNG-visible parts: the Master of Thieves'
+// quest-monster fixup, the Archeologist/Wizard nemesis gender (the only quest
+// monster with no gender flag, role.c:2059), and the Priest's borrowed pantheon
+// (the only role with no gods of its own).
+function role_init() {
+    const role = roles[game.initrole];
+    quest_monster_fixups_for_role(game.initrole, name_to_pmidx, monster_by_pmidx);
+    const name = role?.name?.m?.toLowerCase();
+    if (name === 'wizard' || name === 'archeologist')
+        game.quest_nemgend = (rn2(100) < 50) ? 1 : 0;
+    if (game.initrole === ROLE_PRIEST) {
+        let pantheon;
+        do {
+            pantheon = randrole(false);
+        } while (pantheon === ROLE_PRIEST);
+        game.pantheon = pantheon;
+    }
 }
 
-function realUinitRan() {
-    const name = gameRoleName();
-    if (name === 'knight') return true;
-    return REAL_UINIT_ROLES.has(name);
+// C ref: u_init.c u_init_misc() — level-0 HP and Pw, then the handedness roll.
+function u_init_misc() {
+    const g = game;
+    g.u = g.u || {};
+    g.u.ulevel = 0;
+    g.u.uhp = g.u.uhpmax = g.u.uhppeak = newhp();
+    g.u.uen = g.u.uenmax = g.u.uenpeak = newpw();
+    // u.uhandedness = rn2(10) ? RIGHT_HANDED : LEFT_HANDED.
+    g.u.uleft_handed = (rn2(10) === 0);
+    g.u.uhandedness = g.u.uleft_handed ? 1 /* LEFT_HANDED */ : 0 /* RIGHT_HANDED */;
 }
 
 // C ref: allmain.c welcome() — svp.plname (the name in play; "wizard" when a
@@ -124,55 +138,45 @@ export async function newgame() {
     // or a previous session's abuse would leak into this one.  No RNG.
     adj_erinys(0);
 
-    // Fast-forward through pre-mklev startup RNG calls.
-    // Covers: o_init (shuffles), dungeon init, u_init_misc.
-    fastforward_pre_mklev();
+    // C ref: allmain.c newgame() init_objects(), role_init(), init_dungeons(),
+    // u_init_misc(), in C's order.
+    init_objects();
+    /* role_init() -> plnamesuffix(): a generic name (typed at the first
+       askname()) is blanked and asked for again */
+    if (plname_is_generic() && game._askname) {
+        game.plname = '';
+        await game._askname();      /* no second genericusers test: do/while */
+        plnamesuffix(true);
+    }
+    role_init();
+    // C ref: dungeon.c init_dungeons() -> nhl_init() loads nhlib.lua, whose
+    // shuffle of its alignment table is rn2(3) then rn2(2) before the dungeon
+    // definition is read.
+    rn2(3); rn2(2);
+    init_dungeons();
+    u_init_misc();
 
     // C ref: allmain.c l_nhcore_init() — shuffle align[] for Lua
     // Consumes rn2(3), rn2(2) matching session indices 309-310
     l_nhcore_init();
 
-    // Preserve the full dungeon model that fastforward_pre_mklev's
-    // init_dungeons() materialized (dungeons[], sp_levchn[], branches[], tune[])
-    // before the level-1 stub below clobbers g.dungeons / g.branches.  The
-    // wizard ^V print_dungeon level menu needs the complete model; gameplay
-    // level generation only needs the dnum-0 stub.  The legacy seed8000 path
-    // doesn't build sp_levchn, so guard on its presence.
-    if (Array.isArray(g.sp_levchn) && g.sp_levchn.length) {
-        g._full_dungeon = {
-            dungeons: g.dungeons,
-            branches: g.branches,
-            sp_levchn: g.sp_levchn,
-            n_dgns: g.n_dgns,
-            tune: g.tune,
-            knox_level: g.knox_level,
-            stronghold_level: g.stronghold_level,
-        };
-    }
+    // Keep the full dungeon model init_dungeons() materialized (dungeons[],
+    // sp_levchn[], branches[], tune[]); the wizard ^V print_dungeon level menu
+    // and the dungeon.js lookups read it from _full_dungeon.
+    g._full_dungeon = {
+        dungeons: g.dungeons,
+        branches: g.branches,
+        sp_levchn: g.sp_levchn,
+        n_dgns: g.n_dgns,
+        tune: g.tune,
+        knox_level: g.knox_level,
+        stronghold_level: g.stronghold_level,
+    };
 
-    // Set up game state needed by mklev.
-    //
-    // Gameplay sessions (those that ran init_dungeons and stashed the complete
-    // model in _full_dungeon) keep the REAL dungeons[]/branches[] so that later
-    // level generation — e.g. a wizard ^V teleport to dlvl 2/3 — sees the true
-    // branch placement.  Otherwise mk_knox_portal() (mklev.c:2638) mis-judges
-    // Is_branchlev(&u.uz): the real Gnomish Mines branch entrance sits on dlvl
-    // 2-4, so those levels ARE branch levels and mk_knox_portal returns BEFORE
-    // its rn2(3); a hardcoded "Mines on dlvl 1" stub instead made the porter
-    // consume an extra rn2(3) on every teleport-destination level, desyncing the
-    // PRNG for the rest of the run (seed5006 diverged here).  The legacy
-    // seed8000 path never built _full_dungeon, so it falls back to the stub that
-    // keeps its level-1 generation byte-identical.
-    if (g._full_dungeon) {
-        g.dungeons = g._full_dungeon.dungeons;
-        g.branches = g._full_dungeon.branches;
-    } else {
-        g.dungeons = [{ dname: 'The Dungeons of Doom', depth_start: 1, num_dunlevs: 30 }];
-        // Branch: Mines entrance on level 1 (for seed 8000)
-        g.branches = [
-            { end1: { dnum: 0, dlevel: 1 }, end2: { dnum: 2, dlevel: 1 }, end1_up: true },
-        ];
-    }
+    // The REAL dungeons[]/branches[] stay in place so later level generation,
+    // e.g. a wizard ^V teleport to dlvl 2/3, sees the true branch placement:
+    // mk_knox_portal() (mklev.c:2638) must judge Is_branchlev(&u.uz) against
+    // the real Gnomish Mines branch entrance on dlvl 2-4.
     g.u = g.u || {};
     g.u.uz = { dnum: 0, dlevel: 1 };
     g.u.uz0 = { dnum: 0, dlevel: 0 }; /* u_init.c:979-984 */
@@ -182,7 +186,7 @@ export async function newgame() {
     // u.ualign.type BEFORE mklev(), and makemon()'s peace_minded() reads all
     // three: u.ualign.type/.record are the sgn test and the rn2(16 + record)
     // modulus, and gu.urace supplies race_peaceful/race_hostile's love/hate
-    // masks.  They used to be assigned AFTER fastforward_fill_mineralize(), so
+    // masks.  They used to be assigned AFTER makelevel_fill_and_mineralize(), so
     // every room-fill monster saw ual=0 and a human hero: an orc Wizard's goblin
     // hit the human hatemask (M2_GNOME|M2_ORC) and returned hostile with NO
     // RNG, where C draws rn2(16) and rn2(5).  That one missing pair shifted the
@@ -214,14 +218,14 @@ export async function newgame() {
     // switch reads Role_if(PM_SAMURAI) via umonnum to erodeproof a Samurai's
     // starting-level splint mail (mkobj.c:1104-1105 `svm.moves <= 1 ||
     // In_quest`). This port used to set umonnum only in u_init_role()
-    // (js/u_init.js), which fastforward_post_mklev() calls AFTER mklev(), so
+    // (js/u_init.js), which newgame() calls AFTER mklev(), so
     // umonnum was still undefined during the real level-1 room fill: the
     // lacquer branch never fired and mkobj_erosions() rolled the erosion RNG
     // (rn2(100)/rn2(80)/rn2(80)/rn2(1000)) that C skips for that armor piece,
     // desyncing every later draw in the fill loop (seed0030 segment 8, step
     // 1345 / idx 35947). u_init_role()'s own `if (umonnum == null)` guard
     // makes its later assignment a no-op once this has already run.
-    g.u.umonnum = g.u.umonster = gameRoleMnum();
+    g.u.umonnum = g.u.umonster = ROLE_PM_BASE + gameRoleMnum();
 
     // Real mklev generates the level with correct room positions
     // Structural phase consumes RNG for rooms/corridors/doors/stairs
@@ -229,10 +233,10 @@ export async function newgame() {
 
     // C ref: mklev.c mklev(): getbones() returns before makelevel() and its
     // fill/mineralize phase when it loaded a legacy level.
-    if (!g._bones_loaded) await fastforward_fill_mineralize();
+    if (!g._bones_loaded) await makelevel_fill_and_mineralize();
 
     // C ref: dog.c makedog() - create the starting pet after level fill.
-    u_on_upstairs();
+    await u_on_upstairs();
     // C ref: allmain.c:810 check_special_room(FALSE) — seeds u.urooms/u.ushops
     // for the starting square before the first move computes an entry delta.
     await check_special_room(false);
@@ -241,50 +245,16 @@ export async function newgame() {
     {
         const occupant = m_at(game.u.ux, game.u.uy);
         if (occupant) {
-            const { mnexto_rloc } = await import('./do.js');
-            await mnexto_rloc(occupant, 0x0004 /* RLOC_NOMSG */);
+            const { mnexto } = await import('./mon.js');
+            await mnexto(occupant, 0x0004 /* RLOC_NOMSG */);
         }
     }
     makedog();
 
-    // Fast-forward through post-mklev startup RNG calls.
-    // Covers: u_init_role, ini_inv, attributes, moveloop_preamble.
-    // For wizard/knight this runs the real u_init_inventory_attrs().
-    fastforward_post_mklev();
-
-    if (realUinitRan()) {
-        await newgame_real();
-        return;
-    }
-
-    // Hardcoded player state for seed8000 Tourist (fastforward path).
-    g.u.ulevel = 1;
-    g.u.uhp = 10; g.u.uhpmax = 10;
-    g.u.uen = 2; g.u.uenmax = 2;
-    g.u.uac = 10; g.u.uexp = 0;
-    g.u.ualign = { type: 0, record: 0 };
-    // Stored in attribute order [STR, INT, WIS, DEX, CON, CHA].
-    g.u.acurr = { a: [9, 11, 16, 14, 12, 16] };
-    g.u.amax = { a: [9, 11, 16, 14, 12, 16] };
-    g.moves = 1;
-    g.urole = { name: { m: 'Tourist', f: 'Tourist' }, rank: { m: 'Rambler', f: 'Rambler' } };
-    g.urace = { adj: 'human' };
-    g.flags.female = true;
-    g.plname = g.plname || 'Contestant';
-
-    // Initial display
-    init_vision_globals();
-    vision_reset();
-    vision_recalc(0);
-    await cls();
-    await docrt();
-    await flush_screen(1);
-    await bot();
-
-    // Welcome message
-    const alignName = 'neutral';
-    const genderAdj = g.flags?.female ? 'female' : 'male';
-    await pline(`Aloha ${g.plname}, welcome to NetHack!  You are a ${alignName} ${genderAdj} human ${g.urole.name.m}.`);
+    // C ref: allmain.c newgame() u_init_inventory_attrs() — role/race
+    // attributes and starting inventory, after makedog().
+    u_init_inventory_attrs();
+    await newgame_real();
 }
 
 // Game start for roles whose real u_init ran (wizard/knight): render
@@ -333,7 +303,7 @@ async function newgame_real() {
     g.u.ugangr = g.u.ugangr ?? 0;
     g.u.ulevel = 1; g.u.ulevelmax = 1; g.u.uexp = 0;
     g.u.uz = g.u.uz || { dnum: 0, dlevel: 1 };
-    g.u.umonnum = mnum;
+    g.u.umonnum = ROLE_PM_BASE + mnum;
     g.moves = 1;
     g.flags = g.flags || {};
     if (g.flags.female === undefined)
@@ -372,6 +342,9 @@ async function newgame_real() {
     // columns) and the status line underneath still shows pre-find_ac AC (0).
     const legacyOn = (g.flags?.legacy !== false);
     if (legacyOn) {
+        // C ref: questpgr.c com_pager() -> nhl_init() loads nhlib.lua, whose
+        // alignment-table shuffle is rn2(3) then rn2(2).
+        rn2(3); rn2(2);
         await com_pager_legacy();
     }
 
@@ -488,13 +461,13 @@ async function moveloop_preamble_messages() {
     // Friday the 13th) — the moon message first, then the Friday-13th warning.
     if (moonphase === FULL_MOON) {
         msgs.push('You are lucky!  Full moon tonight.');
-        g.u.uluck = (g.u.uluck || 0) + 1; // change_luck(1)
+        change_luck(1);
     } else if (moonphase === NEW_MOON) {
         msgs.push('Be careful!  New moon tonight.');
     }
     if (friday_13th()) {
         msgs.push('Watch out!  Bad things can happen on Friday the 13th.');
-        g.u.uluck = (g.u.uluck || 0) - 1; // change_luck(-1)
+        change_luck(-1);
     }
 
     if (msgs.length === 0) return false;
@@ -691,7 +664,8 @@ async function ask_do_tutorial() {
         let maxlen = 0;
         for (const l of lines) if (l.text.length > maxlen) maxlen = l.text.length;
         const maxcol = maxlen + 2;
-        const offx = Math.max(10, cols - maxcol - 1);
+        const offx = (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false
+            ? 0 : Math.max(10, cols - maxcol - 1);  /* !menu_overlay forces offx 0 */
 
         // The acknowledged top-line message no longer belongs on screen.  When
         // a long welcome line wrapped its "--More--" onto grid row 1 (cols
@@ -703,8 +677,10 @@ async function ask_do_tutorial() {
             disp.setCell(c, 0, ' ', NO_COLOR, 0);
             disp.setCell(c, 1, ' ', NO_COLOR, 0);
         }
+        /* a full-screen (offx 0) menu: process_menu_window() term_clear_screen() */
+        if (offx === 0 && disp.clearScreen) disp.clearScreen();
         // Restore the map underneath grid row 1 (map y == 0).
-        if (game.level) {
+        if (game.level && offx !== 0) {
             for (let x = 1; x < cols + 1; x++) {
                 const loc = game.level.at(x, 0);
                 if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
@@ -744,8 +720,7 @@ async function ask_do_tutorial() {
     // while counting only stops the count (wintty.c:1604) instead of
     // cancelling the menu.
     const SELECTORS = 'yn';
-    const DEFAULT_MENU_CMDS = '^|><.-@,\\~:';
-    const RESP = SELECTORS + ' ' + '0123456789\x1b\n\r' + DEFAULT_MENU_CMDS;
+    const RESP = SELECTORS + ' ' + '0123456789\x1b\n\r' + mapped_menu_cmds() + default_menu_cmds;
     const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
     const ITEMS = [{ sel: 'y', str: 'y - Yes, do a tutorial' },
                    { sel: 'n', str: 'n - No, just start play' }];
@@ -760,7 +735,11 @@ async function ask_do_tutorial() {
         let c, idx;
         do { c = await nhgetch(); idx = RESP.indexOf(String.fromCharCode(c)); }
         while (idx < 0);                        // tty_nhbell(), re-read
-        const ch = String.fromCharCode(c);
+        let ch = String.fromCharCode(c);
+        if (idx >= SELECTORS.length) {          // map_menu_cmd() unless explicit
+            ch = map_menu_cmd(ch);
+            c = ch.charCodeAt(0);
+        }
         if (idx < SELECTORS.length) {           // MENU_EXPLICIT_CHOICE
             if (ch === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); }
             break;
@@ -964,9 +943,7 @@ function youHaveBreathless() {
 // C ref: youprop.h Half_physical_damage == (HHalf_physical_damage ||
 // EHalf_physical_damage).
 function youHaveHalfPhysicalDamage() {
-    const p = game.u?.uprops;
-    return !!(p?.Half_physical_damage || p?.HHalf_physical_damage
-               || p?.EHalf_physical_damage);
+    return Half_physical_damage_hero();
 }
 
 // C ref: youprop.h Sleepy == (HSleepy || ESleepy).  js/extcmd-handlers.js's
@@ -1468,6 +1445,7 @@ export async function moveloop_turn() {
 // C ref: objects.h ring/amulet otyps read by gethungry()'s accessory cases.
 const RIN_PROTECTION = 178, RIN_HUNGER = 184, RIN_CONFLICT = 186,
       RIN_SLOW_DIGESTION = 193, FAKE_AMULET_OF_YENDOR = 212, MEAT_RING = 270;
+const FROMFORM_BIT = 0x10000000;
 const OC_CHARGED = 1; // objects[].oc_charged, packed into the JS `flags` field
 
 function wornRing(otyp) {
@@ -1475,10 +1453,11 @@ function wornRing(otyp) {
 }
 // C ref: eat.c gethungry() — `(HRegeneration & ~FROMFORM) || (ERegeneration &
 // ~(W_ARTI | W_WEP))`, i.e. regeneration that isn't from the current polyform
-// or from a wielded artifact.  Only the worn-ring source exists in this port.
-function eats_from_regeneration() { return wornRing(179 /*RIN_REGENERATION*/); }
-// C ref: hack.h Hunger / Conflict extrinsics from worn rings.
-function ringHunger() { return wornRing(RIN_HUNGER); }
+// (u.formprops, never in the H word here) or from a carried/wielded artifact.
+function eats_from_regeneration() {
+    return ((game.u?.uprops?.HRegeneration | 0) & ~FROMFORM_BIT) !== 0
+        || (worn_extrinsic(57 /* REGENERATION */) & ~(0x2000 /* W_ARTI */ | 0x100 /* W_WEP */)) !== 0;
+}
 // C ref: eat.c:3203 `HConflict || (EConflict & ~W_ARTI)` (W_ARTI == 0x2000).
 function ringConflict() {
     return !!(game.u?.uprops?.HConflict) || (worn_extrinsic(44 /*CONFLICT*/) & ~0x2000) !== 0;
@@ -1491,20 +1470,21 @@ function youmonst_eats() {
     const f1 = u.data ? (mflags1_of(u.data) ?? 0) : 0;
     return !!(f1 & (M1_CARNIVORE | M1_HERBIVORE | M1_METALLIVORE));
 }
-// C ref: eat.c:3245-3252 — a worn ring only costs nutrition if it actually does
-// something: nonzero enchantment, or an uncharged type, or a +0 ring of
-// protection that is the hero's ONLY source of protection.  C tests the latter
-// via the EProtection source mask; the only source this port tracks here is the
-// other ring, so a cloak of protection / amulet of guarding is not consulted
-// (worst case: one extra nutrition point per ~40 turns in that configuration).
-function ring_costs_nutrition(ring, otherRing) {
+// C ref: eat.c gethungry() cases 4 and 12 — a worn ring only costs nutrition if
+// it actually does something: nonzero enchantment, or an uncharged type, or a
+// +0 ring of protection that is the hero's ONLY source of protection.  C tests
+// the latter on the EProtection word (worn_extrinsic(PROTECTION)) with this
+// ring's slot bit stripped; the left ring's case also lets a second +0 ring of
+// protection on the right hand count as nothing.
+function ring_costs_nutrition(ring, otherRing, slotbit) {
     if (!ring || ring.otyp === MEAT_RING) return false;
     if (ring.spe) return true;
     if (!(objects[ring.otyp]?.flags & OC_CHARGED)) return true;
     if (ring.otyp !== RIN_PROTECTION) return false;
-    if (otherRing && otherRing.otyp === RIN_PROTECTION && otherRing.spe)
-        return false;
-    return true;
+    const eprot = worn_extrinsic(59 /* PROTECTION */) & ~slotbit;
+    if (eprot === 0) return true;
+    return slotbit === 0x00020000 /* W_RINGL */ && eprot === 0x00040000 /* W_RINGR */
+        && !!otherRing && otherRing.otyp === RIN_PROTECTION && !otherRing.spe;
 }
 
 // C ref: eat.c gethungry() — per-turn hunger.  While u.uinvulnerable (prayer
@@ -1532,7 +1512,7 @@ export async function gethungry() {
         if (near_capacity() > 1 /* SLT_ENCUMBER */)
             u.uhunger = (u.uhunger ?? 900) - 1;
     } else { /* even */
-        if (ringHunger()) u.uhunger = (u.uhunger ?? 900) - 1;
+        if (Hunger_hero()) u.uhunger = (u.uhunger ?? 900) - 1;
         if (ringConflict()) u.uhunger = (u.uhunger ?? 900) - 1;
         switch (accessorytime) { // even cases among 0..19 only
         case 0:
@@ -1540,7 +1520,7 @@ export async function gethungry() {
                 u.uhunger = (u.uhunger ?? 900) - 1;
             break;
         case 4:
-            if (ring_costs_nutrition(game.uleft, game.uright))
+            if (ring_costs_nutrition(game.uleft, game.uright, 0x00020000 /* W_RINGL */))
                 u.uhunger = (u.uhunger ?? 900) - 1;
             break;
         case 8:
@@ -1548,7 +1528,7 @@ export async function gethungry() {
                 u.uhunger = (u.uhunger ?? 900) - 1;
             break;
         case 12:
-            if (ring_costs_nutrition(game.uright, game.uleft))
+            if (ring_costs_nutrition(game.uright, game.uleft, 0x00040000 /* W_RINGR */))
                 u.uhunger = (u.uhunger ?? 900) - 1;
             break;
         case 16:
@@ -1782,7 +1762,7 @@ async function exerper() {
 // so the control flow mirrors C exactly if those statuses become tracked.
 function Wounded_legs() {
     const u = game.u || {};
-    return !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
+    return Wounded_legs_hero();
 }
 // C ref: youprop.h HClairvoyant/BClairvoyant/Clairvoyant.  HClairvoyant carries
 // the intrinsic bits plus the timeout (#wizintrinsic, priest donation);
@@ -1910,8 +1890,7 @@ export async function moveloop_input_redraw() {
     // and BEFORE bot(), so any AC change a command or a monster's turn produced
     // (erosion, a corroded suit, a spe change) is on the status line of the
     // very next captured screen.  RNG-free and idempotent — find_ac() is this
-    // port's only writer of u.uac apart from the seed8000 fastforward stub
-    // (which has no worn gear, so this recomputes the same base 10).
+    // port's only writer of u.uac.
     find_ac();
     if (g.context?.mv && !Blind()) return;
     // C ref: cmd.c rhack() — the 'm' prefix and its command are ONE rhack()
@@ -2020,18 +1999,10 @@ export async function moveloop_core() {
 
     // Per-turn work runs at the TOP of the turn that follows a hero move,
     // mirroring the C moveloop (monsters move based on the previous command's
-    // svc.context.move).  For the recorded seed8000 starter we replay its
-    // captured per-move RNG; otherwise we run the real general turn.
+    // svc.context.move).
     if (g._pendingTurn) {
         g._pendingTurn = false;
-        const turnNum = g._turnsTaken = (g._turnsTaken || 0) + 1;
-        if (fastforward_step_count() > 0 && turnNum <= fastforward_step_count()) {
-            // Recorded per-move RNG replay (seed8000 starter path).
-            fastforward_step(turnNum);
-            g.moves = (g.moves || 1) + 1;
-        } else {
-            await moveloop_turn();
-        }
+        await moveloop_turn();
     }
 
     // C ref: end.c really_done() never returns to moveloop_core() (it ends in
@@ -2549,7 +2520,6 @@ export async function moveloop_preamble(resuming) {
     /* side-effects from the real world */
     g.flags = g.flags || {};
     g.flags.moonphase = phase_of_the_moon();
-    const { change_luck } = await import('./do_wear.js');
     if (g.flags.moonphase === FULL_MOON) {
         await pline('You are lucky!  Full moon tonight.');
         change_luck(1);
@@ -2749,8 +2719,8 @@ export async function welcome(new_game) {
     if (new_game || u.ualignbase?.[A_ORIGINAL] !== u.ualignbase?.[A_CURRENT]
         || adrift)
         buf += ` ${adrift ? 'adrift ' : ''}${adrift
-            ? align_str_wel(u.ualign?.type)
-            : align_str_wel(u.ualignbase?.[A_CURRENT])}`;
+            ? align_str(u.ualign?.type)
+            : align_str(u.ualignbase?.[A_CURRENT])}`;
     const urole = roles[game.initrole], urace = races[game.initrace] || races[0];
     if (!urole?.name?.f
         && (new_game
@@ -2778,14 +2748,6 @@ export async function welcome(new_game) {
         const { print_level_annotation } = await import('./dungeon.js');
         await print_level_annotation();
     }
-}
-
-// C ref: align.c align_str(alignment) — the adjective form.  js/pray.js:1054
-// and js/invent.js:9371 each hold an identical private copy; the fix is one
-// exported align.c port, not a fourth.
-function align_str_wel(alignment) {
-    const a = aligns.find((al) => al.value === alignment);
-    return a ? a.adj : 'unaligned';
 }
 
 // C ref: allmain.c:933 do_positionbar() — build the msdos POSITIONBAR string:

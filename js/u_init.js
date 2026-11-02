@@ -2,10 +2,11 @@
 // C ref: u_init.c
 
 import { game } from './gstate.js';
+import { ROLE_PM_BASE } from './const.js';
 import { skill_init_snapshot } from './enhance.js';
 import { rn2, rnd, rne, rn1 } from './rng.js';
 import { addinv as invent_addinv, bimanual, near_capacity,
-    worn_extrinsics_on } from './invent.js';
+    worn_slot_set as setworn } from './invent.js';
 import { initialspell, num_spells, skill_based_spellbook_id } from './spell.js';
 import {
     ARMOR_CLASS,
@@ -599,27 +600,6 @@ function is_shield(obj) { return is_armor_range(obj, 150, 158); }
 function is_shirt(obj) { return is_armor_range(obj, 136, 137); }
 function is_suit(obj) { return is_armor_range(obj, 101, 135); }
 
-// C ref: worn.c:73-145 setworn() — record a worn armor object on the hero.
-// This is the FIFTH copy of the hero worn-slot mutator in this port (the other
-// four are in js/invent.js: setworn, setworn_slot, setworn_accessory and
-// worn_slot_set) and it is the one that dons the starting kit, so it has to do
-// C's property bookkeeping too: without it the Wizard's cloak of magic
-// resistance never set EAntimagic and a self-zapped wand of magic missile
-// rolled d(4,6) that C does not roll.  Collapsing the five copies is a separate
-// change; this just routes the extrinsic half through the one owner.
-function setworn(obj, mask) {
-    if (!obj) return;
-    obj.owornmask = (obj.owornmask || 0) | mask;
-    if (mask === W_ARM) game.uarm = obj;
-    else if (mask === W_ARMC) game.uarmc = obj;
-    else if (mask === W_ARMH) game.uarmh = obj;
-    else if (mask === W_ARMS) game.uarms = obj;
-    else if (mask === W_ARMG) game.uarmg = obj;
-    else if (mask === W_ARMF) game.uarmf = obj;
-    else if (mask === W_ARMU) game.uarmu = obj;
-    worn_extrinsics_on(obj, mask);
-}
-
 // C ref: u_init.c ini_inv_use_obj — auto-wear starting armor and wield
 // starting weapon(s).  Ammo/missiles fill the quiver; the first wieldable
 // weapon becomes the primary (uwep) and the next the secondary (uswapwep),
@@ -732,7 +712,7 @@ export function find_ac() {
 
 // C ref: attrib.c newhp() / exper.c newpw() — level-0 HP and Pw.
 // The single rnd() each role's enadv contributes is emitted here at the
-// same RNG position the old fastforward_newpw() used.
+// same RNG position as C u_init_misc().
 export function newhp() {
     const adv = ROLE_ADV.get(current_role_mnum());
     if (!adv) return 0;
@@ -1365,7 +1345,7 @@ export function u_init_role() {
     // samurai lacquered-armor branch reads Role_if(PM_SAMURAI) via umonnum.
     // C ref: u_init.c:991 u.umonnum = u.umonster = gu.urole.mnum — umonster is
     // the hero's original (non-polymorphed) form; Upolyd = (umonnum != umonster).
-    if (game.u && game.u.umonnum == null) game.u.umonnum = game.u.umonster = role;
+    if (game.u && game.u.umonnum == null) game.u.umonnum = game.u.umonster = ROLE_PM_BASE + role;
     if (game.u) game.u.umoney0 = game.u.umoney0 ?? 0;
     switch (role) {
     case PM_ARCHEOLOGIST:

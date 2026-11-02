@@ -25,15 +25,15 @@ import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
-    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
+    FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, W_ARM, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED,
+    is_pool } from './const.js';
 import { clear_path, vision_recalc, Blind } from './vision.js';
 import { flush_screen, map_invisible, canseemon_shared, match_warn_of_mon } from './display.js';
-import { objects, place_object, start_object_timer, stop_object_timer } from './mkobj.js';
+import { objects, place_object, remove_object, start_object_timer, stop_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
 import { name_to_pmidx } from './makemon.js';
 import { mindless } from './monflags_data.js';
-import { Blind_telepat } from './youprop.js';
-import { is_pool } from './dbridge.js';
+import { Blind_telepat, Detect_monsters_hero } from './youprop.js';
 
 // C ref: include/vision.h enum ls_sources.
 export const LS_NONE = 0;
@@ -153,12 +153,11 @@ function ignitable(obj) {
 // C ref: artifact.c:2264 artifact_light(obj) — worn gold dragon scales/mail, or
 // Sunsword.  js/monmove.js:493 has a private copy hardcoded to FALSE; that copy
 // is a subset and belongs to artifact.c's owner (see `deferred`).  The worn-body
-// -armor test is C's `(obj->owornmask & W_ARM)`; this port's body-armor slot is
-// game.uarm (js/invent.js deliberately remaps the prop.h W_* bits, so its mask
-// values must not be used from here).
+// -armor test is C's `(obj->owornmask & W_ARM)`: a monster's worn suit carries
+// the const.js W_ARM bit, the hero's is game.uarm.
 export function artifact_light(obj) {
     if (obj && (obj.otyp === GOLD_DRAGON_SCALE_MAIL() || obj.otyp === GOLD_DRAGON_SCALES())
-        && obj === game.uarm)
+        && (obj === game.uarm || ((obj.owornmask | 0) & W_ARM) !== 0))
         return true;
     return !!obj && obj.oartifact === ART_SUNSWORD;
 }
@@ -219,16 +218,6 @@ function fmon() {
 // the moment they exist.
 function migrating_mons() { return game.migrating_mons || []; }
 function mydogs() { return game.mydogs || []; }
-
-// C ref: mkobj.c remove_object(obj) — unlink a floor object from the level pile.
-// (js/ball.js:37 has the same private copy; it belongs in js/mkobj.js.)
-function remove_object(obj) {
-    const arr = game.level?.objects;
-    if (!arr) return;
-    const ix = arr.indexOf(obj);
-    if (ix >= 0) arr.splice(ix, 1);
-    obj.where = OBJ_FREE;
-}
 
 // C ref: vision.c circle_data[] / circle_start[] — the same table js/vision.js
 // keeps privately; circle_ptr() is not exported from there, so it is duplicated
@@ -1010,7 +999,7 @@ function sensemon(mon) {
     if (u?.uinwater
         && !(dist2(mon.mx, mon.my, u.ux, u.uy) <= 2 && is_pool(mon.mx, mon.my)))
         return false;
-    return !!((p.Detect_monsters ?? 0) || (p.HDetect_monsters ?? 0))
+    return Detect_monsters_hero()
         || tp_sensemon(mon) || match_warn_of_mon(mon);
 }
 
@@ -1042,6 +1031,23 @@ hooks.beginCandleBurn = (x, y, otmp) => {
     otmp.lamplit = true;
     otmp.age -= turns;
     new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
+};
+
+// C ref: worn.c m_dowear_type() — `if (artifact_light(best) && !best->lamplit)
+// begin_burn(best, FALSE)` / `if (old->lamplit && artifact_light(old))
+// end_burn(old, FALSE)` for a monster putting on or taking off gold dragon
+// scale mail.  timeout.c's artifact arm (no timer, no RNG) done synchronously
+// for the creation-time m_dowear(), which cannot await.
+hooks.artifactLight = artifact_light;
+hooks.artifactLightOn = (obj) => {
+    obj.lamplit = 1;
+    const loc = get_obj_location(obj, CONTAINED_TOO | BURIED_TOO);
+    if (loc) new_light_source(loc.x, loc.y, arti_light_radius(obj), LS_OBJECT, obj);
+    else impossible("begin_burn: can't get obj position");
+};
+hooks.artifactLightOff = (obj) => {
+    del_light_source(LS_OBJECT, obj);
+    obj.lamplit = 0;
 };
 
 // C ref: makemon.c:1348 `if ((ct = emits_light(mtmp->data)) > 0)

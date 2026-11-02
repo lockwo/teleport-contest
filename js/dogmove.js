@@ -14,8 +14,8 @@
 //   - the m_in_out_region / m_digweapon_check arms of newdogpos.
 
 import { game } from './gstate.js';
-import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT, A_NONE, EPRI, EMIN } from './const.js';
-import { an } from './hacklib.js';
+import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT, A_NONE, EPRI, EMIN, is_pool, is_lava, LARGEST_INT, OBJ_FLOOR } from './const.js';
+import { an, s_suffix } from './hacklib.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
@@ -28,10 +28,9 @@ import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
 import { floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
-import { is_pool, is_lava } from './dbridge.js';
 import { dist2, mfndpos, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
-    Conflict, resist_conflict, mattacku, m_digweapon_check } from './monmove.js';
+    Conflict, resist_conflict, mattacku, m_digweapon_check, locomotion } from './monmove.js';
 import { goodpos } from './teleport.js';
 import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, ALLOW_M, ALLOW_MDISP, In_sokoban, SHOPBASE, W_SADDLE } from './const.js';
 import { t_at } from './trap.js';
@@ -52,7 +51,7 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
 import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn } from './mon.js';
 import { on_qstart_level } from './questok.js';
-import { max_passive_dmg, resists_ston, resists_poison, resists_acid, big_little_match } from './mondata.js';
+import { max_passive_dmg, resists_ston, resists_poison, resists_acid, big_little_match, slimeproof } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
 import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj } from './makemon.js';
@@ -62,6 +61,7 @@ const DOGFOOD = 0, CADAVER = 1, ACCFOOD = 2, MANFOOD = 3,
       APPORT = 4, POISON = 5, UNDEF = 6, TABU = 7;
 
 import { MMOVE_NOTHING, MMOVE_MOVED, MMOVE_DIED, MMOVE_DONE } from './const.js';
+import { vtense } from './plural.js';
 
 // C ref: dogmove.c:10-12 — the pet hunger thresholds (moves past hungrytime).
 // DOG_HUNGRY used to be spelled 500 here with a comment naming DOG_HUNGRY; 500
@@ -528,14 +528,10 @@ function find_pmmonst(name) {
 function stale_egg(obj) {
     return ((game.moves || 1) - (obj.age ?? 0)) > 400;
 }
-// C ref: mondata.h likes_fire(ptr) — fire-immune species (mresists MR_FIRE)
-// plus the fire-liking demons; the MR_FIRE bit is the part dogfood() needs.
-const MR_FIRE = 0x01;
-function likes_fire(ptr) { return ((ptr?.mresists ?? 0) & MR_FIRE) !== 0; }
-// C ref: mondata.h slimeproof(ptr) — green slime itself, flaming, noncorporeal.
-function slimeproof(ptr) {
-    return ptr?.name === 'green slime' || likes_fire(ptr) || ptr?.mcls === S_GHOST;
-}
+// C ref: mondata.h likes_fire(ptr) — fire vortex, flaming sphere, or likes_lava
+// (fire elemental, salamander).
+const LIKES_FIRE_NAMES = new Set(['fire vortex', 'flaming sphere', 'fire elemental', 'salamander']);
+function likes_fire(ptr) { return LIKES_FIRE_NAMES.has(ptr?.name); }
 // C ref: mondata.h is_vampshifter(mon) — a monster whose cham (true) form is
 // one of the three vampire species.
 const PM_VAMPIRE = 226, PM_VAMPIRE_LEADER = 227, PM_VLAD_THE_IMPALER = 228;
@@ -822,7 +818,7 @@ async function dog_invent(mtmp, edog, udist) {
             if (rn2(10) < apport) {
                 // relobj(mtmp, ..., TRUE): drop everything onto the floor.  No
                 // RNG.  Place each carried object back on the pet's tile.
-                await relobj(mtmp, omx, omy);
+                await relobj(mtmp, mtmp.minvis, true);
                 if (edog.apport > 1) edog.apport--;
                 edog.dropdist = udist;
                 edog.droptime = game.moves || 1;
@@ -930,25 +926,37 @@ async function dog_invent(mtmp, edog, udist) {
     return 0;
 }
 
-// C ref: steal.c relobj(mtmp, show, is_pet=TRUE) — drop the pet's DROPPABLE
-// carried objects onto its tile.  is_pet=TRUE means "pet should keep
-// wielded/worn items": the C loop is `while ((otmp = droppables(mtmp)))
-// mdrop_obj(...)`, i.e. it repeatedly asks droppables() (dogmove.c:27-136,
-// now ported in full above) for the next candidate and stops once nothing
-// droppable remains — a worn item
-// such as a pony's saddle (owornmask=W_SADDLE) is NEVER returned by
-// droppables() and so is never dropped here, matching a live steed's own
-// relobj() call on dismount.  Placement of what IS dropped is deterministic
-// (no RNG); we just move it from minvent back into level.objects at (x,y).
-async function relobj(mtmp, x, y) {
-    // C ref: steal.c relobj(is_pet=TRUE) -> mdrop_obj(mon,obj,is_pet&&verbose).
+// C ref: steal.c:875 relobj(mtmp, show, is_pet) — release the objects the
+// creature is carrying onto the square it stands on (mtmp->mx,my: mondead's
+// mon_leaving_level() deliberately leaves them readable).  is_pet=TRUE means
+// the pet keeps wielded/worn items: the loop asks droppables() (dogmove.c) for
+// the next candidate, so a pony's saddle (W_SADDLE) is never dropped here.
+// Otherwise everything in minvent goes.  Placement is RNG-free.
+export async function relobj(mtmp, show, is_pet) {
+    const omx = mtmp.mx, omy = mtmp.my;
+
+    /* vault guard's gold goes away rather than be dropped... */
+    if (mtmp.isgd) {
+        const { findgold } = await import('./steal.js');
+        const otmp = findgold(mtmp.minvent);
+        if (otmp) {
+            if (canspotmon(mtmp)) {
+                const { pline } = await import('./display.js');
+                await pline(`${s_suffix(Monnam(mtmp))} gold ${canseemon(mtmp)
+                    ? 'vanishes' : 'seems to vanish'}.`);
+            }
+            const { obj_extract_self, obfree } = await import('./invent.js');
+            obj_extract_self(otmp);
+            obfree(otmp, null);
+        }
+    }
+
     const verbose = game.flags?.verbose !== false;
-    let obj;
-    while ((obj = droppables(mtmp))) await mdrop_obj(mtmp, obj, verbose);
-    // C ref: steal.c:896 — `if (show && cansee(omx,omy)) newsym(omx,omy)`, and
-    // dog_invent's call site passes show = mtmp->minvis, so a VISIBLE pet gets
-    // no refresh here (its own glyph already covers the square).
-    if (mtmp.minvis && cansee(x, y)) newsym(x, y);
+    let otmp;
+    while ((otmp = is_pet ? droppables(mtmp) : (mtmp.minvent?.[0] ?? null)))
+        await mdrop_obj(mtmp, otmp, is_pet && verbose);
+
+    if (show && cansee(omx, omy)) newsym(omx, omy);
 }
 
 // C ref: steal.c mdrop_obj(mon, obj, verbosely) — drop ONE item out of a
@@ -1015,12 +1023,21 @@ const NEED_WEAPON_PET = 1, NEED_HTH_WEAPON_PET = 3;
 // leaving the remainder at the FULL stack weight made curr_mon_load() and
 // can_carry() (and the hero's own burden maths, once the pet drops it) read a
 // weight C no longer assigns.
+// C splitobj() links the new piece into the same nobj/nexthere chains as the
+// original ("obj -> otmp -> next"), so a floor stack's split-off piece is itself
+// a floor object: delobj() of the eaten piece then finds update_map TRUE and
+// newsym()s the square (display-rng draws while hallucinating).
 function pet_splitobj(obj, num) {
     const split = { ...obj, quan: num };
     split.o_id = nextoid(obj, split);
     obj.quan = (obj.quan || 1) - num;
     obj.owt = weight(obj);
     split.owt = weight(split);
+    const arr = game.level?.objects;
+    if (arr && obj.where === OBJ_FLOOR) {
+        const i = arr.indexOf(obj);
+        if (i >= 0) arr.splice(i, 0, split);   /* chain order: split sits below obj */
+    }
     return split;
 }
 
@@ -1858,7 +1875,7 @@ export async function dog_move(mtmp, after) {
         // redraw); it sets the topline NEED_MORE but does not block on its own.
         // Skipped when the pet ate the food underfoot.
         if (chi >= 0 && cursemsg[chi] && (wasseen || canseemon(mtmp))) {
-            const verb = vtense(locomotion(mtmp.data, 'step')); // "steps"
+            const verb = vtense(null, locomotion(mtmp.data, 'step')); // "steps"
             const over = is_flyer(mtmp.data) || is_floater(mtmp.data);
             const what = reluctant_what(nix, niy);
             await emit_pet_msg(`${noit_Monnam(mtmp)} ${verb} reluctantly ${over ? 'over' : 'onto'} ${what}.`, { x: mtmp.mx, y: mtmp.my });
@@ -2059,7 +2076,7 @@ export function dog_nutrition(mtmp, obj) {
         case 1: nutrit *= 6; break;  // MZ_SMALL
         case 3: nutrit *= 4; break;  // MZ_LARGE
         case 4: nutrit *= 3; break;  // MZ_HUGE
-        case 5: nutrit *= 2; break;  // MZ_GIGANTIC
+        case 7: nutrit *= 2; break;  // MZ_GIGANTIC (monflag.h)
         default: nutrit *= 5; break; // MZ_MEDIUM
         }
         // C ref: dog_nutrition — a partly-eaten food scales BOTH meating and
@@ -2119,43 +2136,13 @@ function canseemon(mtmp) {
 // demons...), so the set answered FALSE for all but four of them and every
 // flying pet got "steps reluctantly onto" instead of "flies reluctantly over".
 function is_flyer(ptr) { return is_flyer_flag(ptr); }
-// C ref: mondata.h is_floater(ptr) = (ptr->mlet == S_EYE).  defsym.h puts
+// C ref: mondata.h is_floater(ptr) = (mlet == S_EYE || mlet == S_LIGHT).  defsym.h puts
 // S_EYE at 5, not 18 (18 is S_RODENT) — the old literal made every rodent a
 // "floater", so a rat stepping onto a cursed object read "floats reluctantly
 // OVER" instead of "steps reluctantly ONTO", and locomotion() gave it the verb
 // "float".  Both are rendered text.
 const S_EYE = 5;
-function is_floater(ptr) { return ptr != null && ptr.mcls === S_EYE; }
-
-// C ref: mondata.c locomotion(ptr, def) — the movement verb.  Floaters/flyers/
-// slitherers use their own verb; a normal limbed walker (every contest pet) uses
-// `def` ("step").  Amorphous/immobile/nolimbs branches aren't reachable for the
-// pets that step onto cursed objects, so they fall through to def.
-function locomotion(ptr, def) {
-    if (is_floater(ptr)) return 'float';
-    if (is_flyer(ptr)) return 'fly';
-    if (ptr && (ptr.mcls === 45 /* S_SNAKE */ || ptr.mcls === 40 /* S_NAGA */))
-        return 'slither';
-    return def;
-}
-
-// C ref: objnam.c vtense(NULL, verb) — the singular 3rd-person present form of a
-// plural-shaped verb ("step" -> "steps", "fly" -> "flies").  Only the null-subject
-// (`sing:`) branch is needed here.
-function vtense(verb) {
-    const b = verb;
-    const last = b[b.length - 1]?.toLowerCase();
-    const prev = b.length >= 2 ? b[b.length - 2].toLowerCase() : '';
-    if (b.toLowerCase() === 'are') return 'is';
-    if (b.toLowerCase() === 'have') return b.slice(0, -2) + 's';
-    if (last === 'z' || last === 'x' || last === 's'
-        || (b.length >= 2 && last === 'h' && (prev === 'c' || prev === 's'))
-        || (b.length === 2 && last === 'o'))
-        return b + 'es';
-    if (last === 'y' && !'aeiou'.includes(prev))
-        return b.slice(0, -1) + 'ies';
-    return b + 's';
-}
+function is_floater(ptr) { return ptr != null && (ptr.mcls === S_EYE || ptr.mcls === S_LIGHT); }
 
 // C ref: dogmove.c:1302 — the object the pet is reluctantly stepping onto.  Names
 // the TOP object ("describe top item of pile, not necessarily cursed item itself")
@@ -2283,7 +2270,6 @@ export function monnear(mon, x, y) {
 // clears mtame/mpeaceful, which flips the monster out of dog_move entirely and
 // changes its mfndpos allowflags (ALLOW_M|ALLOW_TRAPS -> ALLOW_U).
 export function mon_catchup_elapsed_time(mtmp, nmv) {
-    const LARGEST_INT = 0x7fffffff;
     let imv = (nmv >= LARGEST_INT) ? (LARGEST_INT - 1) : (nmv | 0);
 
     // might stop being afraid, blind or frozen (set to 1; movemon does the

@@ -18,12 +18,12 @@ import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { newsym, object_glyph, You_feel, m_at } from './display.js';
 import { Blind } from './vision.js';
-import { place_object } from './mkobj.js';
-import { t_at } from './trap.js';
+import { place_object, remove_object } from './mkobj.js';
+import { t_at, reset_utrap } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
          DRAWBRIDGE_UP, HMON_DRAGGED, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
-import { Levitation_hero } from './youprop.js';
+import { Levitation_hero, Half_physical_damage_hero } from './youprop.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
 export const BC_BALL = 0x01;
@@ -34,16 +34,6 @@ const BCPOS_DIFFER = 0, BCPOS_CHAIN = 1, BCPOS_BALL = 2;
 // C ref: hacklib.c dist2 / distmin.
 const dist2 = (x0, y0, x1, y1) => (x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1);
 const distmin = (x0, y0, x1, y1) => Math.max(Math.abs(x0 - x1), Math.abs(y0 - y1));
-
-// C ref: mkobj.c remove_object(obj) — unlink a floor object from the level pile
-// (the JS engine keeps one flat array; last placed is topmost, matching C).
-function remove_object(obj) {
-    const arr = game.level?.objects;
-    if (!arr) return;
-    const ix = arr.indexOf(obj);
-    if (ix >= 0) arr.splice(ix, 1);
-    obj.where = OBJ_FREE;
-}
 
 const at = (x, y) => game.level?.at(x, y) || null;
 // C ref: rm.h IS_POOL(typ) — POOL <= typ <= DRAWBRIDGE_UP (pool, moat, water,
@@ -510,7 +500,7 @@ async function maybe_unhide_at_bc(x, y) {
 // C ref: attrib.c Maybe_Half_Phys(dmg) — halved by Half_physical_damage.
 // Module-private at js/zap.js:226 and js/spell.js:544.
 function Maybe_Half_Phys(dmg) {
-    if (!game.u?.uprops?.Half_physical_damage) return dmg;
+    if (!Half_physical_damage_hero()) return dmg;
     return Math.trunc((dmg + 1) / 2);
 }
 
@@ -802,10 +792,7 @@ export async function drop_ball(x, y) {
             default:
                 break;
             }
-            /* C ref: trap.c reset_utrap(TRUE) — module-private at
-               js/dothrow.js:166 and js/read.js:1074; clear the fields here. */
-            u.utrap = 0;
-            u.utraptype = 0;
+            await reset_utrap(true);
             await fill_pit(u.ux, u.uy);
         }
 

@@ -24,8 +24,10 @@
 // AT_WEAP branch (thrwmm, via js/mthrowu.js), and corpse_chance()'s AT_BOOM
 // gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
+import { Half_physical_damage_hero, Antimagic_hero, Unchanging_hero, Passes_walls_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
+import { setONAME } from './const.js';
 import { game } from './gstate.js';
-import { PLNMSG_HIDE_UNDER } from './const.js';
+import { PLNMSG_HIDE_UNDER, is_pool } from './const.js';
 import { s_suffix, an } from './hacklib.js';
 import { hitval, possibly_unwield } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
@@ -62,8 +64,9 @@ import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger, golemeffects } from 
 // mhitu.c owns these four (mhitm.c:383/426/85/659 call them across the file
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
-import { find_mac as worn_find_mac } from './worn.js';
+import { find_mac } from './worn.js';
 import { Monnam, mon_nam, a_monnam, mhis, mhe, YMonnam, hliquid } from './do_name.js';
+import { M_AP_TYPE, M_AP_MONSTER } from './const.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
 // attack loop.  Several mhitm_ad_* handlers rloc() a combatant and then still
@@ -279,7 +282,6 @@ function monLev(mon) {
 }
 
 // C ref: worn.c find_mac(mdef).
-function find_mac(mdef) { return worn_find_mac(mdef); }
 
 // getmattk() now lives in js/mhitu.js (its C home, mhitu.c:310).  The copy that
 // used to be here dropped the is_home_elemental() tail — an elemental on its own
@@ -326,11 +328,10 @@ function mm_ops() {
 // ── the deps bundle js/mthrowu.js's ADDITIVE thrwmm()/monshoot()/m_throw()
 // run against, for an AT_WEAP ranged mon-vs-mon attack ──────────────────────
 // mthrowu.js names each piece's one real implementation elsewhere in the port
-// (drop_throw() imports dokick.js ship_object()/down_gate() itself).  The
-// polyself.c poly_when_stoned()+polymon(PM_STONE_GOLEM) egg-petrification
-// escape applies only to a poly'd hero (a golem), the same polymon gap
-// js/mhitu.js declines for a direct hit; omitting it takes C's `&&` short
-// circuit to the ordinary make_stoned() arm.
+// (drop_throw() imports dokick.js ship_object()/down_gate() itself).  Every
+// `deps.X` mthrowu.js reads MUST be a key here: a missing one reads as
+// undefined and `deps.X?.()` silently skips the C behavior
+// (swarm/bin/importcheck.mjs lists any that are missing).
 // tmp_at_flash/tmp_at_step/tmp_at_end draw the in-flight missile (DISP_FLASH).
 export async function thrwmmDeps() {
     const MM = await import('./monmove.js');
@@ -348,6 +349,9 @@ export async function thrwmmDeps() {
     const { nomul, stop_occupation } = await import('./hack.js');
     const { can_blnd } = await import('./mhitm_ad.js');
     void killer_xname; // reserved for a future poisoned() message refinement
+    const { poly_when_stoned } = await import('./mondata.js');
+    const { polymon } = await import('./polyself.js');
+    const { KILLED_BY } = await import('./const.js');
 
     const { flash_obj_glyph, show_glyph_cell } = await import('./display.js');
     const flash = { glyph: null, x: -1, y: -1 };
@@ -394,7 +398,7 @@ export async function thrwmmDeps() {
         is_elf: is_elf_flag,
         bigmonst,
         youmonst_data: youmonst_data_pub,
-        Maybe_Half_Phys: (dmg) => ((game.u?.uprops?.Half_physical_damage)
+        Maybe_Half_Phys: (dmg) => (Half_physical_damage_hero()
             ? Math.trunc((dmg + 1) / 2) : dmg),
         is_poisonable,
         poisoned,
@@ -421,7 +425,13 @@ export async function thrwmmDeps() {
                 else await emitMMmsg(`Your ${eyes} ${eyes === body_part(EYE) ? 'stings' : 'sting'}.`);
             }
         },
-        Stone_resistance: () => !!(game.u?.uprops?.StoneResistance),
+        Stone_resistance: Stone_resistance_hero,
+        poly_when_stoned,
+        polymon,
+        PM_STONE_GOLEM: name_to_pmidx('stone golem'),
+        KILLED_BY,
+        DEADMONSTER,
+        should_mulch_missile: MM.should_mulch_missile,
         make_stoned,
         stop_occupation,
         // C ref: mthrowu.c:804-813 — "onto the sink" when a sink stops it in
@@ -519,8 +529,8 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
     await mhitm_adtyping(magr, mattk, mdef, mhm, mm_ops());
 
     const knockflags = { v: mhm.hitflags };
-    const knocked = await mhitm_knockback(mdef, mattk, knockflags,
-                                          !!MON_WEP_MM(magr), magr);
+    const knocked = await mhitm_knockback(magr, mdef, mattk, knockflags,
+                                          !!MON_WEP_MM(magr));
     mhm.hitflags = knockflags.v;
     if (knocked && (mhm.hitflags & (M_ATTK_DEF_DIED | M_ATTK_HIT)))
         return mhm.hitflags;
@@ -703,13 +713,17 @@ export async function monstone_mm(mdef) {
         /* Archeologists should not break unique statues */
         if (((ptr?.geno ?? 0) & G_UNIQ) !== 0) corpstatflags |= CORPSTAT_HISTORIC;
         otmp = MO.mkcorpstat(MO.STATUE, mdef, ptr, x, y, corpstatflags);
-        if (has_mgivenname(mdef)) otmp.oname = MGIVENNAME(mdef);
+        if (has_mgivenname(mdef)) setONAME(otmp, MGIVENNAME(mdef));
         for (const obj of kept) MO.add_to_container(otmp, obj);
         otmp.owt = MO.weight(otmp);
     } else
         otmp = MO.mksobj_at(MO.ROCK, x, y, true, false);
 
     stackobj(otmp);
+    /* mondead() already does this, but we must do it before the newsym */
+    if (game.level?.at(x, y)?.invisMon) unmap_object(x, y);
+    if (cansee(x, y))
+        newsym(x, y);
     /* we don't currently trap the hero in the statue in this case but we
        could */
     const wasinside = !!engulfing_u(mdef);
@@ -824,11 +838,6 @@ function accessible(x, y) {
     return typ != null && typ >= DOOR && !closed_door_mm(x, y);
 }
 
-// C ref: rm.h IS_POOL(typ) — pools/moat/water also let a corpse drop.
-function is_pool(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ >= POOL && typ <= DRAWBRIDGE_UP;
-}
 
 // Remove a dead monster from the level and redraw its square.  C ref: mon.c
 // mondied() -> mondead() [detach] then, if corpse_chance() succeeds and the
@@ -850,6 +859,12 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
         if (rose) return;
     }
     await mvitals_died(mdef);                // mondead restores the true form first
+    // C ref: mon.c:2739 m_detach() — `if (mtmp->mleashed) m_unleash(mtmp, FALSE)`
+    // is its first step: the leash object forgets the dead monster.
+    if (mdef.mleashed) {
+        const { m_unleash } = await import('./apply.js');
+        await m_unleash(mdef, false);
+    }
     // C ref: mon.c:2744 m_detach() — a light-emitting monster stops being a
     // light source (delete_ls() sets vision_full_recalc).
     {
@@ -899,7 +914,7 @@ async function killMonster(mdef, withCorpse = true, be_sad = false) {
     if (mdef.iswiz) (await import('./wizard.js')).wizdeadorgone();
     // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
     // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
-    { const { relobj } = await import('./uhitm.js'); await relobj(mdef, mx, my); }
+    { const { relobj } = await import('./dogmove.js'); await relobj(mdef, 1, false); }
     await (await import('./mon.js')).thiefdead_shkgone(mdef);
     if (mdef.wormno) (await import('./worm.js')).wormgone(mdef);
     /* C ref: mon.c m_detach() tail — the hero is thrown from a steed that dies */
@@ -1216,7 +1231,7 @@ export async function mdisplacem(magr, mdef, quietly) {
     // C: mhitm.c:205-215 — the displaced defender stops hiding/mimicking, wakes
     // and drops its wait strategy; finish_meating() clears meating.
     if (mdef.mundetected) mdef.mundetected = 0;
-    if (mdef.m_ap_type && mdef.m_ap_type !== 'mon') {   // seemimic(mdef)
+    if (M_AP_TYPE(mdef) !== M_AP_NOTHING && M_AP_TYPE(mdef) !== M_AP_MONSTER) {   // seemimic(mdef)
         seemimicLocal(mdef);
     }
     mdef.msleeping = 0;
@@ -1307,8 +1322,7 @@ async function mswingsm(magr, mdef, otemp) {
     const MM = await import('./monmove.js');
     const { Blind } = await import('./vision.js');
     const u = game.u || {};
-    const seeInvis = !!(u.see_invis || u.uprops?.See_invisible
-                        || u.uprops?.HSee_invisible || u.uprops?.ESee_invisible);
+    const seeInvis = See_invisible_hero();
     // C: flags.verbose && !Blind && mon_visible(magr)
     if (game.flags?.verbose === false || Blind()
         || (magr.minvis && !seeInvis) || magr.mundetected)
@@ -1851,7 +1865,7 @@ function is_youmonst_mm(mon) {
     return mon === YOUMONST || mon === game.youmonst || mon?.isyou === true;
 }
 // C ref: you.h Passes_walls — the hero's intrinsic/extrinsic wall-walking.
-function Passes_walls_u() { return !!game.u?.formprops?.Passes_walls || !!game.u?.uprops?.Passes_walls; }
+function Passes_walls_u() { return Passes_walls_hero(); }
 // C ref: rm.h closed_door(x, y) — IS_DOOR && (D_CLOSED | D_LOCKED).
 function closed_door_mm(x, y) {
     const loc = game.level?.at(x, y);
@@ -2010,7 +2024,7 @@ export async function mon_poly(magr, mdef, dmg) {
         if (resists_magm(mdef)) {
             /* Magic resistance */
             if (vis) await shieldeff_mon_mm(mdef);
-        } else if (resist(mdef, WAND_CLASS_MM, 0, /*TELL*/ 1)) {
+        } else if (await resist(mdef, WAND_CLASS_MM, 0, /*TELL*/ 1)) {
             /* general resistance to magic... */
         } else if (!rn2(25) && (mdef.cham ?? NON_PM) === NON_PM
                    && (mdef.mcan
@@ -2080,14 +2094,8 @@ function pm_to_cham_mm(mon) {
 // C ref: youprop.h Antimagic / Unchanging == H<prop> || E<prop>; the extrinsic
 // half (cloak of magic resistance, amulet of unchanging) is invent.js's worn
 // store.
-function Antimagic_u() {
-    return !!game.u?.formprops?.Antimagic || !!game.u?.uprops?.Antimagic
-        || !!game.u?.uprops?.HAntimagic || !!worn_extrinsic(12 /* ANTIMAGIC */);
-}
-function Unchanging_u() {
-    return !!game.u?.uprops?.Unchanging || !!game.u?.uprops?.HUnchanging
-        || !!worn_extrinsic(63 /* UNCHANGING */);
-}
+function Antimagic_u() { return Antimagic_hero(); }
+function Unchanging_u() { return Unchanging_hero(); }
 async function you_were_mm() {
     const { you_were } = await import('./polyself.js');
     await you_were();

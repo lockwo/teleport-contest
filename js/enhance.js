@@ -141,6 +141,7 @@ export function P_NAME(skill, rolemnum) {
 // C ref: weapon.c:1517 weapon_type(obj) — js/weapon.js owns it.
 export { weapon_type } from './weapon.js';
 import { weapon_type } from './weapon.js';
+import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 
 // C ref: weapon.c uwep_skill_type().
 export function uwep_skill_type() {
@@ -171,7 +172,7 @@ function is_ammo(obj) {
 }
 
 function current_role_mnum() {
-    return game.urole?.mnum ?? game.u?.umonnum ?? PM_SAMURAI;
+    return game.urole?.mnum ?? PM_SAMURAI;
 }
 
 // Build {skill, max, level, restricted} state for all P_NUM_SKILLS skills.
@@ -524,11 +525,33 @@ function render_skill_menu_page(pages, idx) {
 // C ref: win/tty/wintty.c process_menu_window() — one select_menu() round.
 // Returns the picked skill, or null for a commit-with-nothing / cancel.
 async function select_skill_menu(pages, pickOne) {
-    let idx = 0;
+    let idx = 0, count = 0, counting = false;
     for (;;) {
         render_skill_menu_page(pages, idx);
-        const c = await nhgetch();
-        const ch = String.fromCharCode(c);
+        let c = await nhgetch();
+        let ch = String.fromCharCode(c);
+        // xwaitforspace() swallows keys outside resp (selectors, " ", digits,
+        // ESC/NL/CR, mapped and default menu commands) without returning to the
+        // loop, so they neither reset nor consume a pending count; a selector
+        // outranks a mapped menu command.
+        const isSelector = pickOne && pages[idx].some((it) => it.skill != null && it.sel === ch);
+        if (!isSelector && !' 0123456789\x1b\n\r'.includes(ch)
+            && !default_menu_cmds.includes(ch) && !mapped_menu_cmds().includes(ch))
+            continue;
+        if (!isSelector) {
+            ch = map_menu_cmd(ch);
+            c = ch.charCodeAt(0);
+        }
+        // C ref: process_menu_window() count prefix: digits build a count (a leading
+        // zero is ignored), ESC while counting only abandons the count, any other
+        // key resets it.
+        if (ch >= '0' && ch <= '9') {
+            count = count * 10 + (c - 48);
+            if (count !== 0) counting = true;
+            continue;
+        }
+        if (c === 27 && counting) { count = 0; counting = false; continue; }
+        count = 0; counting = false;
         if (c === 27) { delete game._modal_screen; return null; }     // cancel
         if (c === 13 || c === 10) { delete game._modal_screen; return null; } // commit
         if (ch === ' ') {
@@ -683,7 +706,8 @@ export async function skill_window_advance(key) {
         game._skill_counting = false;
         return true;
     }
-    if (' <>^|.-@,\\~:\r\n\x1b'.includes(key)) game._skill_counting = false;
+    key = map_menu_cmd(key);
+    if (' \r\n\x1b'.includes(key) || default_menu_cmds.includes(key)) game._skill_counting = false;
     const pages = game._skill_pages || [];
     const cur = game._skill_page || 0;
     const onLast = cur >= pages.length - 1;

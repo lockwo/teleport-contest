@@ -17,6 +17,7 @@
 // bot() runs, and bot() SKIPS while u.uhp == -1 (dosave()'s "game over"
 // sentinel).  Nothing here tries to improve on that.
 
+import { Wounded_legs_hero, Deaf_hero, Stunned_hero } from './youprop.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { Blind } from './vision.js';
 import {
@@ -38,7 +39,7 @@ import {
     Is_earthlevel, Is_medusa_level, Is_juiblex_level, Is_waterlevel,
 } from './const.js';
 import { unconscious } from './const.js';
-import { db_under_typ } from './dbridge.js';
+import { db_under_typ } from './const.js';
 import { NO_COLOR } from './terminal.js';
 import { GOLD_PIECE, COIN_CLASS, WEAPON_CLASS } from './mkobj.js';
 import { roles } from './role.js';
@@ -49,6 +50,7 @@ import { hidden_gold, money_cnt_invent } from './shk.js';
 import { weapon_type, weapon_descr } from './weapon.js';
 import { helm_simple_name } from './do_wear.js';
 import { humanoid } from './monflags_data.js';
+import { sticks } from './monattk_data.js';
 import { endgamelevelname } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { fuzzymatch, strstri } from './objnam.js';
@@ -56,10 +58,11 @@ import { clr2colorname, query_color, query_attr } from './coloratt.js';
 import { pline, impossible, status_hold } from './display.js';
 import { pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading,
-         end_menu, select_menu, nul_glyphinfo } from './windows.js';
+         end_menu, select_menu, nul_glyphinfo, menu_ctx } from './windows.js';
 import { status_version } from './version.js';
 import { hooked_tty_getlin } from './extcmd-handlers.js';
 import { OPT_MENU_DRIVER } from './options.js';
+import { mungspaces, strcmpi, strncmpi } from './hacklib.js';
 
 /* ==================================================================== */
 /*  botl.h                                                              */
@@ -174,14 +177,6 @@ function sgn(n) { return n < 0 ? -1 : n > 0 ? 1 : 0; }
 function upstart(s) { return s ? highc(s.charAt(0)) + s.slice(1) : s; }
 /* C ref: hacklib.c strkitten() — append one character. */
 function strkitten(s, c) { return s + c; }
-/* C ref: hacklib.c strcmpi()/strncmpi() — caseblind compares. */
-function strcmpi(a, b) {
-    const x = String(a ?? '').toLowerCase(), y = String(b ?? '').toLowerCase();
-    return x < y ? -1 : x > y ? 1 : 0;
-}
-function strncmpi(a, b, n) {
-    return strcmpi(String(a ?? '').slice(0, n), String(b ?? '').slice(0, n));
-}
 /* C ref: hacklib.c str_start_is(str, chkstr, caseblind) */
 function str_start_is(str, chkstr, caseblind) {
     if (!chkstr) return false;
@@ -220,8 +215,6 @@ function stripchars(strip, orig) {
 }
 /* C ref: hacklib.c trimspaces() — strip leading and trailing blanks/tabs. */
 function trimspaces(s) { return String(s ?? '').replace(/^[ \t]+|[ \t]+$/g, ''); }
-/* C ref: objnam.c mungspaces() — collapse runs of whitespace, then trim. */
-function mungspaces(s) { return String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g, ''); }
 /* C ref: hacklib.c nowrap_add(a, i) — saturating add. */
 function nowrap_add(a, i) {
     return (a > 0 && i > 0 && a + i <= 0) ? LARGEST_INT * 65536 : a + i;
@@ -435,8 +428,8 @@ function Sick() {
     if (held && 'sick' in held) return !!held.sick;
     return upv('Sick') > 0 || !!game.u?.sick || !!game._i_special_props?.has(17 /* SICK */);
 }
-function Deaf() { return upv('HDeaf') > 0 || !!game.u?.Deaf; }
-function Stunned() { return !!game.u?.formprops?.Stunned || upv('Stun') > 0 || !!game.u?.Stunned; }
+function Deaf() { return Deaf_hero(); }
+function Stunned() { return Stunned_hero(); }
 function Confusion() {
     const held = game._statusHold;
     if (held && 'conf' in held) return !!held.conf;
@@ -456,10 +449,8 @@ function Flying() {
     return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFlying');
 }
 function Glib() { return upv('Glib') > 0; }
-function Wounded_legs() { return upv('Wounded_legs') > 0; }
+function Wounded_legs() { return Wounded_legs_hero(); }
 function Underwater() { return !!game.u?.uinwater; }
-/* C ref: mondata.h sticks(ptr) — hero-in-that-form does the holding. */
-function sticks(ptr) { return !!ptr?.sticky; }
 
 /* C ref: eat.c hu_stat[] — the trailing blanks are load-bearing for bot2(). */
 const hu_stat = ['Satiated', '        ', 'Hungry  ', 'Weak    ',
@@ -2568,6 +2559,12 @@ async function display_nhwindow(win, _blocking) {
     const { display_text_window } = await import('./pager.js');
     return display_text_window(win.lines.map((line) => ({ text: line.str, attr: line.attr })));
 }
+/* C ref: pline() runs flush_screen(), whose bot() repaints the status window the
+   options menu's docrt() left blank. */
+async function hl_pline(msg) {
+    await pline(msg);
+    if (menu_ctx.active) menu_ctx.blankStatus = false;
+}
 function getlin(query) {
     return OPT_MENU_DRIVER.getlin ? OPT_MENU_DRIVER.getlin(query)
                                  : hooked_tty_getlin(query, null);
@@ -2900,7 +2897,7 @@ export async function status_hilite_menu_add(origfld) {
 
     if (state === 'choose_value') {
         if (retry++ > 5) {
-            await pline("That's enough tries.");
+            await hl_pline("That's enough tries.");
             return false;
         }
         if (behavior === BL_TH_VAL_PERCENTAGE
@@ -2940,7 +2937,7 @@ export async function status_hilite_menu_add(origfld) {
             while (ni < inp.length && digit(inp[ni])) { ni++; gotnum = true; }
             if (inp[ni] === '%') {
                 if (!percent) {
-                    await pline('Not expecting a percentage.');
+                    await hl_pline('Not expecting a percentage.');
                     state = 'choose_behavior';
                     continue;
                 }
@@ -2948,12 +2945,12 @@ export async function status_hilite_menu_add(origfld) {
                 inp = inp.slice(0, ni);
             } else if (ni < inp.length) {
                 /* some random characters */
-                await pline(`"${inp.slice(ni)}" is not a recognized number.`);
+                await hl_pline(`"${inp.slice(ni)}" is not a recognized number.`);
                 state = 'choose_value';
                 continue;
             }
             if (!gotnum) {
-                await pline('Is that an invisible number?');
+                await hl_pline('Is that an invisible number?');
                 state = 'choose_value';
                 continue;
             }
@@ -2971,7 +2968,7 @@ export async function status_hilite_menu_add(origfld) {
             if (percent) {
                 val = aval.a_int;
                 if (initblstats[fld].idxmax === -1) {
-                    await pline(`Field '${initblstats[fld].fldname}' does not`
+                    await hl_pline(`Field '${initblstats[fld].fldname}' does not`
                                 + ' support percentage values.');
                     behavior = BL_TH_VAL_ABSOLUTE;
                     state = 'choose_value';
@@ -2983,7 +2980,7 @@ export async function status_hilite_menu_add(origfld) {
                     || (val === 0 && lt_gt_eq === LT_VALUE)
                     || (val === 100 && lt_gt_eq === GT_VALUE)
                     || (val > 100 && (val !== 101 || lt_gt_eq !== LT_VALUE))) {
-                    await pline(`'${op}${val}%' is not a valid percent value.`);
+                    await hl_pline(`'${op}${val}%' is not a valid percent value.`);
                     state = 'choose_value';
                     continue;
                 }
@@ -2993,13 +2990,13 @@ export async function status_hilite_menu_add(origfld) {
                        && (aval.a_int < ((fld === BL_AC) ? -128
                                          : (lt_gt_eq === GT_VALUE) ? -1
                                            : (lt_gt_eq === LT_VALUE) ? 1 : 0))) {
-                await pline(`${threshold_value}'${op}${aval.a_int}'${is_out_of_range}`);
+                await hl_pline(`${threshold_value}'${op}${aval.a_int}'${is_out_of_range}`);
                 state = 'choose_value';
                 continue;
             } else if (dt === ANY_LONG
                        && (aval.a_long < ((lt_gt_eq === GT_VALUE) ? -1
                                           : (lt_gt_eq === LT_VALUE) ? 1 : 0))) {
-                await pline(`${threshold_value}'${op}${aval.a_long}'${is_out_of_range}`);
+                await hl_pline(`${threshold_value}'${op}${aval.a_long}'${is_out_of_range}`);
                 state = 'choose_value';
                 continue;
             }
@@ -3153,7 +3150,7 @@ export async function status_hilite_menu_add(origfld) {
             let clrbuf = strNsubst(clr2colorname(clr), ' ', '-', 0);
             const tmpattr = hlattr2attrname(atr, '', BUFSZ);
             if (tmpattr) clrbuf += `&${tmpattr}`;
-            await pline(`Added hilite condition/${conditionbitmask2str(cond)}/${clrbuf}`);
+            await hl_pline(`Added hilite condition/${conditionbitmask2str(cond)}/${clrbuf}`);
         } else {
             hilite.coloridx = clr | (atr << 8);
             hilite.anytype = initblstats[fld].anytype;
@@ -3166,13 +3163,13 @@ export async function status_hilite_menu_add(origfld) {
                 const female = hilite.textmatch.slice(at + ' or '.length);
                 hilite.textmatch = hilite.textmatch.slice(0, at);
                 status_hilite_add_threshold(fld, hilite);
-                await pline(`Added hilite ${status_hilite2str(hilite)}`);
+                await hl_pline(`Added hilite ${status_hilite2str(hilite)}`);
                 /* transfer female-rank to the start of hilite.textmatch */
                 hilite.textmatch = female;
                 /* proceed with normal addition of new rule */
             }
             status_hilite_add_threshold(fld, hilite);
-            await pline(`Added hilite ${status_hilite2str(hilite)}`);
+            await hl_pline(`Added hilite ${status_hilite2str(hilite)}`);
         }
         reset_status_hilites();
         return true;

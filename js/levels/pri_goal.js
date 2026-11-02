@@ -7,9 +7,10 @@ import { bless, mksobj_at } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, quest_place_stair, shuffle,
-    splev_create_monster, splev_region_lit, vly_abs, vly_object,
+    splev_create_monster, splev_region_lit, vly_abs, vly_object, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { mkmap_mines, pri_create_trap } from './pri_loca.js';
+import { setONAME } from '../const.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // Priest quest "goal" level (dat/Pri-goal.lua) — Nalzok's lava cavern, and
@@ -53,7 +54,7 @@ export async function makemaz_pri_goal() {
 
     // des.level_init({ style="solidfill", fg=" " }) — rn2(2), then STONE fill.
     // (Overwritten wholesale by the mines init below; only the draw matters.)
-    rn2(2);                                              // sp_lev.c:2992
+    quest_level_init_solidfill();                                              // sp_lev.c:2992
 
     // des.level_flags("mazelevel") — note: NO "noflip", so the finalize flip
     // rolls two rn2(2), and no "hardfloor", so Can_fall_thru() stays true and
@@ -96,7 +97,7 @@ export async function makemaz_pri_goal() {
                 bless(otmp);
                 // C ref: sp_lev.c create_object() -> oname(otmp, name,
                 // ONAME_LEVEL_DEF) -> artifact_exists(otmp, name, TRUE).  No RNG.
-                otmp.oname = 'The Mitre of Holiness';
+                setONAME(otmp, 'The Mitre of Holiness');
                 otmp.oartifact = ART_MITRE_OF_HOLINESS;
                 if (!g.artiexist) g.artiexist = new Set();
                 g.artiexist.add(ART_MITRE_OF_HOLINESS);

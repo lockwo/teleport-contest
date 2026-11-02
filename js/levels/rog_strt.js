@@ -2,6 +2,7 @@
 // sp_lev.js re-exports it; the shared special-level machinery is imported below.
 
 import { game } from '../gstate.js';
+import { M_AP_FURNITURE } from '../const.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, quest_create_monster, quest_create_monster_at,
@@ -83,7 +84,7 @@ export async function makemaz_rog_strt() {
         const mimics = ['giant mimic', 'large mimic', 'small mimic'];
         for (let i = 0; i < 3; i++) {
             const m = quest_create_monster(mimics[i], place[i + 1][0], place[i + 1][1], null);
-            if (m) { m.m_ap_type = 'furniture'; m.mappearance = S_DNSTAIR; }
+            if (m) { m.m_ap_type = M_AP_FURNITURE; m.mappearance = S_DNSTAIR; }
         }
         quest_register_branch(19, 9);
         for (const [dx, dy] of [[32, 2], [63, 9], [27, 10], [31, 12], [35, 13],

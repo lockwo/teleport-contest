@@ -1,0 +1,22 @@
+import { loadC } from './load.mjs';
+const R = process.env.REPO_ROOT || process.cwd();
+await import(R + '/js/jsmain.js');
+const sy = await import(R + '/js/symbols.js');
+const c = loadC(); let bad = 0;
+const rep = (w, cv, jv) => { if (JSON.stringify(cv) !== JSON.stringify(jv)) { bad++; console.log('MISMATCH', w, 'C', JSON.stringify(cv), 'JS', JSON.stringify(jv)); } };
+const ch = (x) => typeof x === 'string' ? x.charCodeAt(0) : x;
+console.log('defsyms C', c.defsyms.length, 'JS', sy.defsyms.length);
+c.defsyms.forEach(([i, sym, expl, color], k) => { const j = sy.defsyms[k]; rep('defsym ' + k, [sym, expl, color], [ch(j.sym), j.explanation, j.color]); });
+c.oc_syms.forEach(([i, sym, name, expl], k) => { const j = sy.def_oc_syms[k]; rep('oc_sym ' + k, [sym, name, expl], [ch(j.sym), j.name, j.explain]); });
+c.monsyms.forEach(([i, sym, name, expl], k) => { const j = sy.def_monsyms[k]; rep('monsym ' + k, [sym, name, expl], [ch(j.sym), j.name, j.explain]); });
+console.log('symbols mismatches', bad);
+import { grab } from './grab.mjs';
+const OCS = grab(R + '/js/display.js', 'OC_SYM');
+c.oc_syms.forEach(([i, sym], k) => { if (k >= 1) rep('display OC_SYM ' + k, sym, ch(OCS[k])); });
+console.log('after display', bad);
+const DE = grab(R + '/js/cmd.js', 'DEFSYM_EXPLANATION');
+console.log('DEFSYM_EXPLANATION len', DE.length);
+c.defsyms.slice(0, DE.length).forEach(([i, sym, expl], k) => rep('cmd DEFSYM_EXPLANATION ' + k, expl, DE[k]));
+console.log('final', bad);
+
+console.log('RESULT defsyms/def_oc_syms/def_monsyms/trap names mismatches=' + (bad)); process.exitCode = (bad) ? 1 : 0;

@@ -6,7 +6,7 @@
 // notes -> rn1(20,30) deafness -> awaken_monsters) is preserved exactly here.
 
 import { game, hooks } from './gstate.js';
-import { Fumbling_hero, Levitation_hero, Flying_hero } from './youprop.js';
+import { Fumbling_hero, Levitation_hero, Flying_hero, Half_physical_damage_hero, Deaf_hero, Stunned_hero, Unchanging_hero } from './youprop.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import {
     isok, A_STR, A_DEX, A_WIS, COLNO, ROWNO,
@@ -41,6 +41,8 @@ const MAGIC_TOOL = new Set([MAGIC_FLUTE, FROST_HORN, FIRE_HORN,
 // ECMD_FAIL 0x04.  js/apply.js carries its OWN renumbering (ECMD_TIME 2), so
 // its dispatch translates this return value; do not compare the two directly.
 import { ECMD_OK, ECMD_TIME, TT_PIT, TT_BURIEDBALL } from './const.js';
+import { reset_utrap } from './trap.js';
+import { set_utrap } from './polyself.js';
 const TOOL_CLASS = 6;
 const S_SNAKE = 45, S_NYMPH = 14, S_PIERCER = 16; // defsym.h MONSYM indices
 const PM_ARCHEOLOGIST = 0;
@@ -58,11 +60,11 @@ function uprop(...names) {
     for (const n of names) if ((p[n] | 0) > 0 || p[n] === true) return true;
     return false;
 }
-function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf'); }
-function Stunned() { return !!game.u?.formprops?.Stunned || uprop('Stun', 'HStun') || !!game.u?.ustun; }
+function Deaf() { return Deaf_hero(); }
+function Stunned() { return Stunned_hero(); }
 function Confusion() { return uprop('Confusion', 'HConfusion') || !!game.u?.uconf; }
 function Hallucination() { return uprop('Hallucination', 'HHallucination') || !!game.u?.uhallu; }
-function Unchanging() { return uprop('Unchanging', 'HUnchanging'); }
+function Unchanging() { return Unchanging_hero(); }
 function Underwater() { return !!game.u?.uinwater; }
 function Levitation() { return Levitation_hero(); }
 function Flying() { return Flying_hero(); }
@@ -79,15 +81,9 @@ async function losehp(n, knam, k_format) {
     const { losehp: losehp_zap } = await import('./zap.js');
     await losehp_zap(n, knam, k_format);
 }
-// C ref: trap.c set_utrap(tim, typ).
-function set_utrap(tim, typ) {
-    const u = game.u;
-    if (!u) return;
-    u.utrap = tim; u.utraptype = typ;
-}
 // C ref: youprop.h Maybe_Half_Phys(dmg).
 function Maybe_Half_Phys(dmg) {
-    return uprop('Half_physical_damage', 'HHalf_physical_damage')
+    return Half_physical_damage_hero()
         ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 
@@ -98,7 +94,7 @@ function unique_corpstat(p) { return !!((p?.geno | 0) & G_UNIQ); }
 // C ref: zap.c resist(mtmp, TOOL_CLASS, 0, NOTELL) — alev 10 for a tool.
 async function resist_tool(mtmp) {
     const { resist } = await import('./zap.js');
-    return resist(mtmp, TOOL_CLASS, 0, false);
+    return await resist(mtmp, TOOL_CLASS, 0, false);
 }
 
 // C ref: music.c:45 awaken_scare(mtmp, scary) — wake a monster, maybe scare it.
@@ -279,7 +275,7 @@ async function do_pit(x, y, tu_pit) {
     } else if (u && u.ux === x && u.uy === y) {
         if (u.utrap && u.utraptype === TT_BURIEDBALL) {
             await update_topl('Your chain breaks!');
-            u.utrap = 0; u.utraptype = 0;
+            await reset_utrap(true);
         }
         if (Levitation() || Flying() || is_clinger(game.u?.mdat)) {
             if (!tu_pit) {
@@ -424,15 +420,8 @@ async function do_earthquake(force) {
         }
 }
 
-// C ref: monst.h M_AP_TYPE(mon): this port stores the mimic appearance type as
-// 'obj'/'furniture'/'monster' strings (makemon.js) or numeric M_AP_* (dogmove.js).
-function m_ap_type_mu(mon) {
-    const t = mon?.m_ap_type;
-    if (t === 'furniture') return 1;
-    if (t === 'obj') return 2;
-    if (t === 'mon' || t === 'monster') return 3;
-    return t | 0;
-}
+// C ref: monst.h M_AP_TYPE(mon).
+function m_ap_type_mu(mon) { return (mon?.m_ap_type | 0) & 7; }
 
 // C ref: mondata.h ceiling_hider(ptr) == is_hider(ptr) && (mlet == S_PIERCER
 // || ptr == &mons[PM_TRAPPER] || ptr == &mons[PM_LURKER_ABOVE]).

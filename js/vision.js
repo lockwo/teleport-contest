@@ -15,6 +15,7 @@ import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
 import { has_innate } from './exper.js';
+import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
 
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
@@ -125,8 +126,8 @@ export function does_block(x, y) {
 // vision/light: a boulder, or a closed door / wall / tree.
 export function is_lightblocker_mappear(m) {
     const S_ndoor = 12, S_vcdoor = 15, S_hcdoor = 16, S_tree = 18; // defsym.h
-    if (m.m_ap_type === 'obj' && m.mappearance === 475 /*BOULDER*/) return true;
-    if (m.m_ap_type === 'furniture') {
+    if (M_AP_TYPE(m) === M_AP_OBJECT && m.mappearance === 475 /*BOULDER*/) return true;
+    if (M_AP_TYPE(m) === M_AP_FURNITURE) {
         const ap = m.mappearance;
         return ap === S_hcdoor || ap === S_vcdoor || ap < S_ndoor || ap === S_tree;
     }
@@ -922,7 +923,7 @@ export function Blind() {
                                  || bf.otyp === 234 /* TOWEL */);
     const eyes_of_overworld = !!bf && bf.oartifact === 26;
     return !!u && !eyes_of_overworld
-        && ((u.blinded || 0) > 0 || blindfolded
+        && ((u.blinded || 0) > 0 || blindfolded || !!u.permablind
             || (u.uprops?.BlindedFromForm | 0) > 0);
 }
 
@@ -935,7 +936,8 @@ export function Infravision() {
         || (props.HInfravision ?? u.HInfravision)
         // C: adjabil() leaves the orc/elf FROMRACE bit in HInfravision across polymorph.
         || has_innate('HInfravision');
-    const extrinsic = props.EInfravision ?? u.EInfravision;
+    const extrinsic = (props.EInfravision ?? u.EInfravision)
+        || ((u.uprops_extrinsic || {})[36 /* INFRAVISION */] | 0);
     const pmidx = u.Upolyd ? u.umonnum : races[game.initrace]?.basepm;
     return !!(intrinsic || extrinsic
         || (pmidx != null && infravision(monster_by_pmidx(pmidx))));

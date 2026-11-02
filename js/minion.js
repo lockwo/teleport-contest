@@ -12,15 +12,11 @@
 // "Demonic Blackmail" dochug() block (a peaceful demon not adjacent to the
 // hero) — neither is in this pass's scope.
 //
-// TWO minion.c functions are NOT redefined here because a faithful copy
-// already exists elsewhere in js/:
-//   dlord()          -> js/pray.js:1324 (private, faithful)
-//   monster_census() -> js/wizard.js:111, js/mcastu.js:953, js/read.js:2103
-//                       (all private, all missing C's isgd/spotted clauses)
-// Neither is exported, so the summoning code below cannot reach them; each is
-// re-derived here under a `minion_`-prefixed name that CANNOT shadow the real
-// port.  ndemon() below is the exported pmidx-returning port (js/sp_lev.js has
-// its own private, differently shaped special-level helper; do not use it).
+// monster_census() has private copies in js/wizard.js:111, js/mcastu.js:953 and
+// js/read.js:2103 (all missing C's isgd/spotted clause); it is re-derived here
+// under a `minion_` prefix.  dlord() and ndemon() below are the exported
+// pmidx-returning ports (js/sp_lev.js has its own private, differently shaped
+// special-level helper; do not use it).
 
 import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
@@ -39,7 +35,7 @@ import {
 } from './makemon.js';
 import { is_art, ART_DEMONBANE, ART_EXCALIBUR } from './artifact.js';
 import { DEADMONSTER, mongone } from './mon.js';
-import { pline, canseemon_shared, newsym, impossible, You_feel } from './display.js';
+import { pline, canseemon_shared, newsym, impossible, You_feel, verbalize } from './display.js';
 import { canspotmon, x_monnam } from './uhitm.js';
 import { Monnam, Amonnam, mon_nam, ARTICLE_A } from './do_name.js';
 import { show_transient_light, transient_light_cleanup } from './light.js';
@@ -115,8 +111,6 @@ function ACURR(i) { return acurr_eff(i); }
 // C ref: sounds.c SetVoice(mon, tag, volume, flags) — tty has no synthesised
 // voice, so this only records who speaks; a no-op here as in js/timeout.js:1101.
 function SetVoice(_mon, _tag, _vol, _flags) { /* tty: nothing to do */ }
-// C ref: pline.c verbalize(); shk.js:814 / vault.js:91 use the same one-liner.
-async function verbalize(line) { await pline(`"${line}"`); }
 function monsterList() { return game.level?.monsters || []; }
 
 // --- species indices -------------------------------------------------------
@@ -211,12 +205,12 @@ export function dprince(atyp) {
             && (atyp === A_NONE || sgn(ptr?.maligntyp | 0) === sgn(atyp)))
             return pm;
     }
-    return minion_dlord(atyp); /* approximate */
+    return dlord(atyp);
 }
 
-// C ref: minion.c:405 dlord(atyp).  See the header note: js/pray.js:1324 holds
-// the faithful private copy; export THAT rather than keeping two.
-function minion_dlord(atyp) {
+// C ref: minion.c:405 dlord(atyp) — a demon lord of the given alignment; 20
+// tries at the JUIBLEX..YEENOGHU window, then ndemon().  Every try draws.
+export function dlord(atyp) {
     const p = PM();
     for (let tryct = !In_endgame() ? 20 : 0; tryct > 0; --tryct) {
         const pm = rn1(p.YEENOGHU + 1 - p.JUIBLEX, p.JUIBLEX);
@@ -225,7 +219,7 @@ function minion_dlord(atyp) {
             && (atyp === A_NONE || sgn(ptr?.maligntyp | 0) === sgn(atyp)))
             return pm;
     }
-    return ndemon(atyp); /* approximate */
+    return ndemon(atyp);
 }
 
 // C ref: minion.c:420 llord() — "create lawful (good) lord".  No RNG unless the
@@ -235,7 +229,7 @@ export function llord() {
     if (!((game.mvitals?.[p.ARCHON]?.mvflags | 0) & G_GONE))
         return p.ARCHON;
 
-    return lminion(); /* approximate */
+    return lminion();
 }
 
 // C ref: minion.c:429 lminion() — up to 20 mkclass(S_ANGEL, 0) draws until one
@@ -298,12 +292,12 @@ export async function msummon(mon) {
     }
 
     if (is_dprince(ptr) || (monsndx(ptr) === p.WIZARD_OF_YENDOR)) {
-        dtype = (!rn2(20)) ? dprince(atyp) : (!rn2(4)) ? minion_dlord(atyp)
+        dtype = (!rn2(20)) ? dprince(atyp) : (!rn2(4)) ? dlord(atyp)
                                                       : ndemon(atyp);
         cnt = ((dtype !== NON_PM)
                && !rn2(4) && is_ndemon(monster_by_pmidx(dtype))) ? 2 : 1;
     } else if (is_dlord(ptr)) {
-        dtype = (!rn2(50)) ? dprince(atyp) : (!rn2(20)) ? minion_dlord(atyp)
+        dtype = (!rn2(50)) ? dprince(atyp) : (!rn2(20)) ? dlord(atyp)
                                                         : ndemon(atyp);
         cnt = ((dtype !== NON_PM)
                && !rn2(4) && is_ndemon(monster_by_pmidx(dtype))) ? 2 : 1;
@@ -311,7 +305,7 @@ export async function msummon(mon) {
         dtype = p.SKELETON;
         cnt = 1;
     } else if (is_ndemon(ptr)) {
-        dtype = (!rn2(20)) ? minion_dlord(atyp) : (!rn2(6)) ? ndemon(atyp)
+        dtype = (!rn2(20)) ? dlord(atyp) : (!rn2(6)) ? ndemon(atyp)
                                                            : monsndx(ptr);
         cnt = 1;
     } else if (mon && is_lminion(mon)) {
@@ -497,7 +491,7 @@ export async function summon_minion(alignment, talk) {
 // which is NOT the PM_ mnum (they differ for Rogue/Ranger) — same resolution as
 // js/insight.js:1462 role_arr_idx().
 function align_gname_of(alignment) {
-    const mnum = game.urole?.mnum ?? game.u?.umonnum ?? 9;
+    const mnum = game.urole?.mnum ?? 9;
     const i = roles.findIndex((r) => r.mnum === mnum);
     return align_gname((i >= 0) ? i : mnum, alignment);
 }
@@ -725,7 +719,7 @@ export async function gain_guardian_angel() {
             /* Too nasty for the game to unexpectedly break petless conduct on
              * the final level of the game. The angel will still appear, but
              * won't be tamed. */
-            if (game.u.uconduct.pets) {
+            if (game.u.uconduct?.pets) {
                 mtmp.mtame = 10;
                 game.u.uconduct.pets++;
             }

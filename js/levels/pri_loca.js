@@ -22,6 +22,7 @@ import {
     splev_get_location_rnd, splev_object_at, splev_traptype_rnd, vly_altar,
     vly_non_diggable, vly_region, LOC_DRY, splev_find_montype,
 } from '../sp_lev.js';
+import { flood_fill_rm, ffrm } from '../mkmap.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // mkmap.c — the des `level_init({style="mines", ...})` engine.
@@ -137,61 +138,9 @@ function mkmap_finish_map(fg_typ, bg_typ, lit, walled, icedpools) {
 // ── mkmap.c join_map() — the "joined=true" arm, needed by the Healer maze
 // levels (Hea-loca/Hea-goal/Hea-fila/Hea-filb all pass joined=true; neither
 // Priest maze level does, which is why this was originally left unported).
-//
-// C ref: mkmap.c flood_fill_rm() anyroom=FALSE path (the arm join_map() itself
-// uses).  Distinct from sp_lev.js's flood_fill_room(), which is the OTHER,
-// anyroom=TRUE arm used by vly_region()'s irregular branch.
-let _joinMinRx, _joinMaxRx, _joinMinRy, _joinMaxRy, _joinFilled;
-
-function mkmap_flood_fill_rm(sx, sy, rmno) {
-    const map = game.level;
-    const fg_typ = map.at(sx, sy).typ;
-
-    while (sx > 0 && map.at(sx, sy).typ === fg_typ && map.at(sx, sy).roomno !== rmno)
-        sx--;
-    sx++;
-
-    if (sx < _joinMinRx) _joinMinRx = sx;
-    if (sy < _joinMinRy) _joinMinRy = sy;
-
-    let i;
-    for (i = sx; i <= MKMAP_WIDTH && map.at(i, sy).typ === fg_typ; i++) {
-        map.at(i, sy).roomno = rmno;
-        map.at(i, sy).lit = false;
-        _joinFilled++;
-    }
-    const nx = i;
-
-    if (isok(sx, sy - 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy - 1).typ === fg_typ) {
-                if (map.at(i, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy - 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy - 1)) && map.at(i - 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i - 1, sy - 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy - 1)) && map.at(i + 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i + 1, sy - 1, rmno);
-                }
-            }
-    }
-    if (isok(sx, sy + 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy + 1).typ === fg_typ) {
-                if (map.at(i, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy + 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy + 1)) && map.at(i - 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i - 1, sy + 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy + 1)) && map.at(i + 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i + 1, sy + 1, rmno);
-                }
-            }
-    }
-
-    if (nx > _joinMaxRx) _joinMaxRx = nx - 1;
-    if (sy > _joinMaxRy) _joinMaxRy = sy;
-}
+// C ref: mkmap.c flood_fill_rm(anyroom=FALSE) for join_map; mkmap.js owns the one
+// implementation and the gm.min_rx.. / gn.n_loc_filled bookkeeping (ffrm).
+function mkmap_flood_fill_rm(sx, sy, rmno) { flood_fill_rm(sx, sy, rmno, false, false); }
 
 // C ref: mkmap.c maybe_sdoor() reached from dig_corridor()'s CORR arm — dead
 // for every current caller (fg_typ is never CORR here) but kept so a future
@@ -304,20 +253,20 @@ function mkmap_join_map(bg_typ, fg_typ) {
         for (let y = 1; y < MKMAP_HEIGHT; y++) {
             const loc = map.at(x, y);
             if (loc.typ === fg_typ && loc.roomno === NO_ROOM) {
-                _joinMinRx = _joinMaxRx = x;
-                _joinMinRy = _joinMaxRy = y;
-                _joinFilled = 0;
+                ffrm.min_rx = ffrm.max_rx = x;
+                ffrm.min_ry = ffrm.max_ry = y;
+                ffrm.n_loc_filled = 0;
                 mkmap_flood_fill_rm(x, y, g.level.nroom + ROOMOFFSET);
-                if (_joinFilled > 3) {
-                    add_sp_room(_joinMinRx, _joinMinRy, _joinMaxRx, _joinMaxRy,
+                if (ffrm.n_loc_filled > 3) {
+                    add_sp_room(ffrm.min_rx, ffrm.min_ry, ffrm.max_rx, ffrm.max_ry,
                                 false, OROOM, true, 0, false);
                     if (g.level.nroom >= (MAXNROFROOMS * 2)) {
                         mkmap_join_corridors(bg_typ, fg_typ);
                         return;
                     }
                 } else {
-                    for (let sx = _joinMinRx; sx <= _joinMaxRx; sx++)
-                        for (let sy = _joinMinRy; sy <= _joinMaxRy; sy++) {
+                    for (let sx = ffrm.min_rx; sx <= ffrm.max_rx; sx++)
+                        for (let sy = ffrm.min_ry; sy <= ffrm.max_ry; sy++) {
                             const l2 = map.at(sx, sy);
                             if (l2.roomno === g.level.nroom + ROOMOFFSET) {
                                 l2.typ = bg_typ;
@@ -360,7 +309,7 @@ export function mkmap_mines(bg_typ, fg_typ, smooth, join, lit, walled) {
 // The four morgues and the temple are des.region{filled=1} rooms: they draw
 // NOTHING at region time and are stocked by lspo_finalize_level's trailing
 // fill_special_room() loop, which this engine runs generically post-mklev
-// (fastforward_fill_mineralize).
+// (makelevel_fill_and_mineralize).
 // ════════════════════════════════════════════════════════════════════════
 
 const PRI_LOCA_MAP = [

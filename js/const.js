@@ -2102,6 +2102,51 @@ export function IS_LAVA(typ) {
     // C ref: rm.h — IS_LAVA(typ) ((typ) == LAVAPOOL || (typ) == LAVAWALL)
     return typ === LAVAPOOL || typ === LAVAWALL;
 }
+// dbridge.c:46-113 is_moat/is_pool/is_lava/is_pool_or_lava/is_ice.  They live in
+// this leaf module so that dungeon.js, mkroom.js and every other caller can
+// import them statically (dbridge.js sits on too many import cycles).
+// C ref: dbridge.c:100 is_moat(x, y).
+export function is_moat(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    const ltyp = loc.typ;
+    return !Is_juiblex_level(game.u?.uz)
+        && (ltyp === MOAT
+            || (ltyp === DRAWBRIDGE_UP
+                && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_MOAT));
+}
+// C ref: dbridge.c:46 is_pool(x, y).  `ltyp == MOAT` is NOT redundant with
+// is_moat(): the Juiblex level has MOATs that are not moats.
+export function is_pool(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    const ltyp = loc.typ;
+    return ltyp === POOL || ltyp === MOAT || ltyp === WATER || is_moat(x, y);
+}
+// C ref: dbridge.c:62 is_lava(x, y).
+export function is_lava(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    const ltyp = loc.typ;
+    return ltyp === LAVAPOOL || ltyp === LAVAWALL
+        || (ltyp === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_LAVA);
+}
+// C ref: dbridge.c:77 is_pool_or_lava(x, y).
+export function is_pool_or_lava(x, y) {
+    return is_pool(x, y) || is_lava(x, y);
+}
+// C ref: dbridge.c:86 is_ice(x, y).
+export function is_ice(x, y) {
+    if (!isok(x, y)) return false;
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    const ltyp = loc.typ;
+    return ltyp === ICE
+        || (ltyp === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_ICE);
+}
 export function IS_OBSTRUCTED(typ) {
     // C ref: rm.h — IS_OBSTRUCTED(typ) ((typ) < POOL)
     return typ < POOL;
@@ -2126,6 +2171,22 @@ export const DB_LAVA = 4;
 export const DB_ICE = 8;
 export const DB_FLOOR = 16;
 export const DB_UNDER = 28; // mask for underneath
+
+// C ref: dbridge.c:115 db_under_typ(mask) — the terrain a raised drawbridge
+// covers.  DB_FLOOR falls through to STONE, exactly as in C.  Lives here (a leaf
+// module) because display.js, dbridge.js and dungeon.js all need it.
+export function db_under_typ(mask) {
+    switch (mask & DB_UNDER) {
+    case DB_ICE:
+        return ICE;
+    case DB_LAVA:
+        return LAVAPOOL;
+    case DB_MOAT:
+        return MOAT;
+    default:
+        return STONE;
+    }
+}
 
 // Monster movement flags used by mfndpos()/mon_allowflags()
 // C ref: src/mon.c (movement legality bitmask flags consumed by mfndpos)
@@ -2891,6 +2952,8 @@ export const HEADER_MACRO_NON_EMITTABLE = Object.freeze([
 
 // permonst.h constants (blacklisted header, manually maintained)
 export const NON_PM = -1;
+// C ref: monst.h PM_ARCHEOLOGIST (first player-monster row of mons[]); roles[].mnum is the 0-based offset from it.
+export const ROLE_PM_BASE = 331;
 export const LOW_PM = 0;
 export const LEAVESTATUE = NON_PM - 1;
 export const NATTK = 6;
@@ -2908,6 +2971,15 @@ export function EGD(mtmp) { return mtmp?.mextra?.egd; }
 export function EDOG(mtmp) { return mtmp?.mextra?.edog; }
 export function EBONES(mtmp) { return mtmp?.mextra?.ebones; }
 export function MCORPSENM(mtmp) { return mtmp?.mextra?.mcorpsenm ?? -1; }
+// C ref: mextra.h has_mcorpsenm(mon) = (mon)->mextra && MCORPSENM(mon) != NON_PM.
+export function has_mcorpsenm(mtmp) { return !!mtmp?.mextra && MCORPSENM(mtmp) !== NON_PM; }
+// C ref: makemon.c newmcorpsenm(mtmp) then MCORPSENM(mtmp) = id.
+export function set_mcorpsenm(mtmp, id) {
+    if (!mtmp.mextra) mtmp.mextra = {};
+    mtmp.mextra.mcorpsenm = id;
+}
+// C ref: display.c:571 `has_mcorpsenm(mon) ? MCORPSENM(mon) : PM_TENGU` (PM_TENGU == 55).
+export function mimic_obj_corpsenm(mtmp) { return has_mcorpsenm(mtmp) ? MCORPSENM(mtmp) : 55; }
 
 export function has_eshk(mtmp) { return !!mtmp?.mextra?.eshk; }
 export function has_epri(mtmp) { return !!mtmp?.mextra?.epri; }
@@ -2920,9 +2992,30 @@ export function has_ebones(mtmp) { return !!mtmp?.mextra?.ebones; }
 // C: ONAME(obj) → ((char *)(obj)->oextra->oname)
 export function ONAME(obj) { return obj?.oextra?.oname || ''; }
 export function has_oname(obj) { return !!obj?.oextra?.oname; }
+// C ref: do_name.c oname()/new_oname()/free_oname() storage half: a non-empty
+// name lives in obj->oextra->oname, an empty one removes it.
+export function setONAME(obj, name) {
+    if (!obj) return;
+    if (name) {
+        if (!obj.oextra) obj.oextra = { oname: null, omonst: null, omid: 0, omailcmd: null };
+        obj.oextra.oname = name;
+    } else if (obj.oextra) {
+        obj.oextra.oname = null;
+    }
+}
 export function OMONST(obj) { return obj?.oextra?.omonst; }
-export function MGIVENNAME(mtmp) { return mtmp?.mextra?.mgivenname || mtmp?.mgivenname || ''; }
-export function has_mgivenname(mtmp) { return !!(mtmp?.mextra?.mgivenname || mtmp?.mgivenname); }
+export function MGIVENNAME(mtmp) { return mtmp?.mextra?.mgivenname || ''; }
+export function has_mgivenname(mtmp) { return !!mtmp?.mextra?.mgivenname; }
+// C ref: do_name.c christen_monst()/free_mgivenname() storage half.
+export function setMGIVENNAME(mtmp, name) {
+    if (!mtmp) return;
+    if (name) {
+        if (!mtmp.mextra) mtmp.mextra = {};
+        mtmp.mextra.mgivenname = name;
+    } else if (mtmp.mextra) {
+        mtmp.mextra.mgivenname = null;
+    }
+}
 
 // C: you.h — #define Upolyd (u.mtimedone != 0)
 export function Upolyd(player) {
@@ -2934,12 +3027,7 @@ export function u_at(x, y) { return game?.u?.ux === x && game?.u?.uy === y; }
 export function OBJ_AT(x, y) { return game?.level?.objects?.some(o => o.ox === x && o.oy === y) ?? false; }
 export function Has_contents(obj) { return obj?.cobj != null; }
 export function M_AP_TYPE(mon) {
-    const type = mon?.m_ap_type;
-    if (typeof type === 'number') return type & M_AP_TYPMASK;
-    if (type === 'furniture') return M_AP_FURNITURE;
-    if (type === 'obj') return M_AP_OBJECT;
-    if (type === 'mon') return M_AP_MONSTER;
-    return M_AP_NOTHING;
+    return (mon?.m_ap_type | 0) & M_AP_TYPMASK;
 }
 export function engulfing_u(mon) { const g = (typeof game !== 'undefined' ? game : null); return g?.u?.uswallow && g?.u?.ustuck === mon; }
 // C ref: permonst.h — ismnum(x) means x is a valid monster index.

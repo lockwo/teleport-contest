@@ -2,6 +2,7 @@
 // C refs: mkobj.c, objects.h, o_init.c object probability setup.
 
 import { game, hooks } from './gstate.js';
+import { set_moreluck, confers_luck_at as confers_luck } from './attrib.js';
 import { rn2, rnd, rn1, rnz, rne } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, In_hell, level_difficulty } from './dungeon.js';
@@ -16,7 +17,7 @@ import {
     OBJ_MIGRATING, OBJ_BURIED, OBJ_ONBILL, OBJ_LUAFREE, OBJ_DELETED, NOBJ_STATES,
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
     COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
-    ONAME, has_oname, OMONST, Has_contents, ismnum, isok, In_quest,
+    ONAME, has_oname, setONAME, OMONST, Has_contents, ismnum, isok, In_quest,
 } from './const.js';
 import {
     rndmonst_adj, monster_by_pmidx, can_be_hatched, dead_species,
@@ -26,6 +27,7 @@ import {
 import { block_point, recalc_block_point } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, obj_nutrition, eating_glob } from './eat.js';
 import { is_human_flag } from './monflags_data.js';
+import { base_oc_cost } from './objcost_data.js';
 
 // artifact.js imports this module, and its top level needs `objects` while this one is still evaluating (steal.js reads it at load),
 // so a static import of mk_artifact/nartifact_exist throws a TDZ ReferenceError.  artifact.js installs them on hooks at load.
@@ -814,35 +816,34 @@ for (const o of objects)
         if (p) o.oc_oprop = p;
     }
 
+// C ref: include/objects.h POTION() `power` argument and the two TOOL()
+// eyewear rows (blindfold, towel): the property the item stands for.  worn.c
+// setworn() puts the blindfold/towel's BLINDED into u.uprops[].extrinsic, and
+// every potion row carries its prop for what_gives()-style reporting.  Keyed
+// by class + name because ring and potion names collide ("levitation",
+// "invisibility", "see invisible").
+const OC_OPROP_BY_CLASS_NAME = {
+    6: { 'blindfold': 15 /*BLINDED*/, 'towel': 15 /*BLINDED*/ },
+    8: { 'confusion': 14 /*CONFUSION*/, 'blindness': 15 /*BLINDED*/,
+         'speed': 64 /*FAST*/, 'levitation': 48 /*LEVITATION*/,
+         'hallucination': 23 /*HALLUC*/, 'invisibility': 40 /*INVIS*/,
+         'see invisible': 29 /*SEE_INVIS*/ },
+};
+for (const o of objects) {
+    const p = o && OC_OPROP_BY_CLASS_NAME[o.oc_class]?.[o.name];
+    if (p) o.oc_oprop = p;
+}
+
 // C ref: include/objects.h:502-552 DRGN_ARMR().  Every coloured dragon
 // scale-mail/scales pair has an oc_oprop, not just the red pair.  worn.c uses
 // this column to install the extrinsic, and zap.c uses it to protect inventory
 // from elemental damage, so this table must remain the shared source of truth.
 //
-// KNOWN TABLE DIVERGENCE, deliberately carried.  The recorder's objects.h has
-// ELEVEN rows in each dragon group; OBJECT_DATA above has ten.  "shimmering
-// dragon scale mail" (objects.h:510) and "shimmering dragon scales"
-// (objects.h:537), both oc_oprop DISPLACED, are absent, and they sit at
-// position 4 of 11 — between silver and red.  Consequences:
-//   * every armour otyp from C's 104 (red dragon scale mail) up is one lower
-//     here, and from C's 115 (red dragon scales) up is two lower; our armour
-//     class holds 84 rows against the recorder's 86;
-//   * there is no DISPLACED armour source at all, so a cloak of displacement is
-//     the only way the hero can get that property;
-//   * every otyp constant in this port is derived from THIS table (or resolved
-//     by name), so the numbering is internally consistent and no recorded
-//     session is affected by the offset.
-// Inserting the two rows is rng-inert on both axes that consume rng, verified
-// against the C source: o_init.c obj_shuffle_range() gives ARMOR_CLASS exactly
-// four description-shuffle ranges (HELMET..HELM_OF_TELEPATHY,
-// LEATHER_GLOVES..GAUNTLETS_OF_DEXTERITY, CLOAK_OF_PROTECTION..
-// CLOAK_OF_DISPLACEMENT, SPEED_BOOTS..LEVITATION_BOOTS), none of which contains
-// a dragon row, so no shuffle changes length; and DRGN_ARMR() passes prob = 0
-// (objects.h:497-499), so the two extra rows never enter mkobj()'s
-// probability walk.  It is NOT landed because the insertion renumbers 377 of
-// 481 rows, and 687 hardcoded otyp literals across 72 files in js/ would have
-// to move with it — a change this corpus cannot fully validate.  Resolve it by
-// converting those literals to name lookups FIRST, then inserting the rows.
+// Ten rows in each dragon group is the recorder's table, not a divergence:
+// objects.h:509-511 and :536-538 wrap "shimmering dragon scale mail" and
+// "shimmering dragon scales" (DISPLACED) in `#if 0 /* DEFERRED */`, so they are
+// not in the compiled objects[] (481 rows, armour class 84).  A compiled dump of
+// the recorder's objects[] agrees with this table row for row.
 const DRAGON_ARMOR_PROP = {
     'gray dragon scale mail': 12, 'gray dragon scales': 12,       // ANTIMAGIC
     'silver dragon scale mail': 65, 'silver dragon scales': 65,   // REFLECTING
@@ -911,6 +912,10 @@ const OC_MAGIC_RANGES = [
     [231, 231], [241, 242], [246, 246], [248, 248], [250, 252], [254, 254],
     [258, 258], [261, 261], [297, 316], [323, 343], [366, 406], [410, 415],
     [417, 437], [470, 472],
+    // the invocation items: Amulet of Yendor (213), Candelabrum of Invocation
+    // and Bell of Opening (262, 263).  objects.h OBJECT(..., BITS(0, 0, 0, 1(uniq),
+    // 1(mgc), ...)); Book of the Dead (409) is set by o_init.js.
+    [213, 213], [262, 263],
 ];
 for (const [lo, hi] of OC_MAGIC_RANGES)
     for (let i = lo; i <= hi; i++)
@@ -1050,9 +1055,8 @@ const G_GONE = 0x03;
 function mvitals_flags(mndx) { return game.mvitals?.[mndx]?.mvflags ?? 0; }
 
 // C ref: gu.urole.mnum — the mons[] index of the hero's role monster.
-// js/roles.js numbers roles 0..12 in mons[] order starting at PM_ARCHEOLOGIST
-// ([[umonnum-is-a-role-index]]: u.umonnum is that same role index, NOT a
-// mons[] index), so resolve it from the species name rather than a literal.
+// js/roles.js numbers roles 0..12 in mons[] order starting at PM_ARCHEOLOGIST,
+// so resolve it from the species name rather than a literal.
 function urole_mnum() {
     const base = PM('archeologist');
     const m = game.urole?.mnum;
@@ -1080,35 +1084,6 @@ export function eaten_stat(base, obj) {
     if (full && uneaten > full) uneaten = full;
     const v = full ? Math.trunc(base * uneaten / full) : 0;
     return v < 1 ? 1 : v;
-}
-
-// C ref: artifact.c confers_luck(obj) — a luckstone, or an artifact with
-// SPFX_LUCK.  Only the luckstone arm can be answered from this file (artifact
-// data lives in artifact.js), and it is the arm that matters for the objects
-// mkobj.c creates.
-function confers_luck(obj) {
-    return obj?.otyp === LUCKSTONE || !!(obj?.oartifact && obj?.spfx_luck);
-}
-
-// C ref: attrib.c stone_luck(include_uncursed) / set_moreluck() — u.moreluck is
-// +-LUCKADD while a luck-conferring stone is carried, and Luck (= u.uluck +
-// u.moreluck) is the modulus-shifting input to every rnl() call.  gi.invent is
-// game.invent in this port; nothing else reads it here.
-function set_moreluck() {
-    const u = game.u;
-    if (!u) return;
-    let bonchance = 0, carrying_luckstone = false;
-    for (const o of (Array.isArray(game.invent) ? game.invent : [])) {
-        if (o.otyp === LUCKSTONE) carrying_luckstone = true;
-        if (confers_luck(o)) {
-            if (o.cursed) bonchance -= (o.quan || 1);
-            else bonchance += (o.quan || 1);        /* include_uncursed */
-        }
-    }
-    const luckbon = Math.sign(bonchance);
-    if (!luckbon && !carrying_luckstone) u.moreluck = 0;
-    else if (luckbon >= 0) u.moreluck = LUCKADD;
-    else u.moreluck = -LUCKADD;
 }
 
 function carried(obj) { return obj?.where === OBJ_INVENT; }
@@ -1173,9 +1148,10 @@ export function unbless(otmp) {
     if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
 }
 
-// C ref: mkobj.c curse(otmp).  The two-handed-weapon reset_remarm() and the
-// twoweapon drop_uswapwep() arms live in wield.c/do_wear.c; the parts that
-// change object state (and so the hero's weight/luck/timers) are here.
+// C ref: mkobj.c curse(otmp).  Sync for the object-creation callers.  C's
+// reset_remarm()/drop_uswapwep()/book_cursed() arms print messages (async in
+// this port), so when one applies curse() returns the Promise that runs the
+// whole sequence in C's order and a hero-affecting caller does `await curse(o)`.
 export function curse(otmp) {
     if (!otmp) return;
     if (otmp.oclass === COIN_CLASS) return;
@@ -1183,6 +1159,32 @@ export function curse(otmp) {
     const already_cursed = otmp.cursed;
     otmp.blessed = false;
     otmp.cursed = true;
+    const wielded = otmp === game.uwep;
+    const dropswap = otmp === game.uswapwep && !!game.u?.twoweap;
+    /* book_cursed() acts only on the book being studied */
+    const book = otmp.oclass === SPBOOK_CLASS && !already_cursed
+        && game.context?.spbook?.book === otmp;
+    if (wielded || dropswap || book)
+        return curse_with_messages(otmp, old_light, wielded, dropswap, book);
+    curse_updates(otmp);
+    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+}
+
+async function curse_with_messages(otmp, old_light, wielded, dropswap, book) {
+    /* welded two-handed weapon interferes with some armor removal */
+    if (wielded && (await import('./invent.js')).bimanual(otmp))
+        (await import('./do_wear.js')).reset_remarm();
+    /* rules at top of wield.c state that twoweapon cannot be done
+       with cursed alternate weapon */
+    if (dropswap) await (await import('./wield.js')).drop_uswapwep();
+    curse_updates(otmp);
+    /* if book hero is reading becomes cursed, interrupt */
+    if (book) await (await import('./spell.js')).book_cursed(otmp);
+    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+}
+
+/* some cursed items need immediate updating */
+function curse_updates(otmp) {
     if (carried(otmp) && confers_luck(otmp)) {
         set_moreluck();
     } else if (otmp.otyp === BAG_OF_HOLDING) {
@@ -1193,12 +1195,7 @@ export function curse(otmp) {
             && !dead_species(otmp.corpsenm, true)
             && (carried(otmp) || otmp.where === OBJ_MINVENT))
             attach_fig_transform_timeout(otmp);
-    } else if (otmp.oclass === SPBOOK_CLASS) {
-        // C: `if (!already_cursed) book_cursed(otmp);` — read.c interrupts the
-        // hero's study; the interrupt itself belongs to read.js.
-        if (!already_cursed) otmp.book_just_cursed = 1;
     }
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
 }
 
 // C ref: mkobj.c uncurse(otmp).
@@ -1660,7 +1657,7 @@ export function attach_egg_hatch_timeout(egg, when) {
 
 // C ref: do_name.c sir_Terry_novels[] — the 41 Discworld titles a "novel"
 // (SPE_NOVEL, the Tribute book) can carry, verbatim and in C's order.
-const SIR_TERRY_NOVELS = [
+export const SIR_TERRY_NOVELS = [
     'The Colour of Magic', 'The Light Fantastic', 'Equal Rites',
     'Mort', 'Sourcery', 'Wyrd Sisters',
     'Pyramids', 'Guards! Guards!', 'Eric',
@@ -1681,13 +1678,13 @@ const SIR_TERRY_NOVELS = [
 // == rn2(41), then keeps an already-assigned index if the caller has one.  mksobj
 // calls this for every novel it creates (mkobj.c:1248
 // `otmp = oname(otmp, noveltitle(&otmp->novelidx), ONAME_NO_FLAGS)`), so the draw
-// happens once per novel — a shop that stocks one consumed it and we did not.
-function noveltitle(obj) {
+// happens once per novel.  `novidx` is an out-box {idx} standing for C's int *.
+export function noveltitle(novidx) {
     const k = SIR_TERRY_NOVELS.length;   // 41
     let j = rn2(k);
-    if (obj) {
-        if (obj.novelidx === -1 || obj.novelidx == null) obj.novelidx = j;
-        else if (obj.novelidx >= 0 && obj.novelidx < k) j = obj.novelidx;
+    if (novidx) {
+        if (novidx.idx === -1) novidx.idx = j;
+        else if (novidx.idx >= 0 && novidx.idx < k) j = novidx.idx;
     }
     return SIR_TERRY_NOVELS[j];
 }
@@ -1843,75 +1840,9 @@ const CLASS_OC_WEIGHT = Object.freeze({
     [WAND_CLASS]: 7,
 });
 
-// C ref: objects.h objects[].oc_cost — the base list price of one unit of each
-// otyp, dumped from the recorder's compiled obj_init[] table and re-keyed by
-// object NAME + class (C and JS agree on every otyp today, but the name key is
-// what makes that verifiable rather than assumed).  The JS object table
-// (OBJECT_DATA) omits the cost column, so shk.c getprice()/get_cost() had no
-// prices at all and every shop item was silently free.  Zero-cost entries
-// (generic dummies, rocks) are omitted; base_oc_cost() reads 0 for those.
-const OC_COST = Object.freeze({
-    18: 2, 19: 2, 20: 2, 21: 5, 22: 4, 23: 2, 24: 2, 25: 5, 26: 20, 27: 3,
-    28: 3, 29: 3, 30: 3, 31: 40, 32: 3, 33: 5, 34: 4, 35: 4, 36: 4, 37: 40,
-    38: 4, 39: 6, 40: 4, 41: 4, 42: 2, 43: 100, 44: 8, 45: 40, 46: 10, 47: 10,
-    48: 10, 49: 10, 50: 15, 51: 75, 52: 10, 53: 10, 54: 15, 55: 50, 56: 80,
-    57: 500, 58: 300, 59: 10, 60: 6, 61: 5, 62: 6, 63: 10, 64: 7, 65: 5,
-    66: 5, 67: 5, 68: 7, 69: 7, 70: 8, 71: 50, 72: 10, 73: 5, 74: 60, 75: 10,
-    76: 5, 77: 3, 78: 3, 79: 5, 80: 4, 81: 4, 82: 4, 83: 60, 84: 60, 85: 60,
-    86: 60, 87: 20, 88: 40, 89: 8, 90: 10, 91: 20, 92: 1, 93: 80, 94: 1,
-    95: 8, 96: 50, 97: 10, 98: 50, 99: 50, 100: 50, 101: 1200, 102: 900,
-    103: 1200, 104: 900, 105: 900, 106: 900, 107: 1200, 108: 900, 109: 900,
-    110: 900, 111: 700, 112: 500, 113: 700, 114: 500, 115: 500, 116: 500,
-    117: 700, 118: 500, 119: 500, 120: 500, 121: 600, 122: 820, 123: 400,
-    124: 80, 125: 90, 126: 240, 127: 240, 128: 75, 129: 75, 130: 45, 131: 15,
-    132: 100, 133: 80, 134: 5, 135: 10, 136: 3, 137: 2, 138: 2, 139: 60,
-    140: 40, 141: 50, 142: 50, 143: 50, 144: 50, 145: 40, 146: 50, 147: 60,
-    148: 60, 149: 50, 150: 3, 151: 50, 152: 50, 153: 7, 154: 7, 155: 7,
-    156: 10, 157: 10, 158: 50, 159: 8, 160: 50, 161: 50, 162: 50, 163: 8,
-    164: 16, 165: 12, 166: 50, 167: 50, 168: 50, 169: 8, 170: 8, 171: 30,
-    172: 30, 173: 100, 174: 150, 175: 150, 176: 150, 177: 150, 178: 100,
-    179: 200, 180: 200, 181: 100, 182: 100, 183: 200, 184: 100, 185: 150,
-    186: 300, 187: 100, 188: 150, 189: 200, 190: 150, 191: 150, 192: 200,
-    193: 200, 194: 200, 195: 300, 196: 300, 197: 300, 198: 150, 199: 150,
-    200: 100, 201: 150, 202: 150, 203: 150, 204: 150, 205: 150, 206: 150,
-    207: 150, 208: 150, 209: 150, 210: 150, 211: 150, 213: 30000, 214: 8,
-    215: 16, 216: 42, 217: 2, 218: 100, 219: 100, 220: 100, 221: 10, 222: 20,
-    223: 10, 224: 10, 225: 20, 226: 12, 227: 10, 228: 50, 229: 200, 230: 10,
-    231: 60, 232: 80, 233: 20, 234: 50, 235: 150, 236: 20, 237: 75, 238: 30,
-    239: 30, 240: 20, 241: 80, 242: 50, 243: 180, 244: 60, 245: 10, 246: 10,
-    247: 12, 248: 36, 249: 15, 250: 50, 251: 50, 252: 50, 253: 50, 254: 50,
-    255: 50, 256: 15, 257: 25, 258: 25, 259: 50, 260: 50, 261: 100, 262: 5000,
-    263: 5000, 264: 15, 265: 5, 266: 9, 267: 5, 268: 5, 269: 105, 270: 1,
-    271: 6, 272: 6, 273: 6, 274: 6, 275: 6, 276: 5, 277: 7, 278: 9, 279: 7,
-    280: 10, 281: 9, 282: 7, 283: 7, 284: 7, 285: 17, 286: 15, 287: 10,
-    288: 10, 289: 7, 290: 15, 291: 45, 292: 35, 293: 45, 294: 25, 295: 20,
-    296: 5, 297: 300, 298: 100, 299: 100, 300: 150, 301: 300, 302: 200,
-    303: 200, 304: 100, 305: 150, 306: 50, 307: 20, 308: 100, 309: 300,
-    310: 200, 311: 150, 312: 150, 313: 150, 314: 100, 315: 200, 316: 200,
-    317: 50, 318: 50, 319: 50, 320: 250, 321: 250, 322: 100, 323: 80,
-    324: 100, 325: 100, 326: 100, 327: 80, 328: 60, 329: 200, 330: 200,
-    331: 300, 332: 50, 333: 100, 334: 100, 335: 100, 336: 20, 337: 100,
-    338: 200, 339: 100, 340: 200, 341: 300, 342: 300, 343: 300, 365: 60,
-    366: 500, 367: 200, 368: 400, 369: 400, 370: 300, 371: 700, 372: 100,
-    373: 100, 374: 100, 375: 100, 376: 100, 377: 100, 378: 200, 379: 200,
-    380: 200, 381: 200, 382: 200, 383: 200, 384: 300, 385: 300, 386: 300,
-    387: 500, 388: 300, 389: 300, 390: 400, 391: 300, 392: 400, 393: 400,
-    394: 400, 395: 300, 396: 500, 397: 300, 398: 600, 399: 600, 400: 600,
-    401: 600, 402: 700, 403: 100, 404: 100, 405: 300, 406: 200, 408: 20,
-    409: 10000, 410: 100, 411: 150, 412: 150, 413: 200, 414: 500, 415: 150,
-    416: 100, 417: 150, 418: 150, 419: 150, 420: 150, 421: 150, 422: 200,
-    423: 200, 424: 200, 425: 150, 426: 150, 427: 150, 428: 150, 429: 150,
-    430: 175, 431: 175, 432: 175, 433: 500, 434: 175, 438: 1, 439: 4500,
-    440: 4000, 441: 3500, 442: 3250, 443: 3000, 444: 2500, 445: 2500,
-    446: 2000, 447: 1500, 448: 1500, 449: 1000, 450: 900, 451: 850, 452: 800,
-    453: 700, 454: 700, 455: 600, 456: 500, 457: 400, 458: 200, 459: 200,
-    460: 300, 470: 60, 471: 1, 472: 45, 473: 1, 477: 10,
-});
-
-// C ref: shk.c getprice() reads objects[obj->otyp].oc_cost directly.
-export function base_oc_cost(otyp) {
-    return OC_COST[otyp] || 0;
-}
+// C ref: shk.c getprice() reads objects[obj->otyp].oc_cost directly; the table is
+// js/objcost_data.js, generated from the recorder's compiled objects[].
+export { base_oc_cost };
 
 // C ref: objnam.c:98 GemStone(typ) — the gem types whose *name* carries a
 // " stone" suffix ("flint stone", "jade stone").  The seven flashy gems are
@@ -1927,6 +1858,9 @@ export function GemStone(typ) {
 
 // C ref: mkobj.c — base weight of one unit of `otmp`'s otyp (objects[].oc_weight).
 export function base_oc_weight(otmp) {
+    // C ref: objects.h GENERIC() — the class placeholders (otyp 1..MAXOCLASSES-1,
+    // "generic potion" and kin) have oc_weight 0, so weight() gives (quan+1)>>1.
+    if (otmp.otyp >= 1 && otmp.otyp < 18) return 0;
     const b = BASE_OC_WEIGHT[otmp.otyp];
     if (b != null) return b;
     // C ref: objects.h — the RING/AMULET/POTION/SCROLL/SPBOOK/WAND class macros
@@ -2413,7 +2347,7 @@ function mksobj_init(otmp, artif) {
         // (PM_SAMURAI == 9); the splint mail only gets lacquered at game start
         // (svm.moves <= 1) or in the quest, exactly as in C.
         // Role_if(PM_SAMURAI) is urole.mnum, not umonnum (which polymorph changes).
-        if ((game.urole?.mnum === 9 || (game.urole?.mnum == null && game.u?.umonnum === 9))
+        if (game.urole?.mnum === 9
             && otmp.otyp === SPLINT_MAIL
             && ((game.moves ?? 1) <= 1 || In_quest(game.u?.uz))) {
             otmp.oerodeproof = true;
@@ -2564,7 +2498,11 @@ export function mksobj(otyp, init = true, artif = false) {
         // C ref: mkobj.c:1246-1249 — novelidx starts at "none of the above" and
         // noveltitle() both rolls rn2(41) and fills it in, then onames the book.
         otmp.novelidx = -1;
-        otmp.oname = noveltitle(otmp);
+        {
+            const novidx = { idx: otmp.novelidx };
+            setONAME(otmp, noveltitle(novidx));
+            otmp.novelidx = novidx.idx;
+        }
         break;
     default:
         break;
@@ -2791,14 +2729,13 @@ export function free_omailcmd(otmp) {
 }
 
 // C ref: mkobj.c dealloc_oextra(o) — release oname/omonst/omailcmd and the
-// oextra itself.  do_name.js also reads obj.oname directly, so clear both.
+// oextra itself.
 export function dealloc_oextra(o) {
     if (!o?.oextra) return;
     if (o.oextra.omonst) free_omonst(o);
     o.oextra.oname = null;
     o.oextra.omailcmd = null;
     o.oextra = null;
-    o.oname = null;
 }
 
 // C ref: mkobj.c copy_oextra(obj2, obj1) — obj2 inherits obj1's name, saved
@@ -2810,7 +2747,6 @@ export function copy_oextra(obj2, obj1) {
     if (!obj2.oextra) obj2.oextra = newoextra();
     if (has_oname(obj1)) {
         obj2.oextra.oname = ONAME(obj1);
-        obj2.oname = obj2.oextra.oname;      /* ONAME_SKIP_INVUPD */
     }
     if (has_omonst(obj1)) {
         if (!obj2.oextra.omonst) newomonst(obj2);
@@ -3644,9 +3580,7 @@ export function mk_named_object(objtype, ptr, x, y, nm) {
     const corpstatflags = (objtype !== STATUE) ? CORPSTAT_INIT : 0;
     const otmp = mkcorpstat(objtype, null, ptr, x, y, corpstatflags);
     if (nm && otmp) {
-        if (!otmp.oextra) otmp.oextra = newoextra();
-        otmp.oextra.oname = nm;
-        otmp.oname = nm;
+        setONAME(otmp, nm);
     }
     return otmp;
 }

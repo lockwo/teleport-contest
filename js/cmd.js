@@ -5,7 +5,7 @@
 // Contestants should add: search, kick, eat, drink, read, zap,
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
-import { Levitation_hero } from './youprop.js';
+import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
@@ -25,7 +25,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          xname, otense, inv_cnt, invlet_basic, splitobj, freeinv, obj_doname, ansimpleoname,
          obj_extract_self, youmonst_data_pub, carried_weight } from './invent.js';
 import { makeplural } from './plural.js';
-import { WEAPON_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
+import { WEAPON_CLASS, SCROLL_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
          disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object } from './mkobj.js';
 import { fobj } from './dogmove.js';
 import { doeat } from './eat.js';
@@ -48,8 +48,9 @@ import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trap
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
          launch_obj, Levitation_fu, Flying_fu, u_locomotion,
          could_untrap, untrap_at } from './trap.js';
+import { set_utrap } from './polyself.js';
 import { doset, dosetSimple } from './doset.js';
-import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, dotele_wizard, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
 import { menuHeadAttr } from './menuattr.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
@@ -68,21 +69,22 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          BRK_KNOWN2BREAK, BRK_KNOWN2NOTBREAK, P_DAGGER, P_SABER, P_BASIC,
          P_UNSKILLED, P_RIDING,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
-         Is_waterlevel, Is_airlevel } from './const.js';
+         Is_waterlevel, Is_airlevel,
+    is_pool, is_lava } from './const.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { hides_under_flag, is_hider_flag, throws_rocks_flag, mflags1_of, M1_CLING, M1_TUNNEL, M1_METALLIVORE } from './monflags_data.js';
-import { noattacks, attacktype, dmgtype, AT_ENGL, AD_FIRE, AD_RUST, AD_CORR, AT_EXPL, MATTK } from './monattk_data.js';
+import { noattacks, attacktype, dmgtype, AT_ENGL, AD_FIRE, AD_RUST, AD_CORR, AT_EXPL, MATTK, sticks } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
 // same way muse.js's import of it does.
-import { onscary, dissolve_bars, passes_bars, can_ooze_hero, bad_rock as bad_rock_mon } from './monmove.js';
-import { curr_mon_load } from './mon.js';
+import { linedup, onscary, dissolve_bars, passes_bars, can_ooze_hero, bad_rock as bad_rock_mon } from './monmove.js';
+import { curr_mon_load, wake_nearto } from './mon.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { builds_up, level_difficulty, surface, earth_sense } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, ROLL, LAUNCH_KNOWN } from './const.js';
+import { LEG, VIBRATING_SQUARE, HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, ROLL, LAUNCH_KNOWN } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
 // kick_nondoor/dokick).  cmd.js <-> dokick.js is a cycle, but every name
 // crossing it is a hoisted `function` declaration, the same way onscary() above
@@ -92,11 +94,12 @@ import { setuwep } from './wield.js';
 import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key, autokey } from './artifact.js';
 import { lock_action, reset_pick } from './lock.js';
 import { weapon_descr, is_pick } from './weapon.js';
-import { rloco, dotele } from './teleport.js';
+import { rloco, dotelecmd } from './teleport.js';
 import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value, add_damage } from './shk.js';
 import { in_rooms, shop_keeper, Stealth } from './shkroom.js';
 import { autopick_testobj, container_at, safe_qbuf } from './pickup.js';
-import { is_drawbridge_wall, is_db_wall, db_under_typ, is_pool, is_lava } from './dbridge.js';
+import { is_drawbridge_wall, is_db_wall } from './dbridge.js';
+import { db_under_typ } from './const.js';
 import { bury_objs, still_chewing } from './dig.js';
 import { hit_bars } from './mthrowu.js';
 
@@ -106,7 +109,7 @@ import { hit_bars } from './mthrowu.js';
 import { CMDQ_KEY, CMDQ_EXTCMD, CMDQ_DIR, CMDQ_USER_INPUT, CMDQ_INT,
          CQ_CANNED, CQ_REPEAT, MAX_TYPE, IS_ROOM, IS_TREE, IS_WATERWALL,
          IS_THRONE, IS_FOUNTAIN, IS_SINK, IS_ALTAR, GLOC_INTERESTING,
-         has_mgivenname, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
+         has_mgivenname, MGIVENNAME, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT,
          MENU_FIRST_PAGE, MENU_LAST_PAGE, MENU_NEXT_PAGE, MENU_PREVIOUS_PAGE,
          MENU_SELECT_ALL, MENU_UNSELECT_ALL, MENU_INVERT_ALL, MENU_SELECT_PAGE,
          MENU_UNSELECT_PAGE, MENU_INVERT_PAGE, MENU_SEARCH, OBJ_FREE, OBJ_FLOOR } from './const.js';
@@ -123,6 +126,7 @@ import { num_spells } from './spell.js';
 import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
+import { can_saddle } from './makemon.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE } from './terminal.js';
 import { create_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu } from './windows.js';
 
@@ -178,22 +182,16 @@ const CMD_DEFAULT_KEY = {
     whatis: '/', wield: 'w', zap: 'z',
 };
 
-// Every default command key (cmd.c extcmdlist), for is_bound_key().
-// '#' (doextcmd) is in C's extcmdlist too — cmdbind_get('#') is non-NULL — but
-// CMD_DEFAULT_KEY omits it because the dispatch chain branches on it separately
-// (EXTCMD_DISPATCH_KEY below), so add it back here.  Audited against the C
-// extcmdlist[]: '#' was the only plain default key missing from this set.
-const BOUND_COMMAND_KEYS = new Set([...Object.values(CMD_DEFAULT_KEY), '#']);
-
 // C ref: cmd.c cmdbind_get(key) — is this key bound to any command at all?
 // An unbound key (space with rest_on_space Off, most punctuation) makes rhack
 // fall straight through to bad_command, skipping the g/G/F prefix handling.
-function is_bound_key(ch) {
-    if (ch == null || ch === '') return false;
-    if ('hjklyubnHJKLYUBN'.includes(ch)) return true;
-    if (ch >= '0' && ch <= '9') return true;   // count prefix, eaten by parse()
-    if (ch.charCodeAt(0) < 32) return true;    // Ctrl-<key> bindings
-    return BOUND_COMMAND_KEYS.has(ch);
+// A digit is a count prefix (eaten by parse()), ESC/NUL never reach the table.
+function is_bound_key(key) {
+    key &= 0xff;
+    if (key === 0 || key === 0x1b || key === 0xff) return true;
+    if (key >= 0x30 && key <= 0x39) return true;
+    const bind = cmdbind_get(key);
+    return bind != null && bind.cmd != null;
 }
 
 // C ref: cmd.c reset_commands() — with number_pad off the movement keys bind
@@ -215,10 +213,10 @@ const CTRL_RUSH_DIR = (() => {
 // digits become the movement keys and the letters they no longer displace fall
 // back to the bindings commands_init() always installs (h #help, j #jump,
 // k #kick, l #loot, u #untrap, N #name, ^L #redraw, ^N #annotate, 5 the run
-// prefix, M-5 the rush prefix).  Modelled as C's Cmd_bind list: a key code
-// (0..255) -> extcmdlist name map that reset_commands() rebuilds; our dispatch
-// chain is keyed on each command's default character, so resolving a key
-// through the map and handing back that character reproduces C's dispatch.
+// prefix, M-5 the rush prefix).  That is C's one Cmd_bind list (gc_Cmd, below);
+// our dispatch chain is keyed on each command's default character, so
+// resolving a key through the list and handing back that character reproduces
+// C's dispatch.
 
 const SDIR = 'hykulnjb><';                 // cmd.c reset_commands() sdir[]
 const SDIR_SWAP_YZ = 'hzkulnjb><';         //   ... sdir_swap_yz[]
@@ -247,80 +245,10 @@ function visctrl_code(k) {
     return s + String.fromCharCode(c);
 }
 
-// C ref: cmd.c extcmdlist[] — every entry that carries a default key.  This is
-// the table commands_init() walks; CMD_DEFAULT_KEY above is the subset our
-// dispatch chain has a branch for and is used to translate back.
-const EXTCMD_DEFAULT_KEY = {
-    adjust: kM('a'), annotate: kM('A'), apply: 0x61, attributes: kC('x'),
-    autopickup: 0x40, call: 0x43, cast: 0x5a, chat: kM('c'), chronicle: 0x76,
-    close: 0x63, conduct: kM('C'), dip: kM('d'), down: 0x3e, drop: 0x64,
-    droptype: 0x44, eat: 0x65, engrave: 0x45, enhance: kM('e'),
-    exploremode: kM('X'), fight: 0x46, fire: 0x66, force: kM('f'),
-    genocided: kM('g'), glance: 0x3b, help: 0x3f, inventory: 0x69,
-    inventtype: 0x49, invoke: kM('i'), jump: kM('j'), kick: kC('d'),
-    known: 0x5c, knownclass: 0x60, look: 0x3a, loot: kM('l'),
-    monster: kM('m'), name: kM('n'), offer: kM('o'), open: 0x6f,
-    options: 0x4f, overview: kC('o'), pay: 0x70, perminv: 0x7c, pickup: 0x2c,
-    pray: kM('p'),
-    prevmsg: kC('p'), puton: 0x50, quaff: 0x71, quiver: 0x51, read: 0x72,
-    redraw: kC('r'), remove: 0x52, repeat: kC('a'), reqmenu: 0x6d,
-    retravel: kC('_'), ride: kM('R'), rub: kM('r'), run: 0x47, rush: 0x67,
-    save: 0x53, search: 0x73, seeall: 0x2a, seeamulet: 0x22, seearmor: 0x5b,
-    seerings: 0x3d, seetools: 0x28, seeweapon: 0x29, shell: 0x21,
-    showgold: 0x24, showspells: 0x2b, showtrap: 0x5e, sit: kM('s'),
-    suspend: kC('z'), swap: 0x78, takeoff: 0x54, takeoffall: 0x41,
-    teleport: kC('t'), terrain: 0x7f, throw: 0x74, tip: kM('T'), travel: 0x5f,
-    turn: kM('t'), twoweapon: 0x58, untrap: kM('u'), up: 0x3c,
-    vanquished: kM('V'), version: kM('v'), versionshort: 0x56, wait: 0x2e,
-    wear: 0x57, whatdoes: 0x26, whatis: 0x2f, wield: 0x77, wipe: kM('w'),
-    wizdetect: kC('e'), wizgenesis: kC('g'), wizidentify: kC('i'),
-    wizlevelport: kC('v'), wizmap: kC('f'), wizwish: kC('w'), zap: 0x7a,
-    // extcmdlist names that are punctuation: '#' (doextcmd) and '?' (doextlist).
-    '#': 0x23, '?': kM('?'),
-};
-
-// Resolution target for numpad_resolve() and bind_key_resolve(): the commands
+// Resolution target for numpad_resolve(): the commands
 // whose default key the dispatch chain below actually branches on.
-// CMD_DEFAULT_KEY omits '#', whose dispatch branch does exist; kept separate so
-// BOUND_COMMAND_KEYS / is_bound_key() keep their current membership.
+// CMD_DEFAULT_KEY omits '#', whose dispatch branch does exist.
 const EXTCMD_DISPATCH_KEY = { ...CMD_DEFAULT_KEY, '#': '#' };
-
-// C ref: cmd.c extcmdlist[] ef_txt column — every name bind_key() will match
-// (`strcmpi(buf, extcmd->ef_txt)`), for this build's #ifdefs.  bind_key()
-// returns FALSE for a name that is in no entry and never calls cmdbind_add(),
-// so such a BIND= leaves the key bound to whatever it already ran.  The full
-// set matters because only 93 of these 152 carry a default key: without it a
-// valid `BINDINGS=q:loot` found no default key to translate to and fell
-// through, so 'q' still ran quaff (cf-bindings-full step 138 onward).
-const EXTCMD_NAMES = new Set([
-    'adjust', 'annotate', 'apply', 'attributes', 'autopickup', 'bugreport',
-    'call', 'cast', 'chat', 'chronicle', 'close', 'conduct', 'debugfuzzer',
-    'dip', 'down', 'drop', 'droptype', 'eat', 'engrave', 'enhance',
-    'exploremode', 'fight', 'fire', 'force', 'genocided', 'glance', 'help',
-    'herecmdmenu', 'history', 'inventory', 'inventtype', 'invoke', 'jump',
-    'kick', 'known', 'knownclass', 'levelchange', 'lightsources', 'look',
-    'lookaround', 'loot', 'monster', 'moveeast', 'movenorth',
-    'movenortheast', 'movenorthwest', 'movesouth', 'movesoutheast',
-    'movesouthwest', 'movewest', 'name', 'offer', 'open', 'options',
-    'optionsfull', 'overview', 'panic', 'pay', 'perminv', 'pickup',
-    'polyself', 'pray', 'prevmsg', 'puton', 'quaff', 'quit', 'quiver',
-    'read', 'redraw', 'remove', 'repeat', 'reqmenu', 'retravel', 'ride',
-    'rub', 'run', 'runeast', 'runnorth', 'runnortheast', 'runnorthwest',
-    'runsouth', 'runsoutheast', 'runsouthwest', 'runwest', 'rush',
-    'rusheast', 'rushnorth', 'rushnortheast', 'rushnorthwest', 'rushsouth',
-    'rushsoutheast', 'rushsouthwest', 'rushwest', 'save', 'saveoptions',
-    'search', 'shell', 'showtrap', 'sit', 'stats', 'suspend', 'swap',
-    'takeoff', 'takeoffall', 'teleport', 'terrain', 'therecmdmenu',
-    'throw', 'timeout', 'tip', 'toggle', 'travel', 'turn', 'twoweapon',
-    'untrap', 'up', 'vanquished', 'version', 'versionshort', 'vision',
-    'wait', 'whatdoes', 'whatis', 'wield', 'wipe', 'wizborn', 'wizbury',
-    'wizcast', 'wizcustom', 'wizdetect', 'wizdispmacros', 'wizfliplevel',
-    'wizgenesis', 'wizidentify', 'wizintrinsic', 'wizkill', 'wizlevelport',
-    'wizloaddes', 'wizloadlua', 'wizmakemap', 'wizmap', 'wizmondiff',
-    'wizobjprobs', 'wizrumorcheck', 'wizseenv', 'wizshownhuuid',
-    'wizsmell', 'wiztelekinesis', 'wizwhere', 'wizwish', 'wmode', 'zap',
-    '#', '?',
-]);
 
 // C ref: cmd.c move_funcs[N_DIRS_Z][N_MOVEMODES] rows, in sdir[] order
 // (cmd.c:3346 "hykulnjb><") — the direction suffix of the movewest/runwest/
@@ -329,28 +257,6 @@ const EXTCMD_NAMES = new Set([
 const MOVE_DIR_NAMES = ['west', 'northwest', 'north', 'northeast',
                         'east', 'southeast', 'south', 'southwest'];
 
-// C ref: cmd.c bind_key(key, command, user), plus rhack()'s use of what it
-// stored: C hangs the extcmdlist ENTRY on the key and calls its ef_funct, so
-// a command with no default key binds exactly like one that has one. Report
-// the binding like numpad_resolve() does — `ch` when the dispatch chain
-// handles the command's key, else `ext` to run its extcmdlist function.
-// `unbind` is C's "nothing" special case (cmdbind_remove): an unknown name
-// resolves to nothing, leaving the key's existing binding in place.
-function bind_key_resolve(command) {
-    if (command === 'nothing') return { ch: null, ext: null, unbind: true };
-    if (!EXTCMD_NAMES.has(command)) return { ch: null, ext: null, unbind: false };
-    const mv = /^(move|run|rush)(west|northwest|north|northeast|east|southeast|south|southwest)$/
-               .exec(command);
-    if (mv) {
-        const c = SDIR.charCodeAt(MOVE_DIR_NAMES.indexOf(mv[2]));
-        const code = mv[1] === 'move' ? c : mv[1] === 'run' ? kHighc(c) : kC(c);
-        return { ch: String.fromCharCode(code), ext: null, unbind: false };
-    }
-    const dflt = EXTCMD_DISPATCH_KEY[command];
-    if (dflt !== undefined) return { ch: dflt, ext: null, unbind: false };
-    return { ch: null, ext: command, unbind: false };
-}
-
 // C ref: cmd.c spkeys_binds[] — only the entries the command loop reads.
 const NHKF_COUNT_KEY = 0x6e;        // 'n'
 const NHKF_GETDIR_SELF = 0x2e;      // '.'
@@ -358,42 +264,6 @@ const NHKF_GETDIR_SELF2 = 0x73;     // 's'
 const NHKF_GETDIR_MOUSE = 0x5f;     // '_'
 const NHKF_GETPOS_PICK_Q = 0x2c;    // ','
 const NHKF_GETPOS_PICK = 0x2e;      // '.'
-
-// C ref: cmd.c cmdbind_add()/cmdbind_remove()/cmdbind_swapkeys().
-function cmdbind_add(binds, key, name) {
-    if (!key) return;
-    if (!name) { binds.delete(key); return; }
-    binds.set(key, name);
-}
-function cmdbind_swapkeys(binds, key1, key2) {
-    const b1 = binds.get(key1), b2 = binds.get(key2);
-    if (b1 !== undefined && b2 !== undefined) {
-        binds.set(key1, b2);
-        binds.set(key2, b1);
-    }
-}
-
-// C ref: cmd.c commands_init() — extcmdlist defaults, then the bindings that
-// exist for number_pad's sake; reset_commands() strips whichever of them the
-// movement keys claim.
-function commands_init(binds) {
-    for (const [name, key] of Object.entries(EXTCMD_DEFAULT_KEY))
-        cmdbind_add(binds, key, name);
-    cmdbind_add(binds, kC('l'), 'redraw');
-    cmdbind_add(binds, 0x68, 'help');    // 'h'
-    cmdbind_add(binds, 0x6a, 'jump');    // 'j'
-    cmdbind_add(binds, 0x6b, 'kick');    // 'k'
-    cmdbind_add(binds, 0x6c, 'loot');    // 'l'
-    cmdbind_add(binds, kC('n'), 'annotate');
-    cmdbind_add(binds, 0x4e, 'name');    // 'N'
-    cmdbind_add(binds, 0x75, 'untrap');  // 'u'
-    cmdbind_add(binds, 0x35, 'run');     // '5'
-    cmdbind_add(binds, kM('5'), 'rush');
-    cmdbind_add(binds, 0x2d, 'fight');   // '-'
-    cmdbind_add(binds, kM('O'), 'overview');
-    cmdbind_add(binds, kM('2'), 'twoweapon');
-    cmdbind_add(binds, kM('N'), 'name');
-}
 
 // C ref: options.c optfn_number_pad() — decode the OPTIONS value into
 // iflags.num_pad / iflags.num_pad_mode.  `raw` is what the rc parser stored:
@@ -415,123 +285,25 @@ function numpad_iflags(raw) {
     return { num_pad: true, num_pad_mode };
 }
 
-// C ref: cmd.c reset_commands() — called at startup (initial) and again every
-// time number_pad is twiddled.
-function reset_commands(Cmd, iflags, initial) {
-    let dir, mode, updated = 0;
-
-    if (initial) {
-        updated = 1;
-        Cmd.num_pad = false;
-        Cmd.pcHack_compat = Cmd.phone_layout = Cmd.swap_yz = false;
-        commands_init(Cmd.binds);
-    } else {
-        if (Cmd.backed_dir_cmd) {
-            for (dir = 0; dir < N_DIRS; dir++)
-                for (mode = 0; mode < N_MOVEMODES; mode++)
-                    cmdbind_add(Cmd.binds, Cmd.back_dir_key[dir][mode],
-                                Cmd.back_dir_cmd[dir][mode]);
-        }
-        let flagtemp = iflags.num_pad;
-        if (flagtemp !== Cmd.num_pad) { Cmd.num_pad = flagtemp; ++updated; }
-        // swap_yz: QWERTZ keyboards (number_pad:-1); only for !num_pad.
-        flagtemp = (iflags.num_pad_mode & 1) ? !Cmd.num_pad : false;
-        if (flagtemp !== Cmd.swap_yz) {
-            Cmd.swap_yz = flagtemp;
-            ++updated;
-            // cmd.c ylist[]: y Y ^Y M-y M-Y M-^Y each swap with the next code.
-            for (const c of [0x79, 0x59, kC('y'), kM('y') & 0xff, kM('Y') & 0xff,
-                             kM(kC('y')) & 0xff])
-                cmdbind_swapkeys(Cmd.binds, c, c + 1);
-        }
-        // pcHack_compat: MSDOS compatibility (number_pad:2/4); only for num_pad.
-        // C's '5'/M-5 swap is #if 0'd out, so M-0 is the only real effect.
-        flagtemp = (iflags.num_pad_mode & 1) ? Cmd.num_pad : false;
-        if (flagtemp !== Cmd.pcHack_compat) {
-            Cmd.pcHack_compat = flagtemp;
-            ++updated;
-            if (Cmd.pcHack_compat) cmdbind_add(Cmd.binds, kM('0'), 'inventtype');
-            else cmdbind_add(Cmd.binds, kM('0'), null);
-        }
-        // phone_layout: 1,2,3 <-> 7,8,9 (number_pad:3/4); only for num_pad.
-        flagtemp = (iflags.num_pad_mode & 2) ? Cmd.num_pad : false;
-        if (flagtemp !== Cmd.phone_layout) {
-            Cmd.phone_layout = flagtemp;
-            ++updated;
-            for (let i = 0; i < 3; i++) {
-                cmdbind_swapkeys(Cmd.binds, 0x31 + i, 0x31 + i + 6);
-                cmdbind_swapkeys(Cmd.binds, (kM('1') & 0xff) + i,
-                                 (kM('1') & 0xff) + i + 6);
-            }
-        }
-    }
-
-    if (updated) Cmd.serialno = (Cmd.serialno | 0) + 1;
-    Cmd.dirchars = !Cmd.num_pad ? (!Cmd.swap_yz ? SDIR : SDIR_SWAP_YZ)
-                                : (!Cmd.phone_layout ? NDIR : NDIR_PHONE_LAYOUT);
-    Cmd.alphadirchars = !Cmd.num_pad ? Cmd.dirchars : SDIR;
-
-    // Back up the commands & keys the new movement keys are about to overwrite.
-    for (dir = 0; dir < N_DIRS; dir++) {
-        for (mode = MV_WALK; mode < N_MOVEMODES; mode++) {
-            let di = Cmd.dirchars.charCodeAt(dir);
-            if (!Cmd.num_pad) {
-                if (mode === MV_RUN) di = kHighc(di);
-                else if (mode === MV_RUSH) di = kC(di);
-            } else {
-                // C uses M(di) for BOTH modes here, so the MV_RUSH pass reads
-                // back the key MV_WALK/MV_RUN already removed and saves null.
-                if (mode === MV_RUN || mode === MV_RUSH) di = kM(di);
-            }
-            Cmd.back_dir_key[dir][mode] = di;
-            const had = Cmd.binds.get(di);
-            Cmd.back_dir_cmd[dir][mode] = had === undefined ? null : had;
-            Cmd.binds.delete(di);
-        }
-    }
-    Cmd.backed_dir_cmd = true;
-
-    // Bind the new keys to movement commands.
-    for (let i = 0; i < N_DIRS; i++) {
-        const di = Cmd.dirchars.charCodeAt(i);
-        cmdbind_add(Cmd.binds, di, `move:${i}`);
-        if (!Cmd.num_pad) {
-            cmdbind_add(Cmd.binds, kHighc(di), `run:${i}`);
-            cmdbind_add(Cmd.binds, kC(di), `rush:${i}`);
-        } else {
-            // M(number) works when altmeta is on; digits have no highc()/C().
-            cmdbind_add(Cmd.binds, kM(di), `run:${i}`);
-        }
-    }
-}
-
-// The live Cmd struct, rebuilt whenever the rc's number_pad value changes.
-// C runs reset_commands(TRUE) from initoptions_init() and reset_commands(FALSE)
-// from the option handler; the rc is parsed once, so the same two calls here
-// reproduce the table exactly.
-let _numpad_cmd = null, _numpad_cmd_src = null;
+// The live Cmd struct: gc_Cmd (the one Cmd_bind list), re-synchronised with
+// the rc's number_pad / BIND= settings by cmd_binds_init_once().
 function numpad_cmd() {
-    const raw = game?.flags?.number_pad;
-    const key = raw === undefined ? '\0none' : String(raw);
-    // Memoised at module scope, not on `game`: the save/restore path round-trips
-    // `game` through JSON, which would turn Cmd.binds into a plain object.
-    if (_numpad_cmd && _numpad_cmd_src === key) return _numpad_cmd;
-    const Cmd = {
-        binds: new Map(), num_pad: false, pcHack_compat: false,
-        phone_layout: false, swap_yz: false, serialno: 0,
-        dirchars: SDIR, alphadirchars: SDIR, backed_dir_cmd: false,
-        back_dir_key: Array.from({ length: N_DIRS }, () => new Array(N_MOVEMODES).fill(0)),
-        back_dir_cmd: Array.from({ length: N_DIRS }, () => new Array(N_MOVEMODES).fill(null)),
-    };
-    reset_commands(Cmd, null, true);
-    if (raw !== undefined) {
-        const ifl = numpad_iflags(raw);
-        if (ifl) reset_commands(Cmd, ifl, false);
-    }
-    _numpad_cmd = Cmd;
-    _numpad_cmd_src = key;
-    return Cmd;
+    cmd_binds_init_once();
+    return gc_Cmd;
 }
+
+// The dispatch name this port's rhack() chain uses for the command bound to
+// `key`: movement commands come back as "move:<i>"/"run:<i>"/"rush:<i>" (i
+// indexes sdir[]), every other command as its ef_txt; undefined when unbound.
+function live_bind_name(key) {
+    const bind = cmdbind_get(key & 0xff);
+    if (!bind || !bind.cmd) return undefined;
+    const txt = bind.cmd.ef_txt;
+    const m = MOVE_FAMILY_RE.exec(txt);
+    if (m) return `${m[1]}:${MOVE_DIR_NAMES.indexOf(m[2])}`;
+    return txt;
+}
+const MOVE_FAMILY_RE = /^(move|run|rush)(west|northwest|north|northeast|east|southeast|south|southwest)$/;
 
 // C ref: cmd.c gc.Cmd.dirchars / gc.Cmd.num_pad — the live movement-key layout,
 // for the help screens that render the key list (pager.c dokeylist(),
@@ -541,15 +313,18 @@ export function Cmd_num_pad() { return numpad_cmd().num_pad; }
 export function Cmd_pcHack_compat() { return numpad_cmd().pcHack_compat; }
 
 // True once the command table differs from the plain alphabetic default, i.e.
-// once a key can mean something other than what the dispatch chain assumes.
+// once a key can mean something other than what the dispatch chain assumes
+// (number_pad, swap_yz, or any BIND= line).
 function numpad_active(Cmd) {
-    return Cmd.num_pad || Cmd.swap_yz;
+    if (Cmd.num_pad || Cmd.swap_yz) return true;
+    for (const _k in game?.keybind) return true;
+    return false;
 }
 
 // C ref: cmd.c movecmd(sym, mode) — resolve a keystroke to a direction index
 // through the command table.  MV_ANY accepts the walk, run and rush keys.
 function movecmd_dir(Cmd, key, mode) {
-    const name = Cmd.binds.get(key);
+    const name = live_bind_name(key);
     if (!name) return -1;
     // move_funcs[DIR_DOWN] and [DIR_UP] hold dodown/doup for all three modes,
     // so the '>' and '<' commands answer movecmd() for any mode.
@@ -601,7 +376,7 @@ export function getpos_hint_chars() {
 // is unbound (rhack's bad_command); `ext` names a command that has no key our
 // chain handles, so it runs through its extcmdlist function instead.
 function numpad_resolve(Cmd, key) {
-    const name = Cmd.binds.get(key & 0xff);
+    const name = live_bind_name(key);
     if (!name) return { ch: null, ext: null, name: null };
     const m = /^(move|run|rush):(\d)$/.exec(name);
     if (m) {
@@ -852,7 +627,7 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy,
     // bumping into avoid_running_into_trap_or_liquid()'s free no-op.
     if ((game.context?.run || 0) === 8 && !(x === ux && y === uy)) {
         const t = t_at(x, y);
-        if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE_CMD) return false;
+        if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE) return false;
         const loc = game.level?.at(x, y);
         const typ = loc ? loc.typ : STONE;
         if ((loc?.seenv || 0) && (isPoolTerrain(x, y) || IS_LAVA(typ))
@@ -1213,49 +988,23 @@ export async function rhack(key) {
     const origKey = key;
     let ch = String.fromCharCode(key);
 
-    // n78's BIND= translation is intentionally dropped: n80's
-    // bind_key_resolve() below already does it and running both translated the
-    // key twice. Its later arms (`npExt || bindExt`) still reference this name.
+    // BIND= lines live in the same Cmd_bind list as every default binding
+    // (cmd_binds_init_once()), so there is exactly one resolution below.
     let bindExt = null;
 
     // C ref: cmd.c rhack() `gc.cmd_bind = cmdbind_get(key & 0xFF)`.  Once
-    // number_pad (or its y/z-swapped variant) has rebuilt the command table a
-    // keystroke no longer means what the alphabetic dispatch below assumes, so
-    // resolve it through the table first: `npExt` is a command with no key of
-    // its own, `npBad` an unbound key headed for bad_command, and `npBound`
-    // replaces is_bound_key() for the prefix bookkeeping.
+    // number_pad (or its y/z-swapped variant) or a BIND= line has rebuilt the
+    // command table a keystroke no longer means what the alphabetic dispatch
+    // below assumes, so resolve it through the table first: `npExt` is a
+    // command with no key of its own, `npBad` an unbound key headed for
+    // bad_command, and `npBound` replaces is_bound_key() for the prefix
+    // bookkeeping.
     const Cmd = numpad_cmd();
     let npExt = null, npBad = null, npBound = null;
-    const commandName = game.keybind?.[ch] ?? Cmd.binds.get(key & 0xff);
-
-    // C ref: cmd.c bind_key() — a nethackrc BIND=key:command entry replaced this
-    // key's extcmdlist entry at config time, so resolve the bound command the
-    // way rhack() runs it.  A command with a key our dispatch chain branches on
-    // is reported as that key; one without runs through its extcmdlist function
-    // (npExt), which is how #loot/#version/#pray become bindable at all.
-    if (game.keybind && Object.prototype.hasOwnProperty.call(game.keybind, ch)) {
-        const b = bind_key_resolve(game.keybind[ch]);
-        if (b.ch !== null) {
-            ch = b.ch;
-            key = ch.charCodeAt(0);
-        } else if (!game._modal_screen && b.ext) {
-            // A modal window swallows every key in the window code, so only
-            // resolve to a command when no window is up.
-            npExt = b.ext;
-            npBound = true;
-        } else if (!game._modal_screen && b.unbind) {
-            // C: cmdbind_remove() leaves the key unbound -> bad_command.
-            npBad = visctrl_code(key & 0xff);
-            npBound = false;
-            ch = '\0';
-            key = 0;
-        }
-    }
+    const commandName = live_bind_name(key & 0xff);
 
     // C rhack() returns for !key / 0377 / ESC before it ever calls
     // cmdbind_get(); a modal window consumes its keys in the window code.
-    // A BIND= already resolved above owns the key: C keeps one binds table, so
-    // whichever of the two wrote it last wins and nothing re-resolves it.
     // C ref: cmd.c cmdbind_get() is consulted for EVERY key, not just under
     // number_pad — a Meta-bit key (e.g. M('j') for #jump) is a DEFAULT
     // binding the alphabetic dispatch chain below has no branches for at all,
@@ -1312,7 +1061,7 @@ export async function rhack(key) {
     if (game.context._prefix_seen
         && npBound !== false
         && (commandName != null
-            || (game.keybind?.[ch] ?? numpad_cmd().binds.get(key & 0xff)) != null
+            || live_bind_name(key & 0xff) != null
             || (key === 32 && !!game.flags?.rest_on_space))
         && !game._modal_screen && !isMovementKey(ch)
         && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
@@ -1382,12 +1131,12 @@ export async function rhack(key) {
     if (game.context.run_prefix && !game._modal_screen
         && !isMovementKey(ch) && ch !== 'g' && ch !== 'G'
         && ch !== 'F' && ch !== '-' && ch !== 'm') {
-        if (!(npBound ?? is_bound_key(ch))) {
+        if (!(npBound ?? is_bound_key(origKey))) {
             game.context.stale_run = game.context.run_prefix || staleRun;
             game.context.stale_rush = true;
         }
         game.context.run_prefix = 0;
-    } else if (!(npBound ?? is_bound_key(ch)) && !isMovementKey(ch) && !game._modal_screen) {
+    } else if (!(npBound ?? is_bound_key(origKey)) && !isMovementKey(ch) && !game._modal_screen) {
         game.context.stale_run = staleRun; // consecutive unbound keys keep it
         game.context.stale_rush = staleRush;
     }
@@ -1670,11 +1419,13 @@ export async function rhack(key) {
         // running the command (cmd.c:3728), so a first search that finds
         // something (nomul(0) -> multi 0) still leaves the occupation set and
         // the move loop runs one more (final) search turn.
-        const counted = (game.multi ?? 0) > 0;
+        // The flag must be live while dosearch() runs: a statue trap woken by the
+        // search makemon()s a monster whose dochugw(mtmp, FALSE) (makemon.c:1503
+        // `if (go.occupation)`) prints "You stop searching." BEFORE trap.c's
+        // "You find <mon> posing as a statue."
+        if ((game.multi ?? 0) > 0) game._search_occupation = true;
         const searched = await dosearch();
         game.context.move = searched ? 1 : 0;
-        if (searched && counted)
-            game._search_occupation = true;
     } else if (key === 1) { // ^A — repeat the previous command (cmd.c do_repeat)
         // C ref: cmd.c:1822 { C('a'), "repeat", ..., do_repeat }.  Unbound
         // here, ^A fell through to "Unknown command '<ch>'." (a non-printable
@@ -1741,14 +1492,7 @@ export async function rhack(key) {
         // calls dotele(TRUE) -> tele(): "Where do you want to be teleported?"
         // then getpos(force=TRUE).  dotele() returns ECMD_TIME, so a game turn
         // elapses whether or not the targeting was cancelled.
-        if (game.flags?.debug) {
-            const res = await dotele_wizard();
-            game.context.move = res === 1 ? 1 : 0;
-        } else {
-            // C ref: teleport.c dotelecmd(): outside wizard mode it is just
-            // dotele(FALSE) (teleport.js carries the full port).
-            game.context.move = (await dotele(false)) ? 1 : 0;
-        }
+        game.context.move = ((await dotelecmd()) & ECMD_TIME) ? 1 : 0;
     } else if (key === 22) { // ^V — wizard-mode level teleport (do.c/teleport.c)
         // C ref: cmd.c:1970 { C('v'), "wizlevelport", ..., WIZMODECMD }.  The
         // WIZMODECMD gate was missing entirely here, so a non-debug session that
@@ -2407,16 +2151,9 @@ async function find_trap(trap) {
     const cleared = Hallucination() || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
     if (cleared) {
         // C cls() opens with display_nhwindow(WIN_MESSAGE, FALSE): a pending
-        // topline (e.g. a squeaky board's note) pages with --More-- first.
-        // pline()'s unacknowledged line is tracked by text (_toplinSoft).
-        if (game._pending_message && game._toplinSoft === game._pending_message) {
-            await topl_more();
-            game._toplin = 0;
-            game._toplinSoft = null;
-            game._pending_message = '';
-        } else {
-            await display_nhwindow_message();
-        }
+        // topline (e.g. a squeaky board's note) pages with --More-- first,
+        // unless an ESC'd --More-- left WIN_CANCELLED (== WIN_STOP) set.
+        await display_nhwindow_message();
         for (let x = 1; x < COLNO; x++)
             for (let y = 0; y < ROWNO; y++)
                 show_glyph_cell(x, y, ' ', NO_COLOR, false);
@@ -2555,7 +2292,7 @@ export function monster_nearby() {
             if (!isok(x, y) || (x === u.ux && y === u.uy)) continue;
             const mtmp = m_at(x, y);
             if (!mtmp) continue;
-            if (mtmp.m_ap_type === 'furniture' || mtmp.m_ap_type === 'obj') continue;
+            if (M_AP_TYPE(mtmp) === M_AP_FURNITURE || M_AP_TYPE(mtmp) === M_AP_OBJECT) continue;
             if (!(hallu || (!mtmp.mpeaceful && !noattacks(mtmp.data)))) continue;
             if (mtmp.mundetected && hides_under_flag(mtmp.data)) continue;
             if (mtmp.msleeping || !mtmp.mcanmove) continue;
@@ -2613,14 +2350,6 @@ export async function dosearch() {
         return false; // ECMD_OK: no game turn
     await dosearch0(0);
     return true;
-}
-
-// C ref: mon.c:4402 wake_nearto(x, y, distance) == wake_nearto_core(x, y,
-// distance, FALSE).  A monster C woke and this port left asleep would skip its
-// whole dochug() turn, so the streams diverge from the next monster phase on.
-export async function wake_nearto(x, y, distance) {
-    const { wake_nearto_core } = await import('./mon.js');
-    await wake_nearto_core(x, y, distance, false);
 }
 
 // C ref: mondata.h digests(ptr) == attacktype(ptr, AT_ENGL).
@@ -2873,9 +2602,8 @@ async function help_dir_window(msg, sym = 0) {
     // digits; the "direct at yourself" key is spkeys[NHKF_GETDIR_SELF2] ('s')
     // with number_pad on and NHKF_GETDIR_SELF ('.') with it off.
     const Cmd = numpad_cmd();
-    const dc = Cmd.dirchars;
-    const self = String.fromCharCode(Cmd.num_pad ? NHKF_GETDIR_SELF2
-                                                 : NHKF_GETDIR_SELF);
+    const selfi = Cmd.num_pad ? NHKF.GETDIR_SELF2 : NHKF.GETDIR_SELF;
+    const nodiag = cmd_NODIAG(game.u.umonnum);
     const lines = msg ? [`cmdassist: ${msg}`, ''] : [];
     // C ref: cmd.c help_dir() — a caller whose prompt starts with '^' (the ^
     // trap-id command) gets "Are you trying to use ^X as specified in the
@@ -2892,16 +2620,12 @@ async function help_dir_window(msg, sym = 0) {
         }
     }
     lines.push(
-        'Valid direction keys are:',
-        `          ${dc[1]}  ${dc[2]}  ${dc[3]}`,
-        '           \\ | / ',
-        `          ${dc[0]}- . -${dc[4]}`,
-        '           / | \\ ',
-        `          ${dc[7]}  ${dc[6]}  ${dc[5]}`,
+        `Valid direction keys${nodiag ? ' in your current form' : ''} are:`,
+        ...direction_key_rows('.', nodiag),
         '',
         '          <  up',
         '          >  down',
-        `          ${self}  direct at yourself`,
+        `       ${cmd_visctrl(Cmd.spkeys[selfi]).padStart(4)}  direct at yourself`,
     );
     if (msg) lines.push('', '(Suppress this message with !cmdassist in config file.)');
     renderWindowScreen(lines, { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
@@ -3701,7 +3425,6 @@ async function escape_from_sticky_mon(x, y) {
     // Dynamic: monmove.js -> ... -> cmd.js is a static cycle.
     const { m_next2u, Conflict } = await import('./monmove.js');
     const { set_ustuck } = await import('./mon.js');
-    const { sticks } = await import('./uhitm.js');
     const { youmonst_data } = await import('./invent.js');
     if (!m_next2u(held)) {
         /* perhaps it fled (or was teleported or ... ) */
@@ -4007,7 +3730,7 @@ async function domove_core(dx, dy, attemptTracked) {
             if (!u.utrap) {
                 game.botl = true;
                 /* reset_utrap(TRUE): might resume levitation or flight */
-                await (await import('./trap.js')).reset_utrap_fu(true);
+                await (await import('./trap.js')).reset_utrap(true);
             }
             if (!moved) {
                 game.context.move = 1;
@@ -4043,6 +3766,10 @@ async function domove_core(dx, dy, attemptTracked) {
             nomul(0);
             return;
         }
+        // C ref: hack.c:2843 test_move(DO_MOVE) -> moverock(): a boulder on the
+        // peaceful/pet's square (giants share squares with boulders) is pushed or
+        // refuses the step BEFORE domove_swap_with_pet().
+        if (!displaceu && await test_move_boulder(newx, newy)) return;
         // C ref: hack.c:2852 — swim_move_danger() follows test_move() on every
         // !displaceu step, so a pet standing in water/lava is no way around it:
         // "You avoid stepping into the shallow sea." and no swap.
@@ -4290,7 +4017,7 @@ async function domove_core(dx, dy, attemptTracked) {
         if (!u.utrap) {
             game.botl = true;
             /* reset_utrap(TRUE): might resume levitation or flight */
-            await (await import('./trap.js')).reset_utrap_fu(true);
+            await (await import('./trap.js')).reset_utrap(true);
         }
         if (!moved) {
             game.context.move = 1; // the struggle elapses a turn
@@ -4482,37 +4209,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // square further in the move direction; if it can't move, test_move returns
     // FALSE and the hero stays put (no turn elapses).  Only reached when the hero
     // does not pass through walls (the corpus heroes never do).
-    {
-        const bobj = boulder_at(newx, newy);
-        // C ref: hack.c:1217 — a hero who is rushing/running/travelling
-        // (context.run >= 2) stops in front of a boulder instead of pushing it,
-        // and C's `if (!test_move(...DO_MOVE)) { move = 0; nomul(0); }` at
-        // hack.c:2841 ends the run there.  rhack() still forces context.move
-        // back on for a command that returned ECMD_TIME, so travel's first step
-        // costs the turn anyway (hack.js travel_walk()).
-        if (bobj && (game.context.run || 0) >= 2
-            && !Blind() && !Hallucination() && !could_move_onto_boulder(newx, newy)) {
-            if (game.flags?.mention_walls) { set_msg_xy(newx, newy); await pline('A boulder blocks your path.'); }
-            game.context.move = 0;
-            nomul(0);
-            return;
-        }
-        if (bobj) {
-            // C ref: hack.c:1001 test_move() starts with context.door_opened = FALSE;
-            // moverock()'s nopick arm sets it (with context.move) when the hero
-            // learned something, and domove_core() 2844 then keeps the turn.
-            game.context.door_opened = false;
-            const pushed = await moverock(bobj, newx, newy, u.dx, u.dy);
-            if (pushed < 0) {
-                // Boulder couldn't be pushed: hero stays put, no turn elapses
-                // unless door_opened kept the move.
-                if (!game.context.door_opened) game.context.move = 0;
-                return;
-            }
-            // Boulder rolled away -> fall through to the normal move onto its old
-            // square (blocksMove sees plain floor/corridor there now).
-        }
-    }
+    if (await test_move_boulder(newx, newy)) return;
 
     // C ref: hack.c test_move() obstacle arm (DO_MOVE): an iron-bars square is
     // chewed by a rusting/corroding/metal-eating form and squeezed through by a
@@ -5078,20 +4775,6 @@ function trap_at(x, y) {
 }
 // C ref: trap.h is_pit(ttyp) — PIT or SPIKED_PIT.
 function is_pit_ttyp(ttyp) { return ttyp === PIT || ttyp === SPIKED_PIT; }
-// C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() — used by pickup()'s
-// can_reach_floor gate (below) to decide whether an unreachable-floor square
-// still gets read_engr_at().
-function uteetering_at_seen_pit(trap) {
-    const u = game.u;
-    return !!trap && is_pit_ttyp(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy
-        && !(u.utrap && u.utraptype === TT_PIT);
-}
-function uescaped_shaft(trap) {
-    const u = game.u;
-    return !!trap && is_hole(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy;
-}
 // C ref: trap.c climb_pit() — one turn's attempt to get out of a pit. The old
 // placeholder consumed NO RNG, on the theory the climb path wasn't reached at
 // a diverging point — but it fires on EVERY struggle: C's second arm is
@@ -5106,27 +4789,27 @@ export async function climb_pit() {
     if (hero_passes_walls()) {
         // marked as trapped so they can pick things up
         await pline(`You ascend from the ${pitname}.`);
-        reset_utrap_cmd();
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
         await fill_pit(u.ux, u.uy);
         game.vision_full_recalc = 1;
         return;
     }
     if (!rn2(2) && boulder_at(u.ux, u.uy)) {
-        await pline('Your leg gets stuck in a crevice.');
+        await pline(`Your ${(await import('./invent.js')).body_part(LEG)} gets stuck in a crevice.`);
         // display_nhwindow(WIN_MESSAGE, FALSE) pages the pending line with
         // --More-- before the follow-up prints (tty_display_nhwindow's
         // NHW_MESSAGE arm calls more() whenever toplin == TOPLINE_NEED_MORE,
         // blocking or not).
         await topl_more();
         game._pending_message = '';
-        await pline('You free your leg.');
+        await pline(`You free your ${(await import('./invent.js')).body_part(LEG)}.`);
         return;
     }
     // The hero's own form: a polymorphed hero may cling (M1_CLING) or be huge.
     const form = u.Upolyd ? u.data : null;
     if ((Flying_fu() || (form && (mflags1_of(form) & M1_CLING) !== 0)) && !In_sokoban(u.uz)) {
         await pline(`You ${u_locomotion('climb')} from the ${pitname}.`);
-        reset_utrap_cmd();
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
         await fill_pit(u.ux, u.uy);
         game.vision_full_recalc = 1;
         return;
@@ -5135,7 +4818,7 @@ export async function climb_pit() {
     // (a baby dragon, a giant) leaves the pit in one struggle.
     const easy = !!form && (form.pmidx === 300 /* PM_PIT_FIEND */ || (form.msize ?? 0) >= 4 /* MZ_HUGE */);
     if (!(--u.utrap) || easy) {
-        reset_utrap_cmd();
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
         await pline(`${(In_sokoban(u.uz) && Levitation_fu())
             ? 'You struggle against the air currents and float'
             : u.usteed ? 'You ride' : 'You crawl'} to the edge of the ${pitname}.`);
@@ -5152,16 +4835,6 @@ export async function climb_pit() {
         await Norep_topl((Hallucination() && !rn2(5))
             ? "You've fallen, and you can't get up."
             : 'You are still in a pit.');
-}
-
-// C ref: trap.c reset_utrap(msg) — clear the trapped state.  The Levitation /
-// Flying re-evaluation (float_vs_flight) has no effect for a hero who is
-// neither, which is every hero that reaches this.
-function reset_utrap_cmd() {
-    const u = game.u;
-    u.utrap = 0;
-    u.utraptype = 0;
-    game.botl = true;
 }
 
 // C ref: hack.c:939 bad_rock(youmonst.data, x, y).  passes_walls(mdat) and
@@ -5301,14 +4974,14 @@ function is_flimsy_boulder(obj) {
 // reused to avoid a fresh import cycle for one small table lookup.
 function harmless_missile_boulder(obj) {
     switch (obj.otyp) {
-    case 83: case 275: case 276: case 283: case 289: case 290:
+    case 87: /* SLING */ case 275: case 276: case 283: case 289: case 290:
         return true;
     case 78: case 220:
         return (obj.spe | 0) < 1;
     case 217: case 218: case 219:
         return !(obj.cobj && obj.cobj.length);
     default:
-        if (obj.oclass === 3 /* SCROLL_CLASS */) return true;
+        if (obj.oclass === SCROLL_CLASS) return true;
         if ((OBJECTS[obj.otyp]?.material | 0) === 6 /* CLOTH */) return true;
         return false;
     }
@@ -5417,6 +5090,41 @@ async function dopush(sx, sy, rx, ry, otmp, costly) {
            leaving and triggering Kops, switch it to stolen_value */
         await stolen_value(otmp, sx, sy, true, false);
     }
+}
+
+// C ref: hack.c test_move() DO_MOVE boulder arm (hack.c:1217 run stop, then
+// moverock()).  Returns true when the step is refused (hero stays put).
+async function test_move_boulder(newx, newy) {
+    const u = game.u;
+    const bobj = boulder_at(newx, newy);
+    // C ref: hack.c:1217 — a hero who is rushing/running/travelling
+    // (context.run >= 2) stops in front of a boulder instead of pushing it,
+    // and C's `if (!test_move(...DO_MOVE)) { move = 0; nomul(0); }` at
+    // hack.c:2841 ends the run there.  rhack() still forces context.move
+    // back on for a command that returned ECMD_TIME, so travel's first step
+    // costs the turn anyway (hack.js travel_walk()).
+    if (bobj && (game.context.run || 0) >= 2
+        && !Blind() && !Hallucination() && !could_move_onto_boulder(newx, newy)) {
+        if (game.flags?.mention_walls) { set_msg_xy(newx, newy); await pline('A boulder blocks your path.'); }
+        game.context.move = 0;
+        nomul(0);
+        return true;
+    }
+    if (bobj) {
+        // C ref: hack.c:1001 test_move() starts with context.door_opened = FALSE;
+        // moverock()'s nopick arm sets it (with context.move) when the hero
+        // learned something, and domove_core() 2844 then keeps the turn.
+        game.context.door_opened = false;
+        const pushed = await moverock(bobj, newx, newy, u.dx, u.dy);
+        if (pushed < 0) {
+            // Boulder couldn't be pushed: hero stays put, no turn elapses
+            // unless door_opened kept the move.
+            if (!game.context.door_opened) game.context.move = 0;
+            return true;
+        }
+        // Boulder rolled away -> the move onto its old square proceeds.
+    }
+    return false;
 }
 
 // C ref: hack.c moverock()/moverock_core() (hack.c:335-638), the hero pushing
@@ -6103,7 +5811,7 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // non-pname monster takes THE, a named one takes NONE.  A displaced
     // peaceful non-pet is described with the "peaceful" adjective
     // ("the peaceful gnome"), and a named one suppresses "saddled ".
-    const _given = mtmp.mgivenname || mtmp.mextra?.mgivenname;
+    const _given = MGIVENNAME(mtmp);
     const { type_is_pname } = await import('./objnam.js');
     const who = x_monnam(mtmp,
         mtmp.mtame ? /*ARTICLE_YOUR*/ 3
@@ -6114,8 +5822,7 @@ async function domove_swap_with_pet(mtmp, x, y) {
 
     // C ref: hack.c:2178 — check for displacing it into pools and traps.
     const { minliquid } = await import('./mon.js');
-    const { mon_mintrap, Trap_Effect_Finished, Trap_Caught_Mon, Trap_Moved_Mon,
-            Trap_Killed_Mon } = await import('./monmove.js');
+    const { mon_mintrap } = await import('./monmove.js');
     const tres = (await minliquid(mtmp)) ? Trap_Killed_Mon : await mon_mintrap(mtmp, 0);
     if (tres === Trap_Caught_Mon || tres === Trap_Moved_Mon) {
         /* there's already been a trap message, reinforce it */
@@ -6138,7 +5845,6 @@ async function domove_swap_with_pet(mtmp, x, y) {
             (await import('./attrib.js')).adjalign(-15);
         }
     }
-    void Trap_Effect_Finished;
     return true;
 }
 
@@ -6154,8 +5860,13 @@ async function domove_displaceu(mtmp, x, y) {
           && !(mtmp.msleeping || !mtmp.mcanmove || (mtmp.mfrozen | 0) > 0)
           && !mtmp.meating && !mtmp.mtrapped
           && !u.utrap && !u.ustuck && !u.usteed)) return false;
+    // C ref: hack.c:1973-1978 — a diagonal swap is refused when either the
+    // displacer beast (bad_rock(mtmp->data)) or the hero (bad_rock(youmonst.data))
+    // could not squeeze between the two orthogonal rock squares.
+    const { bad_rock: bad_rock_mon } = await import('./monmove.js');
     if (u.dx && u.dy
         && (u.umonnum === PM_GRID_BUG
+            || (bad_rock_mon(mtmp.data, x, u.uy0) && bad_rock_mon(mtmp.data, u.ux0, y))
             || (bad_rock_hero(u.ux0, y) && bad_rock_hero(x, u.uy0)))) return false;
     const { goodpos, GP_ALLOW_U } = await import('./teleport.js');
     return goodpos(u.ux0, u.uy0, mtmp, GP_ALLOW_U);
@@ -6211,7 +5922,9 @@ async function hero_displaced_by_mon(mtmp, x, y) {
 // ════════════════════════════════════════════════════════════════════════════
 
 // C ref: hack.h:1456 — extended command return flags.
-import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL } from './const.js';
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL, Trap_Caught_Mon, Trap_Moved_Mon, Trap_Killed_Mon } from './const.js';
+import { mungspaces } from './hacklib.js';
+import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 
 // C ref: func_tab.h — extended command flags.
 const IFBURIED = 0x0001, AUTOCOMPLETE = 0x0002, WIZMODECMD = 0x0004,
@@ -6293,19 +6006,6 @@ function cmd_which_armor(mon, slot) {
         if (((o.owornmask || 0) & slot) !== 0) return o;
     return null;
 }
-// C ref: steed.c can_saddle(mtmp).  (js/makemon.js keeps the other copy
-// private; this mirrors it off the same defsym MONSYM class indices.)
-const CMD_STEED_CLASSES = new Set([17, 21, 27, 29, 30, 36]);
-function cmd_can_saddle(mtmp) {
-    const ptr = mtmp?.data;
-    if (!ptr || !CMD_STEED_CLASSES.has(ptr.mcls)) return false;
-    if ((ptr.msize ?? 2 /*MZ_MEDIUM*/) < 2) return false;
-    if ((ptr.mflags1 & M1_HUMANOID) && ptr.mcls !== 29 /*S_CENTAUR*/)
-        return false;
-    const whirly = ptr.mcls === 22 /*S_VORTEX*/ || ptr.name === 'air elemental';
-    return !(ptr.mflags1 & M1_AMORPHOUS) && ptr.mcls !== 54 /*S_GHOST*/
-        && !whirly && !(ptr.mflags1 & M1_UNSOLID);
-}
 // C ref: obj.h Is_container(o) — LARGE_BOX..BAG_OF_TRICKS.
 const BAG_OF_TRICKS_CMD = 220;
 function cmd_Is_container(o) {
@@ -6313,25 +6013,6 @@ function cmd_Is_container(o) {
 }
 const SADDLE_CMD = 235, BOULDER_CMD = 475, FOOD_CLASS_CMD = 7;
 const W_SADDLE_CMD = 0x00100000;   // prop.h W_SADDLE (js/const.js)
-const BOLT_LIM_CMD = 8;            // hack.h BOLT_LIM
-const VIBRATING_SQUARE_CMD = 24;   // trap.h trap types
-// C ref: hack.h distmin() — Chebyshev distance.
-function cmd_distmin(x0, y0, x1, y1) {
-    return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
-}
-// C ref: mthrowu.c linedup(ax,ay, bx,by, boulderhandling).  js/monmove.js keeps
-// the full copy (with clear_path()/blocking_terrain()) private; there_cmd_menu_far
-// is the only caller here and passes boulderhandling == 1, which returns before
-// the rn2(2 + boulderspots) roll, so this draws nothing either way.
-function cmd_linedup(ax, ay, bx, by, boulderhandling) {
-    const tbx = ax - bx, tby = ay - by;
-    if (tbx === 0 && tby === 0) return false;
-    if (!((tbx === 0 || tby === 0 || Math.abs(tbx) === Math.abs(tby))
-          && cmd_distmin(tbx, tby, 0, 0) < BOLT_LIM_CMD))
-        return false;
-    if (cansee(ax, ay)) return true;
-    return boulderhandling === 1;
-}
 // C ref: hacklib.c visctrl() — "^X"/"M-x" rendering.  visctrl_code() above
 // takes a code; this accepts C's `char`.
 export function cmd_visctrl(c) {
@@ -6353,9 +6034,7 @@ function cmd_letter(c) {
 }
 // C ref: hack.h unmeta(c).
 function cmd_unmeta(c) { return c & 0x7f; }
-// C ref: hack.h NODIAG(mnum) == (mnum == PM_GRID_BUG).  NB: while the hero is
-// NOT polymorphed u.umonnum is a ROLE index in this port, so this only answers
-// meaningfully under u.Upolyd.
+// C ref: hack.h NODIAG(mnum) == (mnum == PM_GRID_BUG).
 function cmd_NODIAG(mnum) { return mnum === PM_GRID_BUG; }
 // C ref: hacklib.c strsubst(bp, orig, replacement) — first occurrence only.
 function cmd_strsubst(bp, orig, repl) {
@@ -6372,8 +6051,6 @@ function cmd_pmatchi(pattern, str) {
 function cmd_strstri(hay, needle) {
     return String(hay).toLowerCase().includes(String(needle).toLowerCase());
 }
-// C ref: hacklib.c mungspaces() — collapse runs of whitespace, trim.
-function cmd_mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 
 // The window layer.  Same local-stub convention js/invent.js and js/end.js use:
 // this port renders through frozen/terminal.js, not through C's winid protocol.
@@ -6391,11 +6068,14 @@ function cmd_mark_synch() {}
 // .debug_fuzzer is never set here, so the branches guarded by it never run).
 function cmd_randomkey() { return 0x1b; }
 // ── gc.Cmd and the Cmd_bind list ───────────────────────────────────────────
-// C ref: func_tab.h struct Cmd_bind + hack.h struct cmd.  This is the C-shaped
-// mirror: a singly linked list of {key, userbind, param, cmd, next}.  The LIVE
-// table this port dispatches through is numpad_cmd()'s Map (see reset_commands
-// near the top of the file); the two are deliberately separate because nothing
-// down here is reachable.
+// C ref: func_tab.h struct Cmd_bind + hack.h struct cmd.  The ONE command
+// binding table: a singly linked list of {key, userbind, param, cmd, next}.
+// rhack(), getpos/getdir, the '&' and '?' listings and the rc's BIND= lines all
+// read and write it.  C builds it in initoptions_init() (reset_commands(TRUE)),
+// applies the rc (BIND= via bind_key(), number_pad via reset_commands(FALSE))
+// and keeps it for the whole game.  This port keeps the rc's settings on `game`
+// (flags.number_pad, flags.rest_on_space, keybind), so the table is rebuilt from
+// them whenever they differ from what it was last built from.
 const gc_Cmd = {
     serialno: 0, num_pad: false, pcHack_compat: false, phone_layout: false,
     swap_yz: false, cmdbinds: null, extcmd_char: '#',
@@ -6405,36 +6085,125 @@ const gc_Cmd = {
 };
 const NUM_MOUSE_BUTTONS = 2;
 
-// C ref: cmd.c:3344 reset_commands(TRUE) — the `initial` branch plus the tail
-// that every call runs: fill gc.Cmd.spkeys[] from spkeys_binds[], build the
-// Cmd_bind list from extcmdlist and commands_init()'s number_pad extras, then
-// let the movement keys claim their three forms.  C runs this from
-// initoptions_init(); the mirror is built on FIRST USE so importing this file
-// costs nothing, and reset_commands()'s Map-based port near the top of the file
-// stays the table the live dispatcher reads.
-let cmd_binds_ready = false;
+let cmd_binds_sig = null;
+let cmd_backed_dir_cmd = false;
 const cmd_back_dir_key = Array.from({ length: N_DIRS },
                                     () => new Array(N_MOVEMODES).fill(0));
 const cmd_back_dir_cmd = Array.from({ length: N_DIRS },
                                     () => new Array(N_MOVEMODES).fill(null));
 
+function cmd_binds_signature() {
+    const kb = game?.keybind;
+    let sig = `${game?.flags?.number_pad}|${game?.flags?.rest_on_space ? 1 : 0}`;
+    if (kb)
+        for (const k in kb)
+            sig += `|${k}=${kb[k]}`;
+    return sig;
+}
+
+// Bring the table in line with the rc: a no-op unless number_pad,
+// rest_on_space or the BIND= set changed since the last call.
 function cmd_binds_init_once() {
-    let i, dir, mode;
+    const sig = cmd_binds_signature();
 
-    if (cmd_binds_ready)
+    if (sig === cmd_binds_sig)
         return;
-    cmd_binds_ready = true;   /* before any cmdbind_get() below recurses */
+    cmd_binds_sig = sig;   /* before any cmdbind_get() below recurses */
 
-    for (i = 0; i < spkeys_binds.length; i++)
-        gc_Cmd.spkeys[spkeys_binds[i].nhkf] = spkeys_binds[i].key;
-    cmd_commands_init();
+    gc_Cmd.cmdbinds = null;
+    gc_Cmd.mousebtn = [null, null, null];
+    cmd_backed_dir_cmd = false;
+    unrestonspace = null;
 
+    cmd_reset_commands(true, null);
+
+    const raw = game?.flags?.number_pad;
+    const ifl = raw === undefined ? null : numpad_iflags(raw);
+    if (ifl)
+        cmd_reset_commands(false, ifl);
+
+    /* nethackrc BIND= lines, C parsebindings() -> bind_key(key, cmd, TRUE) */
+    if (game?.keybind) {
+        for (const k in game.keybind)
+            cmd_bind_key(k.charCodeAt(0) & 0xff, game.keybind[k], true);
+        update_rest_on_space();
+    }
+}
+
+// C ref: cmd.c:3344 reset_commands(initial) — iflags carries num_pad and
+// num_pad_mode (options.c optfn_number_pad()).
+function cmd_reset_commands(initial, iflags) {
+    let flagtemp;
+    let c, i, updated = 0;
+    let dir, mode;
+    const ylist = [0x79, 0x59, kC('y'), kM('y') & 0xff, kM('Y') & 0xff,
+                   kM(kC('y')) & 0xff];
+
+    if (initial) {
+        updated = 1;
+        gc_Cmd.num_pad = false;
+        gc_Cmd.pcHack_compat = gc_Cmd.phone_layout = gc_Cmd.swap_yz = false;
+        for (i = 0; i < spkeys_binds.length; i++)
+            gc_Cmd.spkeys[spkeys_binds[i].nhkf] = spkeys_binds[i].key;
+        cmd_commands_init();
+    } else {
+        if (cmd_backed_dir_cmd) {
+            for (dir = 0; dir < N_DIRS; dir++)
+                for (mode = 0; mode < N_MOVEMODES; mode++)
+                    cmdbind_add_bind(cmd_back_dir_key[dir][mode],
+                                     cmd_back_dir_cmd[dir][mode], false);
+        }
+
+        /* basic num_pad */
+        flagtemp = iflags.num_pad;
+        if (flagtemp !== gc_Cmd.num_pad) {
+            gc_Cmd.num_pad = flagtemp;
+            ++updated;
+        }
+        /* swap_yz mode (only applicable for !num_pad) */
+        flagtemp = (iflags.num_pad_mode & 1) ? !gc_Cmd.num_pad : false;
+        if (flagtemp !== gc_Cmd.swap_yz) {
+            gc_Cmd.swap_yz = flagtemp;
+            ++updated;
+            for (i = 0; i < ylist.length; i++) {
+                c = ylist[i] & 0xff;
+                cmdbind_swapkeys(c, c + 1);
+            }
+        }
+        /* MSDOS compatibility mode (only applicable for num_pad) */
+        flagtemp = (iflags.num_pad_mode & 1) ? gc_Cmd.num_pad : false;
+        if (flagtemp !== gc_Cmd.pcHack_compat) {
+            gc_Cmd.pcHack_compat = flagtemp;
+            ++updated;
+            c = kM('0') & 0xff;
+            if (gc_Cmd.pcHack_compat)
+                cmdbind_add_bind(c, ext_func_tab_from_func('dotypeinv'), false);
+            else
+                cmdbind_remove(c);
+        }
+        /* phone keypad layout (only applicable for num_pad) */
+        flagtemp = (iflags.num_pad_mode & 2) ? gc_Cmd.num_pad : false;
+        if (flagtemp !== gc_Cmd.phone_layout) {
+            gc_Cmd.phone_layout = flagtemp;
+            ++updated;
+            for (i = 0; i < 3; i++) {
+                c = 0x31 + i;                    /* 1,2,3 <-> 7,8,9 */
+                cmdbind_swapkeys(c, c + 6);
+                c = (kM('1') & 0xff) + i;        /* M-1,M-2,M-3 <-> M-7,M-8,M-9 */
+                cmdbind_swapkeys(c, c + 6);
+            }
+        }
+    }
+
+    /* choose updated movement keys */
+    if (updated)
+        gc_Cmd.serialno++;
     gc_Cmd.dirchars = !gc_Cmd.num_pad
         ? (!gc_Cmd.swap_yz ? SDIR : SDIR_SWAP_YZ)
         : (!gc_Cmd.phone_layout ? NDIR : NDIR_PHONE_LAYOUT);
     gc_Cmd.alphadirchars = !gc_Cmd.num_pad ? gc_Cmd.dirchars : SDIR;
 
-    /* back up the commands & keys overwritten by the new movement keys */
+    /* back up the commands & keys overwritten by new movement keys */
     for (dir = 0; dir < N_DIRS; dir++) {
         for (mode = MV_WALK; mode < N_MOVEMODES; mode++) {
             let di = gc_Cmd.dirchars.charCodeAt(dir);
@@ -6455,6 +6224,7 @@ function cmd_binds_init_once() {
             cmdbind_remove(di);
         }
     }
+    cmd_backed_dir_cmd = true;
 
     /* bind the new keys to movement commands */
     for (i = 0; i < N_DIRS; i++) {
@@ -6596,6 +6366,17 @@ export function cmdbind_remove(key) {
         }
         prev = bind;
         bind = bind.next;
+    }
+}
+
+// C ref: cmd.c cmdbind_swapkeys(key1, key2).
+function cmdbind_swapkeys(key1, key2) {
+    const bind1 = cmdbind_get(key1);
+    const bind2 = cmdbind_get(key2);
+
+    if (bind1 && bind2) {
+        bind1.key = key2;
+        bind2.key = key1;
     }
 }
 
@@ -7089,12 +6870,6 @@ async function extlist_waitforspace(s) {
     }
 }
 
-// C ref: win/tty/wintty.c default_menu_cmds[].  gm.mapped_menu_cmds is empty
-// absent a menu_* rebind, so this is the full accepted non-selector set.
-const EXTLIST_DEFAULT_MENU_CMDS = MENU_FIRST_PAGE + MENU_LAST_PAGE
-    + MENU_NEXT_PAGE + MENU_PREVIOUS_PAGE + MENU_SELECT_ALL + MENU_UNSELECT_ALL
-    + MENU_INVERT_ALL + MENU_SELECT_PAGE + MENU_UNSELECT_PAGE + MENU_INVERT_PAGE
-    + MENU_SEARCH;
 
 // C ref: win/tty/wintty.c tty_end_menu() page layout (lmax = min(52,rows-1),
 // npages = ceil(nitems/lmax)) plus tty_display_nhwindow()'s "reaches the
@@ -7155,11 +6930,13 @@ async function extlist_select_menu(m) {
         }
         const page = m.pages[curr_page];
         const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
-        const morc = await extlist_waitforspace(
-            sels + (searchAlias ? 's' : '') + ' \x1b\n\r' + EXTLIST_DEFAULT_MENU_CMDS);
+        let morc = await extlist_waitforspace(
+            sels + (searchAlias ? 's' : '') + ' \x1b\n\r' + mapped_menu_cmds()
+            + default_menu_cmds);
         // MENU_EXPLICIT_CHOICE: a page-local selector keeps its own meaning
         // even when it also happens to be a menu command (':' vs a ':' item).
         if (sels.indexOf(morc) >= 0) return morc;
+        morc = map_menu_cmd(morc);
         if (morc === 's' && searchAlias) return ':';
         switch (morc) {
         case '\x1b':                              // cancel
@@ -7334,7 +7111,7 @@ export async function doextlist() {
         if (search) {
             promptbuf = 'Extended command list search phrase?';
             const raw = await hooked_tty_getlin(promptbuf, null);
-            searchbuf = cmd_mungspaces(raw);
+            searchbuf = mungspaces(raw);
             if (searchbuf[0] === '\x1b')
                 searchbuf = '';
             if (searchbuf)
@@ -7446,7 +7223,7 @@ export async function makemap_prepost(pre, wiztower) {
         (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
         if (svc.polearm) svc.polearm.hitmon = null;
         /* escape from trap */
-        reset_utrap_cmd();
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
         await check_special_room(true);   /* room exit */
         game.dndest = null;
         game.updest = null;
@@ -7969,7 +7746,7 @@ export async function handler_rebind_keys_add(keyfirst) {
                 const out = { buf: '' };
 
                 cmd_getlin(`Command ${ec.ef_txt} requires a parameter:`, out);
-                cmdstr = `${ec.ef_txt}(${cmd_mungspaces(out.buf)})`;
+                cmdstr = `${ec.ef_txt}(${mungspaces(out.buf)})`;
             } else {
                 cmdstr += ec.ef_txt;
             }
@@ -7986,6 +7763,9 @@ export async function handler_rebind_keys_add(keyfirst) {
         prevcmd = cmdbind_get(key);
 
         if (cmd_bind_key(key, cmdstr, true)) {
+            /* the rc-derived inputs the table is rebuilt from must keep it */
+            (game.keybind ||= {})[String.fromCharCode(key)] = cmdstr;
+            cmd_binds_sig = cmd_binds_signature();
             if (prevcmd && prevcmd.cmd !== ec) {
                 await pline(`Changed key '${cmd_key2txt(key)}' from `
                     + `"${prevcmd.cmd.ef_txt}" to "${cmdstr}".`);
@@ -8355,7 +8135,7 @@ export function cmd_from_func(fn) {
     // Use the same live table and user overrides as rhack(), not the separate
     // default-only table maintained by the legacy command-menu helpers.
     const matches = key => names.has(
-        game.keybind?.[String.fromCharCode(key)] ?? Cmd.binds.get(key));
+        live_bind_name(key));
     let ret = '\0';
     for (let key = 1; key < 256; key++) {
         if (key === 0x20) continue;
@@ -8598,9 +8378,9 @@ export function dxdy_moveok() {
 // repaint?
 export function redraw_cmd(c) {
     const uc = typeof c === 'string' ? c.charCodeAt(0) : (c & 0xff);
-    const bind = cmdbind_get(uc);
-
-    return !!(bind && bind.cmd && bind.cmd.ef_funct === 'doredraw');
+    /* the live number_pad-aware table (reset_commands() restores ^L to redraw
+       when number_pad takes the rush keys away) */
+    return live_bind_name(uc) === 'redraw';
 }
 
 // C ref: cmd.c:3931 get_adjacent_loc(prompt, emsg, x, y, cc).  Uses getdir()
@@ -8628,39 +8408,36 @@ export async function get_adjacent_loc(prompt, emsg, x, y, cc) {
     return 1;
 }
 
-// C ref: cmd.c:4122 show_direction_keys(win, centerchar, nodiag) — 'win' should
-// specify a window using a fixed-width font.
-export function show_direction_keys(win, centerchar, nodiag) {
-    let buf;
+// C ref: cmd.c:4122 show_direction_keys(win, centerchar, nodiag) — the legend
+// rows, drawn from the live bindings of the do_move_* commands.
+export function direction_key_rows(centerchar, nodiag) {
+    const k = (fn) => cmd_visctrl(cmd_from_func(fn));
 
     if (!centerchar)
         centerchar = ' ';
 
     if (nodiag) {
-        buf = `             ${cmd_visctrl(cmd_from_func(do_move_north))}   `;
-        cmd_putstr(win, 0, buf);
-        cmd_putstr(win, 0, '             |   ');
-        buf = `          ${cmd_visctrl(cmd_from_func(do_move_west))}- `
-            + `${centerchar} -${cmd_visctrl(cmd_from_func(do_move_east))}`;
-        cmd_putstr(win, 0, buf);
-        cmd_putstr(win, 0, '             |   ');
-        buf = `             ${cmd_visctrl(cmd_from_func(do_move_south))}   `;
-        cmd_putstr(win, 0, buf);
-    } else {
-        buf = `          ${cmd_visctrl(cmd_from_func(do_move_northwest))}  `
-            + `${cmd_visctrl(cmd_from_func(do_move_north))}  `
-            + `${cmd_visctrl(cmd_from_func(do_move_northeast))}`;
-        cmd_putstr(win, 0, buf);
-        cmd_putstr(win, 0, '           \\ | / ');
-        buf = `          ${cmd_visctrl(cmd_from_func(do_move_west))}- `
-            + `${centerchar} -${cmd_visctrl(cmd_from_func(do_move_east))}`;
-        cmd_putstr(win, 0, buf);
-        cmd_putstr(win, 0, '           / | \\ ');
-        buf = `          ${cmd_visctrl(cmd_from_func(do_move_southwest))}  `
-            + `${cmd_visctrl(cmd_from_func(do_move_south))}  `
-            + `${cmd_visctrl(cmd_from_func(do_move_southeast))}`;
-        cmd_putstr(win, 0, buf);
+        return [
+            `             ${k(do_move_north)}   `,
+            '             |   ',
+            `          ${k(do_move_west)}- ${centerchar} -${k(do_move_east)}`,
+            '             |   ',
+            `             ${k(do_move_south)}   `,
+        ];
     }
+    return [
+        `          ${k(do_move_northwest)}  ${k(do_move_north)}  ${k(do_move_northeast)}`,
+        '           \\ | / ',
+        `          ${k(do_move_west)}- ${centerchar} -${k(do_move_east)}`,
+        '           / | \\ ',
+        `          ${k(do_move_southwest)}  ${k(do_move_south)}  ${k(do_move_southeast)}`,
+    ];
+}
+
+// 'win' should specify a window using a fixed-width font.
+export function show_direction_keys(win, centerchar, nodiag) {
+    for (const row of direction_key_rows(centerchar, nodiag))
+        cmd_putstr(win, 0, row);
 }
 
 // C ref: cmd.c:4171 help_dir(sym, spkey, msg) — explain the choices when the
@@ -8901,7 +8678,7 @@ export async function there_cmd_menu_self(win, x, y, act) {
         mcmd_addmenu(win, MCMD_CAST_SPELL, 'Cast a spell'), ++K;
 
     if ((ttmp = t_at(x, y)) != null && ttmp.tseen) {
-        if (ttmp.ttyp !== VIBRATING_SQUARE_CMD)
+        if (ttmp.ttyp !== VIBRATING_SQUARE)
             mcmd_addmenu(win, MCMD_UNTRAP_HERE,
                          'Attempt to disarm trap'), ++K;
     }
@@ -8952,7 +8729,7 @@ export function there_cmd_menu_next2u(win, x, y, mod, act) {
 
     if ((ttmp = t_at(x, y)) != null && ttmp.tseen) {
         mcmd_addmenu(win, MCMD_LOOK_TRAP, 'Examine trap'), ++K;
-        if (ttmp.ttyp !== VIBRATING_SQUARE_CMD)
+        if (ttmp.ttyp !== VIBRATING_SQUARE)
             mcmd_addmenu(win, MCMD_UNTRAP_TRAP,
                          'Attempt to disarm trap'), ++K;
         mcmd_addmenu(win, MCMD_MOVE_DIR, 'Move on the trap'), ++K;
@@ -8979,7 +8756,7 @@ export function there_cmd_menu_next2u(win, x, y, mod, act) {
         buf = `Remove saddle from ${mnam}`;
         mcmd_addmenu(win, MCMD_REMOVE_SADDLE, buf), ++K;
     }
-    if (mtmp && cmd_can_saddle(mtmp) && !cmd_which_armor(mtmp, W_SADDLE_CMD)
+    if (mtmp && can_saddle(mtmp) && !cmd_which_armor(mtmp, W_SADDLE_CMD)
         && carrying(SADDLE_CMD)) {
         buf = `Put saddle on ${mon_nam(mtmp)}`;
         mcmd_addmenu(win, MCMD_APPLY_SADDLE, buf), ++K;
@@ -9017,7 +8794,7 @@ export function there_cmd_menu_far(win, x, y, mod) {
     const u = game.u;
 
     if (mod === CLICK_1) {
-        if (cmd_linedup(u.ux, u.uy, x, y, 1)
+        if (linedup(u.ux, u.uy, x, y, 1)
             && dist2(u.ux, u.uy, x, y) < 18 * 18)
             mcmd_addmenu(win, MCMD_THROW_OBJ, 'Throw something'), ++K;
 

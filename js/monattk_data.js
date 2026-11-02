@@ -492,6 +492,14 @@ export function dmgtype(ptr, dtyp) {
     return attacktype_fordmg(ptr, AT_ANY, dtyp);
 }
 
+/* C ref: mondata.c:654 sticks(ptr) — a holder: AD_STCK, or AD_WRAP without an
+   AT_ENGL attack (an engulfer isn't a holder), or AT_HUGS. */
+export function sticks(ptr) {
+    return dmgtype(ptr, AD_STCK)
+        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
+        || attacktype(ptr, AT_HUGS);
+}
+
 /* C ref: mondata.c noattacks(ptr) — `for (i..NATTK) if (mattk[i].aatyp)
    return FALSE; return TRUE`.  NOT !attacktype(ptr, AT_ANY): C's
    attacktype_fordmg() matches AT_ANY/AD_ANY against mattk[0] unconditionally,

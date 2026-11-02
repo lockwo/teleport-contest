@@ -22,6 +22,7 @@ import {
     add_sp_room, bigrm_wallification, gx, gy, quest_level_init_solidfill, reset_xystart_size,
     splev_link_doors_rooms, splev_mkstairs_at,
 } from '../sp_lev.js';
+import { flood_fill_rm, ffrm } from '../mkmap.js';
 import { quest_align_shuffle } from './quest_home_common.js';
 import {
     quest_monster_class_rnd, quest_monster_named_rnd, quest_object_rnd, quest_trap_random,
@@ -114,66 +115,9 @@ function mkmap_pass_buffered(bg_typ, fg_typ, decide) {
         }
 }
 
-// flood_fill_rm bookkeeping (C ref: mkmap.c gm.min_rx etc, the module-level
-// scratch the anyroom=FALSE flood fill shares with its caller join_map()).
-let mk_min_rx, mk_max_rx, mk_min_ry, mk_max_ry, mk_n_loc_filled;
-
-// C ref: mkmap.c flood_fill_rm() — the anyroom=FALSE arm only (used by
-// join_map(); the anyroom=TRUE arm is a different call site, already ported
-// as sp_lev.js's flood_fill_room() for lspo_region()'s irregular regions).
-function mkmap_flood_fill_rm(sx, sy, rmno) {
-    const map = game.level;
-    const fg_typ = map.at(sx, sy).typ;
-
-    while (sx > 0 && map.at(sx, sy).typ === fg_typ && map.at(sx, sy).roomno !== rmno)
-        sx--;
-    sx++;
-
-    if (sx < mk_min_rx) mk_min_rx = sx;
-    if (sy < mk_min_ry) mk_min_ry = sy;
-
-    let i;
-    for (i = sx; i <= MK_WIDTH && map.at(i, sy).typ === fg_typ; i++) {
-        map.at(i, sy).roomno = rmno;
-        map.at(i, sy).lit = false;
-        mk_n_loc_filled++;
-    }
-    const nx = i;
-
-    if (isok(sx, sy - 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy - 1).typ === fg_typ) {
-                if (map.at(i, sy - 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy - 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy - 1)) && map.at(i - 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy - 1).roomno !== rmno)
-                        mkmap_flood_fill_rm(i - 1, sy - 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy - 1)) && map.at(i + 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy - 1).roomno !== rmno)
-                        mkmap_flood_fill_rm(i + 1, sy - 1, rmno);
-                }
-            }
-    }
-    if (isok(sx, sy + 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy + 1).typ === fg_typ) {
-                if (map.at(i, sy + 1).roomno !== rmno) mkmap_flood_fill_rm(i, sy + 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy + 1)) && map.at(i - 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy + 1).roomno !== rmno)
-                        mkmap_flood_fill_rm(i - 1, sy + 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy + 1)) && map.at(i + 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy + 1).roomno !== rmno)
-                        mkmap_flood_fill_rm(i + 1, sy + 1, rmno);
-                }
-            }
-    }
-
-    if (nx > mk_max_rx) mk_max_rx = nx - 1;
-    if (sy > mk_max_ry) mk_max_ry = sy;
-}
+// C ref: mkmap.c flood_fill_rm(anyroom=FALSE) for join_map; mkmap.js owns the one
+// implementation and the gm.min_rx.. / gn.n_loc_filled bookkeeping (ffrm).
+function mkmap_flood_fill_rm(sx, sy, rmno) { flood_fill_rm(sx, sy, rmno, false, false); }
 
 // C ref: mkmap.c dig_corridor().  Only ever called (below) with ftyp == the
 // cavern's fg_typ (ROOM) and nxcor == FALSE, so the `ftyp==CORR` secret-door
@@ -270,19 +214,19 @@ function mkmap_join_map(bg_typ, fg_typ) {
         for (let y = 1; y < MK_HEIGHT; y++) {
             const loc = game.level?.at(x, y);
             if (loc && loc.typ === fg_typ && loc.roomno === NO_ROOM) {
-                mk_min_rx = mk_max_rx = x;
-                mk_min_ry = mk_max_ry = y;
-                mk_n_loc_filled = 0;
+                ffrm.min_rx = ffrm.max_rx = x;
+                ffrm.min_ry = ffrm.max_ry = y;
+                ffrm.n_loc_filled = 0;
                 mkmap_flood_fill_rm(x, y, game.level.nroom + ROOMOFFSET);
-                if (mk_n_loc_filled > 3) {
-                    const croom = add_sp_room(mk_min_rx, mk_min_ry, mk_max_rx, mk_max_ry,
+                if (ffrm.n_loc_filled > 3) {
+                    const croom = add_sp_room(ffrm.min_rx, ffrm.min_ry, ffrm.max_rx, ffrm.max_ry,
                                               false, OROOM, true, 0, false);
                     croom.irregular = true;
                     if (game.level.nroom >= (MAXNROFROOMS * 2))
                         return mkmap_join_map_corridors(bg_typ, fg_typ);
                 } else {
-                    for (let sx = mk_min_rx; sx <= mk_max_rx; sx++)
-                        for (let sy = mk_min_ry; sy <= mk_max_ry; sy++) {
+                    for (let sx = ffrm.min_rx; sx <= ffrm.max_rx; sx++)
+                        for (let sy = ffrm.min_ry; sy <= ffrm.max_ry; sy++) {
                             const l2 = game.level.at(sx, sy);
                             if (l2.roomno === game.level.nroom + ROOMOFFSET) {
                                 l2.typ = bg_typ;

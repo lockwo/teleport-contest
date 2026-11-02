@@ -9,8 +9,7 @@
 // TWO CONVENTION NOTES that bite anyone editing the table:
 //   * artilist[] has NO Palantir of Westernesse.  Its A() row in artilist.h is
 //     inside `#if 0`, so the ART_xx enum skips it and NROFARTIFACTS is 33, not
-//     34.  js/invent.js's ARTI_TOUCH_PROPS *does* include it at index 24, which
-//     shifts Staff of Aesculapius..Eye of the Aethiopica up by one there.
+//     34.
 //   * artilist[].role/.race hold mons[] indices (PM_KNIGHT == 335), not the
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
@@ -21,7 +20,8 @@ import { hcolor } from './do_name.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost, stamp_fobj, uncurse } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { fuzzymatch, simple_typename, cxname } from './objnam.js';
+import { fuzzymatch, simple_typename, cxname, The } from './objnam.js';
+import { align_str } from './role.js';
 import { monster_by_pmidx } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
@@ -33,7 +33,7 @@ import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimag
          probe_monster, flashburn, lightdamage } from './zap.js';
 import { worn_extrinsic, worn_blocked, xname, yname, otense, killer_xname, Hate_silver, getobj, throwit,
          hold_another_object, GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_PROMPT,
-         GETOBJ_ALLOWCNT, dropx } from './invent.js';
+         GETOBJ_ALLOWCNT, dropx, carried, Tobjnam } from './invent.js';
 import { healmon, is_vampshifter, fmonOrder, migrate_mon, set_ustuck, DEADMONSTER } from './mon.js';
 import { menuHeadAttr } from './menuattr.js';
 import { mon_aligntyp } from './minion.js';
@@ -47,15 +47,15 @@ async function mbodypart(mon, part) { return (await import('./polyself.js')).mbo
 async function body_part(part) { return (await import('./polyself.js')).body_part(part); }
 import { mflags1_of, mflags2_of, mflags3_of, msound_of, MS_NEMESIS, M1_AMORPHOUS, M1_NOHEAD, M2_UNDEAD, M2_WERE, M2_ELF, M2_ORC, M2_DEMON, M2_GIANT, M2_LORD, M2_PRINCE, M2_HUMAN, M2_DWARF, M2_GNOME, noncorporeal, is_undead_flag as is_undead, is_were_flag as is_were, is_demon_flag as is_demon, is_golem, nonliving } from './monflags_data.js';
 import {
-    MATTK,
+    MATTK, dmgtype,
     AT_ENGL, AT_HUGS, AT_MAGC,
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_BLND, AD_STUN, AD_SLOW, AD_PLYS, AD_DRLI, AD_STON, AD_STCK,
-    AD_WRAP, AD_WERE, AD_DISE, AD_HALU,
+    AD_WRAP, AD_WERE, AD_DISE, AD_HALU, sticks,
 } from './monattk_data.js';
 // prop.h W_* bits: const.js carries the real values.
 import { has_innate } from './exper.js';
-import { Poison_resistance } from './youprop.js';
+import { Poison_resistance, Half_physical_damage_hero, Drain_resistance_hero, Stone_resistance_hero, Antimagic_hero } from './youprop.js';
 import { invocation_pos } from './trap.js';
 import {
     W_ART, W_ARTI, W_WEP, W_SWAPWEP, W_QUIVER, W_BALL, W_SADDLE,
@@ -64,7 +64,8 @@ import {
     ONAME_VIA_NAMING, ONAME_WISH, ONAME_GIFT, ONAME_VIA_DIP, ONAME_LEVEL_DEF,
     ONAME_BONES, ONAME_RANDOM, ONAME_KNOW_ARTI,
     D_TRAPPED, IS_DOOR, A_CON, A_WIS, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, I_SPECIAL,
-    In_quest, NECK, MIGR_RANDOM, PL_PSIZ, ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
+    In_quest, NECK, MIGR_RANDOM, PL_PSIZ, ECMD_OK, ECMD_TIME, ECMD_CANCEL, ONAME, setONAME } from './const.js';
+import { youmonst_data } from './invent.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // artifact.h SPFX_* — special-effect bits
@@ -461,13 +462,6 @@ function youmonst() { return game.youmonst || game.u; }
 function is_you(mon) { return !!mon && (mon === game.youmonst || mon === game.u || mon === Symbol.for('youmonst')); }
 // C ref: youprop.h Upolyd.
 function Upolyd() { return !!game.u?.Upolyd; }
-// C ref: monst.h gy.youmonst.data; js/hack.js:588 — u.umonnum holds the
-// 0-based ROLE index when not polymorphed, so PM_ARCHEOLOGIST must be added.
-function youmonst_data() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(ROLE_PM_FIRST + (u?.umonnum ?? 0)) || u?.data || null;
-}
 function mon_data(mon) { return is_you(mon) ? youmonst_data() : (mon?.data || null); }
 // C ref: hack.h Role_if(pm) == (gu.urole.malenum == pm).
 function Role_if(pm) {
@@ -490,7 +484,7 @@ function uprop(name) { return game.u?.uprops?.[name] || 0; }
 function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
 // C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
 // (e.g. the Wizard's cloak of magic resistance).
-function Antimagic() { return !!game.u?.formprops?.Antimagic || !!Antimagic_zap(); }
+function Antimagic() { return Antimagic_hero(); }
 function Fire_resistance() {
     if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     return !!(uprop('Fire_resistance') || uprop('HFire_resistance')
@@ -512,12 +506,11 @@ function Shock_resistance() {
         || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
         || (youmonst_data()?.mresists & MR_ELEC));
 }
-function Drain_resistance() { return !!game.u?.formprops?.Drain_resistance || !!(uprop('Drain_resistance') || game.u?.Drain_resistance); }
-function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || !!(uprop('Stone_resistance') || game.u?.Stone_resistance); }
+function Drain_resistance() { return Drain_resistance_hero(); }
+function Stone_resistance() { return Stone_resistance_hero(); }
 // C ref: hack.h Maybe_Half_Phys(dmg) — halve, rounding up, under HALF_PHDAM.
 function Maybe_Half_Phys(dmg) {
-    return (game.u?.HHalf_physical_damage || game.u?.EHalf_physical_damage)
-        ? Math.trunc((dmg + 1) / 2) : dmg;
+    return Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 function invent_list() {
     return Array.isArray(game.invent) ? game.invent : (game.gi?.invent || []);
@@ -540,13 +533,6 @@ function is_mplayer(ptr) {
 function mattk_rows(ptr) { return ptr?.pmidx != null ? (MATTK[ptr.pmidx] || []) : []; }
 // C ref: mondata.c attacktype()/dmgtype() — [aatyp, adtyp, damn, damd].
 function attacktype(ptr, atyp) { return mattk_rows(ptr).some((a) => a[0] === atyp); }
-function dmgtype(ptr, dtyp) { return mattk_rows(ptr).some((a) => a[1] === dtyp); }
-// C ref: mondata.c sticks().
-function sticks(ptr) {
-    return dmgtype(ptr, AD_STCK)
-        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
-        || attacktype(ptr, AT_HUGS);
-}
 const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10;
 // C ref: mondata.c defended(mon, adtyp) — wielded artifact, or dragon scales
 // (an adult dragon counts as wearing its own).
@@ -786,7 +772,7 @@ export function mk_artifact(otmp, alignment = A_NONE, max_giftvalue = 99,
         }
         otmp.oeroded = 0;                /* prevent erosion from generating */
         otmp.oeroded2 = 0;
-        otmp.oname = a.name;             /* oname(otmp, a->name, NO_FLAGS) */
+        setONAME(otmp, a.name);          /* oname(otmp, a->name, NO_FLAGS) */
         otmp.oartifact = m;
         artifact_origin(otmp, ONAME_RANDOM);
         if (adjust_spe) {
@@ -866,7 +852,7 @@ export function oname_assign(obj, name, oflgs = 0) {
        it (e.g. Excalibur from prayer). */
     if (obj.oartifact || (name && exist_artifact(obj.otyp, name)))
         return false;
-    obj.oname = name; /* new_oname() removes the old name if one is present */
+    setONAME(obj, name); /* new_oname() removes the old name if one is present */
     if (name)
         artifact_exists(obj, name, true, oflgs);
     return true;
@@ -913,7 +899,7 @@ function inside_shop(x, y) {
 // leading "The " downcased to "the " so it reads inside a sentence ("because
 // of the Orb of Fate").
 export function bare_artifactname(obj) {
-    if (!obj?.oartifact) return (obj?.oname || "");
+    if (!obj?.oartifact) return ONAME(obj);
     const nm = artilist[obj.oartifact].name;
     return nm.startsWith('The ') ? `t${nm.slice(1)}` : nm;
 }
@@ -1386,16 +1372,6 @@ export function disp_artifact_discoveries() {
     }
     return { count: i, rows };
 }
-// C ref: align.c align_str().
-function align_str(alignment) {
-    switch (alignment) {
-    case A_LAWFUL: return "lawful";
-    case A_NEUTRAL: return "neutral";
-    case A_CHAOTIC: return "chaotic";
-    case A_NONE: return "unaligned";
-    default: return "unknown";
-    }
-}
 // C ref: artifact.c dump_artifact_info() — wizard-mode listing of the nine
 // tracking bits per artifact.
 export function dump_artifact_info() {
@@ -1528,15 +1504,7 @@ export async function touch_artifact(obj, mon) {
 async function losehp(n, knam) {
     await (await import('./do.js')).losehp_do(n, knam, 1 /*KILLED_BY*/);
 }
-// C ref: objnam.c The(str) for the artifact messages below.
-function The(str) { return upstart(the_artifact_name(str)); }
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-function carried(obj) { return invent_list().includes(obj); }
-// C ref: objnam.c Tobjnam(obj, verb) — The(xname(obj)) plus the verb agreeing
-// with the stack size.
-function Tobjnam(obj, verb) {
-    return `${The(xname(obj))} ${otense(obj, verb)}`;
-}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Magicbane
@@ -1651,7 +1619,7 @@ export async function Mb_hit(magr, mdef, mb, mdmg, dieroll, vis, hittee) {
                 }
             }
         } else {
-            if (rn2(2) && resist(mdef, WEAPON_CLASS, 0, false)) resisted = true;
+            if (rn2(2) && await resist(mdef, WEAPON_CLASS, 0, false)) resisted = true;
             else await (await import('./monmove.js')).monflee(mdef, 3, false, (mdef.mhp > mdmg.d));
         }
         if (!resisted) do_stun = false;
@@ -1801,7 +1769,7 @@ export async function artifact_hit(magr, mdef, otmp, mdmg, dieroll) {
            polyself.c headers), not u.ux/u.uy, so only monsters near the map's
            top-left corner wake when the hammer hits the hero. */
         if (game.spec_dbon_applies)
-            await wake_nearto(youdefend ? 0 : mdef.mx, youdefend ? 0 : mdef.my, 4 * 4);
+            await (await import('./mon.js')).wake_nearto(youdefend ? 0 : mdef.mx, youdefend ? 0 : mdef.my, 4 * 4);
         if (!rn2(5)) {
             const itemdmg = await destroy_items(mdef, AD_ELEC, mdmg.d);
             if (!youdefend) mdmg.d += itemdmg;
@@ -2894,14 +2862,6 @@ async function retouch_equipment_body(dropflag, done) {
 // ─────────────────────────────────────────────────────────────────────────
 // Remaining cross-file helpers.
 // ─────────────────────────────────────────────────────────────────────────
-// cmd.c wake_nearto() — async in this port, so artifact_hit() awaits it to
-// keep C's statement order.  Loaded with a dynamic import so that a future
-// `import ... from './artifact.js'` inside cmd.js/exper.js/invent.js cannot
-// turn into a module-evaluation cycle.
-async function wake_nearto(x, y, dist) {
-    const { wake_nearto: fn } = await import('./cmd.js');
-    return fn(x, y, dist);
-}
 // exper.c losexp(drainer)
 async function losexp(drainer) {
     const { losexp: fn } = await import('./exper.js');
@@ -2930,11 +2890,14 @@ function msound_is_nemesis(ptr) { return msound_of(ptr) === MS_NEMESIS; }
 // set_artifact_intrinsic()/what_gives()/finesse_ahriman() need the full struct
 // and are in the handoff's deferred set.
 function extrinsic_of(prop) { return (game.u?.uprops_extrinsic || {})[prop] || 0; }
+/* C ref: u.uprops[prop].intrinsic for the three properties an artifact's
+   inv_prop can be (artifact.h: CONFLICT, LEVITATION, INVIS); the intrinsic
+   words this port keeps are the flat u.uprops H<prop> fields. */
 function intrinsic_of(prop) {
-    /* the intrinsic words this port keeps are the flat u.uprops timers */
     if (prop === LEVITATION) return (game.u?.uprops?.Levitation | 0);
     if (prop === INVIS) return (game.u?.uprops?.HInvis | 0);
-    return (game.u?.uprops_intrinsic || {})[prop] || 0;
+    if (prop === CONFLICT) return (game.u?.uprops?.HConflict | 0) || (game.u?.HConflict | 0);
+    return 0;
 }
 function set_extrinsic(prop, val) {
     if (!game.u) return;
@@ -2945,6 +2908,5 @@ function set_intrinsic(prop, val) {
     if (!game.u) return;
     if (prop === LEVITATION) { (game.u.uprops ||= {}).Levitation = val; return; }
     if (prop === INVIS) { (game.u.uprops ||= {}).HInvis = val; return; }
-    game.u.uprops_intrinsic = game.u.uprops_intrinsic || {};
-    game.u.uprops_intrinsic[prop] = val;
+    if (prop === CONFLICT) { (game.u.uprops ||= {}).HConflict = val; return; }
 }

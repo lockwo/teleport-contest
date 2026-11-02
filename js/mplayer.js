@@ -11,7 +11,8 @@
 // point of a faithful port, so every rn2/rnd/rn1/d below sits exactly where C
 // has it, including the ones whose results the code then ignores.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
+import { MGIVENNAME } from './const.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { objects, mksobj, mkobj, rnd_class, curse, bless, weight,
          RANDOM_CLASS, STRANGE_OBJECT } from './mkobj.js';
@@ -27,6 +28,7 @@ import { rank_of } from './exper.js';
 import { monmightthrowwep, is_spear } from './weapon.js';
 import { mflags2_of, M2_FEMALE } from './monflags_data.js';
 import { A_NONE, COLNO, ROWNO, MM_NOMSG, In_endgame } from './const.js';
+import { set_mon_data } from './mondata.js';
 
 // ── constants ──────────────────────────────────────────────────────────────
 
@@ -112,11 +114,6 @@ function is_mplayer(ptr) {
 function is_female(ptr) { return (mflags2_of(ptr) & M2_FEMALE) !== 0; }
 // C ref: mondata.c monsndx(ptr).
 function monsndx(ptr) { return ptr?.pmidx ?? -1; }
-// C ref: monst.h has_mgivenname(mon)/MGIVENNAME(mon); this port keeps the name
-// on mon.mname (js/do_name.js christen_monst) as well as in mextra.
-function MGIVENNAME(mtmp) {
-    return mtmp?.mextra?.mgivenname || mtmp?.mname || '';
-}
 
 // ── developers[] (C ref: mplayer.c:17) ─────────────────────────────────────
 //
@@ -485,7 +482,7 @@ export function create_mplayers(num, special, deps = {}) {
 
         /* roll for character class */
         const pm = rn1(PM_WIZARD - PM_ARCHEOLOGIST + 1, PM_ARCHEOLOGIST);
-        set_mon_data(fakemon, monster_by_pmidx(pm));
+        hooks.set_mon_data(fakemon, monster_by_pmidx(pm));
 
         /* roll for an available location */
         do {
@@ -500,13 +497,6 @@ export function create_mplayers(num, special, deps = {}) {
         mk_mplayer(monster_by_pmidx(pm), x, y, special, deps);
         num--;
     }
-}
-// C ref: mon.c set_mon_data(mon, ptr) — point a monst at a permonst row.
-// js/makemon.js has a module-private copy behind the same name; the fix is to
-// export that one.
-function set_mon_data(mon, ptr) {
-    mon.data = ptr;
-    mon.mnum = ptr ? ptr.pmidx : -1;
 }
 
 // C ref: mplayer.c:355 mplayer_talk(mtmp) — the taunt a hostile fake player

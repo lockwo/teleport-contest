@@ -8,7 +8,7 @@
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
-import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, MCORPSENM } from './const.js';
+import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, NON_PM, has_mcorpsenm, set_mcorpsenm } from './const.js';
 import { newsym, m_at, worm_seg_owner_at, show_glyph_cell, Hallucination_u, pline } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { random_monster } from './disprng.js';
@@ -456,15 +456,6 @@ export function wormgone(worm) {
         set_mcorpsenm(worm, NON_PM); /* no longer polymorph-proof */
 }
 
-// C ref: mextra.h:225/234 MCORPSENM(mon) / has_mcorpsenm(mon).  const.js
-// exports the reader; this port keeps the value on mon.mextra.mcorpsenm and
-// makemon.js also mirrors it as mon.mcorpsenm, so both are written.
-const NON_PM = -1;
-function has_mcorpsenm(mon) { return !!mon?.mextra && MCORPSENM(mon) !== NON_PM; }
-function set_mcorpsenm(mon, v) {
-    if (mon.mextra) mon.mextra.mcorpsenm = v;
-    mon.mcorpsenm = v;
-}
 
 /*
  *  wormhitu()

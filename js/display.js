@@ -2,7 +2,8 @@
 // C ref: display.c — newsym, show_glyph, docrt, cls, flush_screen.
 
 import { has_innate } from './exper.js';
-import { Blind_telepat } from './youprop.js';
+import { mimic_obj_corpsenm } from './const.js';
+import { Blind_telepat, Detect_monsters_hero, Deaf_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { SYMBOL_BYTES } from './symset-data.js';
@@ -14,7 +15,7 @@ import {
     HWALL, VWALL, TLCORNER, TRCORNER, BLCORNER, BRCORNER,
     CROSSWALL, TUWALL, TDWALL, TLWALL, TRWALL, isok,
     SDOOR, SCORR, FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, ICE,
-    POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, IRONBARS, TREE,
+    db_under_typ, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, IRONBARS, TREE,
     D_NODOOR, D_ISOPEN, D_CLOSED, D_LOCKED, D_BROKEN,
     SV0, SV1, SV2, SV3, SV4, SV5, SV6, SV7,
     WM_MASK, WM_C_OUTER, WM_C_INNER,
@@ -581,7 +582,7 @@ export function mimic_object_glyph(mon) {
     return { otyp: ap, glyph: object_glyph({
         otyp: ap,
         oclass: objects[ap]?.oclass ?? 1,
-        corpsenm: mon.mcorpsenm ?? -1,
+        corpsenm: mimic_obj_corpsenm(mon),
         dknown: 1,
     }) };
 }
@@ -713,23 +714,8 @@ hooks.canseemon = canseemon_shared;
 // relies on this to decide whether to draw the monster glyph at all.
 function mon_visible(mtmp) {
     if (!mtmp) return false;
-    if (mtmp.minvis && !see_invisible()) return false;
+    if (mtmp.minvis && !See_invisible_hero()) return false;
     return !mtmp.mundetected;
-}
-
-// C ref: youprop.h See_invisible — HSee_invisible || ESee_invisible.  Different
-// files in this port spell the hero's copy differently; read all of them.
-export function see_invisible() {
-    const u = game.u || {}, p = u.uprops || {};
-    // C ref: youprop.h See_invisible == (HSee_invisible || ESee_invisible).
-    // The extrinsic half is invent.js's worn-item store (prop.h SEE_INVIS=29),
-    // which the flat aliases below never mirror; read it directly because
-    // invent.js imports display.js (a static import back would be a cycle).
-    return !!(u.see_invis || p.HSee_invisible || u.HSee_invisible
-        || p.ESee_invisible || u.ESee_invisible || p.See_invisible || u.See_invisible
-        || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0)
-        /* attrib.c adjabil(): Monk's level-1 see invisible (FROMEXPER) */
-        || has_innate('HSee_invisible'));
 }
 
 // ── ANSI color codes ──
@@ -1746,7 +1732,10 @@ const GP_META_DEFAULT_CH = new Map([
 export function getpos_find_feature(ch, cx, cy) {
     const tryCell = (tx, ty) => {
         const loc = game.level?.at(tx, ty);
-        if (!loc || !(loc.seenv || loc.remembered_glyph)) return false;
+        // C ref: detect.c reveal_terrain() TER_FULL paints back_to_glyph() (seenv forced
+        // to SVALL) into gbuf for every square, so getpos matches unexplored terrain.
+        const terrainFull = ((game.iflags?.terrainmode || 0) & 0x10 /* TER_FULL */) !== 0;
+        if (!loc || !(terrainFull || loc.seenv || loc.remembered_glyph)) return false;
         const tg = terrain_glyph(loc, tx, ty);
         // C ref: getpos.c matches defsyms[sidx].sym, the compile-time default
         // symbol — never the live symset's rendering.  A `dec: true` result
@@ -1754,7 +1743,7 @@ export function getpos_find_feature(ch, cx, cy) {
         // e.g. ALTAR's DEC glyph reuses FOUNTAIN's real default char '{'),
         // so fall back to the type's own default char via GP_DEC_DEFAULT_CH.
         const typ = (loc.typ === DRAWBRIDGE_UP)
-            ? db_under_typ_d(loc.drawbridgemask) : loc.typ;
+            ? db_under_typ(loc.drawbridgemask) : loc.typ;
         // The meta symbols (pool/lava diamond, tree, bars, ...) reach the recorder's
         // terminal as a bare backtick/letter that the symset's real nhsym never
         // equals, so only the type's default symbol is typeable.
@@ -2047,15 +2036,12 @@ export function canspotself() {
     const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis
         || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0))
         && !(p.BInvis || u.BInvis || ((u.uprops_blocked || {})[40 /*INVIS*/] | 0)); // mummy wrapping
-    if (!(invis && !see_invisible()) && !u.uundetected) return true;
+    if (!(invis && !See_invisible_hero()) && !u.uundetected) return true;
     /* senseself(): Unblind_telepat is ETelepat (worn helm of telepathy / amulet
        of ESP live in the extrinsic store), Detect_monsters either half */
     const ex = u.uprops_extrinsic || {};
     return !!(p.ETelepat || u.ETelepat || (ex[30 /* TELEPAT */] | 0)
-        || p.Detect_monsters
-        || p.HDetect_monsters || p.EDetect_monsters
-        || u.HDetect_monsters || u.EDetect_monsters
-        || (ex[37 /* DETECT_MONSTERS */] | 0));
+        || Detect_monsters_hero());
 }
 
 // C ref: display.c swallowed(first) — while u.uswallow the map window shows
@@ -2214,7 +2200,7 @@ export function map_location(x, y, show = false) {
     if (show) maybe_observe_near_object(x, y);   // _map_location(x, y, 1) -> map_object()
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
-    update_lastseentyp_d(x, y);
+    update_lastseentyp(x, y);
     if (show) {
         show_bg_glyph(x, y, bg);
         // C ref: display.c _map_location() tail — `if (show && !Blind &&
@@ -2368,7 +2354,7 @@ function feel_location_terrain(x, y) {
         }
     }
 
-    update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
+    update_lastseentyp(x, y); // _map_location() -> update_lastseentyp()
     if (!darkroom_shown) darken_felt_litcorr(loc, x, y);
 
     // C ref: display.c:912 — which of the ball/chain the hero is touching.
@@ -2403,8 +2389,7 @@ function can_reach_floor_disp() { return can_reach_floor(false); }
 function display_sensed_monster(x, y, mon, see_it) {
     const loc = game.level?.at(x, y);
     const u = game.u || {}, props = u.uprops || {};
-    const detect_monsters = !!(props.Detect_monsters || props.HDetect_monsters
-        || props.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters);
+    const detect_monsters = Detect_monsters_hero();
     const dark_worm_tail = x !== mon.mx || y !== mon.my;
     clear_invisible_memory(x, y);
     // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
@@ -2473,8 +2458,7 @@ function newsym_core(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
     const u = game.u || {}, props = u.uprops || {};
-    const detect_monsters = !!(props.Detect_monsters || props.HDetect_monsters
-        || props.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters);
+    const detect_monsters = Detect_monsters_hero();
 
     // C ref: display.c newsym():"only permit updating the hero when swallowed".
     // Everything else on the map is frozen behind the stomach view, so a pet
@@ -2553,7 +2537,7 @@ function newsym_core(x, y) {
         // C ref: _map_location() overwrites levl[x][y].glyph, so a remembered
         // 'I' under the hero is gone (it must not reappear when he steps off).
         loc.invisMon = false;
-        update_lastseentyp_d(x, y); // _map_location() -> update_lastseentyp()
+        update_lastseentyp(x, y); // _map_location() -> update_lastseentyp()
         return;
     }
 
@@ -2631,7 +2615,7 @@ function newsym_core(x, y) {
             if (game.level?.flags?.hero_memory) {
                 remember_bg(loc, bg);
             }
-            update_lastseentyp_d(x, y); // _map_location(x, y, 0) -> update_lastseentyp()
+            update_lastseentyp(x, y); // _map_location(x, y, 0) -> update_lastseentyp()
             // C ref: display.c newsym — showing an actual monster here "also
             // gets rid of any invisibility glyph".
             loc.invisMon = false;
@@ -2708,7 +2692,7 @@ function newsym_core(x, y) {
             if (game.level?.flags?.hero_memory) {
                 remember_bg(loc, bg);
             }
-            update_lastseentyp_d(x, y); // _map_location(x, y, 1) -> update_lastseentyp()
+            update_lastseentyp(x, y); // _map_location(x, y, 1) -> update_lastseentyp()
             show_bg_glyph(x, y, bg);
             // C ref: display.c _map_location() tail — `if (show && !Blind &&
             // (reg = visible_region_at(x, y))) show_region()`, with no ACCESSIBLE
@@ -4841,6 +4825,9 @@ async function a11y_location_prefix(msg) {
     return msg;
 }
 
+// C ref: pline.c verbalize(line) — pline() of the line wrapped in double quotes.
+export async function verbalize(line) { await pline(`"${line}"`); }
+
 export async function pline(msg, opts = {}) {
     msg = await a11y_location_prefix(msg);
     const suppressHistory = !!opts.suppressHistory;
@@ -5386,12 +5373,7 @@ async function pline_flush() {
 // C ref: youprop.h Deaf = (HDeaf || EDeaf || u.uroleplay.deaf).  The port
 // stores the timed intrinsic in u.uprops.HDeaf; worn/legacy sources land on
 // u.uprops.EDeaf / u.uprops.Deaf / u.Deaf.
-export function Deaf_hero() {
-    const u = game.u;
-    const p = u?.uprops;
-    return ((p?.HDeaf ?? 0) > 0) || ((p?.EDeaf ?? 0) > 0) || ((p?.Deaf ?? 0) > 0)
-        || !!u?.Deaf || !!u?.uroleplay?.deaf;
-}
+export { Deaf_hero };
 
 // C ref: pline.c:436 You_hear() — nothing when (Deaf && !Unaware) or with
 // acoustics off; otherwise "You barely hear " Underwater (u.uinwater), "You
@@ -5965,9 +5947,8 @@ function Ugender() {
 // C ref: display.h:1023 hero_glyph —
 //   monnum_to_glyph((Upolyd || !flags.showrace) ? u.umonnum : gu.urace.mnum,
 //                   Ugender)
-// Two port substitutions, both already documented at hero_glyph() above:
-// u.umonnum is a ROLE index here rather than a mons[] index while unpolymorphed,
-// and game.urace carries only `adj`, so the showrace arm reads
+// One port substitution, already documented at hero_glyph() above:
+// game.urace carries only `adj`, so the showrace arm reads
 // RACE_PM[game.initrace] the way hero_glyph() does.
 function hero_glyph_num() {
     const u = game.u || {};
@@ -6056,8 +6037,7 @@ function _sensemon(mon) {
     if (u.uinwater
         && !(mdistu_d(mon) <= 2 && IS_POOL(game.level?.at(mon.mx, mon.my)?.typ)))
         return false;
-    return !!((p.Detect_monsters ?? 0) || (p.HDetect_monsters ?? 0)
-              || (p.EDetect_monsters ?? 0))
+    return Detect_monsters_hero()
         || tp_sensemon(mon) || match_warn_of_mon(mon);
 }
 // C ref: hack.h mdistu(mon) — dist2(mon->mx, mon->my, u.ux, u.uy).
@@ -6073,17 +6053,8 @@ function distu_d(x, y) {
 // C ref: hacklib.c sgn(x).
 function sgn_d(x) { return (x < 0) ? -1 : (x > 0) ? 1 : 0; }
 // C ref: monst.h:71 U_AP_TYPE / M_AP_TYPE(mon) — mon->m_ap_type & M_AP_TYPMASK.
-// DIVERGENCE: this port stores m_ap_type as either the numeric M_AP_* constant
-// (js/monmove.js, js/timeout.js) or a STRING ('furniture'/'obj'/'mon',
-// js/hack.js:3108, js/dokick.js:872).  Normalise both to the C values.
 function M_AP_TYPE(mon) {
-    const t = mon?.m_ap_type;
-    if (!t) return M_AP_NOTHING;
-    if (typeof t === 'number') return t & M_AP_TYPMASK;
-    if (t === 'furniture') return M_AP_FURNITURE;
-    if (t === 'obj') return M_AP_OBJECT;
-    if (t === 'mon') return M_AP_MONSTER;
-    return M_AP_NOTHING;
+    return (mon?.m_ap_type | 0) & M_AP_TYPMASK;
 }
 // C ref: trap.c t_at(x, y).  js/trap.js owns the real one; importing it would
 // close a cycle (trap.js imports this file).
@@ -6099,15 +6070,6 @@ function is_pool_or_lava_d(x, y) {
     return IS_POOL(typ) || IS_LAVA(typ);
 }
 function is_ice_d(x, y) { return game.level?.at(x, y)?.typ === ICE; }
-// C ref: dbridge.c db_under_typ(mask) — the terrain beneath a raised bridge.
-function db_under_typ_d(mask) {
-    switch (mask & DB_UNDER) {
-    case DB_MOAT: return MOAT;
-    case DB_LAVA: return LAVAPOOL;
-    case DB_ICE: return ICE;
-    default: return ROOM;
-    }
-}
 // C ref: mkroom.c:912 cmap_to_type(sym) — display symbol back to topology type,
 // used only for a mimic posing as furniture.  STONE is the catchall.
 const _CMAP_TO_TYPE = {
@@ -6124,19 +6086,19 @@ const _CMAP_TO_TYPE = {
     [S_fountain]: FOUNTAIN, [S_pool]: POOL, [S_ice]: ICE, [S_lava]: LAVAPOOL,
     [S_vodbridge]: DRAWBRIDGE_DOWN, [S_hodbridge]: DRAWBRIDGE_DOWN,
     [S_vcdbridge]: DBWALL, [S_hcdbridge]: DBWALL,
-    [S_air]: AIR, [S_cloud]: CLOUD, [S_water]: WATER,
+    [S_air]: AIR, [S_cloud]: CLOUD, [S_water]: WATER, [S_lavawall]: LAVAWALL,
 };
 function cmap_to_type_d(sym) {
     const t = _CMAP_TO_TYPE[sym];
     return (t === undefined) ? STONE : t;
 }
 // C ref: dungeon.c:2927 update_lastseentyp(x, y).
-function update_lastseentyp_d(x, y) {
+export function update_lastseentyp(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
     let ltyp = loc.typ;
     if (ltyp === DRAWBRIDGE_UP)
-        ltyp = db_under_typ_d(loc.drawbridgemask | 0);
+        ltyp = db_under_typ(loc.drawbridgemask | 0);
     const mtmp = m_at(x, y);
     if (mtmp && M_AP_TYPE(mtmp) === M_AP_FURNITURE && canseemon_shared(mtmp))
         ltyp = cmap_to_type_d(mtmp.mappearance);
@@ -6197,36 +6159,14 @@ function symset_nocolor() { return false; }
 export function knowninvisible(mon) {
     const u = game.u || {}, p = u.uprops || {};
     if (!mon || !mon.minvis) return false;
-    const detect_monsters = (p.Detect_monsters ?? 0) || (p.HDetect_monsters ?? 0)
-        || (p.EDetect_monsters ?? 0);
-    if (cansee(mon.mx, mon.my) && (see_invisible() || detect_monsters))
+    const detect_monsters = Detect_monsters_hero();
+    if (cansee(mon.mx, mon.my) && (See_invisible_hero() || detect_monsters))
         return true;
     // C: HTelepat & ~INTRINSIC — the TIMEOUT/FROMFORM/I_SPECIAL bits only, so
     // plain intrinsic telepathy does not qualify.  prop.h:139
     // INTRINSIC == FROMOUTSIDE|FROMRACE|FROMEXPER == 0x07000000.
     const htelepat_timed = (p.HTelepat ?? 0) & ~0x07000000;
     return !Blind() && !!htelepat_timed && mdistu_d(mon) <= (BOLT_LIM * BOLT_LIM);
-}
-
-// C ref: display.c:233 magic_map_background(x, y, show) — like map_background()
-// but corrects unexplored lit ROOM/CORR spots the hero doesn't remember as lit.
-export function magic_map_background(x, y, show) {
-    let glyph = back_to_glyph(x, y); /* assumes hero can see x,y */
-    const lev = game.level?.at(x, y);
-    if (!lev) return;
-    if (!cansee(x, y) && !lev.waslit) {
-        if (lev.typ === ROOM && glyph === cmap_to_glyph(S_room))
-            glyph = (game.flags?.dark_room && game.iflags?.use_color)
-                ? cmap_to_glyph(DARKROOMSYM()) : GLYPH_NOTHING;
-        else if (lev.typ === CORR && glyph === cmap_to_glyph(S_litcorr))
-            glyph = cmap_to_glyph(S_corr);
-    }
-    if (game.level?.flags?.hero_memory
-        && (glyph_is_unexplored(levl_glyph(lev)) || glyph_is_cmap(levl_glyph(lev))))
-        lev.glyph = glyph;
-    if (show)
-        show_glyph(x, y, glyph);
-    update_lastseentyp_d(x, y);
 }
 
 // C ref: display.c:279 map_background(x, y, show).
@@ -6349,7 +6289,7 @@ export function display_monster(x, y, mon, sightflags, worm_tail) {
                 ox: x, oy: y, otyp: mon.mappearance, oclass: 0, spe: 0,
                 dknown: 0, where: OBJ_FREE, quan: 0,
                 /* might be mimicking a corpse or statue */
-                corpsenm: (mon.mcorpsenm != null) ? mon.mcorpsenm : PM_TENGU,
+                corpsenm: mimic_obj_corpsenm(mon),
             };
             map_object(obj, !sensed);
             break;
@@ -6675,7 +6615,7 @@ export async function under_ground(mode) {
 // C ref: display.c:1532 mimic_light_blocking(mtmp).
 export function mimic_light_blocking(mtmp) {
     if (mtmp.minvis && is_lightblocker_mappear_d(mtmp)) {
-        if (see_invisible())
+        if (See_invisible_hero())
             block_point(mtmp.mx, mtmp.my);
         else
             unblock_point(mtmp.mx, mtmp.my);

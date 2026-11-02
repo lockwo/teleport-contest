@@ -7,7 +7,8 @@
 // (owornmask, misc_worn_check, mspeed) is the INPUT to moduli drawn elsewhere:
 // find_mac() is a term of every to-hit roll, and which_armor() gates muse.c's
 // item choices.
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
+import { has_mcorpsenm, set_mcorpsenm } from './const.js';
 import { newsym, set_msg_mon, canseemon_shared as canseemon_wn } from './display.js';
 import { objects, is_flimsy, RING_CLASS, FOOD_CLASS, GEM_CLASS, BALL_CLASS, CHAIN_CLASS } from './mkobj.js';
 import {
@@ -23,6 +24,7 @@ import {
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
+import { vision_recalc } from './vision.js';
 import { mon_nam, Monnam as Monnam_u, hcolor as hcolor_wn } from './do_name.js';
 
 const ARMOR_CLASS = 3, AMULET_CLASS = 5, WEAPON_CLASS = 2, TOOL_CLASS = 6;
@@ -436,8 +438,10 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
     let m_delay = 0;
     if ((flag === W_ARM || flag === W_ARMU)
         && ((mon.misc_worn_check | 0) & W_ARMC)) m_delay += 2;
+    let oldmask = 0;
     if (old) {
         m_delay += armor_delay(old.otyp);
+        oldmask = old.owornmask | 0; /* needed later by artifact_light() */
         old.owornmask = 0;   /* C clears it so doname() omits "(being worn)" */
     }
     if (!creation) {
@@ -450,11 +454,22 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
         mon.mfrozen = m_delay;
         if (mon.mfrozen) mon.mcanmove = 0;
     }
-    if (old) update_mon_extrinsics(mon, old, false);
+    if (old) {
+        update_mon_extrinsics(mon, old, false, creation);
+        /* owornmask was cleared above but artifact_light() expects it */
+        old.owornmask = oldmask;
+        if (old.lamplit && hooks.artifactLight(old)) hooks.artifactLightOff(old);
+        old.owornmask = 0;
+    }
     mon.misc_worn_check = (mon.misc_worn_check | 0) | flag;
     best.owornmask = (best.owornmask | 0) | flag;
     if (autocurse) { best.cursed = true; best.blessed = false; }
-    update_mon_extrinsics(mon, best, true);
+    /* gold dragon scale mail starts shining the moment it is worn */
+    if (hooks.artifactLight(best) && !best.lamplit) {
+        hooks.artifactLightOn(best);
+        vision_recalc(1);
+    }
+    update_mon_extrinsics(mon, best, true, creation);
 }
 
 // C ref: worn.c m_dowear(mon, creation) — wear the best object of each type.
@@ -874,8 +889,8 @@ export function clear_bypasses() {
         if (!(mtmp.mhp > 0)) continue;
         clear_bypass(mtmp.minvent);
         if (mtmp.data?.name === 'long worm'
-            && mtmp.mcorpsenm === mtmp.data.pmidx)
-            mtmp.mcorpsenm = -1; /* NON_PM */
+            && has_mcorpsenm(mtmp))
+            set_mcorpsenm(mtmp, -1); /* NON_PM */
     }
     for (const mtmp of (game.migrating_mons || []))
         clear_bypass(mtmp.minvent);

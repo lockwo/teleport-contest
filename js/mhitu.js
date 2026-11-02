@@ -3,7 +3,7 @@
 //
 // SCOPE / OWNERSHIP.  Three of mhitu.c's routines already had live ports
 // elsewhere when this module was written and are NOT duplicated here:
-//   mattacku(), hitmu(), missmu()/mswings()/mdamageu()  -> js/monmove.js
+//   mattacku(), hitmu(), mswings()/mdamageu()  -> js/monmove.js
 // Duplicating them would leave two implementations of the same PRNG-bearing
 // control flow free to drift apart.  Everything else in mhitu.c lives here.
 //
@@ -17,6 +17,8 @@
 // YOUMONST/AD_* back from it.  Every such binding is read INSIDE a function
 // body, never at module top level, so neither evaluation order hits a TDZ.
 
+import { Half_physical_damage_hero, Deaf_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
+import { setMGIVENNAME } from './const.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { monnear } from './dogmove.js';
@@ -53,12 +55,13 @@ import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, make_sick } from './potion.js';
-import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion } from './invent.js';
+import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender } from './invent.js';
 import { has_innate } from './exper.js';
-import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu } from './mondata.js';
+import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu, get_atkdam_type } from './mondata.js';
 import { Monnam, mon_nam, mhis, mhe, hliquid } from './do_name.js';
 import { Invis } from './monmove.js';
 import { Acid_resistance } from './explode.js';
+import { Cold_resistance, Shock_resistance, Fire_resistance } from './zap.js';
 import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION, REFLECTING } from './const.js';
 
 const is_hero = (m) => m === YOUMONST;
@@ -67,23 +70,9 @@ const is_hero = (m) => m === YOUMONST;
 // youprop.h Invis lives in js/monmove.js (reads every spelling plus worn
 // extrinsics/blocked words); both it and explode.js Acid_resistance are
 // hoisted function exports, so these static edges are cycle-safe.
-function See_invisible() {
-    if (game.u?.formprops?.See_invisible) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u || {};
-    // u.see_invis (jsmain.js accessor) also covers role/race innate sources.
-    return !!(u.see_invis || u.uprops?.See_invisible || u.uprops?.HSee_invisible
-              || u.uprops?.ESee_invisible);
-}
 function Upolyd() { return !!game.u?.Upolyd; }
-function Deaf() { return !!(game.u?.Deaf || (game.u?.uprops?.HDeaf | 0) > 0); }
+function Deaf() { return Deaf_hero(); }
 function Verbose() { return game.flags?.verbose !== false; }
-// C ref: polyself.c:2149 poly_gender() — 2 (none) for a neuter or non-humanoid
-// current form, else flags.female.
-function poly_gender() {
-    const ptr = youmonst_data();
-    if (ptr && (is_neuter_flag(ptr) || !humanoid_flag(ptr))) return 2;
-    return game.flags?.female ? 1 : 0;
-}
 // C ref: mondata.c gender(mtmp).
 function gender(mtmp) {
     return is_neuter_flag(permonst(mtmp)) ? 2 : (mtmp?.female ? 1 : 0);
@@ -167,13 +156,7 @@ export async function diseasemu(mdat) {
     return true;
 }
 const SICK_NONVOMITABLE = 0x02;   // C ref: youprop.h
-function Sick_resistance() {
-    if (game.u?.formprops?.Sick_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u || {};
-    return !!(u.uprops?.Sick_resistance || u.uprops?.HSick_resistance
-              || u.uprops?.ESick_resistance || u.uprops?.Sick_res
-              || ((u.uprops_extrinsic || {})[SICK_RES] | 0) !== 0);
-}
+function Sick_resistance() { return Sick_resistance_hero(); }
 // ═══ mhitu.c:1047 u_slip_free ═══════════════════════════════════════════════
 // Greased / oilskin body armour makes a hug or wrap attack slide off.  DRAWS
 // rn2(3) when that piece is cursed and rn2(2) for the grease wearing off, so
@@ -293,7 +276,7 @@ export function could_seduce(magr, mdef, mattk) {
     }
     let defperc, gendef;
     if (is_hero(mdef)) {
-        defperc = See_invisible();
+        defperc = See_invisible_hero();
         gendef = poly_gender();
     } else {
         defperc = perceives(permonst(mdef));
@@ -427,20 +410,6 @@ const MR_COLD = 0x02;
 function resists_cold_mon(mdef) {
     return ((permonst(mdef)?.mresists | 0) & MR_COLD) !== 0;
 }
-function Cold_resistance() {
-    if (game.u?.formprops?.Cold_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u || {};
-    return !!(u.uprops?.Cold_resistance || u.uprops?.HCold_resistance
-              || u.uprops?.ECold_resistance || u.Cold_resistance
-              || worn_extrinsic(COLD_RES) || has_innate('HCold_resistance'));
-}
-function Shock_resistance() {
-    const u = game.u || {};
-    return !!(u.uprops?.Shock_resistance || u.uprops?.HShock_resistance
-              || u.uprops?.EShock_resistance || u.Shock_resistance
-              || worn_extrinsic(SHOCK_RES) || has_innate('HShock_resistance')
-              || (u.Upolyd && ((youmonst_data()?.mresists | 0) & 0x10)));
-}
 
 // ═══ mhitu.c:448 calc_mattacku_vars ═════════════════════════════════════════
 // Recomputed at the top of mattacku() and again before each attack after the
@@ -500,9 +469,8 @@ export async function hitmsg(mtmp, mattk) {
 
 
 // ═══ mhitu.c:85 missmu ══════════════════════════════════════════════════════
-// js/monmove.js owns the live copy on the mattacku path; this one exists so the
-// gaze/explode/passive routines below can report a miss without reaching into
-// that module.  No RNG.
+// The one missmu(): mattacku() (js/monmove.js) and the gaze/explode/passive
+// routines below all report a miss here.  No RNG.
 export async function missmu(mtmp, nearmiss, mattk) {
     const h = game._hitmsg || (game._hitmsg = {});
     h.mid = 0; h.slot = null;
@@ -612,9 +580,9 @@ export async function expels(mtmp, mdat, message) {
     // C ref: mhitu.c:300 mnexto(mtmp, RLOC_NOMSG) — the enexto() ring search
     // DRAWS (collect_coords shuffles rings 1..3), so it belongs in the stream.
     {
-        const { mnexto_rloc } = await import('./do.js');
+        const { mnexto } = await import('./mon.js');
         const { RLOC_NOMSG } = await import('./teleport.js');
-        await mnexto_rloc(mtmp, RLOC_NOMSG);
+        await mnexto(mtmp, RLOC_NOMSG);
     }
     newsym(u.ux, u.uy);
     if (um_dist(mtmp.mx, mtmp.my, 1))
@@ -722,7 +690,7 @@ export async function gulpmu(mtmp, mattk) {
         if (u.utrap) {
             await emitU(`You are released from the ${
                 u.utraptype === TT_WEB ? 'web' : 'trap'}!`);
-            await (await import('./trap.js')).reset_utrap_fu(false);
+            await (await import('./trap.js')).reset_utrap(false);
         }
 
         {
@@ -1244,13 +1212,6 @@ function Reflecting() { return !!game.u?.formprops?.Reflecting || !!game.u?.upro
 function Confusion() { return (game.u?.uprops?.Confusion | 0) || (game.u?.uconf | 0); }
 function HConfusion() { return game.u?.uprops?.Confusion | 0; }
 function HStun() { return game.u?.uprops?.Stun | 0; }
-function Fire_resistance() {
-    if (game.u?.formprops?.Fire_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u || {};
-    return !!(u.uprops?.Fire_resistance || u.uprops?.HFire_resistance
-              || u.uprops?.EFire_resistance || u.Fire_resistance
-              || worn_extrinsic(FIRE_RES) || has_innate('HFire_resistance'));
-}
 // C ref: potion.c:107 make_stunned(xtime, talk) — messages only when `talk`.
 export async function make_stunned_u(xtime, talk) {
     const u = game.u || {};
@@ -1624,17 +1585,10 @@ export async function doseduce(mon) {
     if (!await tele_restrict(mon)) await rloc(mon, RLOC_MSG);
     return 1;
 }
-function Stone_resistance_u() {
-    const u = game.u || {};
-    return !!(u.formprops?.Stone_resistance || u.uprops?.Stone_resistance
-              || u.uprops?.HStone_resistance || u.uprops?.EStone_resistance
-              || u.Stone_resistance);
-}
+function Stone_resistance_u() { return Stone_resistance_hero(); }
 // C ref: youprop.h Half_physical_damage.
 function Half_physical_damage_u() {
-    const p = game.u?.uprops;
-    return !!(p?.Half_physical_damage || p?.HHalf_physical_damage
-              || p?.EHalf_physical_damage);
+    return Half_physical_damage_hero();
 }
 const RIN_ADORNMENT = 173;   // js/mkobj.js objects[] index (verified by name)
 const A_CHAOTIC_L = -1, A_INT_L = 1, A_WIS_L = 2;   // C ref: attrib.h
@@ -1661,14 +1615,6 @@ export async function assess_dmg(mtmp, tmp) {
 // (random-breath dragons), so these predicates are not RNG-free.
 const DISTANCE_ATTK_TYPE = (atyp) => atyp === AT_SPIT || atyp === AT_BREA
     || atyp === AT_MAGC || atyp === AT_GAZE;
-const AD_RBRE = 242;   // C ref: monattk.h:89
-const RND_BREATH_TYP = [AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE,
-    AD_DISN, AD_ELEC, AD_DRST, AD_ACID];
-export function get_atkdam_type(adtyp) {
-    if (adtyp === AD_RBRE) return RND_BREATH_TYP[rn2(RND_BREATH_TYP.length)];
-    return adtyp;
-}
-
 export function mon_avoiding_this_attack(mtmp, attkidx) {
     const list = mattk_list(mtmp) || [];
     let typ = -1;
@@ -1916,7 +1862,7 @@ export async function cloneu() {
         NO_MINVENT | MM_EDOG | MM_NOMSG);
     if (!mon) return null;
     mon.mcloned = 1;
-    mon.mgivenname = game.plname;          /* christen_monst(mon, plname) */
+    setMGIVENNAME(mon, game.plname);       /* christen_monst(mon, plname) */
     const { initedog } = await import('./dothrow.js');
     initedog(mon, true);
     mon.m_lev = mdat.mlevel | 0;

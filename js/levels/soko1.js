@@ -3,7 +3,7 @@
 // shared special-level machinery still lives there and is imported below.
 
 import { level_difficulty } from '../dungeon.js';
-import { BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
+import { M_AP_OBJECT, BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
 import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
 import { des_engraving_at } from '../engrave.js';
@@ -17,7 +17,7 @@ import {
 import { rn1, rn2, rnd } from '../rng.js';
 import {
     add_sp_room, bigrm_get_level_extends, level_flip_extents, bigrm_level_init_solidfill, bigrm_load_map,
-    bigrm_wallification, flip_level, flood_fill_room, gx, gy, percent, q_absx, q_absy,
+    bigrm_wallification, flip_level, flood_fill_irregular, gx, gy, percent, q_absx, q_absy,
     quest_create_monster_randpos, quest_place_stair, quest_set_door, record_level_prize, shuffle,
     soko_create_object_class_random, soko_mktrap, soko_region_lit_grow,
     soko_solidify_and_nondig,
@@ -80,7 +80,7 @@ const SOKO1_2_MAP =
 function soko_create_mimic_boulder() {
     const mtmp = quest_create_monster_randpos('giant mimic', null);
     if (mtmp) {
-        mtmp.m_ap_type = 'obj';
+        mtmp.m_ap_type = M_AP_OBJECT;
         mtmp.mappearance = BOULDER;
     }
     return mtmp;
@@ -146,9 +146,8 @@ function soko_create_object_coord(otyp, mx, my, buc, achievement = 0) {
 function soko_region_zoo(x1, y1) {
     const dx1 = x1 + gx.xstart, dy1 = y1 + gy.ystart;
     const roomno = game.level.nroom + ROOMOFFSET;
-    const flood = flood_fill_room(dx1, dy1, roomno, true);
-    if (!flood.cells.length) return null;
-    return add_sp_room(flood.minx, flood.miny, flood.maxx, flood.maxy,
+    const flood = flood_fill_irregular(dx1, dy1, roomno, true);
+    return add_sp_room(flood.min_rx, flood.min_ry, flood.max_rx, flood.max_ry,
                         true, ZOO, true, FILL_NORMAL, true);
 }
 

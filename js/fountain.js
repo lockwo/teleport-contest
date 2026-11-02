@@ -6,8 +6,9 @@
 // not yet fully model, so they emit their observable framing only.
 
 import { game, hooks } from './gstate.js';
+import { setONAME } from './const.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
+import { pline, update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
 import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
@@ -16,7 +17,7 @@ import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
 import { fruitname } from './objnam.js';
 import { fmonOrder } from './mon.js';
 import { nolimbs } from './monflags_data.js';
-import { mbodypart } from './polyself.js';
+import { mbodypart, body_part } from './polyself.js';
 import { Deaf_hero } from './display.js';
 import { ARM, HEAD, M_SEEN_FIRE } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
@@ -30,16 +31,17 @@ import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
 import { clear_area_cells } from './vision.js';
 import { nexttodoor, inside_room } from './mkroom.js';
-import { makemon, name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel } from './makemon.js';
+import { makemon, name_to_pmidx, monster_by_pmidx, enexto_spawn } from './makemon.js';
 import { x_monnam, canspotmon } from './uhitm.js';
 import { somegold } from './steal.js';
 import { create_gas_cloud } from './region.js';
 import { monster_detect, nomul } from './hack.js';
 import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
+import { del_engr_at } from './engrave.js';
 import {
     ER_NOTHING, ER_GREASED, ER_DESTROYED, F_LOOTED, F_WARNED, FROMOUTSIDE,
-    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG, MM_APPARXY_BYYOU,
+    FOUNTAIN, ROOM, POOL, A_WIS, A_CON, A_DEX, FACE, IS_FOUNTAIN, S_LRING, G_GONE, MM_NOMSG, MM_APPARXY_BYYOU,
     POLY_NOFLAGS, OBJ_FLOOR } from './const.js';
 
 // C ref: include/onames.h — long sword otyp (mkobj.js OBJECT_DATA order).
@@ -115,7 +117,7 @@ function Role_if_knight() {
 // C ref: artifact.c exist_artifact(LONG_SWORD, artiname(ART_EXCALIBUR)) — has
 // Excalibur already been made?  The port has no artifact registry, so scan the
 // hero's pack and the current level's floor for oartifact == 1 (Excalibur's
-// artilist index, per invent.js ARTI_TOUCH_PROPS).
+// artilist index, ART_EXCALIBUR in artifact.js).
 function exist_excalibur() {
     for (const o of (game.invent || [])) if (o?.oartifact === 1) return true;
     for (const o of (game.level?.objects || [])) if (o?.oartifact === 1) return true;
@@ -165,7 +167,7 @@ export async function dipfountain(obj) {
             await update_topl(`A freezing mist rises from the ${hliquid('water')}`
                               + ' and envelopes the sword.');
             await update_topl('The fountain disappears!');
-            curse(obj);
+            await curse(obj);
             if ((obj.spe ?? 0) > -6 && !rn2(3)) obj.spe = (obj.spe ?? 0) - 1;
             obj.oerodeproof = false;
             exercise(A_WIS, false);
@@ -174,10 +176,10 @@ export async function dipfountain(obj) {
                 'From the murky depths, a hand reaches up to bless the sword.');
             await update_topl('As the hand retreats, the fountain disappears!');
             // oname(obj, artiname(ART_EXCALIBUR)) + discover_artifact():
-            // invent.js keys artifact properties off obj.oartifact (1 ==
-            // Excalibur in its ARTI_TOUCH_PROPS table).
+            // artifact.js keys artifact properties off obj.oartifact (1 ==
+            // ART_EXCALIBUR).
             obj.oartifact = 1;
-            obj.oname = 'Excalibur';
+            setONAME(obj, 'Excalibur');
             obj.blessed = true; obj.cursed = false;
             obj.oeroded = 0; obj.oeroded2 = 0; obj.oerodeproof = true;
             exercise(A_WIS, true);
@@ -206,7 +208,7 @@ export async function dipfountain(obj) {
     switch (rnd(30)) {
     case 16: // Curse the item
         if (!is_hands && obj.oclass !== COIN_CLASS && !obj.cursed) {
-            curse(obj);
+            await curse(obj);
         }
         break;
     case 17:
@@ -240,7 +242,7 @@ export async function dipfountain(obj) {
         await dogushforth(false);
         break;
     case 26: // Strange feeling
-        await update_topl('A strange tingling runs up your arm.');
+        await update_topl(`A strange tingling runs up your ${body_part(ARM)}.`);
         break;
     case 27: // Strange feeling
         await You_feel('a sudden chill.');
@@ -393,7 +395,7 @@ export async function drinkfountain() {
             let buc_changed = 0;
             for (const obj of game.invent || []) {
                 if (obj.oclass !== COIN_CLASS && !obj.cursed && !rn2(5)) {
-                    curse(obj);
+                    await curse(obj);
                     ++buc_changed;
                 }
             }
@@ -498,8 +500,6 @@ async function dowaterdemon() {
         game._full_mon_gen = was_full;
     }
     if (mtmp) {
-        placeOnLevel(mtmp, spot.x, spot.y);
-        newsym(spot.x, spot.y);
         if (!Blind())
             await update_topl(`You unleash ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}!`);
         else
@@ -543,8 +543,6 @@ async function dowaternymph() {
         }
     }
     if (mtmp) {
-        placeOnLevel(mtmp, spot.x, spot.y);
-        newsym(spot.x, spot.y);
         if (!Blind())
             await update_topl(`You attract ${x_monnam(mtmp, 2 /*ARTICLE_A*/, null, 0, false)}!`);
         else
@@ -594,8 +592,6 @@ async function dowatersnakes() {
         if (!spot) continue;
         const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
         if (!mtmp) continue;
-        placeOnLevel(mtmp, spot.x, spot.y);
-        newsym(spot.x, spot.y);
         if (t_at(mtmp.mx, mtmp.my)) {
             /* C ref: fountain.c:42 mintrap(mtmp, NO_TRAP_FLAGS) */
             const { mon_mintrap } = await import('./monmove.js');
@@ -631,13 +627,6 @@ function floor_boulder_at(x, y) {
     return false;
 }
 
-// C ref: engrave.c del_engr_at(x, y) — remove any engraving at (x, y) (no RNG,
-// no message).
-function del_engr_at(x, y) {
-    if (!game.level?.engravings) return;
-    game.level.engravings = game.level.engravings.filter(
-        (ep) => ep.engr_x !== x || ep.engr_y !== y);
-}
 
 // C ref: fountain.c gush(x, y, poolcnt) — do_clear_area's per-cell callback
 // for dogushforth().  Turns a floor-of-a-ROOM square within range into a
@@ -765,7 +754,8 @@ async function losehp(n, knam, k_format) {
 // type (e.g. a potion's color).
 function OBJ_DESCR(obj) {
     if (!obj) return null;
-    const idx = obj.oc_descr_idx != null ? obj.oc_descr_idx : obj.otyp;
+    const o = objects[obj.otyp];
+    const idx = o?.oc_descr_idx != null ? o.oc_descr_idx : obj.otyp;
     return DESCR_BY_OTYP[idx] ?? null;
 }
 
@@ -801,11 +791,27 @@ async function spawnAtHeroSquare(pmidx) {
     const spot = enexto_spawn(u.ux, u.uy, ptr);
     if (!spot) return null;
     const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
-    if (mtmp) {
-        placeOnLevel(mtmp, spot.x, spot.y);
-        newsym(spot.x, spot.y);
-    }
     return mtmp;
+}
+
+// C ref: fountain.c sink_backs_up(x, y) — muddy waste from the drain; the
+// first time a ring surfaces.  The "Flupp!  " prefix is dropped when Deaf.
+export async function sink_backs_up(x, y) {
+    const loc = game.level?.at(x, y);
+    let buf;
+    if (!Blind()) buf = 'Muddy waste pops up from the drain';
+    else if (!Deaf_hero()) buf = 'You hear a sloshing sound'; /* Deaf-aware */
+    else buf = `Something splashes you in the ${body_part(FACE)}`;
+    await pline(`${!Deaf_hero() ? 'Flupp!  ' : ''}${buf}.`);
+
+    if (!((loc?.looted | 0) & S_LRING)) { /* once per sink */
+        if (!Blind()) await You_see('a ring shining in its midst.');
+        mkobj_at(RING_CLASS, x, y, true);
+        newsym(x, y);
+        exercise(A_DEX, true);
+        exercise(A_WIS, true); /* a discovery! */
+        if (loc) loc.looted = (loc.looted | 0) | S_LRING;
+    }
 }
 
 // C ref: fountain.c drinksink() — quaff from a sink the hero stands on.

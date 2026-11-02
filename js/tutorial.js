@@ -602,11 +602,21 @@ function nhlibAlignShuffle() {
 // viaGoto: the level is entered by goto_level() (first entry), so its
 // mineralize() kelp scan and u_on_rndspot()'s place_lregion draws happen inside
 // this call; a #wizmakemap replacement draws them from
-// fastforward_fill_mineralize() and makemap_prepost() instead.
+// makelevel_fill_and_mineralize() and makemap_prepost() instead.
+// C ref: sp_lev.c lvlfill_solid(STONE, lit) on a level that is all STONE already.
+function tutSolidfillLit(lvl, lit) {
+    for (let x = 2; x <= 78; x++)
+        for (let y = 0; y <= 20; y++) {
+            const loc = lvl.at(x, y);
+            if (loc) loc.lit = !!lit;
+        }
+}
+
 function buildTutorialLevel(lvl, viaGoto) {
     ORG_X = ORG_Y = OFF;
-    // splev_initlev solidfill: linit->lit = rn2(2) (BOOL_RANDOM).
-    rn2(2);
+    // splev_initlev solidfill: linit->lit = rn2(2) (BOOL_RANDOM), then
+    // lvlfill_solid() lights (or not) every square x 2..78, y 0..20.
+    tutSolidfillLit(lvl, rn2(2));
 
     runTutProgram();
 
@@ -692,7 +702,7 @@ export function makemaz_tutorial2() {
     nhlibAlignShuffle();
     setTutorialLevelFlags(lvl);
     // des.level_init({ style = "solidfill", fg = " " }): linit->lit = rn2(2).
-    rn2(2);
+    tutSolidfillLit(lvl, rn2(2));
 
     ORG_X = 33; ORG_Y = 7;
     // des.map([[...]]) — default halign/valign "center".

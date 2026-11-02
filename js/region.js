@@ -14,7 +14,8 @@
 // ttl aged by the turns spent away.
 
 import { game } from './gstate.js';
-import { PLNMSG_ENVELOPED_IN_GAS } from './const.js';
+import { PLNMSG_ENVELOPED_IN_GAS, LUNG } from './const.js';
+import { makeplural } from './plural.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
          M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES } from './const.js';
@@ -337,10 +338,9 @@ function valid_cloud_pos(x, y) {
 
 // C ref: mon.c m_poisongas_ok(mtmp), hero half (is_you) — M_POISONGAS_OK(2)/
 // MINOR(1)/BAD(0).  Does not check for actual poison gas at the location.
-// Monsters use monmove.js m_poisongas_ok_mon().  `youmonst.data` is only a
-// valid mons[] row while polyd in this port (u.umonnum is a role index), and no
-// unpolymorphed race/role is nonliving, breathless or a gas-breather, so the
-// form arms are gated on Upolyd.
+// Monsters use monmove.js m_poisongas_ok_mon().  No unpolymorphed race/role is
+// nonliving, breathless or a gas-breather, so the form arms are gated on
+// Upolyd.
 const M_POISONGAS_BAD = 0;
 const M_POISONGAS_MINOR = 1;
 const M_POISONGAS_OK = 2;
@@ -578,10 +578,11 @@ async function inside_gas_cloud(reg, mtmp) {
         const { Maybe_Half_Phys } = await import('./zap.js');
         const { losehp_do } = await import('./do.js');
         const { monstseesu, monstunseesu } = await import('./mondata.js');
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         const u = game.u;
         if (!Poison_resistance()) {
-            await update_topl('Something is burning your lungs!');
+            const { body_part } = await import('./invent.js');
+            await update_topl(`Something is burning your ${makeplural(body_part(LUNG))}!`);
             await update_topl('You cough and spit blood!');
             await wake_nearto(u?.ux, u?.uy, 2);
             let dmg = Maybe_Half_Phys(rnd(dam) + 5);
@@ -597,7 +598,7 @@ async function inside_gas_cloud(reg, mtmp) {
     }
     const { Monnam } = await import('./do_name.js');
     const { m_poisongas_ok_mon } = await import('./monmove.js');
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     const { setmangry, killed } = await import('./uhitm.js');
     const { monkilled_mm } = await import('./mhitm.js');
     if (m_poisongas_ok_mon(mtmp) !== M_POISONGAS_OK) {
@@ -975,10 +976,8 @@ export async function create_force_field(x, y, radius, ttl) {
 }
 
 // C ref: youprop.h:276 Breathless — HMagical_breathing || EMagical_breathing ||
-// breathless(gy.youmonst.data).  u.data is a bogus mons[] row while
-// unpolymorphed in this port (u.umonnum is a ROLE index), and no player-monster
-// form is breathless anyway, so the form half is gated on Upolyd exactly as
-// C's own uses of youmonst.data are safe only because C keeps that row valid.
+// breathless(gy.youmonst.data).  No player-monster form is breathless, so the
+// form half is gated on Upolyd.
 function Breathless() {
     const u = game.u, p = u?.uprops || {};
     if (p.HMagical_breathing || p.EMagical_breathing || p.Magical_breathing

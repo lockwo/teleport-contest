@@ -67,14 +67,10 @@ function strchr(s, c) {
 }
 
 function digit(c) { return c >= '0' && c <= '9'; }
+import { strncmpi } from './hacklib.js';
 function isxdigit(c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
 function isspace(c) { return c === ' ' || c === '\t' || c === '\n' || c === '\v' || c === '\f' || c === '\r'; }
 function atoi(s) { const n = parseInt(s, 10); return Number.isNaN(n) ? 0 : n; }
-function strncmpi(a, b, n) {
-    const x = String(a).slice(0, n).toLowerCase(), y = String(b).slice(0, n).toLowerCase();
-    return x < y ? -1 : x > y ? 1 : 0;
-}
-
 // C's `anything` is a UNION, so `any.a_int = n` also leaves any.a_void
 // non-NULL — and non-NULL a_void is what wintty.c tty_add_menu() tests to
 // decide an entry is selectable.  js/wintty.js keeps the fields separate, so

@@ -55,12 +55,14 @@ import {
     W_NORTH, W_SOUTH, W_EAST, W_WEST, AM_NONE,
     ARMORSHOP, SCROLLSHOP, POTIONSHOP, WEAPONSHOP, FOODSHOP, RINGSHOP,
     WANDSHOP, TOOLSHOP, BOOKSHOP, FODDERSHOP, CANDLESHOP,
-    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED, ONAME_LEVEL_DEF } from './const.js';
+    ROT_ORGANIC, ROT_CORPSE, ZOMBIFY_MON, OBJ_FLOOR, OBJ_CONTAINED, OBJ_BURIED, ONAME_LEVEL_DEF, ONAME,
+    is_pool_or_lava } from './const.js';
 // readobjnam() is how C's obj.new(<name>) resolves an item name (via the same
 // rnd_otyp_by_namedesc path a wish uses).  readobjnam.js does not import sp_lev,
 // so this is not a cycle.
 import { readobjnam } from './readobjnam.js';
 import { objects as OBJDATA, des_object_defaults } from './mkobj.js';
+import { flood_fill_rm, ffrm } from './mkmap.js';
 import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          CORPSE, CHEST, LARGE_BOX, STATUE, mk_tt_object, mkobj_at, BOULDER,
          FOOD_CLASS, GOLD_PIECE, add_to_container, weight, mkobj, RANDOM_CLASS,
@@ -81,7 +83,7 @@ import { is_flyer_flag, is_swimmer_flag, passes_walls_flag,
          is_male_flag, is_female_flag } from './monflags_data.js';
 import { maketrap, Can_fall_thru, t_at, deltrap, undestroyable_trap,
          Can_dig_down } from './trap.js';
-import { is_pool_or_lava, create_drawbridge } from './dbridge.js';
+import { create_drawbridge } from './dbridge.js';
 import { new_light_source, LS_OBJECT, del_light_source, LS_MONSTER,
          emits_light } from './light.js';
 import { stock_room } from './shknam.js';
@@ -318,6 +320,7 @@ export const SET_LIT_NOCHANGE = -2;
 // lava lit unconditionally; set_levltyp_lit() then applies the caller's light
 // state unless it asked for "no change".
 export function set_levltyp_lit(x, y, typ, lit) {
+    if (!isok(x, y)) return false;   /* set_levltyp(): isok(x, y) guard (column 0 is never terrain) */
     const loc = game.level?.at(x, y);
     if (!loc || typ === INVALID_TYPE || typ >= MAX_TYPE) return false;
     const oldtyp = loc.typ;
@@ -393,51 +396,6 @@ export function add_sp_room(lowx, lowy, hix, hiy, lit, rtype, irregular, needfil
     g.level.nroom++;
     g.level.rooms[g.level.nroom] = { hx: -1 };
     return croom;
-}
-
-export function flood_fill_room(sx, sy, roomno, lit) {
-    const stack = [{ x: sx, y: sy }];
-    const seen = new Set();
-    const cells = [];
-    let minx = sx, maxx = sx, miny = sy, maxy = sy;
-    while (stack.length) {
-        const p = stack.pop();
-        const key = `${p.x},${p.y}`;
-        if (seen.has(key) || !isok(p.x, p.y)) continue;
-        seen.add(key);
-        const loc = game.level?.at(p.x, p.y);
-        if (!loc || loc.typ !== ROOM) continue;
-        loc.roomno = roomno;
-        loc.lit = !!lit;
-        cells.push(p);
-        if (p.x < minx) minx = p.x;
-        if (p.x > maxx) maxx = p.x;
-        if (p.y < miny) miny = p.y;
-        if (p.y > maxy) maxy = p.y;
-        // C ref: mkmap.c flood_fill_rm() anyroom branch (lines 179-195): each
-        // flooded ROOM cell also pulls its surrounding walls/doors into the
-        // room, marking them edge=1, assigning roomno, and (when lit) lighting
-        // them.  Without this an irregular lit room's wall border stays unlit
-        // and never renders when the hero stands in it (vision_recalc only
-        // gives a wall IN_SIGHT when the wall itself is lit).  No RNG.
-        for (let ii = p.x - 1; ii <= p.x + 1; ii++)
-            for (let jj = p.y - 1; jj <= p.y + 1; jj++) {
-                if (!isok(ii, jj)) continue;
-                const wl = game.level?.at(ii, jj);
-                if (!wl) continue;
-                if (IS_WALL(wl.typ) || IS_DOOR(wl.typ) || wl.typ === SDOOR) {
-                    wl.edge = 1;
-                    if (lit) wl.lit = true;
-                    if (wl.roomno === NO_ROOM || wl.roomno == null) wl.roomno = roomno;
-                    else if (wl.roomno !== roomno) wl.roomno = SHARED;
-                }
-            }
-        stack.push({ x: p.x + 1, y: p.y });
-        stack.push({ x: p.x - 1, y: p.y });
-        stack.push({ x: p.x, y: p.y + 1 });
-        stack.push({ x: p.x, y: p.y - 1 });
-    }
-    return { cells, minx, maxx, miny, maxy };
 }
 
 function selection_room(croom) {
@@ -1371,7 +1329,7 @@ function create_storeroom(croom) {
                 // object (M_AP_OBJECT) — no further RNG.  Mark it so the renderer
                 // shows a "(" (chest) glyph rather than the mimic letter.
                 if (mtmp) {
-                    mtmp.m_ap_type = 'obj';
+                    mtmp.m_ap_type = M_AP_OBJECT;
                     mtmp.mappearance = CHEST;
                 }
             }
@@ -1877,10 +1835,11 @@ export function lspo_region({ region, type = 'ordinary', irregular = false,
 
     let croom;
     if (irregular) {
+        // C ref: lspo_region() irregular arm — flood_fill_rm(anyroom=TRUE), whose
+        // diagonal spill-over decides which squares are lit and in the room.
         const roomno = game.level.nroom + ROOMOFFSET;
-        const flood = flood_fill_room(dx1, dy1, roomno, rlit);
-        if (!flood.cells.length) return null;
-        croom = add_sp_room(flood.minx, flood.miny, flood.maxx, flood.maxy,
+        const ext = flood_fill_irregular(dx1, dy1, roomno, rlit);
+        croom = add_sp_room(ext.min_rx, ext.min_ry, ext.max_rx, ext.max_ry,
                             rlit, rtype, true, filled, joined);
     } else {
         croom = add_sp_room(dx1, dy1, dx2, dy2, rlit, rtype, false, filled, joined);
@@ -3662,71 +3621,15 @@ export function lspo_door_relative(spec, broom) {
     }, broom);
 }
 
-// C ref: mkmap.c flood_fill_rm(sx, sy, rmno, lit, anyroom=TRUE) — the
-// scanline flood behind an irregular des.region.  Faithful to the C recursion
-// (including its diagonal spill-over through the `else` arms), because the
-// exact set of flooded squares decides how many squares fill_zoo() stocks and
-// therefore thousands of downstream draws.  No RNG.
-const FFR_WIDTH = COLNO - 2;
-function flood_fill_rm(sx, sy, rmno, lit, anyroom, ext) {
-    const at = (x, y) => game.level?.at(x, y);
-    const typAt = (x, y) => at(x, y)?.typ;
-    const roomnoAt = (x, y) => (at(x, y)?.roomno ?? NO_ROOM);
-    const fg_typ = typAt(sx, sy);
-
-    while (sx > 0 && (anyroom ? IS_ROOM(typAt(sx, sy)) : typAt(sx, sy) === fg_typ)
-           && roomnoAt(sx, sy) !== rmno)
-        sx--;
-    sx++;
-
-    if (sx < ext.min_rx) ext.min_rx = sx;
-    if (sy < ext.min_ry) ext.min_ry = sy;
-
-    let i;
-    for (i = sx; i <= FFR_WIDTH && typAt(i, sy) === fg_typ; i++) {
-        const loc = at(i, sy);
-        loc.roomno = rmno;
-        loc.lit = !!lit;
-        if (anyroom) {
-            /* add walls to room as well */
-            for (let ii = (i === sx ? i - 1 : i); ii <= i + 1; ii++)
-                for (let jj = sy - 1; jj <= sy + 1; jj++) {
-                    if (!isok(ii, jj)) continue;
-                    const wl = at(ii, jj);
-                    if (!wl) continue;
-                    if (!(IS_WALL(wl.typ) || IS_DOOR(wl.typ) || wl.typ === SDOOR))
-                        continue;
-                    wl.edge = 1;
-                    if (lit) wl.lit = true;
-                    if ((wl.roomno ?? NO_ROOM) === NO_ROOM) wl.roomno = rmno;
-                    else if (wl.roomno !== rmno) wl.roomno = SHARED;
-                }
-        }
-        ext.n_loc_filled++;
-    }
-    const nx = i;
-
-    for (const dy of [-1, 1]) {
-        if (!isok(sx, sy + dy)) continue;
-        for (i = sx; i < nx; i++) {
-            if (typAt(i, sy + dy) === fg_typ) {
-                if (roomnoAt(i, sy + dy) !== rmno)
-                    flood_fill_rm(i, sy + dy, rmno, lit, anyroom, ext);
-            } else {
-                if ((i > sx || isok(i - 1, sy + dy))
-                    && typAt(i - 1, sy + dy) === fg_typ
-                    && roomnoAt(i - 1, sy + dy) !== rmno)
-                    flood_fill_rm(i - 1, sy + dy, rmno, lit, anyroom, ext);
-                if ((i < nx - 1 || isok(i + 1, sy + dy))
-                    && typAt(i + 1, sy + dy) === fg_typ
-                    && roomnoAt(i + 1, sy + dy) !== rmno)
-                    flood_fill_rm(i + 1, sy + dy, rmno, lit, anyroom, ext);
-            }
-        }
-    }
-
-    if (nx > ext.max_rx) ext.max_rx = nx - 1;
-    if (sy > ext.max_ry) ext.max_ry = sy;
+// C ref: sp_lev.c lspo_region() irregular arm: gm.min_rx = gm.max_rx = dx1 (and
+// the y pair), then flood_fill_rm(dx1, dy1, nroom + ROOMOFFSET, rlit, TRUE).
+// Returns the bounding box and filled count (gm.min_rx.., gn.n_loc_filled).
+export function flood_fill_irregular(dx1, dy1, roomno, lit) {
+    ffrm.min_rx = ffrm.max_rx = dx1;
+    ffrm.min_ry = ffrm.max_ry = dy1;
+    ffrm.n_loc_filled = 0;
+    flood_fill_rm(dx1, dy1, roomno, lit, true);
+    return { ...ffrm };
 }
 
 // C ref: sp_lev.c lspo_region() for a SPECIAL (non-OROOM) region — the room is
@@ -3747,9 +3650,7 @@ export function vly_region(mx1, my1, mx2, my2, lit, rtype, needfill, irregular,
     let croom;
     if (irregular) {
         const roomno = game.level.nroom + ROOMOFFSET;
-        const ext = { min_rx: a.x, max_rx: a.x, min_ry: a.y, max_ry: a.y,
-                      n_loc_filled: 0 };
-        flood_fill_rm(a.x, a.y, roomno, lit, true, ext);
+        const ext = flood_fill_irregular(a.x, a.y, roomno, lit);
         croom = add_sp_room(ext.min_rx, ext.min_ry, ext.max_rx, ext.max_ry,
                             lit, rtype, true, needfill, true);
     } else {
@@ -4304,7 +4205,7 @@ const EXT_NAMES = [
     'select_newcham_form', 'is_vampshifter', 'validvamp',
     'mgender_from_permonst', 'set_mon_data', 'pm_invisible', 'vampshifted',
     'monst_to_any', 'oname', 'bury_an_obj', 'delete_contents', 'begin_burn',
-    'artifact_exists', 'safe_oname', 'can_saddle', 'put_saddle_on_mon',
+    'artifact_exists', 'can_saddle', 'put_saddle_on_mon',
     'selection_floodfill', 'set_selection_floodfillchk',
     'back_to_glyph', 'glyph_is_cmap', 'count_level_features', 'fixup_special',
     'makemap_prepost', 'oinit', 'clear_level_structures', 'load_lua',
@@ -5369,7 +5270,7 @@ export function create_object(o, croom) {
                 obj_extract_self(otmp);
                 /* uncreate a random artifact created in a container */
                 if (otmp.oartifact)
-                    EXT.artifact_exists(otmp, EXT.safe_oname(otmp), false, 0);
+                    EXT.artifact_exists(otmp, ONAME(otmp), false, 0);
                 obfree(otmp, null);
                 return null;
             }

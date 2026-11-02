@@ -18,7 +18,8 @@
 // adopting the staged pieces is a separate, measured change.
 
 import { makeplural } from './plural.js';
-import { Fumbling_hero } from './youprop.js';
+import { Fumbling_hero, Detect_monsters_hero, Stunned_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
+import { ONAME, setONAME } from './const.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -41,20 +42,21 @@ import { register_monnam_hooks, rndmonnam, bogon_is_pname } from './do_name.js';
 import { priestname } from './priest.js';
 import { rn2, rnd, d } from './rng.js';
 import { Cold_resistance } from './zap.js';
-import { finish_meating, monnear } from './dogmove.js';
+import { finish_meating, monnear, relobj } from './dogmove.js';
 import { cansee, couldsee } from './vision.js';
 import { m_at, newsym, map_invisible, unmap_object, canseemon_shared, tp_sensemon,
          update_topl, set_msg_mon, shieldeff, You_feel } from './display.js';
 import { isok, IS_OBSTRUCTED, A_STR, A_DEX, A_CON, A_WIS, A_LAWFUL, ACCESSIBLE,
          TAINT_AGE, CORPSTAT_INIT, CORPSTAT_NONE, CORPSTAT_FEMALE, CORPSTAT_MALE,
-         MGIVENNAME, has_mgivenname, W_SADDLE, SUPPRESS_SADDLE,
+         MGIVENNAME, has_mgivenname, setMGIVENNAME, W_SADDLE, SUPPRESS_SADDLE,
          SHOPBASE, engulfing_u, STRAT_WAITMASK, I_SPECIAL, M_ATTK_AGR_DIED,
          P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          P_LAST_WEAPON, P_BARE_HANDED_COMBAT, P_TWO_WEAPON_COMBAT,
          P_RIDING, ERODE_BURN, ERODE_RUST, ERODE_CORRODE, ER_NOTHING,
-         EF_NONE, EF_GREASE, EF_VERBOSE, In_endgame, TEMPLE, NON_PM, CXN_ARTICLE, NO_KILLER_PREFIX } from './const.js';
+         EF_NONE, EF_GREASE, EF_VERBOSE, In_endgame, TEMPLE, NON_PM, CXN_ARTICLE, NO_KILLER_PREFIX,
+    is_pool } from './const.js';
 import { Blind, does_block, unblock_point, is_lightblocker_mappear } from './vision.js';
-import { exercise, adjalign, acurr_eff } from './attrib.js';
+import { exercise, adjalign, acurr_eff, change_luck } from './attrib.js';
 import { DEADMONSTER, Protection_from_shape_changers, mmove_of, base_mmove,
          healmon, mvitals_died, resurrect_kop, sensemon, peacefuls_respond, unstuck, mon_leaving_level,
          level_specific_nocorpse, vamprises } from './mon.js';
@@ -66,7 +68,7 @@ const G_UNIQ_XM = 0x1000;
 const CORPSTAT_FEMALE_XM = 1, CORPSTAT_MALE_XM = 2;
 const mflags1_of = (ptr) => (ptr?.pmidx != null ? (MFLAGS1[ptr.pmidx] ?? 0) : 0);
 const mflags2_of = (ptr) => (ptr?.pmidx != null ? (MFLAGS2[ptr.pmidx] ?? 0) : 0);
-import { dmgtype, attacktype, AT_ENGL, AT_HUGS, AD_STCK, AD_SEDU, AD_SSEX } from './monattk_data.js';
+import { dmgtype, attacktype, AT_ENGL, AT_HUGS, AD_STCK, AD_SEDU, AD_SSEX, sticks } from './monattk_data.js';
 import { mattk_of, AT_NONE, AT_CLAW, AT_BITE, AT_KICK, AT_STNG, AT_BUTT, AT_TUCH,
          AT_WEAP, AT_MAGC, AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_ELEC, AD_ACID,
          AD_BLND, AD_STUN, AD_PLYS, AD_DRLI, AD_STON, AD_SLIM, AD_RUST, AD_CORR,
@@ -96,11 +98,11 @@ import { simpleonames, obj_is_pname, singular } from './objnam.js';
 import { S_NYMPH } from './symbols.js';
 import { bare_artifactname, is_art, ART_STORMBRINGER } from './artifact.js';
 import { is_weptool, simple_typename, is_plural, otense,
-         near_capacity, update_inventory, distant_far, distant_doname,
+         near_capacity, check_capacity, update_inventory, distant_far, distant_doname,
          mergable, stackobj, Free_action, Slow_digestion, Amphibious_hero } from './invent.js';
 import { livelog_printf, LL_CONDUCT, LL_KILLEDPET } from './livelog.js';
 import { engr_at, wipe_engr_at, u_wipe_engr, sengr_at, del_engr_at } from './engrave.js';
-import { find_mac as worn_find_mac, bypass_obj } from './worn.js';
+import { find_mac, bypass_obj } from './worn.js';
 import { YOUMONST, erode_armor, golemeffects } from './mhitm_ad.js';
 
 // ── small monster-state predicates (C: include/monst.h, mondata.h) ──
@@ -146,35 +148,6 @@ export function is_safemon(mtmp) {
     const Stunned = Stunned_uh();
     return !!(safe_pet && mtmp.mpeaceful && canspotmon(mtmp)
               && !Confusion && !Hallucination && !Stunned);
-}
-
-// C ref: monmove.c:461 monflee(mtmp, fleetime, first, fleemsg) — bookkeeping
-// half only; both callers here (do_attack's pet-in-the-way scare, muse.c's
-// use_scare_monster) pass fleemsg==FALSE, so the message ladder and vrock gas
-// cloud (which monmove.js's copy has) aren't needed. Must still match:
-//   - first==FALSE runs the body even if already fleeing, accumulating onto
-//     the existing mfleetim;
-//   - a resulting fleetime of exactly 1 is bumped to 2;
-//   - mon_track_clear() runs UNCONDITIONALLY at the end — RNG-visible: it
-//     gates m_move's rn2(4*(cnt-j)) and dog_move's rn2(MTSZ*(k-j)) backtrack
-//     rolls, so skipping it moved a fleeing pet to the wrong square
-//     (seed0014: pet ended 3 squares off instead of adjacent, flipping
-//     dog_goal's appr 0->1 and skipping its obj_resists scan).
-export function monflee(mtmp, fleetime, first, _fleemsg) {
-    if (DEADMONSTER(mtmp)) return;
-    // (mtmp == u.ustuck -> release_hero(): neither caller can be the engulfer.)
-    if (!first || !mtmp.mflee) {
-        if (!fleetime) {
-            mtmp.mfleetim = 0;          /* don't lose an untimed scare */
-        } else if (!mtmp.mflee || mtmp.mfleetim) {
-            fleetime += (mtmp.mfleetim || 0);
-            if (fleetime === 1) fleetime++;
-            mtmp.mfleetim = Math.min(fleetime, 127);
-        }
-        mtmp.mflee = 1;
-    }
-    /* ignore recently-stepped spaces when made to flee */
-    mtmp.mtrack = [];
 }
 
 // ── do_attack ──
@@ -285,18 +258,7 @@ function movement_rate(mtmp) {
 //   survives a swing], (on hit) dmgval(weapon) [+ exercise(A_DEX) on the first
 //   swing], then the kill aftermath (xkilled rn2(6); corpse_chance rn2(2);
 //   make_corpse -> mkcorpstat -> mksobj corpse next_ident/rndmonnum/gender).
-// C ref: hack.c check_capacity(str) — an Overtaxed (EXT_ENCUMBER) hero can't
-// fight at all.  Returning TRUE aborts do_attack BEFORE overexertion(), so it
-// also suppresses that turn's gethungry() rn2(20) and exercise(A_STR) rn2(19).
-const HVY_ENCUMBER = 3, EXT_ENCUMBER = 4;
-async function check_capacity(str) {
-    if (near_capacity() >= EXT_ENCUMBER) {
-        const { pline } = await import('./display.js');
-        await pline(str || "You can't do that while carrying so much stuff.");
-        return true;
-    }
-    return false;
-}
+const HVY_ENCUMBER = 3;
 
 // C ref: hack.c overexertion() — "combat increases metabolism", called by
 // do_attack() before the swing. Always calls the real gethungry() (same
@@ -416,6 +378,7 @@ async function object_from_map_lite(mtmp) {
     const otmp = mksobj(otyp, false, false);
     // C ref: pager.c object_from_map() — "to force pluralization" for coins.
     if (otmp.oclass === COIN_CLASS) otmp.quan = 2;
+    else if (otmp.otyp === 285 /* SLIME_MOLD */) otmp.spe = game.context?.current_fruit ?? 0;
     // C ref: pager.c:358-374 — an adjacent object is seen up close, and a
     // disguise the hero has looked at before stays seen: observe_object()
     // marks the TYPE encountered, which is what #discoveries lists.  A gem or
@@ -437,11 +400,11 @@ async function that_is_a_mimic_message(mtmp) {
     if (Blind()) return "Wait!  That's a monster!";
 
     let fmtbuf;
-    if (mtmp.m_ap_type === 'furniture') {
+    if (M_AP_TYPE(mtmp) === M_AP_FURNITURE) {
         const { defsyms } = await import('./symbols.js');
         const furn = defsyms[mtmp.mappearance]?.explanation || FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
         fmtbuf = `That ${furn} actually is %s!`;
-    } else if (mtmp.m_ap_type === 'obj') {
+    } else if (M_AP_TYPE(mtmp) === M_AP_OBJECT) {
         const otyp = mtmp.mappearance;
         const otmp = await object_from_map_lite(mtmp);
         const otmp_name = (otyp && otyp !== STRANGE_OBJECT
@@ -655,15 +618,12 @@ export async function attack_checks(mtmp, wep = null) {
             seemimicLocal(mtmp);
             return false;
         }
-        const dm = game.u?.uprops || {};
-        const detecting = !!((dm.Detect_monsters ?? 0) || (dm.HDetect_monsters ?? 0)
-                             || (dm.EDetect_monsters ?? 0));
+        const detecting = Detect_monsters_hero();
         // uhitm.c:261 — a hider the hero senses by telepathy/detection is revealed
         // silently and attacked this same turn.
         if (!tp_sensemon(mtmp) && !detecting) {
             const { pline } = await import('./display.js');
             const { l_monnam } = await import('./do_name.js');
-            const { is_pool } = await import('./dbridge.js');
             const lmonbuf = l_monnam(mtmp);
             const notseen = lmonbuf === 'it';
             if (!Blind() && game.u?.uhallu) {
@@ -741,7 +701,7 @@ async function hostile_attack(mtmp) {
     game.override_confirmation = false;
 
     if (await attack_checks(mtmp, game.uwep)) return true;
-    if (Upolyd() && noattacks(youmonst_data_uh())) {
+    if (Upolyd() && noattacks(youmonst_data())) {
         await update_topl('You have no way to attack monsters physically.');
         mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_WAITMASK;
         return await atk_done(mtmp);
@@ -782,7 +742,7 @@ async function hostile_attack(mtmp) {
             if (game.uwep) {
                 // C ref: uhitm.c:543 — yname(uwep): "your" or the shk's name.
                 await update_topl(`You begin bashing monsters with ${yname(game.uwep)}.`);
-            } else if (!cantwield(youmonst_data_uh())) {
+            } else if (!cantwield(youmonst_data())) {
                 await update_topl(`You begin ${Role_if_MONK() ? 'striking' : 'bashing'} monsters with your ${game.uarmg ? 'gloved' : 'bare'} ${makeplural(body_part(6 /*HAND*/))}.`);
             }
         }
@@ -1003,7 +963,6 @@ async function weapon_hit_bonus(weapon) {
 
 // C ref: worn.c find_mac(mtmp).  Keep the C call site's local name while
 // sharing the one authoritative worn-mask calculation.
-function find_mac(mtmp) { return worn_find_mac(mtmp); }
 
 // C ref: uhitm.c find_roll_to_hit() — a swing connects when this exceeds d20.
 // C ref: mondata.h is_orc(ptr) / is_undead(ptr).
@@ -1041,7 +1000,7 @@ export async function check_caitiff(mtmp) {
 
 export async function find_roll_to_hit(mtmp, aatyp, weapon, first_swing) {
     const u = game.u;
-    const form = youmonst_data_uh();
+    const form = youmonst_data();
     const luck = (u.uluck | 0) + (u.moreluck | 0); /* Luck */
     const luckTerm = Math.sign(luck) * Math.trunc((Math.abs(luck) + 2) / 3);
     let tmp = 1 + abon() + find_mac(mtmp) + (u.uhitinc || 0)
@@ -1108,7 +1067,7 @@ async function hitum(mon) {
     // stuck, or as a grid bug.  hitum_cleave() returns the primary target's status.
     if (is_art(game.uwep, ART_CLEAVER) && !u.twoweap && !u.uswallow
         && !u.ustuck && u.umonnum !== PM_GRID_BUG_UH)
-        return await hitum_cleave(mon, mattk_of(youmonst_data_uh())[0]);
+        return await hitum_cleave(mon, mattk_of(youmonst_data())[0]);
     // C ref: uhitm.c:775 — `gt.twohits = (uwep ? u.twoweap : double_punch())`.
     // 0: single hit, 1: first of two hits, 2: second of two.  hmon_hitmon()
     // copies it into hmd.twohits, where it picks the 3/4 strength bonus and the
@@ -1128,7 +1087,7 @@ async function hitum(mon) {
     if (tmp > dieroll) exercise(A_DEX, true);  // uhitm.c:783
     // C ref: uhitm.c do_attack() `hitum(mon, youmonst.data->mattk)` — uattk is
     // the form's first attack; known_hitum()/missum() need it for could_seduce().
-    const uattk = mattk_of(youmonst_data_uh())[0];
+    const uattk = mattk_of(youmonst_data())[0];
     let kh = await known_hitum(mon, game.uwep, mhit, dieroll, tmp, uattk);
     let malive = kh.malive;
     mhit = kh.mhit;
@@ -1399,7 +1358,7 @@ async function hmon_hitmon(mon, obj, thrown, dieroll) {
     } else if (u.umconf && hmd.hand_to_hand) {
         await nohandglow(mon);
         const { resist } = await import('./zap.js');
-        if (!mon.mconf && !resist(mon, SPBOOK_CLASS_UH, 0, 0)) {
+        if (!mon.mconf && !(await resist(mon, SPBOOK_CLASS_UH, 0, 0))) {
             mon.mconf = 1;
             if (!mon.mstun && !helpless(mon) && canseemon(mon)) {
                 set_msg_mon(mon);
@@ -1417,7 +1376,7 @@ async function hmon_hitmon(mon, obj, thrown, dieroll) {
         await wakeupAttack(mon, true);
         if (maybe_knockback) {
             const hitflags = { v: M_ATTK_HIT };
-            if (await mhitm_knockback(mon, mattk_of(youmonst_data_uh())[0],
+            if (await mhitm_knockback(YOUMONST, mon, mattk_of(youmonst_data())[0],
                                       hitflags, true)
                 && (hitflags.v & M_ATTK_DEF_DIED) !== 0)
                 hmd.destroyed = true;
@@ -1752,7 +1711,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
 // the striking object.
 export async function passive_obj(mon, obj, mattk) {
     /* gy.youmonst.data is the hero's current form (game.youmonst is a bare {}) */
-    const ptr = (mon === game.youmonst || mon === game.u) ? youmonst_data_uh() : mon?.data;
+    const ptr = (mon === game.youmonst || mon === game.u) ? youmonst_data() : mon?.data;
     /* C ref: uhitm.c:6136 — if the caller hasn't named an object, use uwep,
        uswapwep or (for AD_ENCH) uarmg. */
     if (!obj) {
@@ -1827,15 +1786,6 @@ function Acid_resistance() {
 // C ref: makemon.js MONS_NAMES index of the floating eye.
 const PM_FLOATING_EYE = 28;
 
-// C ref: rnd.c change_luck(n) — clamped to [LUCKMIN, LUCKMAX].  pray.js keeps
-// a file-static copy; Luck feeds find_roll_to_hit's sgn(Luck) term above.
-function change_luck(n) {
-    const u = game.u;
-    u.uluck = (u.uluck || 0) + n;
-    if (u.uluck < -10) u.uluck = -10;
-    if (u.uluck > 10) u.uluck = 10;
-}
-
 // ── kill aftermath: killed -> xkilled -> mondead + make_corpse ──
 // C ref: mon.c killed()/xkilled().  Emits "You kill the <mon>!", rolls the
 // treasure-drop gate rn2(6), removes the monster, and (corpse_chance rn2(2))
@@ -1869,7 +1819,7 @@ export async function killed(mon, opts) {
         // given name, so namedpet is gated on it.  The extra five characters
         // are load-bearing: they push the topline over 80 columns and move the
         // --More-- boundary (seed0383 step 178).
-        const namedpet = !!(mon?.mgivenname || mon?.mextra?.mgivenname)
+        const namedpet = has_mgivenname(mon)
             && !game.u?.uhallu;
         const who = !(wasinside || canspotmon(mon)) ? 'it'
             : !mon.mtame ? mon_nam(mon)
@@ -1969,6 +1919,12 @@ export async function killed(mon, opts) {
     // matching C (fmon has the dead monster purged by the next round).
     await mvitals_died(mon);                 // mon.c:3135
     await resurrect_kop(mon);
+    // C ref: mon.c:2739 m_detach() — `if (mtmp->mleashed) m_unleash(mtmp, FALSE)`
+    // is its first step: the leash object forgets the dead monster.
+    if (mon.mleashed) {
+        const { m_unleash } = await import('./apply.js');
+        await m_unleash(mon, false);
+    }
     // C ref: mon.c:2758 m_detach() -> mon_leaving_level(): unstuck() (a holder
     // gets mspec_used = rnd(2)), take the monster off the map, and newsym()
     // its square — under hallucination that redraw is a display-RNG draw.
@@ -1980,7 +1936,7 @@ export async function killed(mon, opts) {
     }
 
     // C: m_detach() releases inventory before creating the corpse.
-    await relobj(mon, x, y);
+    await relobj(mon, 1, false);
     await (await import('./mon.js')).thiefdead_shkgone(mon);
     // C ref: mon.c:2796 m_detach() tail — the hero is thrown from a steed
     // that dies (landing_spot()'s tie-break rn2 and the saddle drop-site look).
@@ -1998,7 +1954,6 @@ export async function killed(mon, opts) {
         // (inaccessible, not a pool) draws no rn2(6) treasure roll and no
         // corpse_chance roll.  A kill over WATER still leaves a corpse (it
         // floats), so is_pool counts too.
-        const { is_pool } = await import('./dbridge.js');
         const accessible = (() => {
             const lv = game.level?.at(x, y);
             const t = lv?.typ;
@@ -2046,7 +2001,7 @@ export async function killed(mon, opts) {
             if (isFoodDrop || tooBigForSmallMonster) {
                 if (tooBigForSmallMonster && otmp.oartifact) {
                     const { artifact_exists } = await import('./artifact.js');
-                    artifact_exists(otmp, otmp.oname, false, 0);
+                    artifact_exists(otmp, ONAME(otmp), false, 0);
                 }
                 const { delobj } = await import('./invent.js');
                 delobj(otmp);
@@ -2094,7 +2049,7 @@ export async function killed(mon, opts) {
             const { zombie_maker } = await import('./monmove.js');
             const { zombie_form } = await import('./mon.js');
             game.zombify = (!game.thrownobj && !game.stoned && !game.uwep
-                            && zombie_maker({ data: youmonst_data_uh(), mcan: false })
+                            && zombie_maker({ data: youmonst_data(), mcan: false })
                             && zombie_form(mon.data) !== NON_PM);
             const cadaver = await make_corpse(mon, x, y, burycorpse);
             game.zombify = false; /* reset */
@@ -2209,7 +2164,7 @@ export async function killed(mon, opts) {
                 ? 'the studio audience applaud!'
                 : 'the rumble of distant thunder...');
             if (!(((mon.data?.geno ?? 0) & G_UNIQ_XM) !== 0)) {
-                const mname = mon.mgivenname || mon.mextra?.mgivenname || '';
+                const mname = MGIVENNAME(mon);
                 livelog_printf(LL_KILLEDPET,
                     `murdered ${mname ? `${mname}, ` : ''}${
                         game.flags?.female ? 'her' : 'his'} faithful ${mon_pmname(mon)}`);
@@ -2219,63 +2174,6 @@ export async function killed(mon, opts) {
         }
         adjalign(mon.malign | 0);
     }
-}
-
-// C ref: steal.c relobj(mtmp, 1, FALSE) via mdrop_obj().
-export async function relobj(mon, x, y) {
-    const inv = mon?.minvent;
-    // C ref: steal.c relobj() tail — `if (show && cansee(omx, omy)) newsym(omx, omy);`
-    // fires even for an EMPTY minvent (m_detach always passes show=1), which is
-    // what erases the dead monster's glyph.  Returning early on an empty
-    // inventory left a killed gas spore (no corpse, no gear) drawn on the map.
-    const repaint = () => { if (x > 0 && y >= 0) newsym(x, y); };
-    // C ref: steal.c relobj():883 — a vault guard's gold goes away rather than
-    // being dropped.
-    if (mon?.isgd && inv?.length) {
-        const { findgold } = await import('./steal.js');
-        const { pline } = await import('./display.js');
-        const gold = findgold(inv);
-        if (gold) {
-            if (canspotmon(mon))
-                await pline(`${s_suffix(Monnam(mon))} gold ${canseemon(mon)
-                    ? 'vanishes' : 'seems to vanish'}.`);
-            inv.splice(inv.indexOf(gold), 1);
-            gold.where = OBJ_FREE;
-            gold.ocarry = null;
-        }
-    }
-    if (!inv || !inv.length) { repaint(); return; }
-    const { flooreffects } = await import('./do.js');
-    const { stackobj } = await import('./invent.js');
-    // minvent is newest-first; place_object appends to the floor pile.
-    for (const otmp of [...inv]) {
-        distant_doname(otmp, distant_far(otmp, x, y));
-        inv.splice(inv.indexOf(otmp), 1);
-        otmp.where = OBJ_FREE;
-        otmp.ocarry = null;
-        // C ref: worn.c extract_from_minvent().  An object stops being worn
-        // before it reaches the floor; otherwise a pet which later picks it
-        // up incorrectly treats it as undroppable armour.
-        const unwornmask = otmp.owornmask | 0;
-        otmp.owornmask = 0;
-        if (unwornmask) {
-            mon.misc_worn_check = ((mon.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
-            if (otmp === mon.mw) mon.mw = null;
-        }
-        if (!await flooreffects(otmp, x, y, 'fall')) {
-            place_object(otmp, x, y);
-            stackobj(otmp);
-        } else if (otmp.timed) {
-            const { obj_stop_timers } = await import('./timeout.js');
-            await obj_stop_timers(otmp);
-        }
-        if (!DEADMONSTER(mon) && unwornmask) {
-            const { update_mon_extrinsics } = await import('./worn.js');
-            update_mon_extrinsics(mon, otmp, false);
-        }
-    }
-    mon.minvent = [];
-    repaint();
 }
 
 // C ref: monsters.h LVL() mmove, keyed by pmidx.  mon.js owns the audited copy
@@ -2429,7 +2327,7 @@ export async function make_corpse(mon, x, y, burythem = false) {
         // this monster (context.bypasses), the same beam must not hit its
         // corpse.
         if (obj != null && game.context?.bypasses) bypass_obj(obj);
-        if (obj != null && has_mgivenname(mon)) obj.oname = MGIVENNAME(mon);
+        if (obj != null && has_mgivenname(mon)) setONAME(obj, MGIVENNAME(mon));
         // C ref: mon.c:931 `if (Blind && !sensemon(mtmp)) clear_dknown(obj);` —
         // a corpse the blind hero could not perceive stays undiscovered.
         if (obj != null && Blind() && !sensemon(mon)) clear_dknown(obj);
@@ -2494,7 +2392,7 @@ export async function make_corpse(mon, x, y, burythem = false) {
             /* gold golem: good luck gives more coins */
             gobj = mkgold(200 - rnl(101), x, y);
         }
-        if (mgolem !== 'stone golem') delete mon.mgivenname;
+        if (mgolem !== 'stone golem') setMGIVENNAME(mon, null);
         if (gobj) { named(gobj); stackobj(gobj); newsym(x, y); }
         return gobj;
     }
@@ -2513,7 +2411,7 @@ export async function make_corpse(mon, x, y, burythem = false) {
                     : (rn2(4) ? LEATHER_ARMOR : rn2(3) ? LEATHER_CLOAK : SADDLE);
             obj = mksobj_at(otyp, x, y, true, false);
         }
-        delete mon.mgivenname;
+        setMGIVENNAME(mon, null);
         if (obj) { named(obj); stackobj(obj); newsym(x, y); }
         return obj;
     }
@@ -2539,8 +2437,7 @@ export async function make_corpse(mon, x, y, burythem = false) {
             await pudding_merge_message(obj, other);
             obj = await obj_meld({ obj }, { obj: other });
         }
-        if (mon.mextra) mon.mextra.mgivenname = null;
-        mon.mgivenname = null;
+        setMGIVENNAME(mon, null);
         newsym(x, y);
         return obj;
     }
@@ -2735,7 +2632,7 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
                   && monster_by_pmidx(mtmp.mappearance))
         ? mon_pmname({ data: monster_by_pmidx(mtmp.mappearance), female: mtmp.female })
         : mon_pmname(mtmp);
-    const given = mtmp?.mgivenname || mtmp?.mextra?.mgivenname;
+    const given = MGIVENNAME(mtmp);
 
     // C ref: do_name.c:919 — a shopkeeper IS his personal name ("Maganasipi"),
     // with " the <species>" appended only when he isn't a plain shopkeeper or is
@@ -2773,7 +2670,7 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
     // function" -> priestname(), with Hallucination blocked unless do_hallu
     // and minvis cleared unless do_invis; EXACT_NAME forces "of <deity>".
     if ((mtmp?.ispriest || mtmp?.isminion)
-        && !(mtmp.m_ap_type === 'mon' && !(_suppress & 0x10 /* SUPPRESS_MAPPEARANCE */))) {
+        && !(M_AP_TYPE(mtmp) === M_AP_MONSTER && !(_suppress & 0x10 /* SUPPRESS_MAPPEARANCE */))) {
         const do_hallu = !!game.u?.uhallu && !(_suppress & SUPPRESS_HALLUCINATION);
         const save_invis = mtmp.minvis;
         if (!(mtmp.minvis && !(_suppress & SUPPRESS_INVISIBLE))) mtmp.minvis = 0;
@@ -3039,14 +2936,6 @@ function enfolds(ptr) { return attacktype_fordmg(ptr, AT_ENGL, AD_WRAP); }
 const FLAMING_NAMES = new Set(['fire vortex', 'flaming sphere',
                                'fire elemental', 'salamander']);
 function flaming(ptr) { return FLAMING_NAMES.has(ptr?.name); }
-// C ref: mondata.c:654 sticks(ptr) — a holder; grabbing one would be ambiguous.
-// Note the AT_ENGL exclusion on the AD_WRAP arm (an engulfer isn't a holder).
-export function sticks(ptr) {
-    return dmgtype(ptr, AD_STCK)
-        || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
-        || attacktype(ptr, AT_HUGS);
-}
-hooks.sticks = sticks;
 // C ref: mondata.h hug_throttles(ptr) — the rope golem's strangling hug.
 function hug_throttles(ptr) { return ptr?.name === 'rope golem'; }
 // C ref: mondata.c:591 can_be_strangled(mon) — strangulation is loss of blood
@@ -3112,22 +3001,18 @@ function a_monnam_uh(mtmp) { return x_monnam(mtmp, ARTICLE_A, null, 0, false); }
 function u_of() { return game.u || {}; }
 // C ref: youprop.h Fumbling/Stunned/Blind_telepat/See_invisible/Invisible.
 function Fumbling() { return Fumbling_hero(); }
-function Stunned_uh() {
-    if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return (u_of().uprops?.Stun || 0) > 0 || !!u_of().Stunned
-        || (u_of().ustun | 0) > 0;
-}
-function See_invisible() { return !!game.u?.formprops?.See_invisible || !!u_of().see_invis; }
+function Stunned_uh() { return Stunned_hero(); }
 // C ref: youprop.h Invisible == (Invis && !See_invisible); Invis includes the
 // timed HInvis intrinsic and worn extrinsics (monmove.js Invis()).
 import { Invis as Invis_uh } from './monmove.js';
 import { MMOVE_DIED } from './const.js';
-function Invisible_uh() { return Invis_uh() && !See_invisible(); }
-function Stone_resistance() { return !!game.u?.formprops?.Stone_resistance || (u_of().uprops?.StoneResistance || 0) > 0; }
+function Invisible_uh() { return Invis_uh() && !See_invisible_hero(); }
+function Stone_resistance() { return Stone_resistance_hero(); }
 import { Deaf_hero as Deaf_uh } from './display.js';
 function Upolyd() { return !!u_of().Upolyd; }
 import { Hate_silver } from './invent.js';
 import { Blind_telepat, Levitation_hero, Flying_hero } from './youprop.js';
+import { youmonst_data } from './invent.js';
 // C ref: display.h m_next2u(mon) — adjacent to the hero.
 function m_next2u(mon) {
     const u = u_of();
@@ -4079,7 +3964,7 @@ export function first_weapon_hit(weapon) {
     /* include "cursed" if known but don't bother with blessed */
     if (weapon.cursed && weapon.bknown) buf += 'cursed '; /* normally supplied by doname() */
     if (obj_is_pname(weapon)) {
-        buf += weapon.oname;                    /* fully IDed artifact */
+        buf += ONAME(weapon);                   /* fully IDed artifact */
     } else {
         buf += simpleonames(weapon);
         if (weapon.oartifact && weapon.dknown)
@@ -4272,7 +4157,7 @@ export async function steal_it(mdef, mattk) {
 
     if (ustealo) {   /* we will be taking everything */
         if (Mgender(mdef) === (game.u?.mfemale ? FEMALE_G : MALE_G)
-            && (youmonst_data_uh()?.mcls === S_NYMPH))
+            && (youmonst_data()?.mcls === S_NYMPH))
             await update_topl(`You charm ${mon_nam(mdef)}.  `
                 + `${upstart(mhe(mdef))} gladly hands over `
                 + `${!gold ? '' : 'most of '}${mhis(mdef)} possessions.`);
@@ -4344,7 +4229,7 @@ export async function steal_it(mdef, mattk) {
 // monster growth or hero-defender callbacks.
 const uhitm_ops = {
     permonst: (mon) => mon === YOUMONST
-        ? (game.youmonst?.data || youmonst_data_uh()) : corpse_permonst(mon),
+        ? (game.youmonst?.data || youmonst_data()) : corpse_permonst(mon),
     get vis() { return game.vis; },
     Monnam: (mon) => mon === YOUMONST ? 'You' : Monnam(mon),
     mon_nam: (mon) => mon === YOUMONST ? 'you' : mon_nam(mon),
@@ -4374,7 +4259,7 @@ export async function damageum(mdef, mattk, specialdmg) {
         done: false,
     };
 
-    const ydata = youmonst_data_uh();
+    const ydata = youmonst_data();
     if (is_demon_uh(ydata) && !rn2(13) && !game.uwep
         && ydata?.name !== 'amorous demon' && ydata?.name !== 'balrog') {
         await demonpet();
@@ -4450,7 +4335,7 @@ export async function explum(mdef, mattk) {
     default:
         break;
     }
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     await wake_nearto(u.ux, u.uy, 7 * 7);   /* same radius as an exploding mon */
     return M_ATTK_HIT;
 }
@@ -4461,7 +4346,7 @@ export async function explum(mdef, mattk) {
 let engulf_flash = null;   // C: tmp_at(DISP_ALWAYS, ...) state of start_engulf()
 export async function start_engulf(mdef) {
     const u = game.u;
-    const form = youmonst_data_uh();
+    const form = youmonst_data();
     const u_digest = digests(form);
     const u_enfold = enfolds(form);
     if (!Invisible_uh()) {
@@ -4499,7 +4384,7 @@ export async function gulpum(mdef, mattk) {
     const { update_topl } = await import('./display.js');
     let dam = d(mattk.damn | 0, mattk.damd | 0);
     let tmp;
-    const ydata = youmonst_data_uh();
+    const ydata = youmonst_data();
     const u_digest = digests(ydata), u_enfold = enfolds(ydata);
     const pd = mdef.data;
     const expel_verb = u_digest ? 'regurgitate' : u_enfold ? 'release' : 'expel';
@@ -4758,7 +4643,6 @@ export async function m_is_steadfast(mtmp) {
     const otmp = is_u ? game.uwep : MON_WEP_uh(mtmp);
     const A = await import('./artifact.js');
     const { Is_airlevel, Is_waterlevel } = await import('./const.js');
-    const { is_pool } = await import('./dbridge.js');
 
     /* must be on the ground (or in water) */
     if ((is_u ? (Flying_uh() || Levitation_uh())
@@ -4784,17 +4668,6 @@ export async function m_is_steadfast(mtmp) {
 function Flying_uh() { return Flying_hero(); }
 function Levitation_uh() { return Levitation_hero(); }
 
-// C ref: monst.h gy.youmonst.data — the hero's CURRENT permonst.  game.youmonst
-// is a bare `{}` in this port (restore.js:1135 cg.zeromonst), so `.data` on it
-// is undefined; u.umonnum holds the 0-based ROLE index when not polymorphed,
-// exactly as js/monmove.js's and js/artifact.js's copies of this resolve it.
-const ROLE_PM_FIRST_UH = 331;
-export function youmonst_data_uh() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(ROLE_PM_FIRST_UH + (u?.umonnum ?? 0))
-        || u?.data || null;
-}
 
 // C ref: objclass.h WHACK — objects[].oc_dir's blunt bit, which this port's
 // objects[] table does not carry (its oc_dir column is 0 for every weapon).
@@ -4823,14 +4696,18 @@ function sticks_uh(ptr) {
         || attacktype(ptr, AT_HUGS);
 }
 
-// C ref: uhitm.c mhitm_knockback, with a monster defender.
-// Omitted magr denotes the hero. hitflags models C's mutable int pointer.
-export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used, magr = null) {
+// C ref: uhitm.c:5245 mhitm_knockback(magr, mdef, mattk, hitflags, weapon_used) —
+// a monster (or the hero, YOUMONST) hits another hard enough to knock it back.
+// Either side may be the hero, never both.  `hitflags` models C's mutable int
+// pointer: an object whose `v` is the M_ATTK_* mask.
+export async function mhitm_knockback(magr, mdef, mattk, hitflags, weapon_used) {
     const u = game.u;
-    const magr_data = magr ? magr.data : youmonst_data_uh();
+    const u_agr = (magr === YOUMONST);
+    let u_def = (mdef === YOUMONST);
+    let was_u = false, dismount = false;
     const knockdistance = rn2(3) ? 1 : 2;            // uhitm.c:5258
     let chance = 6;                                  // 1/6 knocks back
-    const wep = weapon_used ? (magr ? MON_WEP_uh(magr) : game.uwep) : null;
+    const wep = weapon_used ? (u_agr ? game.uwep : MON_WEP_uh(magr)) : null;
     const A = await import('./artifact.js');
     if (wep && A.is_art(wep, ART_OGRESMASHER)) chance = 2;
     if (rn2(chance)) return false;                   // uhitm.c:5269
@@ -4840,76 +4717,127 @@ export async function mhitm_knockback(mdef, mattk, hitflags, weapon_used, magr =
           && (mattk.aatyp === AT_CLAW || mattk.aatyp === AT_KICK
               || mattk.aatyp === AT_BUTT || mattk.aatyp === AT_WEAP)))
         return false;
+    const magr_data = u_agr ? youmonst_data() : magr.data;
     /* don't knockback if attacker also wants to grab or engulf */
     if (attacktype(magr_data, AT_ENGL) || attacktype(magr_data, AT_HUGS)
-        || sticks_uh(magr_data))
+        || sticks(magr_data))
         return false;
 
-    const defx = mdef.mx, defy = mdef.my;
+    /* decide where the first step will place the target */
+    const defx = u_def ? u.ux : mdef.mx, defy = u_def ? u.uy : mdef.my;
     const sgn_ = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
-    const agrx = magr ? magr.mx : u.ux, agry = magr ? magr.my : u.uy;
+    const agrx = u_agr ? u.ux : magr.mx, agry = u_agr ? u.uy : magr.my;
     const dx = sgn_(defx - agrx), dy = sgn_(defy - agry);
 
-    /* the non-hero half of C's "can't move a target through a doorway
-       diagonally" test; a subset of test_move() */
-    if (!isok(defx + dx, defy + dy)) return false;
-    const dloc = game.level?.at(defx, defy);
-    // C uses magr->mx/my here even for youmonst, not the hero's u.ux/uy.
-    if (dloc && IS_DOOR(dloc.typ)
-        && (defx - (magr?.mx ?? game.youmonst?.mx ?? 0))
-        && (defy - (magr?.my ?? game.youmonst?.my ?? 0))
-        && ((dloc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) !== 0)
-        return false;
+    /* can't move most targets into or out of a doorway diagonally */
+    if (u_def) {
+        const { test_move_quiet } = await import('./cmd.js');
+        if (!test_move_quiet(defx + dx, defy + dy, dx, dy)) return false;
+    } else {
+        /* subset of test_move() */
+        if (!isok(defx + dx, defy + dy)) return false;
+        const dloc = game.level?.at(defx, defy);
+        // C uses magr->mx here even for youmonst, not the hero's u.ux/u.uy.
+        if (dloc && IS_DOOR(dloc.typ)
+            && (defx - (u_agr ? (game.youmonst?.mx ?? 0) : magr.mx))
+            && (defy - (u_agr ? (game.youmonst?.my ?? 0) : magr.my))
+            && ((dloc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) !== 0)
+            return false;
+    }
 
-    if (DEADMONSTER(mdef) || (magr && DEADMONSTER(magr))) return false;
+    /* if hero is stuck to a cursed saddle, knock the steed back */
+    if (u_def && u.usteed) {
+        const { which_armor } = await import('./worn.js');
+        const otmp = which_armor(u.usteed, W_SADDLE);
+        if (otmp && otmp.cursed) {
+            mdef = u.usteed;
+            was_u = true;
+            u_def = false;
+        } else {
+            dismount = true; /* saddle is not cursed; knock hero out of it */
+        }
+    }
+
+    /* monsters must be alive */
+    if ((!u_agr && DEADMONSTER(magr)) || (!u_def && !dismount && DEADMONSTER(mdef)))
+        return false;
     /* attacker must be much larger than defender */
-    if (!((magr_data?.msize ?? 2) > ((mdef.data?.msize ?? 2) + 1)))
+    const mdef_data = (u_def || dismount) ? youmonst_data() : mdef.data;
+    if (!((magr_data?.msize ?? 2) > ((mdef_data?.msize ?? 2) + 1)))
         return false;
     /* no knockback with a flimsy or non-blunt weapon */
     if (wep && (is_flimsy(wep) || !is_blunt_weapon_uh(wep))) return false;
     if (unsolid(magr_data)) return false;            /* needs a solid hit */
-    /* the attack must have hit */
-    if (!magr && !(hitflags.v & M_ATTK_HIT)) return false;
+    /* the attack must have hit; mon-vs-mon doesn't set up hitflags */
+    if ((u_agr || u_def || dismount) && !(hitflags.v & M_ATTK_HIT)) return false;
 
-    if (await m_is_steadfast(mdef)) {
-        if (u.usteed && mdef === u.usteed)
-            await plineU(`You and ${y_monnam(u.usteed)} don't budge.`);
-        else if (canseemon(mdef))
+    /* steadfast defender cannot be pushed around */
+    if (await m_is_steadfast((u_def || dismount) ? u : mdef)) {
+        if (u_def || dismount || (u.usteed && mdef === u.usteed)) {
+            await plineU(`You ${u.usteed ? `and ${y_monnam(u.usteed)} ` : ''}don't budge.`);
+        } else if (canseemon(mdef)) {
             await plineU(`${Monnam(mdef)} doesn't budge.`);
+        }
         return false;
     }
 
-    const { mhurtle, will_hurtle } = await import('./dothrow.js');
     /* subtly vary the message text if the monster won't actually move */
-    const knockedhow = will_hurtle(mdef, defx + dx, defy + dy)
-        ? 'backward' : 'back';
+    const { mhurtle, hurtle, will_hurtle } = await import('./dothrow.js');
+    const knockedhow = dismount ? 'out of your saddle'
+        : will_hurtle((u_def) ? (game.youmonst || u) : mdef, defx + dx, defy + dy)
+            ? 'backward' : 'back';
 
-    if (canseemon(mdef)) {
+    if (u_def || dismount || canseemon(mdef)) {
         /* "You knock the gnome back with a powerful blow!" -- the adjective
            and the noun are two separate rn2(2)s (uhitm.c:5374) */
+        const magrbuf = u_agr ? 'You' : Monnam(magr);
+        let mdefbuf = (u_def || dismount || was_u) ? 'you' : y_monnam(mdef);
+        if (was_u) mdefbuf += ` and ${y_monnam(u.usteed)}`;
         const adj = rn2(2) ? 'forceful' : 'powerful';
         const noun = rn2(2) ? 'blow' : 'strike';
-        await plineU(`${magr ? Monnam(magr) + ' knocks' : 'You knock'} ${y_monnam(mdef)} ${knockedhow} `
+        await plineU(`${magrbuf} ${vtense_uh(magrbuf, 'knock')} ${mdefbuf} ${knockedhow} `
                      + `with a ${adj} ${noun}!`);
-    } else if (!magr) {
+    } else if (u_agr) {
         /* hero knocks unseen foe back; noticed by touch */
         await You_feel(`${some_mon_nam(mdef)} be knocked ${knockedhow}!`);
     }
 
-    if (!magr && u.ustuck) await unstuck(u.ustuck);
+    if (u.ustuck && (u_def || dismount || u_agr)) await unstuck(u.ustuck);
 
-    await mhurtle(mdef, dx, dy, knockdistance);
-    if (magr) hitflags.v |= M_ATTK_HIT;
-    if (DEADMONSTER(mdef)) {
-        hitflags.v |= M_ATTK_DEF_DIED;
-    } else if (!rn2(4)) {                            // uhitm.c:5406
-        mdef.mstun = 1;
-        if (magr && mdef === u.usteed) {
-            const { set_apparxy } = await import('./monmove.js');
-            set_apparxy(magr);
+    /* do the actual knockback effect */
+    if (u_def || dismount) {
+        if (dismount) {
+            /* u.dx/u.dy carry the preferred dismount direction */
+            u.dx = dx; u.dy = dy;
+            const { dismount_steed } = await import('./steed.js');
+            const { DISMOUNT_KNOCKED } = await import('./const.js');
+            await dismount_steed(DISMOUNT_KNOCKED);
+        } else {
+            await hurtle(dx, dy, knockdistance, false);
+            hitflags.v |= M_ATTK_HIT;
+        }
+        const { set_apparxy } = await import('./monmove.js');
+        set_apparxy(magr); /* update magr's idea of where you are */
+        if (!Stunned_uh() && !rn2(4)) {
+            const { make_stunned_u } = await import('./mhitu.js');
+            await make_stunned_u(knockdistance + 1, true); /* 2 or 3 */
+        }
+    } else {
+        await mhurtle(mdef, dx, dy, knockdistance);
+        if (!u_agr) hitflags.v |= M_ATTK_HIT;
+        if (DEADMONSTER(mdef)) {
+            if (!was_u) hitflags.v |= M_ATTK_DEF_DIED;
+        } else if (!rn2(4)) {
+            mdef.mstun = 1;
+            /* if steed and hero were knocked back, update attacker's idea
+               of where hero is */
+            if (mdef === u.usteed) {
+                const { set_apparxy } = await import('./monmove.js');
+                set_apparxy(magr);
+            }
         }
     }
-    if (magr && DEADMONSTER(magr)) hitflags.v |= M_ATTK_AGR_DIED;
+    if (!u_agr && DEADMONSTER(magr)) hitflags.v |= M_ATTK_AGR_DIED;
     return true;
 }
 // Lazy pline, like plineMon() above (display.js imports uhitm.js).
@@ -4923,7 +4851,7 @@ async function plineU(text) {
 // the hero-as-defender arms are dropped (the hero can't be gulpum()'s target).
 function engulf_target_uh(magr, mdef) {
     const uatk = (magr === game.youmonst || magr === game.u);
-    const adata = uatk ? youmonst_data_uh() : magr?.data;
+    const adata = uatk ? youmonst_data() : magr?.data;
     /* can't swallow something that's too big */
     if ((mdef.data?.msize ?? 2) >= 4 /*MZ_HUGE*/
         || ((adata?.msize ?? 2) < (mdef.data?.msize ?? 2) && !is_whirly(adata)))
@@ -4958,7 +4886,7 @@ export async function hmonas(mon) {
     const WPN = await import('./weapon.js');
     const { getmattk, could_seduce, mtrapped_in_pit } = await import('./mhitu.js');
     const { update_topl } = await import('./display.js');
-    const ydata = youmonst_data_uh();
+    const ydata = youmonst_data();
 
     let altwep = false, weapon_used = false, odd_claw = true;
     let weapon = null, originalweapon = null;
@@ -5353,7 +5281,7 @@ export async function hmonas(mon) {
                &sum[i], weapon_used) — a successful knockback ends the whole
                attack sequence. */
             const hitflags = { v: sum[i] };
-            const knocked = await mhitm_knockback(mon, mattk, hitflags,
+            const knocked = await mhitm_knockback(YOUMONST, mon, mattk, hitflags,
                                                   weapon_used);
             sum[i] = hitflags.v;
             if (knocked) break;
@@ -5402,10 +5330,7 @@ async function failed_grab_uh(magr, mdef, mattk) {
 }
 // C ref: youprop.h Sick/Sick_resistance.
 function Sick_uh() { return (u_of().uprops?.Sick || 0) > 0; }
-function Sick_resistance_uh() {
-    if (game.u?.formprops?.Sick_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return (u_of().uprops?.SickResistance || 0) > 0;
-}
+function Sick_resistance_uh() { return Sick_resistance_hero(); }
 
 // C ref: uhitm.c:6201 that_is_a_mimic(mtmp, mimic_flags) — the "Wait!  That's a
 // <mimic>!" reveal, shared by stumble_onto_mimic() and bhitm()'s
@@ -5567,7 +5492,7 @@ export async function light_hits_gremlin(mon, dmg) {
         await update_topl(`${Monnam(mon)} recoils from the light!`);
     }
     mon.mhp -= dmg;
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     await wake_nearto(mon.mx, mon.my, 30);
     if (DEADMONSTER(mon)) {
         if (game.context?.mon_moving) {

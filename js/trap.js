@@ -3,6 +3,8 @@
 // Stripped-down version for contest: emits the same rn2/rnd/rne PRNG call
 // sequence as C during level generation so RNG parity is preserved.
 
+import { Half_physical_damage_hero, Half_spell_damage_hero, Lev_at_will_hero, Swimming_hero, Passes_walls_hero } from './youprop.js';
+import { has_mgivenname, Trap_Effect_Finished } from './const.js';
 import { count_level_features } from './mklev.js';
 import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
 import { level_difficulty } from './dungeon.js';
@@ -10,7 +12,7 @@ import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp } from './display.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
 import { del_engr_at } from './engrave.js';
@@ -25,11 +27,11 @@ import { the } from './objnam.js';
 import { makeplural } from './plural.js';
 import { shk_blocking_door, block_door_feedback, add_damage, costly_spot, stolen_value, sellobj } from './shk.js';
 import { observe_object } from './o_init.js';
-import { exercise, acurr_eff } from './attrib.js';
+import { exercise, acurr_eff, change_luck } from './attrib.js';
 import { Boots_off, stop_donning, hard_helmet, helm_simple_name, gloves_simple_name, cloak_simple_name, suit_simple_name } from './do_wear.js';
-import { float_vs_flight, selftouch, mbodypart, Stone_resistance_u } from './polyself.js';
+import { float_vs_flight, set_utrap, selftouch, mbodypart, Stone_resistance_u } from './polyself.js';
 import { is_weptool } from './weapon.js';
-import { is_pool, is_lava, is_waterwall } from './dbridge.js';
+import { is_waterwall } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { get_obj_location, emits_light, del_light_source, LS_MONSTER } from './light.js';
 import { wormgone } from './worm.js';
@@ -65,6 +67,7 @@ import {
     TELEPORT, TELEPORT_CONTROL, WWALKING, SWIMMING, MAGICAL_BREATHING, DISMOUNT_FELL,
     FAINTED, BUFSZ, W_NONPASSWALL, W_NONDIGGABLE, WT_TOOMUCH_DIAGONAL, Unaware, Is_earthlevel,
     UNENCUMBERED, LEVITATION, FLYING, FOUNTAIN, SINK,
+    is_pool_or_lava, is_pool, is_lava, is_ice
 } from './const.js';
 import {
     objects, mksobj, weight, place_object, BOULDER, STATUE as STATUE_OTYP, CORPSE,
@@ -83,11 +86,11 @@ import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag, strongmonst_flag, is_whirly, flaming } from './monflags_data.js';
-import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg } from './monattk_data.js';
+import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg, sticks } from './monattk_data.js';
 import { S_HUMAN } from './symbols.js';
 import { GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT, ROLL, LAUNCH_UNSEEN, LAUNCH_KNOWN } from './const.js';
 import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MELT_ICE_AWAY } from './const.js';
-import { at_dgn_entrance, ceiling as ceiling_dg, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid, update_lastseentyp } from './dungeon.js';
+import { at_dgn_entrance, ceiling, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room, in_rooms, shop_keeper } from './shkroom.js';
 import { livelog_printf, LL_MINORAC, LL_DUMP } from './livelog.js';
@@ -313,11 +316,7 @@ export function sokoban_guilt() {
     if (!u) return;
     u.uconduct = u.uconduct || {};
     u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-    // C ref: attrib.c change_luck(-1) — clamped to LUCKMIN/LUCKMAX (-10/10);
-    // do_wear.js/eat.js/pray.js/uhitm.js each keep the same clamped body per
-    // this codebase's per-file convention.
-    u.uluck = (u.uluck || 0) - 1;
-    if (u.uluck < -10) u.uluck = -10;
+    change_luck(-1);
 }
 
 // C ref: trap.c:7057 maybe_finish_sokoban() — called when a trap has been
@@ -511,12 +510,6 @@ function closed_door(x, y) {
     return (loc.doormask & (D_CLOSED | D_LOCKED)) !== 0;
 }
 
-// C ref: dbridge.c is_pool_or_lava() — pool or lava terrain at <x,y>.
-function is_pool_or_lava(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    return IS_POOL(loc.typ) || IS_LAVA(loc.typ);
-}
 
 // C ref: trap.c is_xport() — TELEP_TRAP..MAGIC_PORTAL.
 function is_xport(ttyp) { return ttyp >= TELEP_TRAP && ttyp <= MAGIC_PORTAL; }
@@ -687,10 +680,7 @@ export function maketrap(x, y, typ) {
             || (game.u.utraptype === TT_WEB && typ !== WEB)
             || (game.u.utraptype === TT_PIT && !is_pit(typ))
             || (game.u.utraptype === TT_LAVA && !is_lava(x, y)))) {
-        game.u.utrap = 0;
-        game.u.utraptype = TT_NONE;
-        game.botl = true;
-        float_vs_flight(); /* reset_utrap(FALSE) */
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
     }
     // C ref: trap.c:476-484 — the `else if` arm between "there was already a
     // trap here" and "make a new one": a FRESH trap is refused outright on
@@ -1466,12 +1456,10 @@ export async function sink_into_lava() {
     const u = game.u;
     if (!u) return;
     const sink_deeper = 'You sink deeper into the lava.';
-
-    const { is_lava } = await import('./dbridge.js');
     if (!u.utrap || u.utraptype !== TT_LAVA) {
         return; /* shouldn't happen; matches C's own comment */
     } else if (!is_lava(u.ux, u.uy)) {
-        u.utrap = 0; u.utraptype = 0; /* reset_utrap(FALSE) */
+        set_utrap(0, 0); /* reset_utrap(FALSE) */
     } else if (!u.uinvulnerable) {
         const Fire_resistance = (await import('./zap.js')).Fire_resistance();
         if (!Fire_resistance) u.uhp = Math.floor((u.uhp + 2) / 3);
@@ -1479,13 +1467,12 @@ export async function sink_into_lava() {
         u.utrap -= (1 << 8);
         if (u.utrap < (1 << 8)) {
             game._killer_name = 'molten lava';
-            await update_topl('You sink below the surface and die.');
-            await topl_more();
+            await urgent_topl('You sink below the surface and die.');
             const { burn_away_slime } = await import('./timeout.js');
             await burn_away_slime();
             const { done } = await import('./end.js');
             await done(DISSOLVED);
-            u.utrap = 0; u.utraptype = 0; /* reset_utrap(TRUE) */
+            await reset_utrap(true);
             if (!Levitation_fu() && !Flying_fu()) {
                 const { safe_teleds } = await import('./teleport.js');
                 await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT);
@@ -1842,13 +1829,13 @@ async function trapeffect_web(trap, trflags) {
         /* mtmp location might not be up to date */
         u.usteed.mx = u.ux;
         u.usteed.my = u.uy;
-        const { mon_mintrap, Trap_Effect_Finished } = await import('./monmove.js');
+        const { mon_mintrap } = await import('./monmove.js');
         /* mintrap currently does not return Trap_Killed_Mon (mon died) for webs */
         if (await mon_mintrap(u.usteed, trflags) !== Trap_Effect_Finished) {
             u.usteed.mtrapped = 0;
             if (strongmonst_flag(u.usteed.data)) str = 17;
         } else {
-            await reset_utrap_fu(false);
+            await reset_utrap(false);
             return;
         }
         webmsgok = false; /* mintrap printed the messages */
@@ -1891,17 +1878,6 @@ async function trapeffect_slp_gas_trap(trap, _trflags) {
         monstunseesu(M_SEEN_SLEEP);
     }
     await steedintrap(trap, null);
-}
-
-// C ref: trap.c set_utrap(tim, typ) — mark the hero trapped for `tim` turns.
-function set_utrap(tim, typ) {
-    const u = game.u;
-    if (!u) return;
-    // C: if (!u.utrap ^ !tim) disp.botl = TRUE; utraptype = tim ? typ : TT_NONE.
-    if (!u.utrap !== !tim) game.botl = true;
-    u.utrap = tim;
-    u.utraptype = tim ? typ : TT_NONE;
-    float_vs_flight(); /* maybe block Lev and/or Fly */
 }
 
 // C ref: do.c set_wounded_legs(side, timex).  When the hero first gains wounded
@@ -1985,7 +1961,7 @@ async function trapeffect_bear_trap(trap, trflags) {
         await pline(`${A_Your} bear trap closes on ${s_suffix(mon_nam(u.usteed))} ${mbodypart(u.usteed, FOOT)}!`);
         const { mon_thitm } = await import('./monmove.js');
         if (await mon_thitm(0, u.usteed, null, dmg, false))
-            await reset_utrap_fu(true); /* steed died, hero not trapped */
+            await reset_utrap(true); /* steed died, hero not trapped */
         exercise(A_DEX, false);
         return;
     }
@@ -2050,7 +2026,7 @@ async function domagictrap() {
             if (mtmp) await makemon_appears_msg(mtmp, mtmp.mx, mtmp.my, 0);
         }
         // "roar: wake monsters in vicinity, AFTER placing trap-created ones".
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         await wake_nearto(u.ux, u.uy, 7 * 7);
         return;
     }
@@ -2078,7 +2054,7 @@ async function domagictrap() {
             } else if (!einv && !(game.u?.Upolyd
                                   && ['stalker', 'black light'].includes(game.youmonst?.data?.name))) {
                 if (!Blind()) {
-                    if (!(await import('./display.js')).see_invisible())
+                    if (!(await import('./youprop.js')).See_invisible_hero())
                         await update_topl('You can see yourself again!');
                     else
                         await update_topl("You can't see through yourself anymore.");
@@ -2199,17 +2175,6 @@ async function trapeffect_magic_trap(trap, _trflags) {
     await steedintrap(trap, null);
 }
 
-// C ref: dungeon.c ceiling(x,y).  Message text only, no RNG — but the terrain
-// arm is NOT constant: C only says "ceiling" inside a room / on a wall / in a
-// doorway, and says "rock cavern" everywhere else, which includes every plain
-// CORRIDOR square.  A rock trap sprung in a corridor therefore reads "A trap
-// door in the rock cavern opens ...".  The vault/temple/shop variants still
-// need in_rooms(), which is stubbed empty across this port (mklev.js:254), so
-// a rock trap inside a shop/temple under-reports as "ceiling".
-function ceiling(x, y) {
-    return ceiling_dg(x, y);
-}
-
 // C ref: trap.c trapeffect_rocktrap(&youmonst, trap, trflags) — the hero
 // variant.  On a first trigger trap->once is 0, so the "nothing falls out"
 // escape short-circuits BEFORE its rn2(15) (C's && stops at trap->once).
@@ -2282,7 +2247,7 @@ async function steedintrap(trap, otmp) {
 // ARTICLE_NONE (0) for a named steed, else ARTICLE_THE (1).
 function steed_article() {
     const steed = game.u?.usteed;
-    return (steed && (steed.mgivenname || steed.mextra?.mgivenname)
+    return (steed && has_mgivenname(steed)
             && !Hallucination_u()) ? 0 : 1;
 }
 
@@ -2585,9 +2550,7 @@ function the_str(s) {
 
 // C ref: youprop.h Maybe_Half_Phys(dmg) — halved for a hero with HALF_PHDAM.
 function Maybe_Half_Phys(dmg) {
-    const u = game.u;
-    return (u?.HHalf_physical_damage || u?.EHalf_physical_damage)
-        ? Math.trunc((dmg + 1) / 2) : dmg;
+    return Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg;
 }
 
 // C ref: invent.c gi.invent — the hero's inventory chain.
@@ -2640,47 +2603,6 @@ async function trapeffect_vibrating_square(trap, _trflags) {
     feeltrap(trap);
 }
 
-// C ref: dig.c:605 fillholetyp(x, y, fill_if_any) — what a new hole at <x,y>
-// fills with, given its neighbours.  With no adjacent water or lava every arm
-// short-circuits before its rn2(), so a dry square costs no draw.
-// blow_up_landmine is currently the only caller.
-//
-// The lava arm is `(lava_cnt > moat+pool && rn2(lava_cnt+1))
-//                  || (lava_cnt && fill_if_any)`.
-// It was previously grouped as `(lava_cnt > moat+pool) && (rn2(..) ||
-// fill_if_any)`, which is NOT the same expression: with fill_if_any set and
-// lava present but outnumbered by water, C returns LAVAPOOL with no draw and
-// the old form fell through to the MOAT arm and drew there.  (The moat and
-// pool arms happen to be equivalent under either grouping.)
-//
-// Still approximate: the neighbour scan tests typ directly rather than C's
-// is_moat/is_pool/is_lava, so a raised DRAWBRIDGE_UP always counts as moat
-// (C splits it on drawbridgemask & DB_UNDER) and a Juiblex MOAT counts as
-// moat rather than pool.  Both need levels the corpus never generates; the
-// faithful predicates are exported from js/dbridge.js, but dbridge.js imports
-// trap.js, so wiring them in means breaking that cycle first.
-function fillholetyp(x, y, fill_if_any) {
-    const lo_x = Math.max(1, x - 1), hi_x = Math.min(x + 1, 79);
-    const lo_y = Math.max(0, y - 1), hi_y = Math.min(y + 1, 20);
-    let pool_cnt = 0, moat_cnt = 0, lava_cnt = 0;
-    for (let x1 = lo_x; x1 <= hi_x; x1++)
-        for (let y1 = lo_y; y1 <= hi_y; y1++) {
-            const typ = game.level?.at(x1, y1)?.typ;
-            if (typ === POOL) pool_cnt++;
-            else if (typ === MOAT || typ === WATER || typ === DRAWBRIDGE_UP) moat_cnt++;
-            else if (typ === LAVAPOOL || typ === LAVAWALL) lava_cnt++;
-        }
-    if (!fill_if_any) pool_cnt = Math.trunc(pool_cnt / 3);
-    if ((lava_cnt > moat_cnt + pool_cnt && rn2(lava_cnt + 1))
-        || (lava_cnt && fill_if_any))
-        return LAVAPOOL;
-    if ((moat_cnt > 0 && rn2(moat_cnt + 1)) || (moat_cnt && fill_if_any))
-        return MOAT;
-    if ((pool_cnt > 0 && rn2(pool_cnt + 1)) || (pool_cnt && fill_if_any))
-        return POOL;
-    return ROOM;
-}
-
 // C ref: trap.c:3172 blow_up_landmine(trap) — the explosion itself.  scatter()
 // is the RNG-heavy part; the tail converts the mine into a PIT (or floods it).
 export async function blow_up_landmine(trap) {
@@ -2689,7 +2611,7 @@ export async function blow_up_landmine(trap) {
     const old_typ = lev?.typ;
     const { scatter } = await import('./explode.js');
     const { del_engr_at } = await import('./engrave.js');
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
 
     await scatter(x, y, 4, MAY_DESTROY | MAY_HIT | MAY_FRACTURE | VIS_EFFECTS, null);
     del_engr_at(x, y);
@@ -2710,10 +2632,10 @@ export async function blow_up_landmine(trap) {
             deltrap(trap);
         } else {
             /* fill pit with water, if applicable */
+            const { fillholetyp, liquid_flow } = await import('./dig.js');
             const typ = fillholetyp(x, y, false);
             if (typ !== ROOM) {
                 lev.typ = typ;
-                const { liquid_flow } = await import('./dig.js');
                 await liquid_flow(x, y, typ, trap,
                                   cansee(x, y) ? 'The hole fills with %s!' : null);
             } else {
@@ -3096,7 +3018,6 @@ export async function dofiretrap(box) {
     if (!box && await burn_floor_objects(u.ux, u.uy, see_it, true) && !see_it)
         await update_topl('You smell paper burning.');
     {
-        const { is_ice } = await import('./dbridge.js');
         if (is_ice(u.ux, u.uy)) {
             const { melt_ice } = await import('./zap.js');
             await melt_ice(u.ux, u.uy, null);
@@ -3138,7 +3059,7 @@ export async function could_untrap(verbosely, check_floor) {
         buf = "You're too strained to do that.";
     else if ((data && nohands(data) && !webmaker) || !(data?.mmove ?? 12))
         buf = 'And just how do you expect to do that?';
-    else if (u?.ustuck && (await import('./uhitm.js')).sticks(data))
+    else if (u?.ustuck && sticks(data))
         buf = `You'll have to let go of ${(await import('./uhitm.js')).mon_nam(u.ustuck)} first.`;
     else if (u?.ustuck || (welded(game.uwep) && bimanual(game.uwep)))
         buf = `Your ${makeplural(body_part(HAND))} seem to be too busy for that.`;
@@ -3200,7 +3121,7 @@ export async function cnv_trap_obj(otyp, cnt, ttmp, bury_it) {
     }
     newsym(ttmp.tx, ttmp.ty);
     if (u?.utrap && u.ux === ttmp.tx && u.uy === ttmp.ty) {
-        u.utrap = 0; u.utraptype = 0; game.botl = true;   /* reset_utrap(TRUE) */
+        await reset_utrap(true);
     }
     const mtmp = m_at(ttmp.tx, ttmp.ty);
     if (mtmp && mtmp.mtrapped) mtmp.mtrapped = 0;
@@ -3247,7 +3168,7 @@ async function move_into_trap(ttmp) {
         /* move hero and update map */
         u.ux0 = u.ux; u.uy0 = u.uy;
         /* set u.ux,u.uy and u.usteed->mx,my plus handle CLIPPING */
-        await (await import('./do.js')).u_on_newpos(x, y);
+        await (await import('./dungeon.js')).u_on_newpos(x, y);
         u.umoved = true;
         newsym(u.ux0, u.uy0);
         vision_recalc(1);
@@ -3480,17 +3401,14 @@ async function try_lift(mtmp, ttmp, xtra_wt, stuff) {
 
 // C ref: trap.c:5700 help_monster_out(mtmp, ttmp) — pull a monster out of a pit.
 async function help_monster_out(mtmp, ttmp) {
-    const { near_capacity } = await import('./invent.js');
+    const { check_capacity } = await import('./invent.js');
 
     if (!mtmp.mtrapped) {
         await pline(`${Monnam_trap(mtmp)} isn't trapped.`);
         return 0;
     }
     /* check_capacity(0) */
-    if (near_capacity() >= 4 /* EXT_ENCUMBER */) {
-        await pline("You can't do that while carrying so much stuff.");
-        return 1;
-    }
+    if (await check_capacity()) return 1;
     const uprob = untrap_prob(ttmp);
     if (uprob && !helpless_mon(mtmp)) {
         await pline(`You try to reach out your ${body_part(ARM_BP)}s, but ${
@@ -4071,7 +3989,7 @@ async function tele_trap(trap) {
 // C ref: teleport.c:772 vault_tele() — search_special(VAULT) then a
 // somexyspace() spot inside it.  The two rn2(2)s this draws (a vault is 2x2)
 // are seed0012's step 237.
-async function vault_tele() {
+export async function vault_tele() {
     const { teleok, teleds } = await import('./teleport.js');
     const { somexyspace } = await import('./mkroom.js');
     const croom = search_special(VAULT);
@@ -4102,7 +4020,7 @@ async function trapeffect_level_telep(trap, trflags) {
 }
 
 // C ref: teleport.c:1537 level_tele_trap(trap, trflags).
-async function level_tele_trap(trap, trflags) {
+export async function level_tele_trap(trap, trflags) {
     const u = game.u;
     let intentional = false;
     let verbbuf;
@@ -4161,9 +4079,7 @@ async function trapeffect_anti_magic(trap, _trflags) {
         const { is_quest_artifact } = await import('./questpgr.js');
         let damage = rnd(4);
         const hp = u.Upolyd ? u.mh : u.uhp;
-        if (u.HHalf_physical_damage || u.EHalf_physical_damage
-            || u.HHalf_spell_damage || u.EHalf_spell_damage
-            || worn_extrinsic(HALF_PHDAM) || worn_extrinsic(HALF_SPDAM))
+        if (Half_physical_damage_hero() || Half_spell_damage_hero())
             damage += rnd(4);
         if (is_art(game.uwep, ART_MAGICBANE)) damage += rnd(4);
         if (inventoryArray().some(obj => obj.oartifact && !is_quest_artifact(obj)
@@ -4301,16 +4217,13 @@ function trap_article(trap) {
     return (trap.ttyp === ARROW_TRAP && !trap.madeby_u) ? 'an' : a_your(trap.madeby_u);
 }
 
-// C ref: trap.c:1045 reset_utrap(msg) via set_utrap(0, 0) — clearing the trap
-// re-runs float_vs_flight(), which may unblock Levitation/Flying.
-export async function reset_utrap_fu(msg) {
+// C ref: trap.c:1045 reset_utrap(msg) — clearing the trap re-runs
+// float_vs_flight() (via set_utrap), which may unblock Levitation/Flying.
+export async function reset_utrap(msg) {
     const u = game.u;
     if (!u) return;
     const was_Lev = Levitation_fu(), was_Fly = Flying_fu();
-    if (u.utrap) game.botl = true;
-    u.utrap = 0;
-    u.utraptype = 0;
-    float_vs_flight(); /* maybe block Lev and/or Fly */
+    set_utrap(0, 0);
     if (msg) {
         if (!was_Lev && Levitation_fu()) await float_up();
         if (!was_Fly && Flying_fu()) await pline('You can fly.');
@@ -4335,8 +4248,8 @@ export function Flying_fu() {
 }
 // C ref: youprop.h Hallucination.
 function Hallucination_fu() { return Hallucination_u(); }
-// C ref: youprop.h Lev_at_will == ((HLevitation & I_SPECIAL) != 0L).
-function Lev_at_will_fu() { return ((game.u?.uprops?.Levitation | 0) & I_SPECIAL) !== 0; }
+// C ref: youprop.h Lev_at_will.
+function Lev_at_will_fu() { return Lev_at_will_hero(); }
 // C ref: mondata.h is_floater(ptr)/is_flyer(ptr) — mlet S_EYE(5)/S_LIGHT(25),
 // M1_FLY.  Same private duplicate as timeout.js:280-288 and friends.
 function is_floater_fu(ptr) {
@@ -4359,11 +4272,7 @@ export function Wwalking_fu() {
     return !!(uprop_word('HWwalking') || uprop_word('EWwalking') || worn_extrinsic(WWALKING))
         && !Is_waterlevel(game.u?.uz);
 }
-export function Swimming_fu() {
-    const u = game.u;
-    return !!(uprop_word('HSwimming') || worn_extrinsic(SWIMMING) || u?.formprops?.Swimming
-              || (u?.usteed && is_swimmer_flag(u.usteed.data)));
-}
+export function Swimming_fu() { return Swimming_hero(); }
 function Magical_breathing_fu() {
     return !!(uprop_word('HMagical_breathing') || worn_extrinsic(MAGICAL_BREATHING));
 }
@@ -4382,10 +4291,7 @@ export function Teleport_control_fu() {
               || worn_extrinsic(TELEPORT_CONTROL)
               || game.u?.formprops?.Teleport_control);
 }
-function Passes_walls_fu() {
-    return !!(uprop_word('HPasses_walls') || worn_extrinsic(PASSES_WALLS)
-              || game.u?.formprops?.Passes_walls);
-}
+function Passes_walls_fu() { return Passes_walls_hero(); }
 function Fire_resistance_fu() {
     return !!(uprop_word('HFire_resistance') || worn_extrinsic(FIRE_RES)
               || game.u?.formprops?.Fire_resistance);
@@ -4455,7 +4361,7 @@ export async function float_up() {
     game.botl = true;
     if (u.utrap) {
         if (u.utraptype === TT_PIT) {
-            await reset_utrap_fu(false);
+            await reset_utrap(false);
             await pline(`You float up, out of the ${trapname(PIT, false)}!`);
             game.vision_full_recalc = 1;
             await fill_pit(u.ux, u.uy);
@@ -4577,7 +4483,6 @@ export async function float_down(hmask = 0, emask = 0) {
     let no_msg = false;
     if (!Flying_fu()) {
         if (!u.uswallow && u.ustuck) {
-            const { sticks } = await import('./uhitm.js');
             if (sticks(youmonst_data_pub()))
                 await pline(`You aren't able to maintain your hold on ${mon_nam(u.ustuck)}.`);
             else
@@ -4790,7 +4695,8 @@ export async function dotrap(trap, trflags = 0) {
     // non-mindless, non-animal onlooker — which monmove's mfndpos then reads to
     // route around the trap, and mon_mintrap's already-seen rn2(4) step-over
     // roll depends on.  A steed learns the trap type outright.
-    const { mons_see_trap, mon_learns_traps } = await import('./monmove.js');
+    const { mons_see_trap } = await import('./monmove.js');
+    const { mon_learns_traps } = await import('./montraps.js');
     if (u.usteed) mon_learns_traps(u.usteed, ttype);
     mons_see_trap(trap);
 
@@ -4799,18 +4705,6 @@ export async function dotrap(trap, trflags = 0) {
 
 // C ref: include/trap.h is_pit(ttyp) — PIT or SPIKED_PIT.
 function is_pit_ttyp(ttyp) { return ttyp === PIT || ttyp === SPIKED_PIT; }
-// C ref: trap.c:6648 uteetering_at_seen_pit() / :6660 uescaped_shaft().
-export function uteetering_at_seen_pit(trap) {
-    const u = game.u;
-    return !!trap && is_pit(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy
-        && !(u.utrap && u.utraptype === TT_PIT);
-}
-export function uescaped_shaft(trap) {
-    const u = game.u;
-    return !!trap && is_hole(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy;
-}
 
 // C ref: dbridge.c is_pool(x,y) — POOL/MOAT/WATER.  IS_POOL(typ) (the range
 // macro, POOL..DRAWBRIDGE_UP) coincides with this for every terrain the
@@ -5386,8 +5280,7 @@ export async function lava_effects() {
         await spoteffects(false); // suppress auto-pickup for this landing
         return true;
     } else if (!Wwalking_fu() && (!u.utrap || u.utraptype !== TT_LAVA)) {
-        u.utrap = rn1(4, 4) + (rn1(4, 12) << 8);
-        u.utraptype = TT_LAVA;
+        set_utrap(rn1(4, 4) + (rn1(4, 12) << 8), TT_LAVA);
         await update_topl(`You sink into the ${await waterbody_name(u.ux, u.uy)}, `
                           + 'but it only burns slightly!');
         { const { monstseesu } = await import('./mondata.js'); monstseesu(M_SEEN_FIRE); }
@@ -5723,7 +5616,6 @@ export async function spoteffects(pick) {
         }
         // C ref: hack.c:3404 — Warning alerts you to ice danger.
         if (have_warning()) {
-            const { is_ice } = await import('./dbridge.js');
             if (is_ice(u.ux, u.uy)) {
                 const { spot_time_left } = await import('./timeout.js');
                 const time_left = spot_time_left(u.ux, u.uy, MELT_ICE_AWAY);
@@ -5753,7 +5645,7 @@ export async function spoteffects(pick) {
                 } else {
                     await pline(`You are hit by ${x_monnam(mtmp, ARTICLE_A, 'falling', 0, true)}!`);
                     let damage = d(4, 6);
-                    if (u.HHalf_physical_damage || u.EHalf_physical_damage || worn_extrinsic(HALF_PHDAM))
+                    if (Half_physical_damage_hero())
                         damage = Math.trunc((damage + 1) / 2);
                     await (await import('./mhitu.js')).mdamageu(mtmp, damage);
                     if (game.program_state?.gameover) return;
@@ -5835,7 +5727,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     const { dmgval } = await import('./uhitm.js');
     const { flooreffects } = await import('./do.js');
     const { flash_obj_glyph, show_glyph_cell, You_hear, Deaf_hero } = await import('./display.js');
-    const { wake_nearto } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     let otmp = sobj_at_floor(otyp, x1, y1);
     let otherside = false;
     if (!otmp && otyp === BOULDER) { otherside = true; otmp = sobj_at_floor(otyp, x2, y2); }
@@ -5948,7 +5840,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
                         del_engr_at(x, y);
                         place_object(singleobj, x, y);
                         singleobj.otrapped = 0;
-                        const { fracture_rock } = await import('./dig.js');
+                        const { fracture_rock } = await import('./zap.js');
                         await fracture_rock(singleobj);
                         const { scatter } = await import('./explode.js');
                         await scatter(x, y, 4,
@@ -6219,7 +6111,7 @@ export async function openholdingtrap(mon, noticed) {
         else buf = `${noit_Monnam(u.usteed)} is`;
         await pline(`${buf} released from ${which}${trapdescr}.`);
         game.vision_full_recalc = 1; /* vision limits can change (pit escape) */
-        await reset_utrap_fu(true);
+        await reset_utrap(true);
         if (game.vision_full_recalc) {
             vision_recalc(0);
             game.vision_full_recalc = 0;
@@ -6263,7 +6155,7 @@ export async function closeholdingtrap(mon, noticed) {
     if (mon.mtrapped) return false;
     const { canspotmon } = await import('./uhitm.js');
     if (noticed) noticed.value = cansee(t.tx, t.ty) || canspotmon(mon);
-    const { mon_mintrap, Trap_Effect_Finished } = await import('./monmove.js');
+    const { mon_mintrap } = await import('./monmove.js');
     return (await mon_mintrap(mon, FORCETRAP)) !== Trap_Effect_Finished;
 }
 
@@ -6289,6 +6181,6 @@ export async function openfallingtrap(mon, trapdoor_only, noticed) {
     const { canspotmon, wakeupAttack } = await import('./uhitm.js');
     if (noticed) noticed.value = cansee(t.tx, t.ty) || canspotmon(mon);
     await wakeupAttack(mon, true);
-    const { mon_mintrap, Trap_Effect_Finished } = await import('./monmove.js');
+    const { mon_mintrap } = await import('./monmove.js');
     return (await mon_mintrap(mon, FORCETRAP)) !== Trap_Effect_Finished;
 }

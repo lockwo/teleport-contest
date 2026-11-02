@@ -16,6 +16,7 @@
 // the far side, exactly as C recomputes them (restore.c: "recompute vision
 // (not saved)").
 
+import { ledger_no } from './dungeon.js';
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { monster_by_pmidx } from './makemon.js';
@@ -397,11 +398,6 @@ function as_chain(v, nextfield) {
 
 // C ref: dungeon.c:1376 ledger_no() / :1392 maxledgerno().  bones.js has the
 // same two private copies; both files sit below dungeon.js in the import order.
-function ledger_no_sv(lev) {
-    const dng = game.dungeons?.[lev?.dnum ?? 0];
-    if (!dng) return null;
-    return (lev?.dlevel ?? 1) + (dng.ledger_start ?? 0);
-}
 function maxledgerno_sv() {
     const dgns = game.dungeons;
     if (!dgns || !dgns.length) return null;
@@ -441,7 +437,7 @@ export function savelevl(mode) {
 // whether they follow at a point where it cannot yet call ledger_no() itself.
 export function save_bubbles(lev, mode) {
     let bbubbly = 0;
-    if (lev === ledger_no_sv(game.water_level) || lev === ledger_no_sv(game.air_level))
+    if (lev === ledger_no(game.water_level) || lev === ledger_no(game.air_level))
         bbubbly = lev;                          /* non-zero */
     const out = {};
     if (update_file(mode)) out.bbubbly = bbubbly;
@@ -1023,7 +1019,7 @@ export async function savestateinlock() {
         nhfp.mode = WRITING;
         nhfp.recs = { hackpid: game.hackpid };
         if (game.flags?.ins_chkpt) {
-            const currlev = ledger_no_sv(game.u?.uz);
+            const currlev = ledger_no(game.u?.uz);
             nhfp.recs.savestateinlock = currlev;
             nhfp.recs.savefile_name = saveFileKey();    /* save_savefile_name */
             nhfp.recs.version = null;                   /* store_version */

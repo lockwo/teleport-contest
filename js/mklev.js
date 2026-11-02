@@ -9,7 +9,7 @@ import { game, hooks } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
-import { finish_map } from './mkmap.js';
+import { finish_map, flood_fill_rm, ffrm } from './mkmap.js';
 import { christen_monst } from './do_name.js';
 import { init_rect, rnd_rect, get_rect, split_rects, within_bounded_area } from './rect.js';
 import { depth as depth_of_level, distmin } from './hacklib.js';
@@ -27,8 +27,9 @@ import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_r
          bigrm_get_location_dry, lspo_replace_terrain, bigrm_load_map,
          SET_LIT_NOCHANGE } from './sp_lev.js';
 import { splev_finish_object } from './sp_lev.js';
-import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz,
+import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz, mazexy,
          check_ransacked, stolen_booty, gr as mm_gr } from './mkmaze.js';
+import { is_pool_or_lava } from './const.js';
 import {
     selection_new, selection_clone, selection_clear, selection_setpoint,
     selection_getpoint, selection_getbounds, selection_iterate,
@@ -38,7 +39,7 @@ import {
     l_selection_or, l_selection_grow, l_selection_fillrect, l_selection_rect,
     l_selection_randline, W_ANY, W_RANDOM, W_NORTH, W_SOUTH, W_EAST, W_WEST,
 } from './selvar.js';
-import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty, init_mapseen, insert_branch } from './dungeon.js';
+import { Is_special, builds_up, In_hell, Is_valley, dunlevs_in_dungeon, level_difficulty, init_mapseen, insert_branch, u_on_newpos } from './dungeon.js';
 import { In_quest, BR_PORTAL, BR_NO_END1, BR_NO_END2,
          Is_knox_level, Is_earthlevel, Is_botlevel } from './const.js';
 import { roles, races } from './role.js';
@@ -46,7 +47,8 @@ import { mflags2_of } from './monflags_data.js';
 import { priestini } from './priest.js';
 import { somex, somey, somexy, somexyspace, occupied, has_dnstairs, has_upstairs, inside_room, nexttodoor } from './mkroom.js';
 import { maketrap, Can_fall_thru, Can_dig_down, t_at, Invocation_lev, deltrap, undestroyable_trap } from './trap.js';
-import { makemon as make_monster, rndmonst, mkclass,
+import { set_utrap } from './polyself.js';
+import { makemon, rndmonst, mkclass,
          name_to_pmidx, monster_by_pmidx, enexto_spawn, placeOnLevel,
          name_gender_hint, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
          newcham as newcham_mk, mongets_pub, set_malign } from './makemon.js';
@@ -74,6 +76,7 @@ import {
     obj_extract_self_mkobj, dealloc_oextra, GEM_CLASS as GEM_CLASS_MK,
 } from './mkobj.js';
 import { shtypes } from './shtypes.js';
+import { in_rooms } from './shkroom.js';
 import { obj_resists } from './zap.js';
 import { spell_level } from './u_init.js';
 import {
@@ -186,21 +189,6 @@ function stairway_find_special_dir(up) {
 
 // ── Hero placement (C ref: stairs.c, mkmaze.c) ──
 
-// C ref: dungeon.c u_on_newpos() — the level-change arm (u.uz != u.uz0)
-// map_location()s the arrival square, which makes display-rng draws while
-// Hallucinating.
-function u_on_newpos(x, y) {
-    const u = game.u;
-    u.ux = x;
-    u.uy = y;
-    u.uundetected = 0;
-    if (u.usteed) { u.usteed.mx = x; u.usteed.my = y; }
-    if (u.uz?.dnum !== u.uz0?.dnum || u.uz?.dlevel !== u.uz0?.dlevel) {
-        u.ux0 = x; u.uy0 = y;
-        map_location(x, y);
-    }
-}
-
 // C ref: mkmaze.c bad_location() — full predicate; two missing terms restored:
 // occupied(x,y) (traps/furniture/lava/pool are bad) and typ===AIR accepted
 // alongside ROOM (Plane of Air is all-AIR; without it every square is "bad"
@@ -228,7 +216,7 @@ function bad_location(x, y, nlx, nly, nhx, nhy) {
 // LR_UPSTAIR/LR_DOWNSTAIR/LR_BRANCH stay unported since they'd need this fn
 // async (mkportal/place_branch are). C's is_exclusion_zone() AND'd into
 // bad_location is also unported — no level reaching here registers one.
-function put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
+async function put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
     if (bad_location(x, y, nlx, nly, nhx, nhy)) {
         // C's oneshot arm deletes a destroyable trap and re-tests; we only
         // re-test, so a lone trapped square still fails instead of being freed.
@@ -243,7 +231,7 @@ function put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
         // square left (then it rloc()s the monster, which draws).  Skipping the
         // retry silently accepted squares C rejects, shortening the rn1 loop.
         if (m_at(x, y) && !oneshot) return false;
-        u_on_newpos(x, y);
+        await u_on_newpos(x, y);
         break;
     default:
         // C does the rtype's work and returns TRUE; we can't, but returning
@@ -255,7 +243,7 @@ function put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev) {
 }
 
 // C ref: mkmaze.c place_lregion — place hero (LR_UPTELE/LR_DOWNTELE)
-export function place_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype, lev) {
+export async function place_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype, lev) {
     if (!lx) {
         lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1;
     }
@@ -270,26 +258,26 @@ export function place_lregion(lx, ly, hx, hy, nlx, nly, nhx, nhy, rtype, lev) {
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);
         const y = rn1((hy - ly) + 1, ly);
-        if (put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev))
+        if (await put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev))
             return;
     }
     // Deterministic fallback
     oneshot = true;
     for (let x = lx; x <= hx; x++)
         for (let y = ly; y <= hy; y++)
-            if (put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev))
+            if (await put_lregion_here(x, y, nlx, nly, nhx, nhy, rtype, oneshot, lev))
                 return;
 }
 
 // C ref: stairs.c u_on_upstairs — place hero on upstairs or fallback
-export function u_on_upstairs() {
+export async function u_on_upstairs() {
     const stway = stairway_find_dir(true);
-    if (stway) { u_on_newpos(stway.sx, stway.sy); return; }
+    if (stway) { await u_on_newpos(stway.sx, stway.sy); return; }
     // No upstair — try special stairs, then random
     const special = stairway_find_special_dir(0);
-    if (special) { u_on_newpos(special.sx, special.sy); return; }
+    if (special) { await u_on_newpos(special.sx, special.sy); return; }
     // Random placement via place_lregion
-    place_lregion(0, 0, 0, 0, 0, 0, 0, 0, LR_UPTELE, null);
+    await place_lregion(0, 0, 0, 0, 0, 0, 0, 0, LR_UPTELE, null);
 }
 
 // oinit stub (level-dependent object probability reset)
@@ -303,30 +291,6 @@ function oinit() { /* no-op for contest */ }
 function rndmonnum() {
     return rndmonst()?.pmidx ?? 0;
 }
-
-// makemon — create a monster and (when it has a real position) place it
-// on the level so the renderer can draw it.  C ref: makemon.c makemon /
-// mon.c place_monster.  The RNG side-effects all live in make_monster();
-// here we just record the placement for display.
-async function makemon(mdat, x, y, mmflags) {
-    const mtmp = make_monster(mdat, x, y, mmflags);
-    if (mtmp && x > 0 && y > 0 && game.level) {
-        // Via placeOnLevel so a group leader lands BEFORE the members m_initgrp
-        // just appended: C links the leader into fmon at makemon.c:1248, ahead of
-        // the group block at 1430.  A plain push put the leader AFTER them, which
-        // reversed the visit order inside every group.
-        placeOnLevel(mtmp, x, y);
-    }
-    return mtmp;
-}
-
-// C ref: mkroom.c in_rooms(x, y, typewanted) — room numbers at/next to <x,y>
-// matching rtype (SHOPBASE = any shop). Stubbed empty; exact because this
-// stub's only caller (dosdoor's shdoor, from join/makecorridors/makeniche/
-// makevtele) always runs before do_mkroom(SHOPBASE) assigns a shop rtype, so
-// C also says "no shop" there. NOT a general stub — a caller after mkshop()
-// needs the real scan, which also gates dosdoor's rn2(25)/rn2(5)/rn2(20).
-function in_rooms(x, y, rtype) { return []; }
 
 // ============================================================
 // Core mklev functions (ported from main project's mklev.js)
@@ -626,7 +590,7 @@ async function makelevel() {
         await quest_place_branch();
         // C ref: mineralize() (moat kelp) is NOT called here — the JS engine
         // defers the fill phase (fill_special_room loop + mineralize) into
-        // fastforward_fill_mineralize(), which runs at C's level_finalize_topology
+        // makelevel_fill_and_mineralize(), which runs at C's level_finalize_topology
         // point (kelp rn2(30) per MOAT cell just before the hero arrival spot).
         return;
     }
@@ -678,7 +642,7 @@ async function makelevel() {
         // teleport_region is only stored (goto_level places the hero from it).
         await quest_place_branch();
         // The fill_special_room() loop that closes lspo_finalize_level is the
-        // engine's generic post-mklev pass (fastforward_fill_mineralize), which
+        // engine's generic post-mklev pass (makelevel_fill_and_mineralize), which
         // runs right after mklev() returns — i.e. already in C's order, after
         // the branch lregion and after level_finalize_topology's mineralize().
         set_wall_state();
@@ -1037,7 +1001,7 @@ async function makelevel() {
 
     // C ref: mklev.c:1392-1402 — choose which fillable room gets bonus items
     // This rn2(fillable_room_count) call must happen here regardless of whether
-    // fill_ordinary_room is called immediately or deferred to fastforward.
+    // fill_ordinary_room is called immediately or deferred to makelevel_fill_and_mineralize.
     {
         let fillable_room_count = 0;
         for (let i = 0; i < (g.level.rooms?.length ?? 0); i++) {
@@ -1050,7 +1014,7 @@ async function makelevel() {
         g.level._bonus_room_idx = (fillable_room_count > 0) ? rn2(fillable_room_count) : -1;
     }
 
-    // Fill rooms + mineralize: handled by fastforward_fill_mineralize (seed8000)
+    // Fill rooms + mineralize: handled by makelevel_fill_and_mineralize
     // or real fill loop (all other seeds), called from allmain.js.
 }
 
@@ -1263,7 +1227,7 @@ function makerogueghost() {
     if (!g.level.nroom) return;
     const croom = g.level.rooms[rn2(g.level.nroom)];
     const x = somex(croom), y = somey(croom);
-    const ghost = make_monster(monster_by_pmidx(PM_GHOST_IDX), x, y, 0);
+    const ghost = makemon(monster_by_pmidx(PM_GHOST_IDX), x, y, 0);
     if (!ghost) return;
     ghost.msleeping = 1;
     christen_monst(ghost, roguename());
@@ -1934,7 +1898,7 @@ function mk_monster_class_at(classChar, x, y, waiting) {
     const data = mk_mines_race_suppress(mkclass(klass, 0x0200 /* G_NOGEN */));
     const c = { x, y };
     mk_enexto_if_occupied(c, data);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) {
         mtmp.female = 0;
         // C ref: sp_lev.c:2160 create_monster() `if (m->waiting)
@@ -2450,7 +2414,7 @@ async function mkswamp() {
                     if (!eelct || !rn2(4)) {
                         const pm = rn2(5) ? PM_GIANT_EEL
                             : rn2(2) ? PM_PIRANHA : PM_ELECTRIC_EEL;
-                        const mtmp = await makemon(monster_by_pmidx(pm), sx, sy, 0);
+                        const mtmp = makemon(monster_by_pmidx(pm), sx, sy, 0);
                         // C ref: makemon.c:1322 `case S_EEL: if (gi.in_mklev)
                         // hideunder(mtmp);` -> mon.c hideunder() S_EEL arm:
                         // undetected = is_pool(x,y) && !Is_waterlevel && (!Underwater
@@ -2463,7 +2427,7 @@ async function mkswamp() {
                         eelct++;
                     }
                 } else if (!rn2(4)) {
-                    await makemon(mkclass(S_FUNGUS, 0), sx, sy, 0);
+                    makemon(mkclass(S_FUNGUS, 0), sx, sy, 0);
                 }
             }
         }
@@ -2800,7 +2764,7 @@ function dosdoor(x, y, aroom, type) {
                 // C's extra set_mimic_sym(mtmp) after makemon() re-runs the same
                 // dispatch; on a DOOR square it takes the RNG-free M_AP_FURNITURE
                 // arm, so the one call inside makemon() is state-identical.
-                const mtmp = make_monster(mkclass(S_MIMIC, 0), x, y, 0);
+                const mtmp = makemon(mkclass(S_MIMIC, 0), x, y, 0);
                 if (mtmp) placeOnLevel(mtmp, x, y);
             }
         }
@@ -3216,70 +3180,9 @@ function mk_pass_three(bg_typ, fg_typ) {
             map.at(x, y).typ = newloc[y * (MK_WIDTH + 1) + x];
 }
 
-// flood_fill_rm bookkeeping (C ref: gm.min_rx etc.).
-let mk_min_rx, mk_max_rx, mk_min_ry, mk_max_ry, mk_n_loc_filled;
-
-// C ref: mkmap.c flood_fill_rm() — anyroom=FALSE path only (used by join_map).
-function mk_flood_fill_rm(sx, sy, rmno) {
-    const map = game.level;
-    const fg_typ = map.at(sx, sy).typ;
-
-    while (sx > 0 && map.at(sx, sy).typ === fg_typ
-           && map.at(sx, sy).roomno !== rmno)
-        sx--;
-    sx++;
-
-    if (sx < mk_min_rx) mk_min_rx = sx;
-    if (sy < mk_min_ry) mk_min_ry = sy;
-
-    let i;
-    for (i = sx; i <= MK_WIDTH && map.at(i, sy).typ === fg_typ; i++) {
-        map.at(i, sy).roomno = rmno;
-        map.at(i, sy).lit = false;
-        mk_n_loc_filled++;
-    }
-    const nx = i;
-
-    if (isok(sx, sy - 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy - 1).typ === fg_typ) {
-                if (map.at(i, sy - 1).roomno !== rmno)
-                    mk_flood_fill_rm(i, sy - 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy - 1))
-                    && map.at(i - 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy - 1).roomno !== rmno)
-                        mk_flood_fill_rm(i - 1, sy - 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy - 1))
-                    && map.at(i + 1, sy - 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy - 1).roomno !== rmno)
-                        mk_flood_fill_rm(i + 1, sy - 1, rmno);
-                }
-            }
-    }
-    if (isok(sx, sy + 1)) {
-        for (i = sx; i < nx; i++)
-            if (map.at(i, sy + 1).typ === fg_typ) {
-                if (map.at(i, sy + 1).roomno !== rmno)
-                    mk_flood_fill_rm(i, sy + 1, rmno);
-            } else {
-                if ((i > sx || isok(i - 1, sy + 1))
-                    && map.at(i - 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i - 1, sy + 1).roomno !== rmno)
-                        mk_flood_fill_rm(i - 1, sy + 1, rmno);
-                }
-                if ((i < nx - 1 || isok(i + 1, sy + 1))
-                    && map.at(i + 1, sy + 1).typ === fg_typ) {
-                    if (map.at(i + 1, sy + 1).roomno !== rmno)
-                        mk_flood_fill_rm(i + 1, sy + 1, rmno);
-                }
-            }
-    }
-
-    if (nx > mk_max_rx) mk_max_rx = nx - 1;
-    if (sy > mk_max_ry) mk_max_ry = sy;
-}
+// C ref: mkmap.c flood_fill_rm(anyroom=FALSE) for join_map; mkmap.js owns the one
+// implementation and the gm.min_rx.. / gn.n_loc_filled bookkeeping (ffrm).
+function mk_flood_fill_rm(sx, sy, rmno) { flood_fill_rm(sx, sy, rmno, false, false); }
 
 // C ref: mkmap.c join_map_cleanup()
 function mk_join_map_cleanup() {
@@ -3300,20 +3203,20 @@ function mk_join_map(bg_typ, fg_typ) {
         for (let y = 1; y < MK_HEIGHT; y++) {
             const loc = map.at(x, y);
             if (loc.typ === fg_typ && loc.roomno === NO_ROOM) {
-                mk_min_rx = mk_max_rx = x;
-                mk_min_ry = mk_max_ry = y;
-                mk_n_loc_filled = 0;
+                ffrm.min_rx = ffrm.max_rx = x;
+                ffrm.min_ry = ffrm.max_ry = y;
+                ffrm.n_loc_filled = 0;
                 mk_flood_fill_rm(x, y, g.level.nroom + ROOMOFFSET);
-                if (mk_n_loc_filled > 3) {
-                    add_room(mk_min_rx, mk_min_ry, mk_max_rx, mk_max_ry,
+                if (ffrm.n_loc_filled > 3) {
+                    add_room(ffrm.min_rx, ffrm.min_ry, ffrm.max_rx, ffrm.max_ry,
                              false, OROOM, true);
                     g.level.rooms[g.level.nroom - 1].irregular = true;
                     if (g.level.nroom >= (MAXNROFROOMS * 2)) {
                         return mk_join_map_corridors(bg_typ, fg_typ);
                     }
                 } else {
-                    for (let sx = mk_min_rx; sx <= mk_max_rx; sx++)
-                        for (let sy = mk_min_ry; sy <= mk_max_ry; sy++) {
+                    for (let sx = ffrm.min_rx; sx <= ffrm.max_rx; sx++)
+                        for (let sy = ffrm.min_ry; sy <= ffrm.max_ry; sy++) {
                             const l2 = map.at(sx, sy);
                             if (l2.roomno === g.level.nroom + ROOMOFFSET) {
                                 l2.typ = bg_typ;
@@ -3534,7 +3437,7 @@ function mk_monster_named(name, peacefulOverride) {
     // pm_to_humidity(pm) — DRY for these mines monsters (no swimmers/flyers).
     const c = mk_get_location_random(mk_ok_dry);
     mk_enexto_if_occupied(c, data2);
-    const mtmp = make_monster(data2, c.x, c.y, 0);
+    const mtmp = makemon(data2, c.x, c.y, 0);
     // C ref: sp_lev.c create_monster() `mtmp->female = m->female;` (no RNG).
     if (mtmp) mtmp.female = mgend;
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
@@ -3568,7 +3471,7 @@ function mk_monster_class(classChar, peacefulOverride) {
     const data = mk_mines_race_suppress(mkclass(klass, 0x0200 /* G_NOGEN (monflag.h); was 1 */));
     const c = mk_get_location_random(mk_ok_dry);
     mk_enexto_if_occupied(c, data);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     // C ref: sp_lev.c lspo_monster() — the single-char CLASS form never touches
     // tmpmons.female, so it keeps its `= 0` initialiser and create_monster's
     // `mtmp->female = m->female;` makes every des.monster("G") male.
@@ -3593,36 +3496,7 @@ async function mk_trap() {
         const t = map.at(c.x, c.y);
         if (!(t && (t.typ === STAIRS))) break; // LADDER not present here
     } while (++trycnt <= 100);
-    await qf_mktrap_at(c.x, c.y);
-}
-
-// mktrap(type=-1 random): traptype loop + maketrap + victim gate.  Shared by
-// des.trap() with and without a croom.
-async function qf_mktrap_at(cx, cy) {
-    const c = { x: cx, y: cy };
-    let kind;
-    kind = mktrap_random_kind();
-    // C ref: mklev.c mktrap() `if (is_hole(kind) && !Can_fall_thru(&u.uz))`
-    if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
-    const trap = await maketrap(c.x, c.y, kind);
-    kind = trap ? trap.ttyp : NO_TRAP;
-    // C ref: sp_lev.c create_trap() -> mktrap(..., mktrap_flags, ...) — a
-    // lua des.trap() defaults spider_on_web=TRUE (lspo_trap, sp_lev.c:4405),
-    // so MKTRAP_NOSPIDERONWEB is normally NOT set; mktrap() then spawns a
-    // giant spider on a freshly made WEB trap.
-    if (kind === WEB) {
-        const spiderPm = monster_by_pmidx(name_to_pmidx('giant spider'));
-        if (spiderPm) make_monster(spiderPm, c.x, c.y, 0);
-    }
-    const lvl = level_difficulty();
-    if (kind !== NO_TRAP
-        && lvl <= rnd(4)
-        && kind !== SQKY_BOARD && kind !== RUST_TRAP
-        && !(kind === ROLLING_BOULDER_TRAP && trap.launch?.x === trap.tx && trap.launch?.y === trap.ty)
-        && !is_pit(kind) && (kind < HOLE || kind === MAGIC_TRAP)) {
-        if (kind === LANDMINE) { trap.ttyp = PIT; trap.tseen = true; }
-        mktrap_victim(trap);
-    }
+    await mktrap(0, MKTRAP_NOFLAGS, null, c);
 }
 
 // math.random(lo,hi) = lo + rn2(hi+1-lo).
@@ -3701,7 +3575,7 @@ async function makemaz_minefill() {
     await mk_fixup_branch();
 
     // NOTE: level_finalize_topology -> mineralize() is NOT called here; the JS
-    // engine factors mineralize() into fastforward_fill_mineralize(), which
+    // engine factors mineralize() into makelevel_fill_and_mineralize(), which
     // goto_level() runs immediately after mklev().  For minefill the room-fill
     // loop there is a no-op (join_map_cleanup left nroom == 0) and only
     // mineralize() runs, matching C's level_finalize_topology ordering.
@@ -3799,7 +3673,7 @@ function mt4_place_monster(data, croom, peaceful) {
         if (cc) { c.x = cc.x; c.y = cc.y; }
     }
     if (!inside_room(croom, c.x, c.y)) return null;
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
     return mtmp;
 }
@@ -4148,7 +4022,7 @@ function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
     const data2 = mk_mines_race_suppress(data);
     const c = { x, y };
     mk_enexto_if_occupied(c, data2);
-    const mtmp = make_monster(data2, c.x, c.y, 0);
+    const mtmp = makemon(data2, c.x, c.y, 0);
     if (mtmp) mtmp.female = mgend;
     if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
     if (mtmp && levAdj) {                              // sp_lev.c:2168-2175
@@ -4636,7 +4510,7 @@ function hf_monster_class_at(classChar, x, y, peacefulOverride) {
     const data = mkclass(HF_MONSYM[classChar] ?? 0, 0x0200 /* G_NOGEN */);
     const c = hf_loc(x, y);
     mk_enexto_if_occupied(c, data);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = 0;                       // class form: tmpmons.female stays 0 (sp_lev.c:2125)
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
@@ -4648,7 +4522,7 @@ function hf_monster_named_at(name, x, y, peacefulOverride) {
     oracle_induced_align();
     const c = hf_loc(x, y);
     mk_enexto_if_occupied(c, data);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = mgend;                   // create_monster: mtmp->female = m->female
     if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
     return mtmp;
@@ -4686,7 +4560,7 @@ function mk_monster_random(peacefulOverride) {
     // populatemaze() random-monster roll landing on an occupied square skipped
     // the whole enexto()/collect_coords() ring shuffle C draws in that case.
     mk_enexto_if_occupied(c, null);
-    const mtmp = make_monster(null, c.x, c.y, 0);
+    const mtmp = makemon(null, c.x, c.y, 0);
     // C ref: sp_lev.c lspo_monster() safety net -- a bare des.monster() leaves
     // tmpmons.female BOOL_RANDOM, which becomes 0 (makemon's own roll is overwritten).
     if (mtmp) mtmp.female = 0;
@@ -5280,17 +5154,12 @@ function hf_exclusion(kind, x1, y1, x2, y2) {
                                 lx: a.x, ly: a.y, hx: b.x, hy: b.y });
 }
 
-// C ref: sp_lev.c create_altar() — with an explicit `type` there is no rn2(2)
-// shrine roll here; the percent(75) that chose altar-vs-shrine was already
-// drawn by the .lua.  NOTE: the shrine branch's priestini() (which would spawn
-// Moloch's priest, and draw RNG) is not ported — see RECON_NOTES.
+// C ref: sp_lev.c lspo_altar()/create_altar() — the percent(75) that chose altar-vs-shrine
+// was already drawn by the .lua.
 function hf_altar(x, y, shrine) {
-    const c = hf_loc(x, y);
-    const loc = game.level?.at(c.x, c.y);
-    if (!loc) return;
-    loc.typ = ALTAR;
-    loc.altarmask = Align2amask(A_NONE /* "noalign" */);
-    if (shrine) game.level.flags.has_temple = true;
+    // des.altar({align="noalign", type=shrine and "shrine" or "altar"}): create_altar() makes
+    // the temple's priest (priestini) for a shrine inside a temple region.
+    vly_altar(x, y, Align2amask(A_NONE /* "noalign" */), shrine ? 1 : 0);
 }
 
 // C ref: sp_lev.c lspo_drawbridge() + dbridge.c create_drawbridge().  With an
@@ -5439,7 +5308,7 @@ function castle_monster_named_at(name, x, y) {
     oracle_induced_align();
     const c = hf_loc(x, y);
     mk_enexto_if_occupied(c, data);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = mgend;                   // create_monster: mtmp->female = m->female
     return mtmp;
 }
@@ -5451,7 +5320,7 @@ function castle_monster_class_at(classCh, x, y) {
     oracle_induced_align();
     const data = mkclass(HF_MONSYM[classCh] ?? 0, 0x0200 /* G_NOGEN */);
     const c = hf_loc(x, y);
-    const mtmp = make_monster(data, c.x, c.y, 0);
+    const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = 0;                       // class form: tmpmons.female stays 0 (sp_lev.c:2125)
     return mtmp;
 }
@@ -5809,12 +5678,12 @@ async function castle_fill_empty_maze() {
     }
     for (cnt = rn2(2); cnt; cnt--) {
         const mm = castle_maze1xy();
-        make_monster(monster_by_pmidx(name_to_pmidx('minotaur')),
+        makemon(monster_by_pmidx(name_to_pmidx('minotaur')),
                      mm.x, mm.y, 0);
     }
     for (cnt = rnd(Math.trunc((12 * mapfact) / 100)); cnt; cnt--) {
         const mm = castle_maze1xy();
-        make_monster(null, mm.x, mm.y, 0);
+        makemon(null, mm.x, mm.y, 0);
     }
     for (cnt = rn2(Math.trunc((15 * mapfact) / 100)); cnt; cnt--) {
         const mm = castle_maze1xy();
@@ -6070,7 +5939,7 @@ async function qf_trap(croom) {
         const r = qf_getloc_once(() => true, croom, false);
         c.x = r.x; c.y = r.y;
     }
-    await qf_mktrap_at(c.x, c.y);
+    await mktrap(0, MKTRAP_NOFLAGS, null, c);
 }
 
 // C ref: sp_lev.c create_monster() with a croom -- pm_to_humidity's two-step
@@ -6083,7 +5952,7 @@ function qf_place_monster(data, croom) {
         c = qf_getloc_coord(qf_ok_hum(hum | LOC_DRY), croom, false);
     mk_enexto_if_occupied(c, data);
     if (croom && !inside_room(croom, c.x, c.y)) return null;
-    return make_monster(data, c.x, c.y, 0);
+    return makemon(data, c.x, c.y, 0);
 }
 
 // C ref: sp_lev.c lspo_monster()+create_monster() -- the single-char CLASS form
@@ -6189,7 +6058,7 @@ async function makemaz_quest_fill(name) {
             // C ref: sp_lev.c lspo_room() -- a level-file room defaults
             // filled=1 and joined=true, but C's fill_special_room() returns
             // immediately for an OROOM, so FILL_NORMAL is inert there.  This
-            // port's fastforward_fill_mineralize() DOES stock an OROOM with
+            // port's makelevel_fill_and_mineralize() DOES stock an OROOM with
             // FILL_NORMAL (that is makelevel()'s regular arm, which a special
             // level never reaches), so ordinary rooms must carry FILL_NONE.
             await des_room({ rtype,
@@ -6414,7 +6283,7 @@ async function makemaz_oracle() {
             topologize(room1);
             // C: special-level rooms are filled inline (here) during gen and
             // are NOT re-filled by the ordinary fill_ordinary_room loop, so mark
-            // them FILL_NONE to keep fastforward_fill_mineralize from re-stocking.
+            // them FILL_NONE to keep makelevel_fill_and_mineralize from re-stocking.
             room1.needfill = FILL_NONE;
             // 8 historic centaur statues at fixed room-relative coords.
             const S_CENTAUR = 29;
@@ -6450,7 +6319,7 @@ async function makemaz_oracle() {
                 // des.monster("Oracle", 1, 1) — fixed coords inside delphi.
                 oracle_induced_align();             // sp_amask_to_amask
                 const ox = delphi.lx + 1, oy = delphi.ly + 1;
-                make_monster(monster_by_pmidx(name_to_pmidx('Oracle')), ox, oy, 0);
+                makemon(monster_by_pmidx(name_to_pmidx('Oracle')), ox, oy, 0);
                 // des.door({ state="nodoor", wall="all" })
                 // C ref: oracle.lua des.door({ state="nodoor", wall="random" })
                 // -> lspo_door -> create_door() with mask != -1.
@@ -6549,7 +6418,7 @@ function oracle_monster(croom) {
     }
     // C: if (croom && !inside_room(croom, x, y)) return;
     if (croom && !inside_room(croom, c.x, c.y)) return;
-    const mtmp = make_monster(null, c.x, c.y, 0);
+    const mtmp = makemon(null, c.x, c.y, 0);
     // C ref: sp_lev.c:2125 `mtmp->female = m->female;` — a bare des.monster()
     // leaves tmpmons.female BOOL_RANDOM, which lspo_monster's safety net turns
     // into 0, so makemon()'s rn2(2) gender roll (still drawn) is overwritten.
@@ -6573,34 +6442,7 @@ async function oracle_trap(croom) {
             c.x = r.x; c.y = r.y;
         } while (g.level.at(c.x, c.y)?.typ !== ROOM && ++trycnt <= 100);
     }
-    // is_pool_or_lava(tm) check: room floor is never pool here.
-    let kind;
-    kind = mktrap_random_kind();
-    // C ref: mklev.c mktrap() `if (is_hole(kind) && !Can_fall_thru(&u.uz))`.
-    // The local "dlevel < num_dunlevs" stand-in dropped Can_dig_down()'s
-    // hardfloor and Invocation_lev tests, so a hole survived on levels C turns
-    // into a ROCKTRAP — a different maketrap() and a different draw count.
-    if (is_hole(kind) && !Can_fall_thru(g.u?.uz)) kind = ROCKTRAP;
-    const trap = await maketrap(c.x, c.y, kind);
-    kind = trap ? trap.ttyp : NO_TRAP;
-    // C ref: sp_lev.c create_trap() -> mktrap(..., mktrap_flags, ...) — a
-    // lua des.trap() defaults spider_on_web=TRUE (lspo_trap, sp_lev.c:4405),
-    // so MKTRAP_NOSPIDERONWEB is normally NOT set; mktrap() then spawns a
-    // giant spider on a freshly made WEB trap.
-    if (kind === WEB) {
-        const spiderPm = monster_by_pmidx(name_to_pmidx('giant spider'));
-        if (spiderPm) make_monster(spiderPm, c.x, c.y, 0);
-    }
-    const lvl = level_difficulty();
-    // victim gate (gi.in_mklev is true during gen)
-    if (kind !== NO_TRAP
-        && lvl <= rnd(4)
-        && kind !== SQKY_BOARD && kind !== RUST_TRAP
-        && !(kind === ROLLING_BOULDER_TRAP && trap.launch?.x === trap.tx && trap.launch?.y === trap.ty)
-        && !is_pit(kind) && (kind < HOLE || kind === MAGIC_TRAP)) {
-        if (kind === LANDMINE) { trap.ttyp = PIT; trap.tseen = true; }
-        mktrap_victim(trap);
-    }
+    await mktrap(0, MKTRAP_NOFLAGS, null, c);
 }
 
 // ============================================================
@@ -6757,18 +6599,6 @@ function find_branch_room(mp) {
     const croom = generate_stairs_find_room();
     if (croom) somexyspace(croom, mp);
     return croom;
-}
-
-// C ref: mklev.c mktrap() — random-trap-type selection chain when no type is
-// given: Is_rogue_level -> traptype_roguelvl(); Inhell && !rn2(5) -> FIRE_TRAP
-// ("bias the frequency of fire traps in Gehennom"); otherwise the do/while
-// traptype_rnd() loop. The rn2(5) only fires in Gehennom, so RNG-neutral
-// elsewhere.
-function mktrap_random_kind() {
-    if (In_hell(game.u?.uz) && !rn2(5)) return FIRE_TRAP;  // mklev.c:2070
-    let kind;
-    do { kind = traptype_rnd(); } while (kind === NO_TRAP);
-    return kind;
 }
 
 // C ref: mklev.c place_branch(br, x, y) — "randomly place a special stair or
@@ -6962,7 +6792,7 @@ export function wallification(x1, y1, x2, y2) {
 // Fill ordinary room
 // ============================================================
 
-function traptype_rnd() {
+function traptype_rnd(mktrapflags) {
     const lvl = level_difficulty();
     let kind = rnd(TRAPNUM - 1);
     switch (kind) {
@@ -6983,7 +6813,8 @@ function traptype_rnd() {
     case LANDMINE:
         if (lvl < 6) kind = NO_TRAP; break;
     case WEB:
-        if (lvl < 7) kind = NO_TRAP; break;
+        if (lvl < 7 && !(mktrapflags & MKTRAP_NOSPIDERONWEB)) kind = NO_TRAP;
+        break;
     case STATUE_TRAP: case POLY_TRAP:
         if (lvl < 8) kind = NO_TRAP; break;
     case FIRE_TRAP:
@@ -7130,72 +6961,17 @@ function mk_sobj_at_boulder(x, y) {
     return false;
 }
 
-async function mktrap_room(croom) {
-    let kind;
-    kind = mktrap_random_kind();
-    // C ref: mklev.c mktrap() — Can_fall_thru(), not a bare bottom-level test.
-    if (is_hole(kind) && !Can_fall_thru(game.u?.uz)) kind = ROCKTRAP;
-    // C ref: mklev.c mktrap() — retry the spot until it is neither occupied()
-    // nor (for a pit/hole) on top of a boulder.  somexyspace() already rejects
-    // occupied squares, so in practice only the boulder test re-rolls.
-    const pos = { x: 0, y: 0 };
-    {
-        const avoid_boulder = (is_pit(kind) || is_hole(kind));
-        let tryct = 0;
-        do {
-            if (++tryct > 200) return;
-            if (!somexyspace(croom, pos)) return;
-        } while (occupied(pos.x, pos.y)
-                 || (avoid_boulder && mk_sobj_at_boulder(pos.x, pos.y)));
-    }
-    const trap = await maketrap(pos.x, pos.y, kind);
-    kind = trap ? trap.ttyp : NO_TRAP;
-    // C ref: mklev.c mktrap() — `if (kind == WEB && !(mktrapflags &
-    // MKTRAP_NOSPIDERONWEB)) makemon(&mons[PM_GIANT_SPIDER], m.x, m.y,
-    // NO_MM_FLAGS);`.  fill_ordinary_room() calls mktrap() with mktrapflags
-    // 0, so the flag is clear and the spider is always made.  This is the
-    // same call the maze (mk_trap) and des.trap (oracle_trap) paths already
-    // make; it was missing only here.
-    if (kind === WEB) {
-        const spiderPm = monster_by_pmidx(name_to_pmidx('giant spider'));
-        // Through the local makemon() wrapper, not the bare make_monster():
-        // C links the spider into fmon like any other monster, and calling
-        // make_monster() directly created it (consuming the right RNG) but
-        // never put it on the level — so it was absent from the map and, more
-        // damagingly, missing from every later movemon()/mcalcmove() pass,
-        // which costs one rn2(12) per turn for the rest of the level.
-        if (spiderPm) await makemon(spiderPm, pos.x, pos.y, 0);
-    }
-    // C ref: mklev.c mktrap() — `unsigned lvl = level_difficulty();`, not the
-    // raw dlevel: in a branch dungeon (Mines/Quest/Gehennom) depth differs
-    // from dlevel, and Sokoban/Vlad's Tower build upwards.
-    const lvl = level_difficulty();
-    const was_in_mklev = game.in_mklev;
-    game.in_mklev = true;
-    try {
-        if (kind !== NO_TRAP
-            && lvl <= rnd(4)
-            && kind !== SQKY_BOARD && kind !== RUST_TRAP
-            && !(kind === ROLLING_BOULDER_TRAP && trap.launch?.x === trap.tx && trap.launch?.y === trap.ty)
-            && !is_pit(kind) && (kind < HOLE || kind === MAGIC_TRAP)) {
-            if (kind === LANDMINE) { trap.ttyp = PIT; trap.tseen = true; }
-            mktrap_victim(trap);
-        }
-    } finally {
-        game.in_mklev = was_in_mklev;
-    }
-}
-
 function mkfount(croom) {
     const pos = { x: 0, y: 0 };
     if (!find_okay_roompos(croom, pos)) return;
-    // The shared terrain setter recounts features, including themed fountains.
-    // Do not increment again: drying the last fountain must disable its sounds.
+    // C ref: mklev.c mkfount(): set_levltyp() recounts every fountain, then
+    // mkfount() itself does `level.flags.nfountains++` on top of that count.
     if (!set_levltyp_lit(pos.x, pos.y, FOUNTAIN, SET_LIT_NOCHANGE)) return;
     const loc = game.level?.at(pos.x, pos.y);
     if (loc) {
         if (!rn2(7)) loc.blessedftn = 1;
     }
+    if (game.level?.flags) game.level.flags.nfountains = (game.level.flags.nfountains || 0) + 1;
 }
 
 function mkaltar(croom) {
@@ -7240,6 +7016,52 @@ function mkgrave_room(croom) {
     if (dobell) mksobj_at(BELL, pos.x, pos.y, true, false);
 }
 
+// C ref: mklev.c makelevel() — the tail after the structural phase: fill each
+// ordinary room, fill the special rooms, run the themerooms post-generation
+// handlers, then mineralize().  This port runs makelevel()'s structural phase
+// in mklev() and this phase separately, so every mklev() caller that did not
+// load bones follows it with this call.
+export async function makelevel_fill_and_mineralize() {
+    const rooms = game.level?.rooms ?? [];
+    const bonus_idx = game.level?._bonus_room_idx ?? -1;
+    let fillable_idx = 0;
+    const was_in_mklev = game.in_mklev;
+    game.in_mklev = true;
+    try {
+        for (let i = 0; i < rooms.length; i++) {
+            const r = rooms[i];
+            if (!r || r.hx <= 0) break;
+            if ((r.rtype === OROOM || r.rtype === THEMEROOM) && r.needfill === FILL_NORMAL) {
+                await fill_ordinary_room(r, fillable_idx === bonus_idx);
+                fillable_idx++;
+            }
+        }
+        // A des.*-loaded special level asks for the faithful makemon path
+        // (m_initweap_full / m_initinv_full) for the monsters its special
+        // rooms spawn, matching what its own generator already used.
+        const was_full = game._full_mon_gen;
+        if (game.level?._splev_fullmon) game._full_mon_gen = true;
+        try {
+            for (let i = 0; i < rooms.length; i++) {
+                const r = rooms[i];
+                if (!r || r.hx <= 0) break;
+                fill_special_room(r);
+            }
+        } finally {
+            game._full_mon_gen = was_full;
+        }
+        // C ref: mklev.c:1420 themerooms_post_level_generate() — run the
+        // queued themeroom postprocess handlers (e.g. Teleportation hub's
+        // deferred teleport traps) after the per-room fill loops.
+        await run_themeroom_postprocess();
+        mineralize(-1, -1, -1, -1, false);
+        // C mklev.c:1559-1560: this follows room filling, which sets has_morgue.
+        if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
+    } finally {
+        game.in_mklev = was_in_mklev;
+    }
+}
+
 export async function fill_ordinary_room(croom, bonus_items) {
     const g = game;
     if (!croom || (croom.rtype !== OROOM && croom.rtype !== THEMEROOM)) return;
@@ -7271,7 +7093,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
     // gets a WEB under it.  Both halves were missing: the web is a real trap
     // object (t_at/occupied/display) and maketrap() writes level state.
     if ((g.u?.uhave?.amulet || !rn2(3)) && somexyspace(croom, pos)) {
-        const tmonst = await makemon(null, pos.x, pos.y, 0x00002000); // MM_NOGRP
+        const tmonst = makemon(null, pos.x, pos.y, 0x00002000); // MM_NOGRP
         if (tmonst && tmonst.data?.pmidx === PM_GIANT_SPIDER
             && !occupied(pos.x, pos.y))
             await maketrap(pos.x, pos.y, WEB);
@@ -7283,7 +7105,7 @@ export async function fill_ordinary_room(croom, bonus_items) {
     if (x <= 1) x = 2;
     let trycnt = 0;
     while (!rn2(x) && ++trycnt < 1000) {
-        await mktrap_room(croom);
+        await mktrap(0, MKTRAP_NOFLAGS, croom, null);
     }
     // Gold
     if (!rn2(3) && somexyspace(croom, pos)) {
@@ -7723,7 +7545,7 @@ export function set_wall_state() {
 
 function level_finalize_topology() {
     bound_digging();
-    // mineralize is consumed by fastforward_fill_mineralize
+    // mineralize is consumed by makelevel_fill_and_mineralize
     game.in_mklev = false;
     // C ref: mklev.c themerooms_post_level_generate() runs the level-wide
     // wallification(1, 0, COLNO-1, ROWNO-1) at the very end of makelevel()
@@ -7757,10 +7579,11 @@ function level_finalize_topology() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// mklev.c — remaining functions. INERT: nothing above calls into this section,
-// no existing call site was rewired. The RNG-drawing ones (mktrap, mkgrave,
-// mkinvpos) share maketrap()/rn2() with the live builders, so wiring one up
-// reorders the shared draw stream — a measured change, not a refactor.
+// mklev.c — remaining functions. Except mktrap(), which every live trap
+// builder calls, INERT: nothing above calls into this section.  The
+// RNG-drawing ones (mkgrave, mkinvpos) share maketrap()/rn2() with the live
+// builders, so wiring one up reorders the shared draw stream — a measured
+// change, not a refactor.
 // ═══════════════════════════════════════════════════════════════════════════
 
 // hack.h:1429-1433 — mktrap()'s flag word.
@@ -7960,60 +7783,17 @@ export function traptype_roguelvl() {
     return kind;
 }
 
-// C ref: rm.h is_pool_or_lava(x,y).  Private copies also sit at hack.js:85 and
-// polyself.js:1832; mktrap()'s only use is the `tm` early-out.
-function mklev_is_pool_or_lava(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return IS_POOL(t) || t === LAVAPOOL || t === LAVAWALL;
-}
-
-// C ref: mkmaze.c:1316 mazexy(cc) — rnd(x_maze_max)/rnd(y_maze_max) until the
-// square matches the maze's own floor type, up to 100 tries, then a
-// systematic scan. js/mkmaze.js exports maze0xy() (odd-cell carve start) but
-// not mazexy, so this local copy covers mktrap()'s MKTRAP_MAZEFLAG arm;
-// delete it if mkmaze.js ever exports mazexy().
-function mklev_mazexy(cc) {
-    const allowedtyp = game.level?.flags?.corrmaze ? CORR : ROOM;
-    let cpt = 0;
-    let x, y;
-
-    do {
-        x = rnd(mz.x_maze_max);
-        y = rnd(mz.y_maze_max);
-        if (game.level?.at(x, y)?.typ === allowedtyp) {
-            cc.x = x;
-            cc.y = y;
-            return;
-        }
-    } while (++cpt < 100);
-    /* 100 random attempts failed; systematically try every possibility */
-    for (x = 1; x <= mz.x_maze_max; x++)
-        for (y = 1; y <= mz.y_maze_max; y++)
-            if (game.level?.at(x, y)?.typ === allowedtyp) {
-                cc.x = x;
-                cc.y = y;
-                return;
-            }
-    /* C: panic("mazexy: can't find a place!") */
-}
-
 /* mklev.c:2042 `static int mktrap_err` — the paniclog is issued once per run. */
 let mktrap_err = 0;
 
-// C ref: mklev.c:2035 mktrap(num, mktrapflags, croom, tm) — the general form;
-// mktrap_room() (mklev.js:6378) is the croom-only flagless specialisation the
-// live fill path uses. This is the whole function: `tm` and MKTRAP_MAZEFLAG
-// placement arms plus the three flag tests included.
+// C ref: mklev.c:2035 mktrap(num, mktrapflags, croom, tm) — the one trap
+// generator: fill_ordinary_room (croom), des.trap() with a location (tm) and
+// populate_maze() (MKTRAP_MAZEFLAG) all come through here.
 // RNG: kind selection draws (traptype_rnd's rnd(TRAPNUM-1) NO_TRAP retry loop,
 // or traptype_roguelvl's rn2(7), or Gehennom's rn2(5) — drawn BEFORE the
 // fire-trap shortcut, so always), then somexyspace()/mazexy() per placement
 // attempt, then maketrap(), then the victim gate's rnd(4) (RHS of
 // `lvl <= rnd(4)`, drawn whenever the earlier conditions hold).
-// CAVEAT: traptype_rnd() (mklev.js:6229) takes no argument, so C's
-// `case WEB: if (lvl < 7 && !(mktrapflags & MKTRAP_NOSPIDERONWEB))` degrades to
-// `if (lvl < 7)` here — identical for every flagless caller, but a caller
-// passing MKTRAP_NOSPIDERONWEB (des.trap() spider_on_web=false) gets NO_TRAP
-// where C gets a web. Fix requires editing traptype_rnd().
 export async function mktrap(num, mktrapflags, croom, tm) {
     let t, kind;
     const m = { x: 0, y: 0 };
@@ -8029,7 +7809,7 @@ export async function mktrap(num, mktrapflags, croom, tm) {
     m.x = m.y = 0;
 
     /* no traps in pools */
-    if (tm && mklev_is_pool_or_lava(tm.x, tm.y))
+    if (tm && is_pool_or_lava(tm.x, tm.y))
         return;
 
     if (num > NO_TRAP && num < TRAPNUM) {
@@ -8058,7 +7838,7 @@ export async function mktrap(num, mktrapflags, croom, tm) {
             if (++tryct > 200)
                 return;
             if ((mktrapflags & MKTRAP_MAZEFLAG) !== 0)
-                mklev_mazexy(m);
+                { const mp = mazexy(); m.x = mp.x; m.y = mp.y; }
             else if (croom && !somexyspace(croom, m))
                 return;
         } while (occupied(m.x, m.y)
@@ -8074,7 +7854,7 @@ export async function mktrap(num, mktrapflags, croom, tm) {
         const spiderPm = monster_by_pmidx(name_to_pmidx('giant spider'));
         /* through the local makemon() wrapper so the spider is linked into
            fmon — see the note at mklev.js:6406 */
-        if (spiderPm) await makemon(spiderPm, m.x, m.y, 0);
+        if (spiderPm) makemon(spiderPm, m.x, m.y, 0);
     }
     if (t && (mktrapflags & MKTRAP_SEEN))
         t.tseen = true;
@@ -8124,6 +7904,9 @@ export function mksink(croom) {
     /* Put a sink at m.x, m.y */
     if (!set_levltyp_lit(m.x, m.y, SINK, SET_LIT_NOCHANGE))
         return;
+
+    /* set_levltyp() has just recounted every sink, then this adds one more */
+    if (game.level?.flags) game.level.flags.nsinks = (game.level.flags.nsinks || 0) + 1;
 }
 
 // ── C names for ports that already exist under a local name ────────────────
@@ -8208,7 +7991,7 @@ export async function mkinvokearea() {
             const { buried_ball_to_punishment } = await import('./dig.js');
             await buried_ball_to_punishment();
         }
-        g.u.utrap = 0;                          /* reset_utrap(FALSE) */
+        set_utrap(0, 0);                        /* reset_utrap(FALSE) */
     }
 
     xmin = xmax = g.inv_pos.x;  /* reset after the check for walls */

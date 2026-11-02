@@ -26,10 +26,10 @@ import { m_at } from './display.js';
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, ledger_no } from './dungeon.js';
 import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE,
-         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED } from './const.js';
+         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED, ONAME, has_oname, OMONST } from './const.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
 import { can_carry, DEADMONSTER } from './mon.js';
@@ -71,12 +71,6 @@ function svp_plname() {
 // dungeon.c:1376 ledger_no(lev) = lev->dlevel + svd.dungeons[lev->dnum].ledger_start
 // dungeon.c:1392 maxledgerno()  = dungeons[n_dgns-1].ledger_start + .num_dunlevs
 // Both feed can_make_bones()'s range check, which runs BEFORE its rn2().
-function ledger_no(lev) {
-    const dnum = lev?.dnum ?? 0;
-    const dng = game.dungeons?.[dnum];
-    if (!dng) return null;                       // dungeon table not built yet
-    return (lev?.dlevel ?? 1) + (dng.ledger_start ?? 0);
-}
 
 function maxledgerno() {
     const dgns = game.dungeons;
@@ -329,6 +323,9 @@ async function bones_getlev(blob) {
         const { free_oname } = await import('./do_name.js');
         const { exist_artifact, artifact_exists } = await import('./artifact.js');
         const { cant_revive } = await import('./read.js');
+        const { is_quest_artifact } = await import('./questpgr.js');
+        const { sanitize_engr_text } = await import('./engrave.js');
+        const { setONAME, ONAME, ONAME_BONES } = await import('./const.js');
         const room_at = (x, y) => {
             const rno = level.at?.(x, y)?.roomno;
             return rno >= ROOMOFFSET ? level.rooms?.[rno - ROOMOFFSET] : null;
@@ -336,7 +333,9 @@ async function bones_getlev(blob) {
         const deps = {
             O: { objects, FOOD_CLASS },
             obj_extract_self, dealloc_obj, free_oname, free_omonst, set_corpsenm,
-            exist_artifact, artifact_exists, cant_revive,
+            exist_artifact, artifact_exists, cant_revive, is_quest_artifact, ONAME_BONES,
+            /* bones.c sanitize_name(ONAME(otmp)): in place */
+            sanitize_name: (o) => setONAME(o, sanitize_engr_text(ONAME(o))),
             get_obj_location: (obj, loc) => {
                 loc.x = obj.ox;
                 loc.y = obj.oy;
@@ -472,7 +471,7 @@ export function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
         hooks.extract?.(otmp);                                 // C: obj_extract_self(otmp)
         if (rn2(5)) hooks.curse?.(otmp);                       // C: if (rn2(5)) curse(otmp);
         if (mtmp) {
-            hooks.addToMon?.(mtmp, otmp);
+            hooks.toMon?.(mtmp, otmp);                         // C: add_to_minv(mtmp, otmp)
         } else if (cont) {
             hooks.addToContainer?.(cont, otmp);
         } else if (!rn2(8)) {                                  // C: else if (!rn2(8))
@@ -893,14 +892,14 @@ export async function resetobjs(ochain, restore, deps = {}) {
             /* artifact bookkeeping needs to be done during restore; other
                fixups are done while saving */
             if (otmp.oartifact) {
-                if (deps.exist_artifact?.(otmp.otyp, safe_oname(otmp))
+                if (deps.exist_artifact?.(otmp.otyp, ONAME(otmp))
                     || deps.is_quest_artifact?.(otmp)) {
                     /* prevent duplicate -- revert to ordinary obj */
                     otmp.oartifact = 0;
                     if (has_oname(otmp))
                         deps.free_oname?.(otmp);
                 } else {
-                    deps.artifact_exists?.(otmp, safe_oname(otmp), true,
+                    deps.artifact_exists?.(otmp, ONAME(otmp), true,
                                            deps.ONAME_BONES ?? 0);
                 }
             } else if (has_oname(otmp)) {
@@ -966,7 +965,7 @@ export async function resetobjs(ochain, restore, deps = {}) {
                    false for the revival flag), temple priests and vault guards,
                    to prevent corpse revival / statue reanimation. */
                 const mnumRef = { v: otmp.corpsenm };
-                if (has_omonst(otmp)
+                if (OMONST(otmp)
                     && await deps.cant_revive?.(mnumRef, false, null)) {
                     deps.free_omonst?.(otmp);
                     /* mnum is now either human_zombie or doppelganger; for
@@ -1004,12 +1003,7 @@ export async function resetobjs(ochain, restore, deps = {}) {
         }
     }
 }
-// C ref: obj.h has_oname(obj) / ONAME(obj); this port keeps the name in
-// obj.oname (js/invent.js:312 safe_oname()).  mkobj.h ismnum(mnum) is
-// `mnum > NON_PM && mnum < NUMMONS`.
-function has_oname(obj) { return !!obj?.oname; }
-function safe_oname(obj) { return obj?.oname || ''; }
-function has_omonst(obj) { return !!(obj?.omonst || obj?.oextra?.omonst); }
+// mkobj.h ismnum(mnum) is `mnum > NON_PM && mnum < NUMMONS`.
 function ismnum(mnum) { return (mnum | 0) > -1; }
 
 // C ref: bones.c:308 fixuporacle(oracle) — "possibly restore oracle's room

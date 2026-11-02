@@ -115,7 +115,8 @@ export async function doorlock(otmp, x, y) {
     const { pline, newsym, m_at, You_hear, Deaf_hero,
             canseemon_shared } = await import('./display.js');
     const { Unaware, Is_rogue_level, SHOPBASE } = await import('./const.js');
-    const { obstructed, wake_nearto } = await import('./cmd.js');
+    const { obstructed } = await import('./cmd.js');
+    const { wake_nearto } = await import('./mon.js');
     const { in_rooms } = await import('./shkroom.js');
     const mysterywand = otmp.oclass === 11 && !otmp.dknown;
     let res = true, msg = null, loudness = 0;

@@ -9,21 +9,25 @@
 //
 // Hero placement is shared by jumping, teleport commands, scrolls, and traps.
 
-import { acurr_eff } from './attrib.js';
-import { Levitation_hero, Flying_hero } from './youprop.js';
+import { acurr_eff, exercise } from './attrib.js';
+import { create_nhwindow, start_menu, add_menu, end_menu, select_menu, destroy_nhwindow, nul_glyphinfo } from './windows.js';
+import { NO_COLOR } from './terminal.js';
+import { Levitation_hero, Flying_hero, Stunned_hero, Passes_walls_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
-import { set_msg_mon, newsym, m_at, update_topl, y_n, You_feel } from './display.js';
+import { newsym, m_at, update_topl, y_n, You_feel } from './display.js';
 import { Blind, couldsee, vision_recalc } from './vision.js';
 import { update_monster_region } from './region.js';
 import { onscary, set_apparxy, noteleport_level, m_in_air, may_passwall } from './monmove.js';
-import { youmonst_data, worn_extrinsic, near_capacity, makeknown } from './invent.js';
+import { youmonst_data, worn_extrinsic, near_capacity, makeknown, check_capacity } from './invent.js';
 import { known_spell, spelleffects } from './spell.js';
 import { morehungry } from './eat.js';
-import { hero_liquid_goodpos } from './trap.js';
-import { In_hell } from './dungeon.js';
-import { In_endgame, Trap_Effect_Finished, Trap_Moved_Mon } from './const.js';
+import { hero_liquid_goodpos, vault_tele, level_tele_trap, u_locomotion } from './trap.js';
+import { set_utrap } from './polyself.js';
+import { In_hell, u_on_newpos } from './dungeon.js';
+import { noit_mon_nam } from './do_name.js';
+import { In_endgame, is_pool, is_lava } from './const.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -60,16 +64,6 @@ function roomnoAt(x, y) { return game.level?.at(x, y)?.roomno ?? 0; }
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 function distu(x, y) { return dist2(x, y, game.u?.ux ?? 0, game.u?.uy ?? 0); }
 
-// C ref: rm.h IS_POOL(typ) — POOL <= typ <= DRAWBRIDGE_UP.
-function is_pool(x, y) {
-    const typ = terrainTyp(x, y);
-    return typ != null && typ >= POOL && typ <= DRAWBRIDGE_UP;
-}
-// C ref: rm.h IS_LAVA(typ) — LAVAPOOL or LAVAWALL.
-function is_lava(x, y) {
-    const typ = terrainTyp(x, y);
-    return typ === LAVAPOOL || typ === LAVAWALL;
-}
 
 // C ref: rm.h closed_door(x,y) — a DOOR whose doormask has D_CLOSED|D_LOCKED.
 function closed_door(x, y) {
@@ -255,7 +249,6 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
     // adjacent.
     if (game.u?.ustuck === mtmp) {
         if (game.u.uswallow) {
-            const { u_on_newpos } = await import('./do.js');
             await u_on_newpos(mtmp.mx, mtmp.my);
             const { check_special_room } = await import('./shkroom.js');
             await check_special_room(false);
@@ -533,21 +526,19 @@ import {
     CC_INCL_CENTER, CC_UNSHUFFLED, CC_RING_PAIRS, CC_SKIP_MONS, CC_SKIP_INACCS,
     GP_ALLOW_XY, TELEDS_ALLOW_DRAG, TELEDS_TELEPORT,
     TT_BURIEDBALL, SLT_ENCUMBER, VIBRATING_SQUARE, LEVEL_TELEP, TELEP_TRAP,
-    MAGIC_PORTAL, HOLE, TRAPDOOR, NO_TRAP, MIGR_RANDOM, MIGR_PORTAL,
     UTOTYPE_PORTAL, UTOTYPE_ATSTAIRS, VAULT, SHOPBASE,
     ECMD_OK, ECMD_TIME, FORCETRAP, NHW_MENU, PICK_ONE,
     A_STR, A_WIS, EXT_ENCUMBER,
-    is_pit, is_hole, is_xport, IS_ALTAR, ZAP_POS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+    is_pit, is_hole, IS_ALTAR, ZAP_POS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { CORPSE, SCR_SCARE_MONSTER } from './mkobj.js';
 import { M1_NOEYES, M2_LORD, M2_PRINCE, M1_TPORT } from './monflags_data.js';
 import { within_bounded_area } from './rect.js';
 import { in_out_region } from './region.js';
 import { see_monsters, see_nearby_objects } from './display.js';
 
-// C ref: monsym.h — mons[].mlet values goodpos_onscary() and mlevel_tele_trap()
-// test.  (S_EEL_MCLS above is the same table.)
-const S_HUMAN_MCLS = 53, S_ANGEL_MCLS = 27, S_VAMPIRE_MCLS = 48,
-      S_ELEMENTAL_MCLS = 31;
+// C ref: monsym.h — mons[].mlet values goodpos_onscary() tests.  (S_EEL_MCLS
+// above is the same table.)
+const S_HUMAN_MCLS = 53, S_ANGEL_MCLS = 27, S_VAMPIRE_MCLS = 48;
 // C ref: pm.h PM_MINOTAUR (mon.js:905 carries the same index).
 const PM_MINOTAUR_TP = 177;
 
@@ -765,7 +756,8 @@ export async function teleds(nux, nuy, teleds_flags) {
     let ball_active, ball_still_in_range = false;
     let allow_drag = (teleds_flags & TELEDS_ALLOW_DRAG) !== 0;
     const is_teleport = (teleds_flags & TELEDS_TELEPORT) !== 0;
-    const vault_guard = vault_occupied_(u?.urooms) ? findgd_() : 0;
+    const { vault_occupied, findgd } = await import('./vault.js');
+    const vault_guard = vault_occupied(u?.urooms) ? findgd() : 0;
 
     if (u.utraptype === TT_BURIEDBALL) {
         /* unearth it */
@@ -789,7 +781,7 @@ export async function teleds(nux, nuy, teleds_flags) {
         else if (!allow_drag)
             await B.unplacebc();                 /* have to move the ball */
     }
-    reset_utrap_(false);
+    set_utrap(0, 0); /* reset_utrap(FALSE) */
     was_swallowed = u.uswallow;            /* set_ustuck(Null) clears uswallow */
     const { set_ustuck } = await import('./mon.js');
     set_ustuck(null);
@@ -823,7 +815,7 @@ export async function teleds(nux, nuy, teleds_flags) {
     }
 
     /* must set u.ux,u.uy AFTER drag_ball(), which may need the old position */
-    await u_on_newpos_(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
+    await u_on_newpos(nux, nuy);   /* set u.<x,y>, usteed-><mx,my>; cliparound() */
     const { fill_pit } = await import('./trap.js');
     await fill_pit(u.ux0, u.uy0);
     if (ball_active && uchain_() && uchain_().where === OBJ_FREE)
@@ -859,7 +851,7 @@ export async function teleds(nux, nuy, teleds_flags) {
         const save_urooms = u.urooms;
         u.urooms = in_rooms(u.ux, u.uy, VAULT);
         /* if hero has left vault, make guard notice */
-        if (!vault_occupied_(u.urooms)) {
+        if (!vault_occupied(u.urooms)) {
             const { uleftvault } = await import('./vault.js');
             await uleftvault(vault_guard);
         }
@@ -979,20 +971,22 @@ export async function dotelecmd() {
             { menulet: 't', menudesc: 'try ^T without having it; no spell' },
             { menulet: 'w', menudesc: 'debug mode; ignore restrictions' },
         ];
-        const win = create_nhwindow_(NHW_MENU);
-        start_menu_(win);
+        const picks = [];
+        const win = create_nhwindow(NHW_MENU);
+        start_menu(win, 0 /* MENU_BEHAVE_STANDARD */);
         for (let i = 0; i < tports.length; ++i)
-            add_menu_(win, tports[i].menulet, tports[i].menudesc,
-                      tports[i].menulet === 'w');
-        end_menu_(win, 'Which way do you want to teleport?');
-        const picks = await select_menu_(win, PICK_ONE);
-        destroy_nhwindow_(win);
+            add_menu(win, nul_glyphinfo, { a_int: tports[i].menulet.charCodeAt(0) },
+                     tports[i].menulet, 0, 0 /* ATR_NONE */, NO_COLOR,
+                     tports[i].menudesc,
+                     (tports[i].menulet === 'w') ? 0x1 /* MENU_ITEMFLAGS_SELECTED */ : 0);
+        end_menu(win, 'Which way do you want to teleport?');
+        const i = await select_menu(win, PICK_ONE, picks);
+        destroy_nhwindow(win);
         let tmode;
-        const i = picks ? picks.length : -1;
         if (i > 0) {
-            tmode = picks[0];
+            tmode = String.fromCharCode(picks[0].item.a_int);
             /* if we got 2, use the one which wasn't preselected */
-            if (i > 1 && tmode === 'w') tmode = picks[1];
+            if (i > 1 && tmode === 'w') tmode = String.fromCharCode(picks[1].item.a_int);
         } else if (i === 0) {
             /* preselected one was explicitly chosen and got toggled off */
             tmode = 'w';
@@ -1044,8 +1038,8 @@ export async function dotele(break_the_rules) {
     const { newsym: newsym_ } = await import('./display.js');
     if (trap) {
         if (trap.ttyp === LEVEL_TELEP && trap.tseen) {
-            if (await y_n_('There is a level teleporter here. Trigger it?') === 'y') {
-                await level_tele_trap_(trap, FORCETRAP);
+            if (await y_n('There is a level teleporter here. Trigger it?') === 'y') {
+                await level_tele_trap(trap, FORCETRAP);
                 /* deliberate jumping always takes time even if it doesn't work */
                 return 1;
             } else {
@@ -1055,7 +1049,7 @@ export async function dotele(break_the_rules) {
             trap_once = trap.once;   /* trap may get deleted, save this */
             if (trap.once) {
                 await update_topl('This is a vault teleport, usable once only.');
-                if (await y_n_('Jump in?') === 'n') {
+                if (await y_n('Jump in?') === 'n') {
                     trap = 0;
                 } else {
                     const { deltrap } = await import('./trap.js');
@@ -1064,7 +1058,7 @@ export async function dotele(break_the_rules) {
                 }
             }
             if (trap)
-                await update_topl(`You ${u_locomotion_('jump')} onto the teleportation trap.`);
+                await update_topl(`You ${u_locomotion('jump')} onto the teleportation trap.`);
         } else {
             trap = 0;
         }
@@ -1103,14 +1097,14 @@ export async function dotele(break_the_rules) {
             await update_topl(`You ${cantdoit} `
                 + `${castit ? 'for a teleport spell' : 'to teleport'}.`);
             return 0;
-        } else if (await check_capacity_(
+        } else if (await check_capacity(
                        'Your concentration falters from carrying so much.')) {
             return 1;   /* this failure in spelleffects() also uses the move */
         }
 
         if (castit) {
             /* energy cost is deducted in spelleffects() */
-            exercise_(A_WIS_TP, true);
+            await exercise(A_WIS_TP, true);
             if ((await spelleffects_(SPE_TELEPORT_AWAY_TP, true, false)) & ECMD_TIME)
                 return 1;
             else if (!break_the_rules)
@@ -1124,7 +1118,7 @@ export async function dotele(break_the_rules) {
 
     if (await next_to_u_()) {
         if (trap && trap_once) {
-            await vault_tele_();
+            await vault_tele();
         } else if (trap && isok(trap.teledest?.x, trap.teledest?.y)) {
             await teleds(trap.teledest.x, trap.teledest.y, TELEDS_TELEPORT);
         } else {
@@ -1222,9 +1216,9 @@ export async function control_mon_tele(mon, cc_p, rlocflags, via_rloc) {
 
     if (!wizard_() || !game.iflags?.mon_telecontrol) return false;
 
-    await update_topl(`Teleport ${noit_mon_nam_(mon)} @ <${mon.mx},${mon.my}> where?`);
+    await update_topl(`Teleport ${noit_mon_nam(mon)} @ <${mon.mx},${mon.my}> where?`);
     /* getpos '?' will show "Move the cursor to <where to teleport Foo>:" */
-    const tcbuf = `where to teleport ${noit_mon_nam_(mon)}`;
+    const tcbuf = `where to teleport ${noit_mon_nam(mon)}`;
     const { getpos } = await import('./hack.js');
     const verbose = game.flags?.verbose !== false;
     const picked = await getpos(tcbuf, cc_p.x, cc_p.y, null, /*force=*/false, verbose);
@@ -1324,102 +1318,6 @@ export async function mtele_trap(mtmp, trap, in_sight) {
             seetrap(trap);
         }
     }
-}
-
-// C ref: teleport.c:2005 mlevel_tele_trap(mtmp, trap, force_it, in_sight).
-// RNG: the endgame MAGIC_PORTAL arm's rn2(7) (short-circuited by
-// mon_has_amulet/is_home_elemental) and random_teleport_level() for
-// LEVEL_TELEP.  Returns Trap_Effect_Finished or Trap_Moved_Mon.
-export async function mlevel_tele_trap(mtmp, trap, force_it, in_sight) {
-    const tt = (trap ? trap.ttyp : NO_TRAP);
-
-    if (mtmp === game.u?.ustuck)   /* probably a vortex */
-        return Trap_Effect_Finished;   /* temporary? kludge */
-    if (await teleport_pet(mtmp, force_it)) {
-        const tolevel = { dnum: 0, dlevel: 0 };
-        let migrate_typ = MIGR_RANDOM;
-        const { Monnam, mon_nam } = await import('./uhitm.js');
-
-        if (is_hole(tt)) {
-            if (Is_stronghold_()) {
-                assign_level_(tolevel, valley_level_());
-            } else if (Is_botlevel_()) {
-                if (in_sight && trap.tseen) {
-                    set_msg_mon(mtmp);
-                    await update_topl(`${Monnam(mtmp)} avoids the `
-                        + `${(tt === HOLE) ? 'hole' : 'trap'}.`);
-                }
-                return Trap_Effect_Finished;
-            } else {
-                assign_level_(tolevel, trap.dst);
-                const { clamp_hole_destination } = await import('./trap.js');
-                clamp_hole_destination(tolevel);
-            }
-        } else if (tt === MAGIC_PORTAL) {
-            if (In_endgame_() && (mon_has_amulet_(mtmp)
-                                  || await is_home_elemental_(mtmp.data)
-                                  || rn2(7))) {
-                if (in_sight && mtmp.data?.mcls !== S_ELEMENTAL_MCLS) {
-                    set_msg_mon(mtmp);
-                    await update_topl(`${Monnam(mtmp)} seems to shimmer for a moment.`);
-                    const { seetrap } = await import('./trap.js');
-                    seetrap(trap);
-                }
-                return Trap_Effect_Finished;
-            } else {
-                assign_level_(tolevel, trap.dst);
-                migrate_typ = MIGR_PORTAL;
-            }
-        } else if (tt === LEVEL_TELEP || tt === NO_TRAP) {
-            let nlev;
-
-            if (mon_has_amulet_(mtmp) || In_endgame_()
-                /* NO_TRAP is used when forcing a monster off the level;
-                   onscary(0,0,) is true for the Wizard, Riders, lawful
-                   minions, Angels, and a shk/priest inside his own room */
-                || (tt === NO_TRAP && onscary(0, 0, mtmp))) {
-                if (in_sight) {
-                    set_msg_mon(mtmp);
-                    await update_topl(`${Monnam(mtmp)} seems very disoriented for a moment.`);
-                }
-                return Trap_Effect_Finished;
-            }
-            if (tt === NO_TRAP) {
-                /* creature is being forced off the level to make room */
-                assign_level_(tolevel, game.u.uz);
-            } else {
-                nlev = random_teleport_level_();
-                if (nlev === depth_(game.u.uz)) {
-                    if (in_sight) {
-                        set_msg_mon(mtmp);
-                        await update_topl(`${Monnam(mtmp)} shudders for a moment.`);
-                    }
-                    return Trap_Effect_Finished;
-                }
-                get_level_(tolevel, nlev);
-            }
-        } else {
-            const { impossible } = await import('./display.js');
-            await impossible(`mlevel_tele_trap: unexpected trap type (${tt})`);
-            return Trap_Effect_Finished;
-        }
-
-        if (in_sight) {
-            set_msg_mon(mtmp);
-            await update_topl(`Suddenly, ${mon_nam(mtmp)} `
-                + `${(tt === HOLE) ? 'falls into a hole'
-                   : (tt === TRAPDOOR) ? 'falls through a trap door'
-                   : 'disappears out of sight'}.`);
-            if (trap) {
-                const { seetrap } = await import('./trap.js');
-                seetrap(trap);
-            }
-        }
-        if (is_xport(tt) && !control_teleport_(mtmp.data)) mtmp.mconf = 1;
-        await migrate_to_level_(mtmp, ledger_no_(tolevel), migrate_typ, null);
-        return Trap_Moved_Mon;   /* no longer on this level */
-    }
-    return Trap_Effect_Finished;
 }
 
 // C ref: teleport.c:2101 rloco(obj) — place a floor object at random.  RNG: a
@@ -1566,14 +1464,7 @@ export function In_W_tower(x, y, lev = game.u?.uz) {
     if (!d.nlx) return false; /* C: impossible("No boundary for Wizard's Tower?") */
     return within_bounded_area_(x, y, d.nlx, d.nly, d.nhx, d.nhy);
 }
-function Is_stronghold_() { return false; }
-function Is_botlevel_() { return false; }
-function depth_(lev) { return (lev?.dlevel | 0); }
 function on_level_(a, b) { return !!a && !!b && a.dnum === b.dnum && a.dlevel === b.dlevel; }
-function valley_level_() { return game.valley_level || { dnum: 0, dlevel: 0 }; }
-function assign_level_(dst, src) { if (dst && src) { dst.dnum = src.dnum; dst.dlevel = src.dlevel; } }
-function get_level_(dst, levnum) { if (dst) { dst.dnum = game.u?.uz?.dnum | 0; dst.dlevel = levnum; } }
-function ledger_no_(lev) { return (lev?.dlevel | 0); }
 // C ref: rect.c within_bounded_area — js/rect.js's real export.
 function within_bounded_area_(x, y, lx, ly, hx, hy) {
     return within_bounded_area(x, y, lx, ly, hx, hy);
@@ -1603,7 +1494,7 @@ const S_MIMIC_MCLS = 13;                       /* defsym.h MONSYM(13,'m',MIMIC) 
 function HProp_tp(name) { return (game.u?.uprops?.[name] | 0); }
 function Levitation_() { return Levitation_hero(); }
 function Flying_() { return Flying_hero(); }
-function Passes_walls_() { return !!game.u?.formprops?.Passes_walls || HProp_tp('HPasses_walls') > 0; }
+function Passes_walls_() { return Passes_walls_hero(); }
 function Punished_() { return !!game.u?.uball; }
 function Teleportation_() { return !!game.u?.formprops?.Teleportation || HProp_tp('HTeleportation') > 0 || HProp_tp('ETeleportation') > 0 || worn_extrinsic(TELEPORT_PROP); }
 function HTeleportation_() { return HProp_tp('HTeleportation'); }
@@ -1615,7 +1506,7 @@ const I_SPECIAL_TP = 0x20000000;
 function uball_() { return game.u?.uball || null; }
 function uchain_() { return game.u?.uchain || null; }
 function carried_(obj) { return obj?.where === OBJ_INVENT; }
-function Stunned_tp() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function Stunned_tp() { return Stunned_hero(); }
 function HStun_tp() { return game.u?.uprops?.Stun || 0; }
 function Confusion_tp() { return HProp_tp('HConfusion') > 0; }
 // C ref: teleport.c:1485 make_stunned(..., FALSE); timeout.js owns recovery.
@@ -1629,24 +1520,6 @@ function make_stunned_tp(xtime) {
 // C ref: include/hack.h distmin(x0,y0,x1,y1) — port is js/track.js:45, private.
 function distmin_(x0, y0, x1, y1) {
     return Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0));
-}
-// C ref: vault.c vault_occupied(rooms) / findgd() — js/sounds.js:167/174, private.
-function vault_occupied_(_rooms) { return false; }
-function findgd_() { return null; }
-// C ref: trap.c reset_utrap(msg) — the FALSE arm used by teleportation.
-function reset_utrap_(_msg) { const u = game.u; if (u) { u.utrap = 0; u.utraptype = 0; } }
-// C ref: hack.c u_on_newpos(x, y) — js/mklev.js:170, private.
-async function u_on_newpos_(x, y) {
-    const u = game.u;
-    if (!u) return;
-    u.ux = x; u.uy = y;
-    u.uundetected = 0;
-    /* ridden steed always shares hero's location */
-    if (u.usteed) { u.usteed.mx = u.ux; u.usteed.my = u.uy; }
-    /* C dungeon.c u_on_newpos(): a same-level relocation lets nearby generic
-       objects be observed up close (feeds the '\' discoveries list). */
-    see_nearby_objects();
-    await (await import('./dungeon.js')).earth_sense();
 }
 // C ref: display.c see_monsters() / notice_mon_off()/on() (mon.c) /
 // vision.c vision_recalc(control) / detect.c switch_terrain().
@@ -1672,19 +1545,6 @@ async function somexyspace_(_croom, _c) { return false; }
 // js/monmove.js:4303 (exported).
 function mon_offmap_(mon) { return (mon?.mstate | 0) !== 0; }
 async function m_next2u_(mtmp) { return distmin_(mtmp.mx, mtmp.my, game.u.ux, game.u.uy) <= 1; }
-// C ref: mon.c migrate_to_level / muse.c's copy at js/muse.js:665 (private).
-async function migrate_to_level_(_mtmp, _ledger, _migrtyp, _cc) { }
-// C ref: eat.c control_teleport(ptr) — js/eat.js:1925, private.
-function control_teleport_(_ptr) { return false; }
-// C ref: muse.c mon_has_amulet(mon) — js/muse.js:445, private.
-function mon_has_amulet_(_mon) { return false; }
-// C ref: makemon.c is_home_elemental — js/makemon.js:1480 exports it.
-async function is_home_elemental_(_ptr) { return false; }
-// C ref: teleport.c:2190 random_teleport_level() — RNG-BEARING (rn2(5),
-// rn2(cur+3-min), rnd(3)).  Ports at js/do.js:2075 and js/muse.js:467, private.
-function random_teleport_level_() { return depth_(game.u?.uz); }
-// C ref: teleport.c vault_tele — js/trap.js:2990 and js/zap.js:2834 (private).
-async function vault_tele_() { }
 // C ref: teleport.c tele(void) { scrolltele((struct obj *) 0); } — js/read.js
 // exports the faithful port of scrolltele(); dotele() calls this with no
 // scroll (the #teleport command / non-scroll teleport paths).
@@ -1692,14 +1552,9 @@ async function tele_() {
     const { scrolltele } = await import('./read.js');
     await scrolltele(null);
 }
-// C ref: trap.c level_tele_trap(trap, trflags) — js/trap.js:3021, private.
-async function level_tele_trap_(_trap, _trflags) { }
 // C ref: display.c y_n / getpos — js/display.js exports y_n; js/hack.js:1860's
 // getpos is private and has a different signature.
-async function y_n_(_query) { return 'n'; }
 async function getpos_(_cc, _force, _goal) { return -1; }
-// C ref: do_name.c noit_mon_nam(mon) — js/dogmove.js:2010 has noit_Monnam.
-function noit_mon_nam_(mon) { return mon?.data?.name || 'it'; }
 // C ref: cmd.c wizard / flags.debug.
 function wizard_() { return !!game.flags?.debug; }
 // C ref: spell.c tport_spell(action).
@@ -1710,7 +1565,6 @@ async function tport_spell_(action) {
 async function next_to_u_() {
     return await (await import('./apply.js')).next_to_u();
 }
-function u_locomotion_(def) { return def; }
 // C ref: eat.c morehungry(num) — js/fountain.js:50, private.  No RNG.
 async function morehungry_(num) { await morehungry(num); }
 // C ref: spell.c known_spell / spelleffects / role.h Role_if / mondata.h
@@ -1727,23 +1581,6 @@ function spellev_(_otyp) { return 6; }
 function Role_if_wizard_() { return (game.urole?.name?.m || '') === 'Wizard'; }
 function can_teleport_(ptr) { return (mflags1_of_(ptr) & M1_TPORT) !== 0; }
 function ACURR_tp(i) { return acurr_eff(i); }
-function exercise_(i, inc) {
-    if (i === A_INT || i === A_CHA || (game.u?.Upolyd && i !== A_WIS)) return;
-    const aexe = game.u.aexe || (game.u.aexe = []);
-    if (Math.abs(aexe[i] ?? 0) < 50) {
-        const acurr = game.u?.acurr?.a?.[i] ?? 0;
-        aexe[i] = (aexe[i] ?? 0) + (inc ? (rn2(19) > acurr ? 1 : 0) : -rn2(2));
-    }
-}
-/* C ref: hack.c check_capacity(str): refuse from "extremely burdened" up. */
-async function check_capacity_(str) {
-    if (near_capacity() >= EXT_ENCUMBER) {
-        if (str) await update_topl(str);
-        else await update_topl("You can't do that while carrying so much stuff.");
-        return true;
-    }
-    return false;
-}
 async function spelleffects_(otyp, atme, force) { return await spelleffects(otyp, atme, force); }
 // C ref: teleport.c rloc_pos_ok — the live port above is module-private under
 // the same name; this indirection exists only so control_mon_tele() reads like C.
@@ -1759,13 +1596,3 @@ async function revive_corpse_(obj) {
     return await revive_corpse(obj);
 }
 function place_object_(obj, x, y) { place_object(obj, x, y); }
-// C ref: window.c create_nhwindow/start_menu/add_menu/end_menu/select_menu/
-// destroy_nhwindow — the menu layer; js/invent.js has private no-op stubs.
-function create_nhwindow_(type) { return { type, items: [] }; }
-function start_menu_(_win) { }
-function add_menu_(win, menulet, desc, preselected) {
-    win.items.push({ menulet, desc, preselected });
-}
-function end_menu_(_win, _query) { }
-async function select_menu_(_win, _how) { return null; }
-function destroy_nhwindow_(_win) { }

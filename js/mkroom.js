@@ -7,6 +7,7 @@ import {
     ROOM, CORR, ICE, SDOOR, ROOMOFFSET,
     IS_DOOR, IS_FURNITURE, IS_POOL, IS_WALL,
     isok, LAVAPOOL, LAVAWALL, POOL, MOAT, WATER,
+    is_pool, is_lava
 } from './const.js';
 
 // C ref: trap.c:6502 t_at — return the trap at (x,y), or null.
@@ -16,25 +17,7 @@ export function t_at(x, y) {
     return null;
 }
 
-// C ref: dbridge.c:46 is_pool — POOL/MOAT/WATER (and moats).
-// Drawbridge-under-water is not modeled in this port; covered by IS_POOL.
-function is_pool(x, y) {
-    if (!isok(x, y)) return false;
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    const ltyp = loc.typ;
-    return ltyp === POOL || ltyp === MOAT || ltyp === WATER || IS_POOL(ltyp);
-}
 
-// C ref: dbridge.c:62 is_lava — LAVAPOOL/LAVAWALL.
-// Drawbridge-under-lava is not modeled in this port.
-function is_lava(x, y) {
-    if (!isok(x, y)) return false;
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    const ltyp = loc.typ;
-    return ltyp === LAVAPOOL || ltyp === LAVAWALL;
-}
 
 export function nexttodoor(sx, sy) {
     for (let dx = -1; dx <= 1; dx++) {

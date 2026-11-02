@@ -2,24 +2,26 @@
 // C ref: sit.c dosit()/throne_sit_effect()/special_throne_effect()/take_gold()/
 // lay_an_egg().  Full port including the 13-entry throne effect table.
 
+import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { update_topl, vobj_at, Hallucination_u, You_feel, map_background, newsym, y_n } from './display.js';
 import { cansee, Blind } from './vision.js';
-import { adjattrib } from './attrib.js';
+import { adjattrib, change_luck } from './attrib.js';
 import { mflags2_of, M2_PRINCE } from './monflags_data.js';
 import { SPBOOK_CLASS, EGG, mksobj, weight, set_corpsenm } from './mkobj.js';
 import { dropy, stackobj } from './invent.js';
 import { surface, hliquid } from './dungeon.js';
-import { t_at, dotrap, water_damage, uteetering_at_seen_pit, uescaped_shaft } from './trap.js';
+import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf, youmonst_data_pub } from './invent.js';
-import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD } from './const.js';
+import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool } from './const.js';
 import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags } from './objnam.js';
 import { mon_nam, Monnam, mhis } from './do_name.js';
 import { humanoid } from './monflags_data.js';
+import { sticks } from './monattk_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import {
     FOUNTAIN, STAIRS, LADDER, DRAWBRIDGE_DOWN, ICE, POOL, MOAT, WATER,
@@ -36,10 +38,6 @@ async function losehp(n, knam, k_format) {
     await losehp_zap(n, knam, k_format);
 }
 
-function change_luck_sit(n) {
-    const u = game.u;
-    if (u) u.uluck = (u.uluck | 0) + n;
-}
 function make_confused_sit(xtime) {
     const u = game.u;
     if (!u) return;
@@ -47,15 +45,9 @@ function make_confused_sit(xtime) {
     u.uconf = xtime > 0;
 }
 
-// C ref: rm.h/dbridge.c is_pool(x,y) — POOL/MOAT/WATER (drawbridge-under and
-// Juiblex MOATs not tracked on the reached levels).
-function is_pool(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === POOL || t === MOAT || t === WATER;
-}
 
 // C ref: potion.c Half_physical_damage — the contest heroes lack it.
-function Half_physical_damage() { return (game.u?.uprops?.HalfPhysDam || 0) > 0; }
+function Half_physical_damage() { return Half_physical_damage_hero(); }
 
 // C ref: objnam.c:1290 the(str) — an already-capitalised name is a proper noun
 // and takes no article.
@@ -91,7 +83,7 @@ export async function dosit() {
         else
             await update_topl('You are sitting on air.');
         return ECMD_OK;
-    } else if (u.ustuck && !sticks()) {
+    } else if (u.ustuck && !sticks(youmonst_data_pub())) {
         if (humanoid(u.ustuck.data))
             await update_topl(`${Monnam(u.ustuck)} won't offer ${mhis(u.ustuck)} lap.`);
         else
@@ -128,7 +120,7 @@ export async function dosit() {
         if (u.utrap) {
             exercise(A_WIS, false); // you're getting stuck longer
             if (u.utraptype === TT_BEARTRAP) {
-                await update_topl("You can't sit down with your foot in the bear trap.");
+                await update_topl(`You can't sit down with your ${(await import('./invent.js')).body_part(FOOT)} in the bear trap.`);
                 u.utrap++;
             } else if (u.utraptype === TT_PIT) {
                 if (trap && trap.ttyp === SPIKED_PIT) {
@@ -229,7 +221,6 @@ async function sit_in_water() {
 
 // ---- polymorph / hero-monster predicates (all false for the base hero) ----
 
-function sticks() { return false; }                 // sticks(youmonst.data)
 // C ref: mondata.h likes_lava(ptr) — fire elemental and salamander.
 function likes_lava(ptr) {
     const p = ptr?.pmidx;
@@ -464,7 +455,7 @@ async function throne_sit_effect() {
         case 6:
             if (Luck_sit() + rn2(5) < 0) {
                 await You_feel('your luck is changing.');
-                change_luck_sit(1);
+                change_luck(1);
             } else {
                 const { makewish } = await import('./extcmd-handlers.js');
                 await makewish();
@@ -498,7 +489,7 @@ async function throne_sit_effect() {
             if (Luck_sit() > 0) {
                 const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
                 await make_blinded_hero(BlindedTimeout() + rn1(100, 250), true);
-                change_luck_sit((Luck_sit() > 1) ? -rnd(2) : -1);
+                change_luck((Luck_sit() > 1) ? -rnd(2) : -1);
             } else {
                 const { rndcurse } = await import('./pray.js');
                 await rndcurse();

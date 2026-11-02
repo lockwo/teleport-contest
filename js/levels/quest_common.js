@@ -26,6 +26,7 @@ import {
     Align2amask_noncoalignment, LOC_DRY, pm_to_humidity, q_absx, q_absy,
     splev_find_montype, splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
+import { setONAME } from '../const.js';
 
 // C ref: monflags.h G_NOGEN — mkclass()'s "ignore the never-generate flag" arg.
 const G_NOGEN = 0x0200;
@@ -211,7 +212,7 @@ export function quest_named_object_at(otyp, mx, my, { spe = null, buc = null, na
     default: break;
     }
     if (name) {
-        otmp.oname = name; otmp.onamelth = name.length;
+        setONAME(otmp, name);
         // C ref: sp_lev.c create_object() -> oname(otmp, name, ONAME_NO_FLAGS):
         // naming an object with an artifact's name MAKES it that artifact and
         // sets artiexist[m].  Skipping that left every quest artifact invisible

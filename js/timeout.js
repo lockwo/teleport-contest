@@ -13,13 +13,15 @@
 // preserving timeout bits beside any persistent-source flags.
 
 import { game, hooks } from './gstate.js';
+import { set_itimeout, incr_itimeout } from './youprop.js';
+import { panic as _panic } from './panic.js';
 import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
 import { msound_of } from './monflags_data.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
 import { exercise, stone_luck } from './attrib.js';
-import { A_CON } from './const.js';
+import { A_CON, is_pool, is_ice, is_pool_or_lava } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters, status_hold, You_feel } from './display.js';
@@ -27,9 +29,8 @@ import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at, Flying_fu } from './trap.js';
-import { is_pool, is_ice } from './dbridge.js';
 import { surface } from './dungeon.js';
-import { encumber_msg, inv_weight, body_part, renderMenuLines } from './invent.js';
+import { encumber_msg, inv_weight, body_part, renderMenuLines, shk_your, Yname2, youmonst_data } from './invent.js';
 import { makeplural } from './plural.js';
 import { float_vs_flight } from './polyself.js';
 
@@ -40,8 +41,9 @@ import { float_vs_flight } from './polyself.js';
 // error that would take the whole game down at startup.
 import * as C from './const.js';
 import { objects } from './mkobj.js';
-import { pline, impossible, You_hear, You_see } from './display.js';
+import { pline, verbalize, impossible, You_hear, You_see } from './display.js';
 import { rn1 } from './rng.js';
+import { vtense } from './plural.js';
 
 const {
     TIMEOUT, FROMOUTSIDE, I_SPECIAL, COLNO, ROWNO, CLOUD, ACCESSIBLE,
@@ -218,7 +220,7 @@ async function slip_or_trip() {
     }
     switch (rn2(4)) {
     case 1:
-        await update_topl(`You trip over your own ${Hallucination() ? 'elbow' : 'feet'}.`);
+        await update_topl(`You trip over your own ${Hallucination() ? 'elbow' : makeplural(body_part(C.FOOT))}.`);
         break;
     case 2:
         await update_topl(`You slip ${Hallucination() ? 'on a banana peel' : 'and nearly fall'}.`);
@@ -450,14 +452,14 @@ async function expire_sleepy() {
     /* C: `if (unconscious() || Sleep_resistance)` — Sleep_resistance includes
        the FROMFORM bit (e.g. a green slime hero) */
     if (C.unconscious() || Sleep_resistance()) {
-        _incr_itimeout('Sleepy', rnd(100));
+        incr_itimeout('Sleepy', rnd(100));
     } else if (u.uprops?.ESleepy || worn_extrinsic(C.SLEEPY)
                || ((u.uprops?.Sleepy | 0) & ~TIMEOUT)) {
         await pline('You fall asleep.');
         const sleeptime = rnd(20);
         const { fall_asleep } = await import('./zap.js');
         await fall_asleep(-sleeptime, true);
-        _incr_itimeout('Sleepy', sleeptime + rnd(100));
+        incr_itimeout('Sleepy', sleeptime + rnd(100));
     }
 }
 
@@ -487,12 +489,13 @@ async function expire_warn_of_mon() {
 // no remaining source makes the hero invisible.
 async function expire_invisibility() {
     const u = game.u;
-    const { newsym, see_invisible } = await import('./display.js');
+    const { newsym } = await import('./display.js');
+    const { See_invisible_hero } = await import('./youprop.js');
     const { Blind } = await import('./vision.js');
     newsym(u.ux, u.uy);
     if (!u.uprops?.HInvis && !u.uprops?.EInvis
         && !u.uprops?.BInvis && !Blind()) {
-        await pline(!see_invisible()
+        await pline(!See_invisible_hero()
             ? 'You are no longer invisible.'
             : 'You can no longer see through yourself.');
         await stop_occupation();
@@ -549,7 +552,8 @@ const TIMED_PROPS = [
     }),
     timed_uprop('STONE_RES', 'HStone_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EStone_resistance && !(p.HStone_resistance & ~TIMEOUT)
+        if (!p.EStone_resistance && !((game.u?.uprops_extrinsic || {})[8 /* STONE_RES */] | 0)
+            && !(p.HStone_resistance & ~TIMEOUT)
             && !game.u?.formprops?.Stone_resistance /* FROMFORM, e.g. a green slime hero */) {
             /* timeout.c:827 — extend while eating a stoning corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_STONE_RES_T)) {
@@ -868,29 +872,21 @@ export async function nh_timeout() {
 // Leading underscore, never the C name: a second definition under the C name
 // would shadow the real one the day it lands (the js/save.js:270 convention).
 
-function _panic(msg) { throw new Error(`panic: ${msg}`); }   /* panic.c */
 
 // C ref: prop.h set_itimeout()/incr_itimeout().  This port stores each hero
 // timer as a bare integer in u.uprops[<key>] with no TIMEOUT/INTRINSIC bit
 // packing, so both macros reduce to arithmetic on that integer and `& TIMEOUT`
 // is the identity for every value the game can reach.
 function _prop(key) { return (game.u?.uprops?.[key] | 0) & TIMEOUT; }
-function _set_itimeout(key, val) {
-    const u = game.u;
-    if (!u) return;
-    if (!u.uprops) u.uprops = {};
-    u.uprops[key] = (val | 0) & TIMEOUT;
-}
 // C ref: `HFast = 0L` — drops every source bit, including the role-granted
 // intrinsic that allmain.js youHaveFast() reads through u.lost_innate.
 function _clear_HFast() {
-    _set_itimeout('HFast', 0);
+    if (game.u) (game.u.uprops = game.u.uprops || {}).HFast = 0;
     const u = game.u;
     if (!u) return;
     u.HFast = 0;
     (u.lost_innate ||= new Set()).add('HFast');
 }
-function _incr_itimeout(key, incr) { _set_itimeout(key, _prop(key) + (incr | 0)); }
 
 // C ref: pline.c urgent_pline() + wintty.c tty_putstr(ATR_URGENT) — shown even
 // when an ESC at an earlier --More-- suppressed further messages.
@@ -909,14 +905,6 @@ function _an(s) {
 }
 function _upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-// C: vtense(subj, verb) — a plural subject leaves the verb alone, a singular
-// one gets the third-person form.  Only the pronoun subjects reach this file.
-function _vtense(subj, verb) {
-    if (/^(you|they|we|these|those)$/i.test(String(subj || ''))) return verb;
-    if (verb === 'are') return 'is';
-    return /s$/.test(verb) ? verb : `${verb}s`;
-}
-
 // C ref: you.h:322 mhe(mtmp) == genders[pronoun_gender(mtmp, PRONOUN_HALLU)].he
 // and mondata.c:1191 pronoun_gender() — DRAWS rn2(4) whenever the hero is
 // hallucinating, before any of the visibility tests, and role.c genders[] adds
@@ -929,10 +917,6 @@ function _mhe(mtmp) {
     return _GENDER_HE[mtmp?.female ? 1 : 2];
 }
 
-// C ref: gy.youmonst.data.  u.data is a BOGUS mons[] row while the hero is
-// unpolymorphed (this port keeps a ROLE index in u.umonnum), so it is only
-// trusted under Upolyd.
-function _youmonst_data() { return game.u?.Upolyd ? game.u.data : null; }
 // C ref: hacklib.c strsubst(bp, orig, replacement) — replaces the FIRST match
 // only and returns the buffer.
 function _strsubst(buf, orig, repl) { return String(buf).replace(orig, repl); }
@@ -968,23 +952,6 @@ function _region_danger() {
         return true;
     }
     return false;
-}
-
-// C ref: shk.c Shk_Your(buf, obj) — "Your " / "Fred's " / "The goblin's ",
-// falling back to "The " for an unowned object; and objnam.c Yname2(obj) ==
-// shk_your() followed by cxname().
-async function _Shk_Your(obj) {
-    if (!obj) return 'The ';
-    if (obj.where === OBJ_INVENT) return 'Your ';
-    if (obj.where === OBJ_MINVENT && obj.ocarry) {
-        const { Monnam } = await import('./do_name.js');
-        return `${s_suffix(Monnam(obj.ocarry))} `;
-    }
-    return 'The ';
-}
-async function _Yname2(obj) {
-    const { xname } = await import('./invent.js');
-    return (await _Shk_Your(obj)) + xname(obj);
 }
 
 // otyps by their objects.h macro name, never by a literal index; resolved
@@ -1136,7 +1103,7 @@ export async function stoned_dialogue() {
     if (i > 0 && i <= stoned_texts.length) {
         let buf = stoned_texts[stoned_texts.length - i];
         const { nolimbs } = await import('./monflags_data.js');
-        if (nolimbs(_youmonst_data()) && buf.includes('limbs'))
+        if (nolimbs(youmonst_data()) && buf.includes('limbs'))
             buf = _strsubst(buf, 'limbs', 'extremities');
         await _urgent_pline(buf);
     }
@@ -1162,7 +1129,7 @@ export async function stoned_dialogue() {
         break;
     case 2: /* turned to stone */
         if (_prop('HDeaf') > 0 && _prop('HDeaf') < 5)
-            _set_itimeout('HDeaf', 5); /* avoid Hear_again at the tail end */
+            set_itimeout('HDeaf', 5); /* avoid Hear_again at the tail end */
         /* if also vomiting or turning into slime, stop those (no messages) */
         if (_prop('Vomiting') > 0) await (await import('./potion.js')).make_vomiting(0, false);
         if (_prop('Slimed') > 0) await (await import('./potion.js')).make_slimed(0, null);
@@ -1243,7 +1210,7 @@ export async function sickness_dialogue() {
             /* youmonst: with Hallucination, mhe()'s mon argument is unused --
                but the rn2(4) inside pronoun_gender() is still drawn. */
             const pronoun = _mhe(u);
-            buf += `  ${_upstart(pronoun)} ${_vtense(pronoun, 'are')} inviting you in.`;
+            buf += `  ${_upstart(pronoun)} ${vtense(pronoun, 'are')} inviting you in.`;
         }
         await _urgent_pline(buf);
     }
@@ -1263,8 +1230,6 @@ export async function levitation_dialogue() {
     const i = Math.floor((_prop('Levitation') - 1) / 2);
 
     if (u?.ELevitation) return;
-
-    const { is_pool_or_lava } = await import('./dbridge.js');
     const loc = _levl(u.ux, u.uy);
     if (!ACCESSIBLE(loc?.typ) && !is_pool_or_lava(u.ux, u.uy)) return;
 
@@ -1313,7 +1278,7 @@ export async function slime_dialogue() {
     if ((t % 2) !== 0 && i >= 0 && i < slime_texts.length) {
         let buf = slime_texts[slime_texts.length - i - 1];
         const { nolimbs } = await import('./monflags_data.js');
-        if (nolimbs(_youmonst_data()) && buf.includes('limbs'))
+        if (nolimbs(youmonst_data()) && buf.includes('limbs'))
             buf = _strsubst(buf, 'limbs', 'extremities');
 
         if (buf.includes('%')) {
@@ -1338,7 +1303,7 @@ export async function slime_dialogue() {
         break;
     case 2: /* skin begins to peel */
         if (_prop('HDeaf') > 0 && _prop('HDeaf') < 5)
-            _set_itimeout('HDeaf', 5); /* avoid Hear_again at the tail end */
+            set_itimeout('HDeaf', 5); /* avoid Hear_again at the tail end */
         break;
     case 1: /* turning into slime */
         /* if also turning to stone, stop doing that (no message) */
@@ -1388,10 +1353,10 @@ export async function region_dialogue() {
     /* C temporarily clears the timeout so Breathless/region_danger() answer for
        a hero WITHOUT it -- might have poly'd into a non-breather or stepped out
        of the cloud. */
-    _set_itimeout('HMagical_breathing', 0);
+    set_itimeout('HMagical_breathing', 0);
     const no_need_to_breathe = _Breathless();
     const in_poison_gas_cloud = _region_danger();
-    _set_itimeout('HMagical_breathing', r);
+    set_itimeout('HMagical_breathing', r);
     if (no_need_to_breathe || !in_poison_gas_cloud) return;
 
     if ((r % 2) && i > 0 && i <= region_texts.length)
@@ -1507,25 +1472,12 @@ function _get_obj_location(obj, locflags) {
     return null;
 }
 
-// C ref: mon.c maybe_unhide_at(x, y) — a hider whose cover just vanished stops
-// hiding.  mon.c's symbol; js/monmove.js and js/invent.js keep private copies.
-async function _maybe_unhide_at(x, y) {
-    const { m_at } = await import('./display.js');
-    const { hideunder } = await import('./monmove.js');
-    let mtmp = m_at(x, y);
-    if (!mtmp && C.u_at(x, y)) mtmp = game.u;
-    if (mtmp && (mtmp.mundetected || mtmp.m_ap_type === C.M_AP_OBJECT))
-        await hideunder(mtmp);
-}
-
 // C ref: mondata.h is_silent(ptr) — msound == MS_SILENT, and monsym.h numbers
 // MS_SILENT 0.
 function _is_silent(ptr) { return (msound_of(ptr) | 0) === 0; }
 
-// C ref: pline.c verbalize() — the monster's speech, suppressed entirely while
-// Deaf; and sounds.c SetVoice(), which only picks the synthesised voice for
+// C ref: sounds.c SetVoice(), which only picks the synthesised voice for
 // interfaces that speak (a no-op for the tty).
-async function _verbalize(msg) { if (!_Deaf()) await pline(msg); }
 function _SetVoice(_mon, _tag, _vol, _flags) { /* tty: nothing to do */ }
 
 // C ref: timeout.c:1008 kill_egg(egg) — prevent an egg from ever hatching.
@@ -1556,7 +1508,6 @@ export async function hatch_egg(arg, timeout) {
     const { newsym, m_at, canseemon_shared } = await import('./display.js');
     const { cry_sound } = await import('./sounds.js');
     const { container_weight, obj_extract_self_mkobj } = await import('./mkobj.js');
-    const { is_pool } = await import('./dbridge.js');
     const { hideunder } = await import('./monmove.js');
 
     let mon = null, mon2 = null;
@@ -1634,7 +1585,7 @@ export async function hatch_egg(arg, timeout) {
                 await pline(`${siblings ? 'Their' : 'Its'} ${_ing_suffix(cry_sound(mon))} ${(_is_silent(mon.data) || _Deaf()) ? 'seems' : 'sounds'} like "${game.flags?.female ? 'mommy' : 'daddy'}${egg.spe ? '.' : '?'}"`);
             } else if (mon.data?.mlet === S_DRAGON_LET && !_Deaf()) {
                 _SetVoice(mon, 0, 80, 0);
-                await _verbalize('Gleep!');     /* Mything eggs :-) */
+                await verbalize('Gleep!');     /* Mything eggs :-) */
             }
             break;
 
@@ -1726,7 +1677,7 @@ export async function see_lamp_flicker(obj, tailer) {
     switch (obj.where) {
     case OBJ_INVENT:
     case OBJ_MINVENT:
-        await pline(`${await _Yname2(obj)} flickers${tailer}.`);
+        await pline(`${Yname2(obj)} flickers${tailer}.`);
         break;
     case OBJ_FLOOR:
         await You_see(`${_an(xname(obj))} flicker${tailer}.`);
@@ -1793,7 +1744,7 @@ export async function burn_object(arg, timeout) {
                 obj_extract_self(obj);
                 obfree(obj, null);
                 obj = null;
-                if (mtmp) await _maybe_unhide_at(mtmp.mx, mtmp.my);
+                if (mtmp) (await import('./monmove.js')).maybe_unhide_at(mtmp.mx, mtmp.my);
             }
         } else {
             obj.age -= how_long;
@@ -1809,7 +1760,8 @@ export async function burn_object(arg, timeout) {
         x = loc.x; y = loc.y;
         canseeit = !Blind() && cansee(x, y);
         /* set `whose' to "Your " or "Fred's " or "The goblin's " */
-        whose = await _Shk_Your(obj);
+        const owner = shk_your(obj);   /* Shk_Your(): capitalised, trailing space */
+        whose = owner ? `${owner.charAt(0).toUpperCase()}${owner.slice(1)} ` : '';
     } else {
         canseeit = false;
     }
@@ -1875,7 +1827,7 @@ export async function burn_object(arg, timeout) {
                     switch (obj.where) {
                     case OBJ_INVENT:
                     case OBJ_MINVENT:
-                        await pline(`${await _Yname2(obj)} seems about to go out.`);
+                        await pline(`${Yname2(obj)} seems about to go out.`);
                         break;
                     case OBJ_FLOOR:
                         await You_see(`${_an(xname(obj))} about to go out.`);
@@ -1898,7 +1850,7 @@ export async function burn_object(arg, timeout) {
                     if (obj.otyp === _BRASS_LANTERN())
                         await pline(`${whose}lantern has run out of power.`);
                     else
-                        await pline(`${await _Yname2(obj)} has gone out.`);
+                        await pline(`${Yname2(obj)} has gone out.`);
                     break;
                 case OBJ_FLOOR:
                     if (obj.otyp === _BRASS_LANTERN())
@@ -1981,7 +1933,7 @@ export async function burn_object(arg, timeout) {
                         /* no need_invupdate: useupall() -> freeinv() does it */
                         /* FALLTHROUGH */
                     case OBJ_MINVENT:
-                        await pline(`${await _Yname2(obj)} ${many ? 'are' : 'is'} consumed!`);
+                        await pline(`${Yname2(obj)} ${many ? 'are' : 'is'} consumed!`);
                         break;
                     case OBJ_FLOOR:
                         await You_see(`${many ? 'some ' : ''}${many ? xname(obj) : _an(xname(obj))} consumed!`);
@@ -2015,7 +1967,7 @@ export async function burn_object(arg, timeout) {
                        think this item is worn */
                     if (obj.where === OBJ_MIGRATING) obj.owornmask = 0;
                     obj_extract_self(obj);
-                    if (onfloor) await _maybe_unhide_at(x, y);
+                    if (onfloor) (await import('./monmove.js')).maybe_unhide_at(x, y);
                     obfree(obj, null);
                 }
                 obj = null;
@@ -2212,7 +2164,7 @@ export async function do_storms() {
         /* inside a cloud during a thunderstorm is deafening -- and even an
            already deaf hero senses the thunder's vibrations */
         await pline('Kaboom!!!  Boom!!  Boom!!');
-        _incr_itimeout('HDeaf', rn1(20, 30));
+        incr_itimeout('HDeaf', rn1(20, 30));
         _set_botl();
         if (!u.uinvulnerable) {
             await stop_occupation();
@@ -2600,7 +2552,6 @@ export async function timer_sanity_check() {
             const y = lwhere & 0xFFFF;
             if (C.isok(x, y)) {
                 const loc = _levl(x, y);
-                const { is_ice } = await import('./dbridge.js');
                 /* the terrain under an OPEN drawbridge can be frozen moat;
                    is_ice() only sees that while the bridge is closed */
                 if (curr.func_index === MELT_ICE_AWAY && !is_ice(x, y)

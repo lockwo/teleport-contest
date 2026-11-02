@@ -12,24 +12,24 @@
 //                 →  makelevel() structural generation
 //                 →  fill_ordinary_room()/fill_special_room()/mineralize()
 //                    (C does this inside makelevel(); the JS port factors the
-//                     fill phase into fastforward_fill_mineralize())
+//                     fill phase into makelevel_fill_and_mineralize())
 //                 →  u_on_rndspot() → place_lregion(LR_UP/DOWNTELE)
 //                 →  losedogs() → mon_arrive(With_you): rn2(10) + mnexto()
 //
-// The structural + fill phases reuse the real mklev.js / fastforward.js code
+// The structural + fill phases reuse the real mklev.js code
 // paths that already generate the level-1 layout bit-for-bit; the placement
 // and pet-follow phases are ported here (teleport.c collect_coords/enexto and
 // dog.c mon_arrive are not otherwise available in the JS engine).
 
 import { makeplural } from './plural.js';
-import { Fumbling_hero, Flying_hero, Levitation_hero } from './youprop.js';
+import { Fumbling_hero, Flying_hero, Levitation_hero, Half_physical_damage_hero, Passes_walls_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
-import { A_STR, Unaware, COST_DEGRD } from './const.js';
+import { A_STR, Unaware, COST_DEGRD, is_pool, is_lava, is_pool_or_lava } from './const.js';
 import { rn2, rn1, rnd, rnl, d, rnz } from './rng.js';
 import { print_dungeon, builds_up, In_hell, Is_valley, surface,
          find_hell, dunlevs_in_dungeon, single_level_branch, level_difficulty,
-         at_dgn_entrance, Is_bigroom, lev_by_name, earth_sense } from './dungeon.js';
+         at_dgn_entrance, Is_bigroom, lev_by_name, earth_sense, u_on_newpos, ledger_no } from './dungeon.js';
 
 // insight.c record_achievement(), reached lazily: insight.js -> u_init.js ->
 // mkobj.js is a static cycle this file must not join.
@@ -37,11 +37,10 @@ async function record_ach(achidx) {
     const { record_achievement } = await import('./insight.js');
     record_achievement(achidx);
 }
-import { mklev } from './mklev.js';
+import { mklev, makelevel_fill_and_mineralize } from './mklev.js';
 import { fumaroles, movebubbles, is_exclusion_zone } from './mkmaze.js';
 const PM_ROGUE_DO = 8;     // roles[].mnum is the role index in this port (Rogue = 8), not a mons[] index
 import { clear_regions, remove_region } from './region.js';
-import { fastforward_fill_mineralize } from './fastforward.js';
 import { depth as depth_of_level, s_suffix } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          STRAT_WAITMASK, STRAT_ARRIVE, IS_STWALL, W_NONPASSWALL,
@@ -65,18 +64,20 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, freeze_screen_for_level_change,
-         thaw_screen_for_level_change, Deaf_hero, You_feel, You_see } from './display.js';
-import { seetrap, dotrap, fill_pit, Teleport_control_fu, pooleffects, u_locomotion } from './trap.js';
+         thaw_screen_for_level_change, Deaf_hero, You_feel, You_see, stairway_at } from './display.js';
+import { seetrap, dotrap, fill_pit, Teleport_control_fu, pooleffects, u_locomotion, reset_utrap } from './trap.js';
+import { set_utrap } from './polyself.js';
 import { check_special_room } from './shkroom.js';
 import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { forget_temple_entry } from './priest.js';
-import { enexto_gpflags } from './teleport.js';
-import { near_capacity, addinv, prinv_fmt, worn_extrinsic, worn_blocked, youmonst_data } from './invent.js';
+import { enexto_gpflags, goodpos } from './teleport.js';
+import { m_in_air } from './monmove.js';
+import { near_capacity, addinv, prinv_fmt, worn_extrinsic, worn_blocked, youmonst_data, Tobjnam } from './invent.js';
 import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm, clear_no_charge_on_getlev } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
          recalc_block_point } from './vision.js';
-import { hide_monst, DEADMONSTER, ceiling_hider } from './mon.js';
+import { hide_monst, DEADMONSTER, ceiling_hider, wake_nearto } from './mon.js';
 import { mflags2_of, M2_STALK, is_swimmer_flag, throws_rocks_flag,
          is_flyer_flag, mflags1_of, mflags3_of, M1_WALLWALK, M2_UNDEAD,
          M3_DISPLACES, humanoid, msound_of } from './monflags_data.js';
@@ -226,32 +227,6 @@ async function oneshot_free_trap(x, y) {
     }
 }
 
-// C ref: dungeon.c u_on_newpos(x, y) — put the hero on a specific square. Off-
-// map validation is a panic()/impossible() in C, never reached legally.
-// hack.c's domove_core() (inlined in cmd.js) takes the "same level" arm;
-// goto_level() always takes the other, since u.uz already names the
-// destination while u.uz0 still names the level left.  That arm's
-// map_location() consumes no core RNG but does make display-rng draws while
-// Hallucinating (a statue/object under the hero).
-export async function u_on_newpos(x, y) {
-    const u = game.u;
-    u.ux = x;
-    u.uy = y;
-    u.uundetected = 0;
-    /* a ridden steed always shares the hero's location */
-    if (u.usteed) { u.usteed.mx = u.ux; u.usteed.my = u.uy; }
-    if (u.uz?.dnum !== u.uz0?.dnum || u.uz?.dlevel !== u.uz0?.dlevel) {
-        /* changing levels: don't leave the old position set with stale values */
-        u.ux0 = u.ux; u.uy0 = u.uy;
-        /* sets lastseentyp; the object-glyph pick draws display rng while Hallucinating */
-        map_location(u.ux, u.uy);
-        (game.iflags = game.iflags || {}).terrain_typ = 37; /* MAX_TYPE: "none of the above" */
-    } else {
-        see_nearby_objects();
-    }
-    await earth_sense(); // dungeon.c:1600
-}
-
 // C ref: dungeon.c u_on_rndspot() — level-teleport/fall arrival uses the
 // up/down-teleport destination region.  goto_level() memsets svu.updest/
 // svd.dndest to zero before mklev(); a special level's des.teleport_region()
@@ -281,84 +256,6 @@ export async function u_on_rndspot(upflag) {
 
 // ── pet follow (C ref: dog.c keepdogs()/losedogs()/mon_arrive(With_you)) ──
 
-// C ref: rm.h closed_door(x, y) == (IS_DOOR(levl[x][y].typ)
-//                                   && (levl[x][y].doormask & (D_CLOSED|D_LOCKED)))
-function closed_door(x, y) {
-    const lev = game.level?.at(x, y);
-    if (!lev) return false;
-    return IS_DOOR(lev.typ) && ((lev.doormask & (D_CLOSED | D_LOCKED)) !== 0);
-}
-
-// C ref: monmove.c accessible(x, y) == (ACCESSIBLE(SURFACE_AT(x,y))
-//                                      && !closed_door(x, y)).
-// goodpos() calls THIS, not the bare ACCESSIBLE() macro — a closed or locked
-// door is NOT a good position for an ordinary monster (only amorphous ones get
-// the `amorphous(mdata) && closed_door(x,y) -> TRUE` early-out above it, and no
-// pet is amorphous).  SURFACE_AT's drawbridge indirection is not modelled: no
-// session places a monster in front of a closed drawbridge.
-function accessible_mon(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    return typ != null && ACCESSIBLE(typ) && !closed_door(x, y);
-}
-
-function goodpos_mon(x, y, mtmp) {
-    if (!isok(x, y)) return false;
-    if (game.u?.ux === x && game.u?.uy === y) return false;
-    if (m_at(x, y)) return false;
-    // C ref: teleport.c goodpos() — `if (!accessible(x, y)) return FALSE;`.
-    // enexto() takes the FIRST accepted ring square, so any test here that
-    // answers differently from C forks pet placement while the RNG stream
-    // stays identical (an invisible placement fork).  Two such bugs lived
-    // here: the threshold was `typ >= 13` mislabeled DOOR (it's TREE; DOOR is
-    // 23), and the closed-door rejection was missing, landing an arriving pet
-    // in a doorway.  The three tests below sit AHEAD of accessible() in C and
-    // share that same failure mode.
-    // C ref: dbridge.c is_pool() — POOL/MOAT/WATER (is_moat()'s drawbridge
-    // indirection unmodelled).  Used to be a flat rejection ("no contest pet
-    // swims/flies"); C's real answer is the mondata.h flag test.
-    const mdat = mtmp?.data ?? null;
-    const typ = game.level?.at(x, y)?.typ;
-    if (typ === POOL || typ === MOAT || typ === WATER)
-        // C ref: teleport.c goodpos() — airborne only counts off the Plane of
-        // Water and when the square is not a WATER wall (rm.h IS_WATERWALL).
-        return is_swimmer_flag(mdat)
-            || (!Is_waterlevel(game.u?.uz) && typ !== WATER && m_in_air_do(mtmp));
-    // C ref: teleport.c goodpos() — an out-of-water eel usually refuses the
-    // square, and this rn2(13) FIRES whenever an eel is offered one.
-    if (mdat?.mcls === S_EEL_DO && rn2(13)) return false;
-    // C ref: dbridge.c is_lava() — LAVAPOOL/LAVAWALL; mondata.h:190 likes_lava.
-    if (typ === LAVAPOOL || typ === LAVAWALL)
-        return m_in_air_do(mtmp) || likes_lava_do(mdat);
-    const loc = game.level?.at(x, y);
-    if (passes_walls_do(mdat)
-        && !(IS_STWALL(typ) && ((loc?.wall_info || 0) & W_NONPASSWALL)))
-        return true;
-    if (!accessible_mon(x, y)) return false;
-    // C ref: teleport.c goodpos() — `sobj_at(BOULDER, x, y) && !throws_rocks`.
-    if (sobj_at(BOULDER, x, y) && !throws_rocks_flag(mdat)) return false;
-    return true;
-}
-
-// C ref: mon.c m_in_air(mon) — `is_flyer(mon->data) || is_floater(mon->data)
-// || (is_clinger(mon->data) && has_ceiling(&u.uz) && mon->mundetected)`. It
-// reads the SPECIES, not per-monster flags — `mtmp->mflying` doesn't exist in
-// C — so this used to answer FALSE for every flyer, an invisible RNG-free
-// enexto() placement fork.  Our caller (enexto_core()) passes a zeroed fake
-// monst carrying only mdat, so the is_clinger arm's mundetected is always 0.
-function m_in_air_do(mtmp) {
-    const d = mtmp?.data;
-    if (!d) return false;
-    // C ref: mondata.h is_floater(ptr) — mlet == S_EYE || mlet == S_LIGHT.
-    return is_flyer_flag(d) || d.mcls === S_EYE_DO || d.mcls === S_LIGHT_DO;
-}
-const S_EYE_DO = 5, S_LIGHT_DO = 25;  // defsym.h MONSYM S_EYE / S_LIGHT
-// C ref: mondata.h:190 likes_lava(ptr) — fire elemental / salamander only.
-function likes_lava_do(mdat) {
-    return mdat?.pmidx === 155 /*PM_FIRE_ELEMENTAL*/
-        || mdat?.pmidx === 329 /*PM_SALAMANDER*/;
-}
-const S_EEL_DO = 57;   // defsym.h MONSYM(57, ';', EEL, S_EEL, ...)
-
 // C ref: teleport.c enexto(cc, xx, yy, mdat) == enexto_gpflags(.., NO_MM_FLAGS);
 // js/teleport.js owns the faithful collect_coords()/goodpos() (incl. the
 // scare-monster / Elbereth goodpos_onscary() filter and the second
@@ -367,27 +264,6 @@ function enexto(xx, yy, mtmp) {
     return enexto_gpflags(xx, yy, mtmp?.data ?? null, 0);
 }
 
-// C ref: mon.c:3955 mnexto(mtmp, rlocflags) — put the monster next to the
-// hero.  enexto() DRAWS (collect_coords shuffles every ring), so it must
-// always be called even where relocation looks delegated elsewhere.  C's
-// enexto() is enexto_core(GP_CHECKSCARY) || enexto_core(NO_MM_FLAGS), but the
-// scary-square filter only matters near a scare item/Elbereth, so the second
-// pass never fires.  (mnexto() below is the same routine minus
-// rloc_to_core()'s display/track bookkeeping, kept separate for pet arrival.)
-export async function mnexto_rloc(mtmp, rlocflags = 0) {
-    const u = game.u;
-    if (mtmp === u?.usteed) { mtmp.mx = u.ux; mtmp.my = u.uy; return; }
-    // C ref: mon.c mnexto() — `enexto(&mm, u.ux, u.uy, mtmp->data)`.  The mdat
-    // was being dropped, so goodpos() judged every candidate square as if for a
-    // species with no flags: a flying engulfer was refused the pool square C
-    // puts it on (seed0383 step 177) with the ring shuffle drawing identically.
-    // enexto_core() builds a zeroed fake monst carrying only mdat, so pass the
-    // same thing rather than the live monster.
-    const mm = enexto(u.ux, u.uy, { data: mtmp?.data ?? null });
-    if (!mm || !isok(mm.x, mm.y)) return;   // deal_with_overcrowding -> limbo
-    const { rloc_to_core } = await import('./teleport.js');
-    await rloc_to_core(mtmp, mm.x, mm.y, rlocflags);
-}
 
 // C ref: mondata.c:1211 levl_follower(mtmp) — used by keepdogs() to decide
 // whether a nearby monster accompanies a level change.  Tame pets, the Wizard
@@ -512,7 +388,7 @@ async function keepdogs_capture() {
         } else {
             const { keep_mon_accessible, migrate_to_level } = await import('./dog.js');
             if (keep_mon_accessible(m)) {
-                await migrate_to_level(m, ledger_no_do(u.uz), MIGR_EXACT_XY, null);
+                await migrate_to_level(m, ledger_no(u.uz), MIGR_EXACT_XY, null);
                 gone.add(m);
             } else if (m.mleashed) {
                 const DN = await import('./do_name.js');
@@ -558,7 +434,7 @@ export async function u_collide_m(mtmp) {
     } else {
         // mnexto() -> rloc_to_core() newsym()s the monster's new square, which
         // draws display-rng picks while the hero hallucinates.
-        await mnexto_rloc(mtmp, RLOC_NOMSG);
+        await (await import('./mon.js')).mnexto(mtmp, RLOC_NOMSG);
     }
     // C: if still a monster in the hero's way, rloc it; if that fails, limbo it.
     let still = m_at(u.ux, u.uy);
@@ -669,20 +545,6 @@ function Levitation_do() {
 // C ref: youprop.h Punished — u.uball is set only while punished.
 function Punished_do() { return !!game.u?.uball; }
 
-// C ref: trap.c uteetering_at_seen_pit()/uescaped_shaft() — the hero is standing
-// on a seen pit (without being caught in it) or on a seen hole/trap door.  Both
-// make '>' a deliberate plunge rather than a "you can't go down here".
-function uteetering_at_seen_pit(trap) {
-    const u = game.u;
-    return !!trap && is_pit(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy
-        && !(u.utrap && u.utraptype === TT_PIT);
-}
-function uescaped_shaft(trap) {
-    const u = game.u;
-    return !!trap && is_hole(trap.ttyp) && !!trap.tseen
-        && trap.tx === u.ux && trap.ty === u.uy;
-}
 
 // C ref: hack.c u_rooted() — a hero whose current form has mmove == 0 (a
 // polymorphed-into-a-tree/lichen case) cannot move at all, and BOTH callers
@@ -777,7 +639,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // <= 0) done(ESCAPED);` ("in fact < 0 is impossible").  Reached by a magic
     // portal with no recorded destination: a tutorial entered by level teleport
     // never set u.ucamefrom, so its exit portal's dst is still (-1,-1).
-    if (ledger_no_do(newlevel) <= 0) {
+    if (ledger_no(newlevel) <= 0) {
         const { done, ESCAPED } = await import('./end.js');
         await done(ESCAPED);
         return;
@@ -878,8 +740,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // left.  Leaving u.utrap/u.ustuck set made the first move on the destination
     // take domove()'s trapped/held arm — a DIFFERENT rn2 modulus — so this is
     // the "RNG-free state steers a later draw" pattern, not cosmetics.
-    u.utrap = 0;
-    u.utraptype = 0;
+    set_utrap(0, 0);
     await fill_pit(u.ux, u.uy);
     u.ustuck = null;
     u.uswallow = 0;
@@ -1106,8 +967,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         await mklev();
         if (!g._bones_loaded) {
             // C does the room fill + mineralize inside makelevel(); the JS engine
-            // factors it into fastforward_fill_mineralize().
-            await fastforward_fill_mineralize();
+            // factors it into makelevel_fill_and_mineralize().
+            await makelevel_fill_and_mineralize();
         }
         // C ref: do.c:1701 goto_level() `familiar = bones_include_name(svp.plname)`
         // — only ever set on this first-visit/mklev() branch.  A prefix match of
@@ -2291,13 +2152,6 @@ export function random_teleport_level() {
     return nlev;
 }
 
-// C ref: stairs.c stairway_at — find the stairway node at <x,y>.
-function stairway_at(x, y) {
-    for (let s = game.stairs; s; s = s.next)
-        if (s.sx === x && s.sy === y) return s;
-    return null;
-}
-
 // C ref: stairs.c stairway_find_from(fromdlev, isladder) — find the stairway on
 // the current level whose destination is the given level AND whose isladder flag
 // matches the way the hero travelled (used to land the hero on the staircase
@@ -2361,7 +2215,7 @@ async function next_to_u() {
 async function u_stuck_cannot_go(updn) {
     const u = game.u;
     if (!u.ustuck) return false;
-    const { sticks } = await import('./uhitm.js');
+    const { sticks } = await import('./monattk_data.js');
     if (u.uswallow || !sticks(youmonst_data())) {
         await pline(`You are ${!u.uswallow ? 'being held'
             : await digests_do(u.ustuck.data) ? 'swallowed'
@@ -2426,8 +2280,7 @@ export async function dodown() {
         if (Is_airlevel(u.uz)) {
             await pline(`You are floating in the ${surface(u.ux, u.uy)}.`);
         } else if (Is_waterlevel(u.uz)) {
-            const DB = await import('./dbridge.js');
-            await pline(`You are floating in ${DB.is_pool(u.ux, u.uy) ? 'the water' : 'a bubble of air'}.`);
+            await pline(`You are floating in ${is_pool(u.ux, u.uy) ? 'the water' : 'a bubble of air'}.`);
         } else {
             await pline(`You are floating high above the ${
                 stairs_down ? 'stairs' : ladder_down ? 'ladder'
@@ -2445,8 +2298,7 @@ export async function dodown() {
             await pline('You fly out of hiding.');
         } else {
             await pline(`You drop to the ${surface(u.ux, u.uy)}.`);
-            const DB = await import('./dbridge.js');
-            if (DB.is_pool_or_lava(u.ux, u.uy)) {
+            if (is_pool_or_lava(u.ux, u.uy)) {
                 await pooleffects(false);
             } else {
                 const P = await import('./pickup.js');
@@ -2564,23 +2416,19 @@ function uprop_do(...keys) {
     }
     return 0;
 }
-function Deaf_do() { return uprop_do('Deaf', 'HDeaf', 'EDeaf') > 0; }
+function Deaf_do() { return Deaf_hero(); }
 function Hallucination_do() {
     return uprop_do('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu;
 }
 function Underwater_do() { return !!(game.u?.uinwater); }
-function Passes_walls_do() {
-    if (game.u?.formprops?.Passes_walls) return true; /* FROMFORM: polyself.js set_uasmon() */
-    return uprop_do('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0;
-}
+function Passes_walls_do() { return Passes_walls_hero(); }
 function Stoned_do() { return uprop_do('Stoned') > 0; }
 function Slimed_do() { return uprop_do('Slimed') > 0; }
 function Strangled_do() { return uprop_do('Strangled') > 0; }
 function Sick_do() { return uprop_do('Sick') > 0 || !!game.u?.sick; }
 // C ref: youprop.h Half_physical_damage / Maybe_Half_Phys(dmg) — no RNG.
 function Half_physical_damage_do() {
-    return uprop_do('Half_physical_damage', 'HHalf_physical_damage',
-                    'EHalf_physical_damage') > 0;
+    return Half_physical_damage_hero();
 }
 export function Maybe_Half_Phys_do(dmg) {
     return Half_physical_damage_do() ? Math.floor((dmg + 1) / 2) : dmg;
@@ -2660,22 +2508,9 @@ async function revive_unported(corpse, by_hero) {
     return await revive(corpse, by_hero);
 }
 
-// C ref: objnam.c Tobjnam(obj, verb) / Doname2(obj) / is_plural(obj).
-async function Tobjnam_do(obj, verb) {
-    const I = await import('./invent.js');
-    return `${upstart(the(I.xname(obj)))} ${I.otense(obj, verb)}`;
-}
 async function Doname2_do(obj) {
     const I = await import('./invent.js');
     return upstart(I.obj_doname(obj));
-}
-// C ref: trap.c reset_utrap(msg) — clear the trapped state (js/dothrow.js:166
-// and js/dig.js:702 keep the same private copy).
-function reset_utrap_do(_msg) {
-    const u = game.u;
-    if (u.utrap) game.botl = true; // set_utrap(0, 0)
-    u.utrap = 0;
-    u.utraptype = 0;
 }
 // C ref: mondata.h passes_walls(ptr) / nonliving(ptr) / is_vampshifter(mon).
 function passes_walls_do(ptr) { return (mflags1_of(ptr) & M1_WALLWALK) !== 0; }
@@ -2698,13 +2533,11 @@ async function is_vampshifter_do(mon) {
 // pool-or-lava destination, BEFORE the fills_up decision — including on the
 // Plane of Water where fills_up is unconditionally FALSE.
 export async function boulder_hits_pool(otmp, rx, ry, pushing) {
-    const DB = await import('./dbridge.js');
-
     if (!otmp || otmp.otyp !== BOULDER) {
         await impossible_do('Not a boulder?');
-    } else if (DB.is_pool_or_lava(rx, ry)) {
+    } else if (is_pool_or_lava(rx, ry)) {
         const loc = game.level?.at(rx, ry);
-        const lava = DB.is_lava(rx, ry);
+        const lava = is_lava(rx, ry);
         const what = (await import('./cmd.js')).waterbody_name(rx, ry);
         const ltyp = loc?.typ;
         const chance = rn2(10); /* water: 90%; lava: 10% */
@@ -2730,7 +2563,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
             // while it drops inventory, and killing it twice trips dmonsfree().
             const MN = await import('./mon.js');
             if ((mtmp = m_at(rx, ry)) != null && !MN.DEADMONSTER(mtmp)
-                && !m_in_air_do(mtmp)) {
+                && !m_in_air(mtmp)) {
                 const MM = await import('./mhitm.js');
                 await MM.mondied_mm(mtmp);
             }
@@ -2767,8 +2600,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
                     /* C: Soundeffect(se_sizzling|se_splash, 100) then You_hear() */
                     await You_hear(`a${lava ? ' sizzling' : ''} splash.`);
                 }
-                const C = await import('./cmd.js');
-                await C.wake_nearto(rx, ry, 40);
+                await wake_nearto(rx, ry, 40);
             }
 
             if (fills_up && game.u.uinwater && distu(rx, ry) === 0) {
@@ -2832,8 +2664,6 @@ export async function flooreffects(obj, x, y, verb) {
     const save_bhitpos = game.bhitpos ? { x: game.bhitpos.x, y: game.bhitpos.y }
                                       : { x: 0, y: 0 };
     game.bhitpos = { x, y };
-
-    const DB = await import('./dbridge.js');
     const I = await import('./invent.js');
     const MO = await import('./mkobj.js');
     const T = await import('./trap.js');
@@ -2897,7 +2727,7 @@ export async function flooreffects(obj, x, y, verb) {
                     await losehp_do(Maybe_Half_Phys_do(rnd(15)), 'squished under a boulder', NO_KILLER_PREFIX);
                     deletedwithboulder = true; /* C: goto deletedwithboulder */
                 } else {
-                    reset_utrap_do(true);
+                    await reset_utrap(true);
                 }
             }
         }
@@ -2918,17 +2748,17 @@ export async function flooreffects(obj, x, y, verb) {
            ice into floor, so no special ice handling is needed here. */
         if ((t = t_at(x, y)) != null) {
             T.delfloortrap(t);
-            if (game.u.utrap && u_at(x, y)) reset_utrap_do(false);
+            if (game.u.utrap && u_at(x, y)) set_utrap(0, 0);
         }
         await I.useupf(obj, 1);
         await DIG.bury_objs(x, y);
         newsym(x, y);
         res = true;
-    } else if (DB.is_lava(x, y)) {
+    } else if (is_lava(x, y)) {
         // C ref: do.c:271 `res = lava_damage(obj, x, y);` — js/trap.js
         // lava_damage().
         res = await T.lava_damage(obj, x, y);
-    } else if (DB.is_pool(x, y)) {
+    } else if (is_pool(x, y)) {
         /* Reasonably bulky objects splash when dropped; if you are floating
            above the water even small things make noise.  Stuff dropped near
            fountains always misses. */
@@ -2952,7 +2782,7 @@ export async function flooreffects(obj, x, y, verb) {
             if (Blind() && !Deaf_do()) {
                 await You_hear(`${the(I.xname(obj))} tumble downwards.`);
             } else {
-                await pline(`${await Tobjnam_do(obj, 'tumble')} into `
+                await pline(`${Tobjnam(obj, 'tumble')} into `
                             + `${t.madeby_u ? 'your' : 'the'} pit.`);
             }
         } else {
@@ -2985,7 +2815,7 @@ export async function flooreffects(obj, x, y, verb) {
            flash points are both above water's). */
         if (cansee(x, y)) {
             /* unconditional "ground": this arm only runs for ROOM and CORR */
-            await pline(`${await Tobjnam_do(obj, 'heat')} up as `
+            await pline(`${Tobjnam(obj, 'heat')} up as `
                         + `${I.is_plural(obj) ? 'they hit' : 'it hits'} `
                         + 'the hot ground.');
         }
@@ -3352,7 +3182,7 @@ export async function engulfer_digests_food(obj) {
             could_slime = true;
         }
         /* see or feel the effect */
-        await pline(`${await Tobjnam_do(obj, 'are')} instantly digested!`);
+        await pline(`${Tobjnam(obj, 'are')} instantly digested!`);
 
         if (could_poly || could_slime) {
             const MK = await import('./makemon.js');
@@ -3450,7 +3280,7 @@ export async function currentlevel_rewrite() {
     // level files in this port at all (files.c is judge-frozen territory);
     // js/save.js:945 keeps the same seam as a null-returning
     // create_levelfile_sv().  Null here is exactly C's failure branch.
-    void ledger_no_do(game.u?.uz);
+    void ledger_no(game.u?.uz);
     const nhfp = null;
     if (!nhfp) {
         /*
@@ -3466,11 +3296,6 @@ export async function currentlevel_rewrite() {
 
 // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69 has the faithful private
 // copy and js/dig.js:924 a reduced one; js/dungeon.js should own the export.
-function ledger_no_do(lev) {
-    if (!lev) return 0;
-    const dng = game.dungeons?.[lev.dnum];
-    return (lev.dlevel | 0) + ((dng?.ledger_start | 0) || 0);
-}
 
 // ── save_currentstate (C ref: do.c:1375) ────────────────────────────────────
 // The INSURANCE checkpoint: write the just-attained level (with pets and
@@ -3489,7 +3314,7 @@ export async function save_currentstate() {
             return;
         }
         /* C: if (nhfp->structlevel) bufon(nhfp->fd); nhfp->mode = WRITING */
-        await S.savelev(ledger_no_do(game.u?.uz), WRITING);
+        await S.savelev(ledger_no(game.u?.uz), WRITING);
         /* C: close_nhfile(nhfp) */
     }
 
@@ -3727,7 +3552,7 @@ export async function revive_corpse(corpse) {
             } else if (mcarry && await canseemon_do(mcarry)) {
                 await pline(`${mnam} writhes out of ${I.yname(container)}!`);
             } else if (container_where === OBJ_INVENT) {
-                await pline(`${mnam} ${locomotion_do(mtmp.data, 'writhes')} `
+                await pline(`${mnam} ${(await import('./monmove.js')).locomotion(mtmp.data, 'writhes')} `
                             + `out of ${an(I.xname(container))} in your pack!`);
             } else if (container_where === OBJ_FLOOR && cansee(corpsex, corpsey)) {
                 await pline(`${mnam} escapes from ${an(I.xname(container))}!`);
@@ -3793,7 +3618,7 @@ export async function revive_nasty(x, y, msg) {
     /* this location might not be safe; if not, move revived monster */
     if (revived) {
         const mtmp = m_at(x, y);
-        if (mtmp && !goodpos_mon(x, y, mtmp)) {
+        if (mtmp && !goodpos(x, y, mtmp, 0)) {
             const cc = enexto(x, y, mtmp);
             if (cc) await rloc_to(mtmp, cc.x, cc.y);
         }
@@ -3802,9 +3627,6 @@ export async function revive_nasty(x, y, msg) {
     return revived;
 }
 
-// C ref: mondata.c locomotion(ptr, def) — js/dogmove.js:2056, js/monmove.js:1876
-// and js/muse.js:297 each keep the same private copy.
-function locomotion_do(_ptr, def) { return def; }
 
 // ── revive_mon (C ref: do.c:2251) ───────────────────────────────────────────
 // The REVIVE_MON timeout callback.  A displacer (Rider) bumps whatever is

@@ -29,12 +29,12 @@ import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT,
-         SHOPBASE, SHOP_DOOR_COST, ECMD_TIME } from './const.js';
-import { mon_mr } from './monmr_data.js';
+         SHOPBASE, SHOP_DOOR_COST, ECMD_TIME,
+    is_pool, is_lava } from './const.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands, nolimbs, hides_under_flag, mflags1_of, M1_SLITHY } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
 import { align_gname, halu_gname } from './role.js';
-import { map_invisible, doredraw } from './display.js';
+import { map_invisible, doredraw, stairway_at } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT, CHEST } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
@@ -72,7 +72,6 @@ import { container_at, able_to_loot, tipcontainer, tip_ok, menu_style,
          PICK_ANY, ALL_TYPES, ALL_TYPES_SELECTED, UNPAID_TYPES, WORN_TYPES, CHOOSE_ALL,
          BUCX_TYPES, JUSTPICKED } from './pickup.js';
 import { AUTOUNLOCK_FORCE, KILLED_BY_AN, MENU_TRADITIONAL, MENU_COMBINATION, MENU_FULL, ALL_FINISHED, EXT_ENCUMBER, OBJ_FREE, OBJ_CONTAINED, OBJ_FLOOR, OBJ_INVENT, OBJ_ONBILL, OBJ_DELETED, SELL_NORMAL } from './const.js';
-import { is_pool, is_lava } from './dbridge.js';
 import { vtense } from './dothrow.js';
 import { tiphat } from './sounds.js';
 import { dopray as pray_dopray, dosacrifice } from './pray.js';
@@ -92,13 +91,13 @@ import { doextversion, doversion } from './version.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { polyok_flag } from './monflags_data.js';
 import { polymon, newman, domonability, PM_HUMAN } from './polyself.js';
-import { obj_resists, dozap, wishcmdassist, wish_history_add, wish_history_first, wish_history_menu } from './zap.js';
+import { obj_resists, resist, dozap, wishcmdassist, wish_history_add, wish_history_first, wish_history_menu } from './zap.js';
 import { timed_prop, wiz_timeout_queue } from './timeout.js';
 import { dobugreport } from './report.js';
 import { docast, dowizcast, dovspell } from './spell.js';
 import { dodown, doup } from './do.js';
-import { doengrave } from './engrave.js';
-import { dotogglepickup } from './options.js';
+import { doengrave, can_reach_floor } from './engrave.js';
+import { dotogglepickup, map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 import { doclassdisco, rename_disco } from './o_init.js';
 import { doread } from './read.js';
 import { dotelecmd } from './teleport.js';
@@ -110,6 +109,8 @@ import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 import { doextlist, dosuspend_core, dosh_core } from './cmd.js';
 import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
+import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
+import { mungspaces } from './hacklib.js';
 
 // ── extcmd flag bits (only the ones we filter on) ──
 // C ref: hack.h AUTOCOMPLETE / WIZMODECMD / CMD_NOT_AVAILABLE / INTERNALCMD.
@@ -336,10 +337,6 @@ function ext_cmd_getlin_hook(base) {
     return null;
 }
 
-// mungspaces: collapse runs of whitespace and trim.  C ref: hacklib.c.
-function mungspaces(s) {
-    return s.replace(/\s+/g, ' ').replace(/^ | $/g, '');
-}
 
 // Render the top-line getline prompt: clear row 0, draw "<query> <buf>", cursor
 // parked right after the typed text (the autocompleted tail draws, but the
@@ -607,15 +604,6 @@ export async function hooked_tty_getlin(query, hook) {
 // instead of the type-in prompt.  Each pick appends its accelerator to cbuf and
 // re-filters until exactly one command remains — that's the selection.
 
-// C ref: win/tty/wintty.c default_menu_cmds[] (wintype.h MENU_*).  These are
-// accepted alongside the current page's selector letters, the digits and the
-// quitchars.  gm.mapped_menu_cmds is empty unless a menu_* option rebinds one,
-// which makes map_menu_cmd() the identity, so it is not modelled.
-const MENU_FIRST_PAGE = '^', MENU_LAST_PAGE = '|';
-const MENU_NEXT_PAGE = '>', MENU_PREVIOUS_PAGE = '<';
-const MENU_SEARCH = ':';
-const DEFAULT_MENU_CMDS = MENU_FIRST_PAGE + MENU_LAST_PAGE + MENU_NEXT_PAGE
-    + MENU_PREVIOUS_PAGE + '.' + '-' + '@' + ',' + '\\' + '~' + MENU_SEARCH;
 
 // C ref: strutil.c pmatch_internal(..., ci=TRUE) — '*' matches zero or more
 // characters, '?' matches exactly one.
@@ -826,33 +814,6 @@ export async function yn_function(query, resp, def, addcmdq = false) {
 
 // ── individual extended commands ──
 
-// C ref: zap.c resist(mtmp, oclass, damage, tell) — generic magic-resistance
-// check: `oclass` sets the attack level, monster m_lev is the defense level,
-// draw is rn2(100 + alev - dlev) < mtmp->data->mr (mr 0 still costs a draw).
-// Ported here for #turn; damage is always 0 there so the kill tail is a no-op.
-async function resist(mtmp, oclass, damage, tell) {
-    let alev;
-    switch (oclass) {
-    case 'wand':   alev = 12; break;
-    case 'tool':   alev = 10; break;   /* instrument */
-    case 'weapon': alev = 10; break;   /* artifact */
-    case 'scroll': alev = 9; break;
-    case 'potion': alev = 6; break;
-    case 'ring':   alev = 5; break;
-    default:       alev = game.u?.ulevel ?? 1; break;   /* spell / '\0' */
-    }
-    let dlev = mtmp.m_lev | 0;
-    if (dlev > 50) dlev = 50;
-    else if (dlev < 1) dlev = 1;       /* is_mplayer would use u.ulevel */
-    // permonst.mr — the magic-resistance PERCENTAGE from monsters.h's LVL(), NOT
-    // makemon.js's MONS[].mresists, which is the MR_* bitmask (a wraith's
-    // mresists is 166 while its mr is 15).
-    const resisted = rn2(100 + alev - dlev) < mon_mr(mtmp.data);
-    void damage;                        /* #turn passes 0 / TELL only */
-    if (resisted && tell) await (await import('./mon.js')).shieldeff_mon(mtmp);   /* zap.c: if (tell) shieldeff_mon() */
-    return resisted;
-}
-
 // C ref: pray.c doturn() — the #turn command (Knights/Priests; other roles
 // fall back to the turn-undead spell).  Was entirely unimplemented: seed4500's
 // `#turn` drew none of C's stream (exercise(A_WIS,TRUE) rn2(19) at step 643,
@@ -957,6 +918,7 @@ async function doturn() {
                 && !(await resist(mtmp, '\0', 0, 0))) {
                 if ((u.ualign?.type ?? 0) === -1 /* A_CHAOTIC */) {
                     mtmp.mpeaceful = 1;
+                    (await import('./makemon.js')).set_malign(mtmp);
                 } else {
                     // C: killed(mtmp) destroys the undead outright — uhitm.js's
                     // killed() is the real xkilled() port (js/mon.js has neither
@@ -1184,7 +1146,7 @@ export async function jump(magic) {
             break;
         }
         /* if we reach here, hero is no longer trapped */
-        await T.reset_utrap_fu(true);
+        await T.reset_utrap(true);
     }
     // jumping on hero's same spot doesn't use walk_path() and isn't allowed
     // when riding (handled above)
@@ -1220,8 +1182,8 @@ export async function jump(magic) {
 // pluslvl/losexp roll the per-level newhp()/newpw() RNG.
 async function wiz_level_change() {
     const buf = mungspaces(await getlin_top('To what experience level do you want to be set?'));
-    if (buf === '' || buf[0] === '\x1b') return 0;
-    const m = buf.match(/^(-?\d+)/);
+    /* sscanf(buf, "%d%c") must convert exactly the %d: ESC, empty, text or trailing junk -> Never_mind */
+    const m = (buf === '' || buf[0] === '\x1b') ? null : buf.match(/^([+-]?\d+)$/);
     if (!m) { await pline('Never mind.'); return 0; }
     let newlevel = parseInt(m[1], 10);
     const u = game.u;
@@ -1369,7 +1331,7 @@ async function dochat() {
     // C ref: sounds.c dochat():2004 — a mimic posing as furniture or an object
     // is not chatted with at all (it stays hidden).
     if (!mtmp || mtmp.mundetected
-        || mtmp.m_ap_type === 'furniture' || mtmp.m_ap_type === 'obj')
+        || M_AP_TYPE(mtmp) === M_AP_FURNITURE || M_AP_TYPE(mtmp) === M_AP_OBJECT)
         return 0;
 
     // sleeping / immobilised non-priest monsters won't talk.  C uses
@@ -1902,7 +1864,8 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     // C ref: wintty.c tty_display_nhwindow(): maxrow >= rows forces offx = 0, and
     // process_menu_window() `if (!cw->offx) term_clear_screen()` -- a full-width
     // menu wipes the whole screen (map and status window included).
-    if (isMenu && moreRow + 1 >= rows) offx = 0;
+    if (isMenu && (moreRow + 1 >= rows
+                   || (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false)) offx = 0;
     const fullScreen = isMenu && offx === 0;
     // C ref: wintty.c erase_menu_or_text(): dismissal is docorner() (no docrt,
     // no vision_recalc) unless offx == 0; invent.js dismiss_invent_screen() reads this.
@@ -2195,6 +2158,10 @@ async function use_container(box, more_containers) {
                 const key = await nhgetch();
                 ch = (key === 27) ? '\x1b' : String.fromCharCode(key);
                 if (respsel.includes(ch)) break;             // explicit menu choice
+                /* xwaitforspace() also accepts gm.mapped_menu_cmds; process_menu_window()
+                   then runs the key through map_menu_cmd() */
+                if (mapped_menu_cmds().includes(ch)) ch = map_menu_cmd(ch);
+                if (respsel.includes(ch)) break;
                 if (ch === '\x1b' || ch === '\n' || ch === '\r' || ch === ' ') break;
                 if (ch >= '0' && ch <= '9') continue;        // count prefix: no redraw
                 if (ch === '-' || ch === '\\') {             // deselect the default
@@ -2851,15 +2818,13 @@ async function doloot_core() {
     // FIRST: an Overtaxed hero "can't do that while carrying so much stuff"
     // and no turn passes (so the container prompts never appear).
     {
-        const { check_capacity_throw } = await import('./invent.js');
-        if (await check_capacity_throw()) return 0; // ECMD_OK
+        const { check_capacity } = await import('./invent.js');
+        if (await check_capacity()) return 0; // ECMD_OK
     }
     // C ref: pickup.c doloot():2198 — a handless polyform can't loot at all;
     // skipping this opened the container menu and ate keystrokes C hands to
-    // the command parser.  Only consult the form while polymorphed: an
-    // unpolymorphed hero's u.umonnum is this port's ROLE index, not a mons[]
-    // pmidx (every player monster has hands anyway, so C's answer is FALSE
-    // either way).
+    // the command parser.  Only consult the form while polymorphed (every
+    // player monster has hands, so C's answer is FALSE either way).
     const ydata = game.u?.Upolyd ? (game.u?.data || null) : null;
     if (ydata && nohands(ydata)) {
         await pline('You have no hands!');
@@ -3048,8 +3013,8 @@ export async function picklock() {
         }
     }
 
-    // C lock.c:92-96.  `nohands()` only applies to a polymorphed hero here:
-    // without polymorph this port's u.umonnum is a role index, not mons[] data.
+    // C lock.c:92-96.  `nohands()` only applies to a polymorphed hero here
+    // (every player monster has hands).
     const ydata = u?.Upolyd ? (u.data || null) : null;
     if (xl.usedtime++ >= 50 || (ydata && nohands(ydata))) {
         await update_topl(`You give up your attempt at ${lock_action(xl)}.`);
@@ -3428,6 +3393,8 @@ function render_overview_menu(lines) {
     for (const l of lines) maxcol = Math.max(maxcol, l.text.length + 2);
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
+    /* tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0 */
+    if ((game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false) offx = 0;
     // C ref: wintty.c:1407 process_menu_window() — `if (!cw->offx)` the menu
     // is not a corner window and term_clear_screen() blanks the whole screen.
     if (offx === 0) {
@@ -3511,7 +3478,8 @@ export async function show_overview_disclosure(final, how) {
     // ends it, and ESC/Enter/space leave.
     let counting = false, count = 0;
     for (;;) {
-        const morc = await xwaitforspace(' 0123456789\x1b\n\r' + DEFAULT_MENU_CMDS);
+        let morc = await xwaitforspace(' 0123456789\x1b\n\r' + mapped_menu_cmds() + default_menu_cmds);
+        morc = map_menu_cmd(morc);
         if (morc >= '0' && morc <= '9') {
             count = count * 10 + (morc.charCodeAt(0) - 48);
             counting = count !== 0;
@@ -4298,15 +4266,14 @@ async function doherecmdmenu() {
     // Accelerators are assigned by the tty menu in add order: a, b, c, ...
     const nextCh = () => String.fromCharCode(97 + items.length);
 
-    // C ref: cmd.c:4448 — can_reach_floor(FALSE) is unconditionally true here
-    // (js/invent.js can_reach_floor).
-    if (IS_FOUNTAIN(typ) || IS_SINK(typ))
+    // C ref: cmd.c:4446-4451 — drinking and dipping need can_reach_floor(FALSE).
+    if ((IS_FOUNTAIN(typ) || IS_SINK(typ)) && can_reach_floor(false))
         push(nextCh(), `Drink from the ${IS_FOUNTAIN(typ) ? 'fountain' : 'sink'}`, 'drink', 'y');
-    if (IS_FOUNTAIN(typ)) push(nextCh(), 'Dip something into the fountain', 'dip');
+    if (IS_FOUNTAIN(typ) && can_reach_floor(false)) push(nextCh(), 'Dip something into the fountain', 'dip');
     if (IS_THRONE(typ)) push(nextCh(), 'Sit on the throne', 'sit');
     if (IS_ALTAR(typ)) push(nextCh(), 'Sacrifice something on the altar', 'offer');
 
-    const stway = herecmd_stairway_at(x, y);
+    const stway = stairway_at(x, y);
     if (stway && stway.up)
         push(nextCh(), `Go up the ${stway.isladder ? 'ladder' : 'stairs'}`, 'up');
     if (stway && !stway.up)
@@ -4381,12 +4348,6 @@ async function doherecmdmenu() {
     return await fn();
 }
 
-// C ref: stairs.c stairway_at(x, y) (js/do.js keeps the other copy private).
-function herecmd_stairway_at(x, y) {
-    for (let s = game.stairs; s; s = s.next)
-        if (s.sx === x && s.sy === y) return s;
-    return null;
-}
 // C ref: trap.c t_at(x, y).
 function herecmd_t_at(x, y) {
     for (const t of game.level?.traps ?? [])

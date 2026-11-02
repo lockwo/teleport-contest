@@ -6,7 +6,9 @@
 // type="shrine"/"sanctum"), and it is the sole RNG consumer of the temple fill.
 
 import { game, hooks } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { MGIVENNAME, RLOC_NOMSG } from './const.js';
+import { s_suffix, just_an } from './hacklib.js';
+import { incr_itimeout } from './youprop.js';
 import { roomAt } from './roomat.js';
 import { in_rooms } from './shkroom.js';
 import { rn2, rn1 } from './rng.js';
@@ -102,7 +104,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
     priest.epri.shralign = Amask2align(game.level?.at(sx, sy)?.altarmask ?? 0);
     priest.epri.shrpos = { x: sx, y: sy };
     priest.epri.shrlevel = lvl ? { dnum: lvl.dnum, dlevel: lvl.dlevel } : null;
-    priest.mtrapseen = ~0;               // mon_learns_traps(priest, ALL_TRAPS)
+    mon_learns_traps(priest, ALL_TRAPS);
     priest.mpeaceful = 1;
     priest.ispriest = 1;
     priest.isminion = 0;
@@ -134,11 +136,13 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
 }
 
 // C ref: priest.c:410 intemple(roomno), called from check_special_room().
-import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at, You_feel } from './display.js';
+import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at, You_feel, verbalize } from './display.js';
 import { d } from './rng.js';
-import { TEMPLE, ACH_TMPL, SPINE, In_endgame } from './const.js';
+import { TEMPLE, ACH_TMPL, SPINE, In_endgame, ALL_TRAPS } from './const.js';
+import { mon_learns_traps } from './montraps.js';
 import { roles, align_gname, halu_gname } from './role.js';
 import { rndmonnam, Monnam, mon_pmname } from './do_name.js';
+import { linedup } from './monmove.js';
 
 // C ref: priest.c:142 temple_occupied(array).
 export function temple_occupied(array) {
@@ -223,8 +227,8 @@ export async function intemple(roomno) {
             msg1 = `Pilgrim, you enter a ${!shrined ? 'desecrated' : 'sacred'} place!`;
         }
         if (msg1 && can_speak && !Deaf) {
-            await verbalize_(msg1);
-            if (msg2) await verbalize_(msg2);
+            await verbalize(msg1);
+            if (msg2) await verbalize(msg2);
             epri_p.enter_time = moves + d(10, 100); /* ~505 */
         }
         if (!sanctum) {
@@ -434,7 +438,7 @@ export function priestname(mon, article, reveal_high_priest, _pname,
                as indicating a personal name */
             pname = 'an ';
         } else {
-            pname = just_an_(what);
+            pname = just_an(what);
         }
     }
     /* pname contains "" or {"a ","an ","the "} */
@@ -538,7 +542,7 @@ export async function priest_talk(priest) {
         }
         priest.mpeaceful = 0;
         SetVoice_(priest, 0, 80, 0);
-        await verbalize_(cranky_msg[rn2(3)]);              /* priest.c:599 */
+        await verbalize(cranky_msg[rn2(3)]);              /* priest.c:599 */
         return;
     }
 
@@ -546,7 +550,7 @@ export async function priest_talk(priest) {
     if (priest.mpeaceful && in_temple_room_(priest.mx, priest.my)
         && !has_shrine(priest)) {
         SetVoice_(priest, 0, 80, 0);
-        await verbalize_(
+        await verbalize(
             'Begone!  Thou desecratest this holy place with thy presence.');
         priest.mpeaceful = 0;
         return;
@@ -592,30 +596,30 @@ export async function priest_talk(priest) {
         let offer = await bribe(priest, buf);
         if (offer === 0) {
             SetVoice_(priest, 0, 80, 0);
-            await verbalize_('Thou shalt regret thine action!');
+            await verbalize('Thou shalt regret thine action!');
             if (coaligned) await adjalign_(-1);
             if (cheapskate) cheapskate.cheapskate_count = (cheapskate.cheapskate_count | 0) + 1;
         } else if (offer < suggested * quan) {
             if (money_cnt_(invent_()) > (offer * 2)) {
                 SetVoice_(priest, 0, 80, 0);
-                await verbalize_('Cheapskate.');
+                await verbalize('Cheapskate.');
                 if (cheapskate) cheapskate.cheapskate_count = (cheapskate.cheapskate_count | 0) + 1;
             } else {
                 SetVoice_(priest, 0, 80, 0);
-                await verbalize_('I thank thee for thy contribution.');
+                await verbalize('I thank thee for thy contribution.');
                 /* give player some token */
                 await exercise_(A_WIS_, true);
             }
         } else if (offer < suggested * quan * 2) {
             SetVoice_(priest, 0, 80, 0);
-            await verbalize_('Thou art indeed a pious individual.');
+            await verbalize('Thou art indeed a pious individual.');
             if (money_cnt_(invent_()) < (offer * 2)) {
                 if (coaligned && (u.ualign?.record ?? 0) <= ALGN_SINNED)
                     await adjalign_(1);
             }
-            await verbalize_('I bestow upon thee a blessing.');
+            await verbalize('I bestow upon thee a blessing.');
             const n = Math.trunc(500 * offer / suggested);
-            incr_itimeout_('HClairvoyant', rn1(n, n));      /* priest.c:679 */
+            incr_itimeout('HClairvoyant', rn1(n, n));      /* priest.c:679 */
         } else if (offer < suggested * quan * 3) {
             let orig_ublessed = u.ublessed | 0;
 
@@ -637,12 +641,12 @@ export async function priest_talk(priest) {
             }
             SetVoice_(priest, 0, 80, 0);
             if ((u.ublessed | 0) > orig_ublessed)
-                await verbalize_('Thou hast been rewarded for thy devotion.');
+                await verbalize('Thou hast been rewarded for thy devotion.');
             else
-                await verbalize_('Thy selfless generosity is deeply appreciated.');
+                await verbalize('Thy selfless generosity is deeply appreciated.');
         } else {
             SetVoice_(priest, 0, 80, 0);
-            await verbalize_('Thy selfless generosity is deeply appreciated.');
+            await verbalize('Thy selfless generosity is deeply appreciated.');
             /* money_cnt check is preserved for futureproofing but probably
                can't fail in the current code */
             if (money_cnt_(invent_()) < (offer * 2) && coaligned) {
@@ -703,7 +707,7 @@ export async function mk_roamer(ptr, alignment, x, y, peaceful) {
 
     if (m_at(x, y)) {
         const { rloc } = await import('./teleport.js');
-        await rloc(m_at(x, y), RLOC_NOMSG_);   /* insurance */
+        await rloc(m_at(x, y), RLOC_NOMSG);   /* insurance */
     }
 
     const roamer = makemon(ptr, x, y, MM_ADJACENTOK_ | MM_EMIN | MM_NOMSG_);
@@ -716,7 +720,7 @@ export async function mk_roamer(ptr, alignment, x, y, peaceful) {
     roamer.emin.renegade = (coaligned && !peaceful);
     roamer.ispriest = 0;
     roamer.isminion = 1;
-    mon_learns_traps_(roamer, -1 /* ALL_TRAPS */); /* traps are known */
+    mon_learns_traps(roamer, ALL_TRAPS); /* traps are known */
     roamer.mpeaceful = peaceful ? 1 : 0;
     roamer.msleeping = 0;
     set_malign(roamer); /* peaceful may have changed */
@@ -758,7 +762,7 @@ export async function ghod_hitsu(priest) {
     const troom = roomAt(roomno);
     if (!troom) return;
 
-    if ((u.ux === x && u.uy === y) || !linedup_(u.ux, u.uy, x, y, 1)) {
+    if ((u.ux === x && u.uy === y) || !linedup(u.ux, u.uy, x, y, 1)) {
         if (IS_DOOR_(game.level?.at(u.ux, u.uy)?.typ)) {
             if (u.ux === troom.lx - 1) {
                 x = troom.hx; y = u.uy;
@@ -777,7 +781,7 @@ export async function ghod_hitsu(priest) {
             default: x = troom.hx; y = u.uy; break;
             }
         }
-        if (!linedup_(u.ux, u.uy, x, y, 1)) return;
+        if (!linedup(u.ux, u.uy, x, y, 1)) return;
     }
 
     switch (rn2(3)) {                                      /* priest.c:850 */
@@ -811,11 +815,12 @@ export async function ghod_hitsu(priest) {
 // C ref: priest.c:919 clearpriests() — when saving bones, drop every priest
 // that is not on its own shrine level; restoring such a priest would be a mess.
 // No RNG.
-export function clearpriests() {
+export async function clearpriests() {
+    const { mongone } = await import('./mon.js');
     for (const mtmp of Array.from(game.level?.monsters || [])) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;   /* DEADMONSTER */
         if (mtmp.ispriest && !on_level_(EPRI_(mtmp)?.shrlevel, game.u?.uz))
-            mongone_(mtmp);
+            await mongone(mtmp);
     }
 }
 
@@ -840,7 +845,7 @@ export function restpriest(mtmp, ghostly) {
 // C ref: do_name.h ARTICLE_* (do_name.c's article enum).
 const ARTICLE_NONE_ = 0, ARTICLE_THE_ = 1, ARTICLE_A_ = 2, ARTICLE_YOUR_ = 3;
 // C ref: mkobj.h MM_ADJACENTOK / MM_NOMSG, teleport.h RLOC_NOMSG.
-const MM_ADJACENTOK_ = 0x00000010, MM_NOMSG_ = 0x00020000, RLOC_NOMSG_ = 0x01;
+const MM_ADJACENTOK_ = 0x00000010, MM_NOMSG_ = 0x00020000;
 // C ref: attrib.h A_WIS.
 const A_WIS_ = 2;
 // C ref: monattk.h AD_ELEC.
@@ -893,14 +898,6 @@ async function a_gname_at_(x, y) {
     if (idx < 0) idx = 0;
     return align_gname(idx, Amask2align((loc.altarmask | 0) & 7 /* AM_MASK */));
 }
-// C ref: objnam.c just_an(outbuf, str) — "a "/"an "/"" for a bare noun.
-function just_an_(str) {
-    const s = String(str || '');
-    if (!s) return '';
-    /* C returns "" for a personal name (leading capital treated as one) */
-    if (/^[A-Z]/.test(s)) return '';
-    return /^[aeiouAEIOU]/.test(s) ? 'an ' : 'a ';
-}
 // C ref: mon.c mon_pmname(mon) — the species name honouring M_AP_TYPE.
 function mon_pmname_(mon) { return mon_pmname(mon) || 'creature'; }
 // C ref: do_name.c rndmonnam(&charcode) — a random bogus monster name; DRAWS on
@@ -919,7 +916,7 @@ let _do_name_mod = null;
 function Monnam_(mon) {
     const f = _do_name_mod?.Monnam;
     if (f) return f(mon);
-    const nm = mon?.mgivenname || mon?.data?.name || 'it';
+    const nm = MGIVENNAME(mon) || mon?.data?.name || 'it';
     return nm.charAt(0).toUpperCase() + nm.slice(1);
 }
 function mon_nam_(mon) {
@@ -932,9 +929,6 @@ function helpless_(mon) { return !!(mon?.msleeping || !mon?.mcanmove); }
 // C ref: sounds.c SetVoice(mon, ...) — the voice/pitch selection for the
 // sound interface.  This port has no sound layer.
 function SetVoice_(_mon, _pitch, _volume, _flags) { /* NOT PORTED */ }
-// C ref: pline.c verbalize(fmt, ...) — the line wrapped in double quotes
-// (js/shk.js:814).  verbalize1() is the no-format variant.
-async function verbalize_(line) { await update_topl(`"${line}"`); }
 // C ref: hack.h gi.invent.
 function invent_() { return game.invent || game.u?.invent || []; }
 // C ref: invent.c money_cnt(objchain) — js/invent.js:1155 (unexported).
@@ -971,52 +965,15 @@ async function adjalign_(n) {
     const { adjalign } = await import('./attrib.js');
     adjalign(n);
 }
-// C ref: timeout.c incr_itimeout(&prop, incr) — js/eat.js:2013 (unexported).
-function incr_itimeout_(propname, incr) {
-    const p = (game.u.uprops = game.u.uprops || {});
-    const TIMEOUT = 0x00FFFFFF;
-    const cur = p[propname] | 0;
-    p[propname] = (cur & ~TIMEOUT) | (((cur & TIMEOUT) + incr) & TIMEOUT);
-}
 // C ref: livelog.c livelog_printf(mask, fmt, ...) — js/livelog.js exports it.
 function livelog_printf_(mask, msg) {
     import('./livelog.js').then((L) => L.livelog_printf(mask, msg));
-}
-// C ref: mon.c mongone(mtmp) — js/muse.js:672 / js/vault.js:228 (both
-// unexported): remove the monster without a corpse or death message.
-function mongone_(mtmp) {
-    if (!mtmp) return;
-    mtmp.mhp = 0;
-    const mons = game.level?.monsters;
-    if (mons) {
-        const i = mons.indexOf(mtmp);
-        if (i >= 0) mons.splice(i, 1);
-    }
-}
-// C ref: monmove.c mon_learns_traps(mon, trapmask) — js/monmove.js exports it.
-function mon_learns_traps_(mon, mask) {
-    if (mon) mon.mtrapseen = (mask === -1) ? ~0 : ((mon.mtrapseen | 0) | (1 << (mask - 1)));
 }
 // C ref: mkroom.c *in_rooms(x, y, TEMPLE) — nonempty means "inside a temple".
 function in_temple_room_(x, y) {
     const here = game.level?.at(x, y)?.roomno ?? 0;
     const r = roomAt(here);
     return !!r && r.rtype === TEMPLE;
-}
-// C ref: mthrowu.c linedup(ax, ay, bx, by, boulderhandling) — sets gt.tbx/gt.tby
-// (which ghod_hitsu() then reads for the bolt direction) and tests for a clear
-// straight line.  js/monmove.js:6736 has the faithful copy (unexported); this
-// reduced one does the tbx/tby write and the geometry test only.
-function linedup_(ax, ay, bx, by, boulderhandling) {
-    const tbx = ax - bx, tby = ay - by;
-    game.tbx = tbx; game.tby = tby;
-    if (tbx === 0 && tby === 0) return false;
-    const BOLT_LIM = 8;
-    if (!((tbx === 0 || tby === 0 || Math.abs(tbx) === Math.abs(tby))
-          && Math.max(Math.abs(tbx), Math.abs(tby)) < BOLT_LIM))
-        return false;
-    void boulderhandling; /* the boulder-tolerance walk is in monmove.js's copy */
-    return true;
 }
 // Resolve the do_name.js handles Monnam_()/mon_nam_() prefer, once, without
 // adding a static edge and without a module-evaluation side effect.

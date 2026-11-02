@@ -15,7 +15,7 @@ import { game } from '../gstate.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, quest_region_light,
-    quest_set_door, shuffle,
+    quest_set_door, shuffle, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { sam_stair } from './sam_common.js';
 import { S_DOG } from '../symbols.js';
@@ -46,7 +46,7 @@ export async function makemaz_sam_filb() {
     // load_special -> load nhlib.lua top-level shuffle(align): rn2(3), rn2(2).
     shuffle(['law', 'neutral', 'chaos']);
     // des.level_init({ style = "solidfill", fg = " " }) — rn2(2) + fill STONE.
-    rn2(2);
+    quest_level_init_solidfill();
     // des.level_flags("mazelevel") — no RNG, and no "noflip".
     if (g.level?.flags) g.level.flags.is_maze_lev = true;
     // des.map([[...]]) — bare string form: lit is FALSE, no rn2(2).

@@ -21,6 +21,7 @@
 // INTEGRATION: nothing imports this module yet; the call sites C has (and the
 // file that owns each) are listed at the bottom.
 
+import { Deaf_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { rn2, rn1 } from './rng.js';
 import {
@@ -33,28 +34,27 @@ import {
     EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT, MELT_ICE_AWAY } from './const.js';
 import { ATR_INVERSE } from './terminal.js';
 import {
-    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible, You_hear,
-} from './display.js';
+    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible, You_hear, verbalize } from './display.js';
 import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind } from './vision.js';
-import { Monnam, mon_nam, canspotmon, setmangry, relobj } from './uhitm.js';
+import { Monnam, mon_nam, canspotmon, setmangry } from './uhitm.js';
 import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
 import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
-import { rloc, rloc_to, RLOC_MSG, RLOC_ERR } from './teleport.js';
-import { makemon, set_malign, monster_by_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
-import { place_object, objects, weight, COIN_CLASS, GEM_CLASS, BOULDER, ROCK } from './mkobj.js';
-import { stackobj, xname, currency, freeinv } from './invent.js';
+import { rloc, rloc_to, RLOC_MSG, RLOC_ERR, RLOC_NOMSG } from './teleport.js';
+import { makemon, set_malign, monster_by_pmidx, pmname_of_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
+import { place_object, remove_object, objects, weight, COIN_CLASS, GEM_CLASS, BOULDER, ROCK } from './mkobj.js';
+import { stackobj, xname, currency, freeinv, youmonst_data, obj_extract_self, obfree } from './invent.js';
 import { makeplural } from './plural.js';
 import { money_cnt_invent, hidden_gold as shk_hidden_gold } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { t_at } from './mkroom.js';
 import { deltrap } from './trap.js';
-import { make_grave } from './engrave.js';
+import { make_grave, del_engr_at } from './engrave.js';
 import { stop_occupation, nomul } from './hack.js';
 import { adjalign } from './attrib.js';
 import { dist2 } from './hacklib.js';
 import { msound_of } from './monflags_data.js';
 import { yelp } from './sounds.js';
-import { attacktype, dmgtype, AT_HUGS, AD_STCK, AD_WRAP } from './monattk_data.js';
+import { attacktype, dmgtype, AT_HUGS, AD_STCK, AD_WRAP, sticks } from './monattk_data.js';
 import { unfaint } from './eat.js';
 
 // C ref: monsters.h — mons[] indices in this port's MONS_NAMES order.
@@ -75,24 +75,23 @@ const MS_SILENT = 0;
 // C ref: monst.h DEADMONSTER(mon).
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: youprop.h Deaf.
-const Deaf = () => ((game.u?.uprops?.HDeaf ?? 0) > 0) || !!game.u?.Deaf;
+const Deaf = () => Deaf_hero();
 // C ref: youprop.h Blind.
 const Blind_hero = () => Blind();
 // C ref: youprop.h Strangled — u.uprops[STRANGLED].
 const Strangled = () => (game.u?.uprops?.Strangled || 0) > 0;
 // C ref: pline.c verbalize() / You() / Your() / You_hear() / pline_The().
-const verbalize = (line) => update_topl(`"${line}"`);
 const You = (s) => update_topl(`You ${s}`);
 const Your = (s) => update_topl(`Your ${s}`);
 const pline_The = (s) => update_topl(`The ${s}`);
 // C ref: hacklib.c an() / upstart() / mungspaces().
 import { an } from './hacklib.js';
 const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
-const mungspaces = (s) => String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g, '');
 // C ref: do_name.c noit_Monnam / noit_mon_nam — SUPPRESS_IT, i.e. a guard is
 // named even when the hero cannot spot it.  The shim used to be mon_nam(),
 // which was indistinguishable only while x_monnam() ignored canspotmon().
 import { noit_mhis, mhe } from './do_name.js';
+import { mungspaces } from './hacklib.js';
 // C ref: hack.h um_dist(x,y,n) — further than n from the hero on EITHER axis.
 const um_dist = (x, y, n) => Math.abs(x - (game.u?.ux ?? 0)) > n
     || Math.abs(y - (game.u?.uy ?? 0)) > n;
@@ -117,25 +116,10 @@ const mon_visible = (mon) => !mon?.minvis || !!game.u?.uprops?.See_invisible;
 // C ref: eat.c is_fainted() — u.uhs == FAINTED.
 const is_fainted = () => (game.u?.uhs ?? 0) === FAINTED;
 
-// The hero's current monster form.  u.umonnum holds the ROLE index in this
-// port unless polymorphed (see js/eat.js:1328, js/end.js:295), so the mons[]
-// lookup is only meaningful while Upolyd; without it the caller falls back to
-// the player-monster answer, which is what every role's PM_ entry gives.
-function youmonst_data() {
-    const u = game.u;
-    if (!u || !Upolyd(u)) return null;
-    return monster_by_pmidx(u.umonnum) || null;
-}
 // C ref: mondata.h is_silent(ptr) — msound == MS_SILENT.
 const is_silent_hero = () => {
     const d = youmonst_data();
     return d ? msound_of(d) === MS_SILENT : false;
-};
-// C ref: mondata.h sticks(ptr) — AD_STCK / AD_WRAP damage or an AT_HUGS attack.
-const sticks_hero = () => {
-    const d = youmonst_data();
-    if (!d) return false;
-    return !!(dmgtype(d, AD_STCK) || dmgtype(d, AD_WRAP) || attacktype(d, AT_HUGS));
 };
 
 // The level's floor objects.  js/mkobj.js place_object() keeps them in ONE
@@ -156,24 +140,6 @@ function g_at(x, y) {
 function sobj_at(otyp, x, y) {
     for (const o of floorObjsAt(x, y)) if (o.otyp === otyp) return o;
     return null;
-}
-// C ref: mkobj.c obj_extract_self(obj) / remove_object(obj) / obfree(obj,mrg)
-// for an object lying on the floor.
-function obj_extract_self(obj) {
-    const objs = game.level?.objects;
-    if (Array.isArray(objs)) {
-        const i = objs.indexOf(obj);
-        if (i >= 0) objs.splice(i, 1);
-    }
-    return obj;
-}
-const remove_object = obj_extract_self;
-const obfree = obj_extract_self;
-// C ref: engrave.c del_engr_at(x,y).
-function del_engr_at(x, y) {
-    if (!game.level?.engravings) return;
-    game.level.engravings = game.level.engravings.filter(
-        (ep) => ep.engr_x !== x || ep.engr_y !== y);
 }
 
 // C ref: mon.c place_monster(mon, x, y) / remove_monster(x, y).  This port
@@ -215,26 +181,6 @@ function mpickgold(mtmp) {
     obj_extract_self(gold);
     add_to_minv(mtmp, gold);
     if (cansee(mtmp.mx, mtmp.my)) newsym(mtmp.mx, mtmp.my);
-}
-
-// C ref: zap.c fracture_rock(obj) — a boulder in the guard's way becomes a
-// pile of rocks.  rn1(60, 7) is the one draw.  The shop-billing arm needs a
-// costly_spot (a vault wall is not one) and sokoban_guilt() needs Sokoban.
-function fracture_rock(obj) {
-    obj.otyp = ROCK;
-    obj.oclass = GEM_CLASS;
-    obj.quan = rn1(60, 7);
-    obj.owt = weight(obj);
-    obj.dknown = 0; obj.bknown = 0; obj.rknown = 0;
-    obj.known = objects?.[ROCK]?.oc_uses_known ? 0 : 1;
-    obj.oextra = null;              /* dealloc_oextra */
-    if (obj.where === OBJ_FLOOR) {
-        const ox = obj.ox, oy = obj.oy;
-        obj_extract_self(obj);      /* move rocks back on top */
-        place_object(obj, ox, oy);
-        unblock_point(ox, oy);
-        if (cansee(ox, oy)) newsym(ox, oy);
-    }
 }
 
 // C ref: display.c map_location(x, y, show) -> _map_location: draw and
@@ -366,7 +312,6 @@ export async function unmul_form_note(nmsg) {
     const u = game.u;
     if (u && Upolyd(u) && /^you survived that /i.test(nmsg)) {
         const { an } = await import('./hacklib.js');
-        const { pmname_of_pmidx } = await import('./makemon.js');
         await update_topl(`You are ${an(pmname_of_pmidx(u.umonnum, !!u.mfemale))}.`);
     }
 }
@@ -402,15 +347,6 @@ async function getlin(query) {
     return (typeof s === 'string') ? s : '';
 }
 
-// C ref: mon.c mnexto(mtmp, rlocflags) — relocate next to the hero via
-// enexto(); on failure the monster goes off-map.  js/do.js keeps a private
-// copy of this for level arrival; vault.c needs the rloc_to form.
-async function mnexto(mtmp) {
-    const u = game.u;
-    const cc = enexto_spawn(u.ux, u.uy, mtmp.data);
-    if (!cc) { await m_into_limbo(mtmp); return; }
-    await rloc_to(mtmp, cc.x, cc.y);
-}
 
 /* ------------------------------------------------------------------ *
  * vault.c
@@ -543,7 +479,7 @@ export async function grddead(grd) {
 
     if (!dispose) {
         /* destroy guard's gold; drop any other inventory */
-        await relobj(grd, grd.mx, grd.my);
+        await (await import('./dogmove.js')).relobj(grd, 0, false);
         grd.mhp = 0;
         parkguard(grd);
         dispose = await clear_fcorr(grd, true);
@@ -758,7 +694,7 @@ export async function invault() {
         let bcnt = 0;
         do {
             ++bcnt;
-            fracture_rock(otmp);
+            await (await import('./zap.js')).fracture_rock(otmp);
             otmp = sobj_at(BOULDER, guard.mx, guard.my);
         } while (otmp);
         const what = (bcnt === 1) ? an(bname) : makeplural(bname);
@@ -1197,7 +1133,7 @@ export async function gd_move(grd) {
                 n = grd.my;
                 if (!Deaf()) await verbalize("You've been warned, knave!");
                 grd.mpeaceful = 0;
-                await mnexto(grd);
+                await (await import('./mon.js')).mnexto(grd, RLOC_NOMSG);
                 levl_at(m, n).typ = egrd.fakecorr[0].ftyp;
                 levl_at(m, n).flags = egrd.fakecorr[0].flags;
                 recalc_block_point(m, n);
@@ -1290,7 +1226,7 @@ export async function gd_move(grd) {
     if (um_dist(grd.mx, grd.my, 1) || egrd.gddone) {
         // C ref: vault.c:1067 — the one rn2(10) this function draws.
         if (!egrd.gddone && !rn2(10) && !Deaf() && !u.uswallow
-            && !(u.ustuck && !sticks_hero()))
+            && !(u.ustuck && !sticks(youmonst_data())))
             await verbalize('Move along!');
         await restfakecorr(grd);
         return 0;                   /* didn't move */
@@ -1447,7 +1383,7 @@ export async function paygd(silently, before_deposit) {
         /* peaceful guard has no "right" to your gold */
         deposit = false;            /* C: goto remove_guard */
     } else {
-        await mnexto(grd);
+        await (await import('./mon.js')).mnexto(grd, RLOC_NOMSG);
         if (!silently)
             await update_topl(`${Monnam(grd)} remits your gold to the vault.`);
         const rm = roomAt(EGD(grd).vroom);
@@ -1494,11 +1430,9 @@ export function vault_gd_watching(activity) {
 }
 
 // C ref: pmname(&mons[u.umonster], flags.female ? FEMALE : MALE) — the hero's
-// own player-monster name, for paygd()'s grave epitaph.  u.umonster is not
-// tracked separately here, so the role's player monster is looked up by name.
+// own player-monster name, for paygd()'s grave epitaph.
 function hero_pmname() {
-    const nm = monster_by_pmidx(game.u?.umonster)?.name;
-    return nm || (game.u?.female ? 'woman' : 'man');
+    return pmname_of_pmidx(game.u?.umonster, !!game.flags?.female);
 }
 
 /*

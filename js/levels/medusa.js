@@ -46,6 +46,7 @@ import {
     vly_region, vly_teleport_region,
 } from '../sp_lev.js';
 import { Can_fall_thru, maketrap, t_at } from '../trap.js';
+import { setONAME } from '../const.js';
 
 // C ref: objects[] indices (mkobj.js exports no constant for these two).
 const SCIMITAR = 50, SHIELD_OF_REFLECTION = 158;
@@ -306,7 +307,7 @@ async function med_object(o, contained = false) {
         const pmidx = name_to_pmidx(o.montype);
         if (pmidx >= 0) set_corpsenm(otmp, pmidx);
     }
-    if (named) otmp.oname = o.name;
+    if (named) setONAME(otmp, o.name);
     // A `contents` key that is merely PRESENT (even the number 0) sets
     // SP_OBJ_CONTAINER, whose first act is delete_contents() — that is what
     // throws away the spellbook mksobj_init() may have put inside a statue.

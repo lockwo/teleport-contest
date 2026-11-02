@@ -7,9 +7,9 @@ import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch } from './input.js';
 import { Blind } from './vision.js';
-import { ATR_NONE, NO_COLOR } from './terminal.js';
+import { NO_COLOR } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
-import { status_sweep } from './display.js';
+import { status_sweep, update_lastseentyp, map_location, see_nearby_objects } from './display.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
 import { hliquid } from './do_name.js';
@@ -37,11 +37,11 @@ import {
     TEMPLE, DELPHI, ROOMOFFSET, MAXNROFROOMS, VIBRATING_SQUARE,
     IS_DRAWBRIDGE, DB_UNDER, DB_ICE, DB_LAVA, DB_MOAT,
     DB_DIR, DB_WEST, DB_EAST, DB_NORTH, DB_SOUTH,
-    MSA_NONE, AM_MASK, AM_SHRINE, Amask2align, NON_PM,
+    MSA_NONE, AM_MASK, AM_SHRINE, Amask2align, NON_PM, MCORPSENM,
     M_AP_FURNITURE, M_AP_TYPE, SVALL, VISITED, MAXLINFO, BUFSZ,
     COUNTING, WRITING, FREEING,
-    MENU_ITEMFLAGS_NONE, MENU_ITEMFLAGS_SKIPMENUCOLORS, MENU_BEHAVE_STANDARD,
-    PICK_NONE, PICK_ONE, ASCENDED, ESCAPED,
+    PICK_ONE, ASCENDED, ESCAPED,
+    is_pool, is_lava, is_ice
 } from './const.js';
 import { shtypes } from './shtypes.js';
 
@@ -1278,8 +1278,8 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     let pageNo = 1;
     pick: for (;;) {
         renderPage(pageNo);
-        const key = await nhgetch();
-        const ch = String.fromCharCode(key);
+        let key = await nhgetch();
+        let ch = String.fromCharCode(key);
 
         // Cancel: ESC.
         if (key === 27) break pick;
@@ -1294,6 +1294,9 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
             break pick;
         }
 
+        // process_menu_window(): a non-selector key goes through map_menu_cmd().
+        ch = (await import('./options.js')).map_menu_cmd(ch);
+        key = ch.charCodeAt(0);
         // Return/Enter commits (nothing selected => none).
         if (key === 13 || key === 10) break pick;
         // ' ' pages forward and finishes the menu on the last page; '>' only pages.
@@ -1362,7 +1365,7 @@ function overview_plur(n) { return n === 1 ? '' : 's'; }
 
 // C ref: dungeon.c count_feat_lastseentyp() — counts seen cells of a given
 // terrain, capped at 3 (matches print_mapseen's "no/a/some/many" scale).
-// Reads the level's lastseentyp[][] (see display.js update_lastseentyp_d).
+// Reads the level's lastseentyp[][] (see display.js update_lastseentyp).
 function overview_count_feat(lst, pred) {
     let n = 0;
     for (let x = 1; x < COLNO; x++) {
@@ -1792,23 +1795,6 @@ export async function build_overview_lines(final = 0, how = 0) {
     return lines;
 }
 
-// C ref: dbridge.c is_pool/is_lava/is_ice — terrain-class predicates.  The
-// DB_UNDER (drawbridge-up) variants aren't tracked on the contest levels
-// reached; the plain typ comparisons cover the ordinary cases.
-function is_pool(x, y) {
-    if (!isok(x, y)) return false;
-    const t = game.level?.at(x, y)?.typ;
-    return t === POOL || t === MOAT || t === WATER;
-}
-function is_lava(x, y) {
-    if (!isok(x, y)) return false;
-    const t = game.level?.at(x, y)?.typ;
-    return t === LAVAPOOL || t === LAVAWALL;
-}
-function is_ice(x, y) {
-    if (!isok(x, y)) return false;
-    return game.level?.at(x, y)?.typ === ICE;
-}
 // C ref: stairs.c On_stairs(x,y) — stairway_at(x,y) != NULL.  Stairs live on
 // game.stairs (mklev.js) with .sx/.sy coordinates.
 function On_stairs(x, y) {
@@ -1983,7 +1969,7 @@ function on_level(lev1, lev2) {
 
 // C ref: dungeon.c:1376 ledger_no() / :1392 maxledgerno().  bones.js:69 and
 // save.js:287 keep the same private copies for the same import-order reason.
-function ledger_no(lev) {
+export function ledger_no(lev) {
     return (lev.dlevel | 0) + (game.dungeons?.[lev.dnum]?.ledger_start | 0);
 }
 function maxledgerno() {
@@ -2021,9 +2007,6 @@ function Msa2amask(x) { return (x === 3) ? 4 : x; }
 
 // C ref: hacklib.c mungspaces()/highc(), objnam.c plur().  Several files keep
 // the same private copies (extcmd-handlers.js:292, topten.js:188, ...).
-function mungspaces(s) {
-    return String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g, '');
-}
 function highc(c) { return String(c ?? '').toUpperCase(); }
 function plur(n) { return (n === 1) ? '' : 's'; }
 
@@ -2048,24 +2031,8 @@ function m_at(x, y) {
             return mtmp;
     return null;
 }
-function canseemon(mtmp) {
-    if (!mtmp) return false;
-    if (game.u?.uswallow) return true;
-    if (mtmp.minvis && !game.u?.see_invis) return false;
-    if (mtmp.mundetected) return false;
-    /* UNPORTED: see_with_infrared(mon) (mondata.c) */
-    return !!game.level?.at(mtmp.mx, mtmp.my)?.seenv;
-}
-
 // C ref: mextra.h:234 has_mcorpsenm(mon), pray.c:2490 altarmask_at(x, y).
 // dig.js:683's private copy drops the M_AP_FURNITURE arm; this one keeps it.
-// This port stores a mimic's m_ap_type as 'furniture' (a string) and its
-// MCORPSENM as mon.mcorpsenm (makemon.js set_mimic_sym), so test through
-// M_AP_TYPE() and read either spelling of the field.
-function mimic_mcorpsenm(mon) {
-    const mc = mon?.mextra?.mcorpsenm ?? mon?.mcorpsenm;
-    return (mc == null || mc === NON_PM) ? NON_PM : mc;
-}
 export function altarmask_at(x, y) {
     let res = 0;
 
@@ -2074,7 +2041,7 @@ export function altarmask_at(x, y) {
 
         if (mon && M_AP_TYPE(mon) === M_AP_FURNITURE
             && mon.mappearance === S_altar) {
-            const mc = mimic_mcorpsenm(mon);
+            const mc = MCORPSENM(mon);
             res = (mc !== NON_PM) ? mc : 0;
         } else if (IS_ALTAR(game.level?.at(x, y)?.typ)) {
             const loc = game.level.at(x, y);
@@ -2086,18 +2053,6 @@ export function altarmask_at(x, y) {
 
 // C ref: dbridge.c:115 db_under_typ(mask) / :136 is_drawbridge_wall(x, y).
 // dbridge.js exports both but imports this file.
-function db_under_typ(mask) {
-    switch (mask & DB_UNDER) {
-    case DB_ICE:
-        return ICE;
-    case DB_LAVA:
-        return LAVAPOOL;
-    case DB_MOAT:
-        return MOAT;
-    default:
-        return STONE;
-    }
-}
 function is_drawbridge_wall(x, y) {
     const at = (xx, yy) => game.level?.at(xx, yy);
     if (!isok(x, y)) return -1;
@@ -2120,96 +2075,8 @@ function is_drawbridge_wall(x, y) {
     return -1;
 }
 
-// C ref: defsym.h PCHAR() order — the S_* indices cmap_to_type() switches on.
-// cmd.js:3440 carries the same block.
-const S_stone = 0, S_vwall = 1, S_hwall = 2, S_tlcorn = 3, S_trcorn = 4,
-      S_blcorn = 5, S_brcorn = 6, S_crwall = 7, S_tuwall = 8, S_tdwall = 9,
-      S_tlwall = 10, S_trwall = 11, S_ndoor = 12, S_vodoor = 13, S_hodoor = 14,
-      S_vcdoor = 15, S_hcdoor = 16, S_bars = 17, S_tree = 18, S_room = 19,
-      S_darkroom = 20, S_corr = 22, S_litcorr = 23, S_upstair = 25,
-      S_dnstair = 26, S_upladder = 27, S_dnladder = 28, S_altar = 33,
-      S_grave = 34, S_throne = 35, S_sink = 36, S_fountain = 37, S_pool = 38,
-      S_ice = 39, S_lava = 40, S_lavawall = 41, S_vodbridge = 42,
-      S_hodbridge = 43, S_vcdbridge = 44, S_hcdbridge = 45, S_air = 46,
-      S_cloud = 47, S_water = 48;
-
-// C ref: mkroom.c:912 cmap_to_type(sym) — display symbol back to topology
-// type, for remembered terrain when a mimic poses as furniture.  mkroom.js does
-// not have it yet; it lives here because update_lastseentyp() is its only
-// caller in this file and cannot await an import.
-function cmap_to_type(sym) {
-    let typ = STONE; /* catchall */
-
-    switch (sym) {
-    case S_stone: typ = STONE; break;
-    case S_vwall: typ = VWALL; break;
-    case S_hwall: typ = HWALL; break;
-    case S_tlcorn: typ = TLCORNER; break;
-    case S_trcorn: typ = TRCORNER; break;
-    case S_blcorn: typ = BLCORNER; break;
-    case S_brcorn: typ = BRCORNER; break;
-    case S_crwall: typ = CROSSWALL; break;
-    case S_tuwall: typ = TUWALL; break;
-    case S_tdwall: typ = TDWALL; break;
-    case S_tlwall: typ = TLWALL; break;
-    case S_trwall: typ = TRWALL; break;
-    case S_ndoor:  /* no door (empty doorway) */
-    case S_vodoor: /* open door in vertical wall */
-    case S_hodoor: /* open door in horizontal wall */
-    case S_vcdoor: /* closed door in vertical wall */
-    case S_hcdoor: typ = DOOR; break;
-    case S_bars: typ = IRONBARS; break;
-    case S_tree: typ = TREE; break;
-    case S_room:
-    case S_darkroom: typ = ROOM; break;
-    case S_corr:
-    case S_litcorr: typ = CORR; break;
-    case S_upstair:
-    case S_dnstair: typ = STAIRS; break;
-    case S_upladder:
-    case S_dnladder: typ = LADDER; break;
-    case S_altar: typ = ALTAR; break;
-    case S_grave: typ = GRAVE; break;
-    case S_throne: typ = THRONE; break;
-    case S_sink: typ = SINK; break;
-    case S_fountain: typ = FOUNTAIN; break;
-    case S_pool: typ = POOL; break;
-    case S_ice: typ = ICE; break;
-    case S_lava: typ = LAVAPOOL; break;
-    case S_vodbridge: /* open drawbridge spanning north/south */
-    case S_hodbridge: typ = DRAWBRIDGE_DOWN; break; /* east/west */
-    case S_vcdbridge: /* closed drawbridge in vertical wall */
-    case S_hcdbridge: typ = DBWALL; break;
-    case S_air: typ = AIR; break;
-    case S_cloud: typ = CLOUD; break;
-    case S_water: typ = WATER; break;
-    case S_lavawall: typ = LAVAWALL; break;
-    default: break; /* not a cmap symbol? */
-    }
-    return typ;
-}
-
-// C ref: windows.c:1816 add_menu_heading() / :1832 add_menu_str() — the two
-// wrappers print_mapseen() uses.  windows.c has no js/ counterpart; these call
-// the tty windowport directly (the whole port is tty-only).
-function add_menu_heading(wt, tmpwin, buf) {
-    const any = {};
-    let attr = menuHeadAttr();
-    let color = game.iflags?.menu_headings?.color ?? NO_COLOR;
-
-    /* suppress highlighting during end-of-game disclosure */
-    if (game.program_state?.gameover)
-        attr = ATR_NONE, color = NO_COLOR;
-
-    wt.tty_add_menu(tmpwin, null, any, '\0', '\0', attr, color,
-                    buf, MENU_ITEMFLAGS_SKIPMENUCOLORS);
-}
-function add_menu_str(wt, tmpwin, buf) {
-    const any = {};
-
-    wt.tty_add_menu(tmpwin, null, any, '\0', '\0', ATR_NONE, NO_COLOR,
-                    buf, MENU_ITEMFLAGS_NONE);
-}
+// C ref: defsym.h PCHAR() — S_altar's index (altarmask_at() below).
+const S_altar = 33;
 
 /* ── dungeon.c:91 dumpit ─────────────────────────────────────────────────── */
 
@@ -2472,6 +2339,32 @@ export function ledger_to_dlev(ledgerno) {
     return ledgerno - game.dungeons[ledger_to_dnum(ledgerno)].ledger_start;
 }
 
+// C ref: dungeon.c u_on_newpos(x, y) — put the hero on a specific square. Off-
+// map validation is a panic()/impossible() in C, never reached legally.
+// hack.c's domove_core() (inlined in cmd.js) takes the "same level" arm;
+// goto_level() always takes the other, since u.uz already names the
+// destination while u.uz0 still names the level left.  That arm's
+// map_location() consumes no core RNG but does make display-rng draws while
+// Hallucinating (a statue/object under the hero).
+export async function u_on_newpos(x, y) {
+    const u = game.u;
+    u.ux = x;
+    u.uy = y;
+    u.uundetected = 0;
+    /* a ridden steed always shares the hero's location */
+    if (u.usteed) { u.usteed.mx = u.ux; u.usteed.my = u.uy; }
+    if (u.uz?.dnum !== u.uz0?.dnum || u.uz?.dlevel !== u.uz0?.dlevel) {
+        /* changing levels: don't leave the old position set with stale values */
+        u.ux0 = u.ux; u.uy0 = u.uy;
+        /* sets lastseentyp; the object-glyph pick draws display rng while Hallucinating */
+        map_location(u.ux, u.uy);
+        (game.iflags = game.iflags || {}).terrain_typ = 37; /* MAX_TYPE: "none of the above" */
+    } else {
+        see_nearby_objects();
+    }
+    await earth_sense(); // dungeon.c:1600
+}
+
 /* ── dungeon.c:1548 earth_sense ─────────────────────────────────────────── */
 
 const FOOT = 5;   /* hack.h:136 body_part() index */
@@ -2619,7 +2512,8 @@ export function lev_by_name(nam) {
     return lev;
 }
 
-/* ── dungeon.c:2478 get_annotation .. :2500 query_annotation ────────────── */
+/* ── dungeon.c:2478 get_annotation, :2489 print_level_annotation ───────── */
+// (query_annotation() is js/extcmd-handlers.js, which owns the #annotate prompt.)
 
 // C ref: dungeon.c:2478 get_annotation(lev).
 export function get_annotation(lev) {
@@ -2639,69 +2533,6 @@ export async function print_level_annotation() {
     if (annotation) {
         const { pline } = await import('./display.js');
         await pline(`You remember this level as ${annotation}.`);
-    }
-}
-
-// C ref: dungeon.c:2500 query_annotation(lev) — the #annotate prompt.  `lev`
-// null means the current level.  EDIT_GETLIN is not defined in the recorder
-// build, so the "Replace annotation ..." arm is the live one.
-export async function query_annotation(lev) {
-    let mptr;
-    let nbuf; /* Buffer for response */
-
-    if (!(mptr = find_mapseen(lev ? lev : game.u?.uz)))
-        return;
-
-    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-    const getlin = (q) => hooked_tty_getlin(q, null);
-
-    nbuf = '';
-    if (mptr.custom) {
-        const tmpbuf = `Replace annotation "${mptr.custom.slice(0, 30)}`
-            + `${(mptr.custom.length > 30) ? '...' : ''}" with?`;
-        nbuf = await getlin(tmpbuf);
-    } else {
-        let lbuf; /* level description */
-
-        if (!lev || on_level(game.u?.uz, lev)) {
-            lbuf = 'this dungeon level';
-        } else {
-            const dflgs = (lev.dnum === game.u?.uz?.dnum) ? 0 : 2;
-            const save_uz = game.u.uz;
-            const { describe_level } = await import('./botl.js');
-            const out = { buf: '' };
-
-            game.u.uz = lev;
-            describe_level(out, dflgs);
-            game.u.uz = save_uz;
-            lbuf = out.buf;
-
-            lbuf = lbuf.replace('Dlvl:', 'level ');
-            /* describe_level() formats the level number with %-2d, so a single
-               digit leaves a trailing space behind even without dflgs & 1 */
-            lbuf = lbuf.replace(/^[ \t]+|[ \t]+$/g, '');
-        }
-        const qbuf = `What do you want to call ${lbuf}?`;
-        nbuf = await getlin(qbuf);
-    }
-
-    /* empty input or ESC means don't add or change annotation;
-       space-only means discard current annotation without adding new one */
-    if (nbuf == null || nbuf === '' || nbuf.charCodeAt(0) === 27)
-        return;
-    /* strip leading and trailing spaces, compress out consecutive spaces */
-    nbuf = mungspaces(nbuf);
-
-    /* discard old annotation, if any */
-    if (mptr.custom) {
-        mptr.custom = null;
-        mptr.custom_lth = 0;
-    }
-    /* add new annotation, unless it's all spaces */
-    if (nbuf && nbuf !== ' ') {
-        mptr.custom = nbuf;
-        /* _lth field does not include trailing '\0' in the count */
-        mptr.custom_lth = mptr.custom.length;
     }
 }
 
@@ -3079,21 +2910,6 @@ function lastseentyp_at(x, y) {
     return game.lastseentyp?.[x]?.[y] | 0;
 }
 
-// C ref: dungeon.c:2927 update_lastseentyp(x, y).
-export function update_lastseentyp(x, y) {
-    let mtmp;
-    let ltyp = game.level?.at(x, y)?.typ;
-
-    if (ltyp === DRAWBRIDGE_UP)
-        ltyp = db_under_typ(game.level.at(x, y).drawbridgemask | 0);
-    if ((mtmp = m_at(x, y)) != null
-        && mtmp.m_ap_type === M_AP_FURNITURE && canseemon(mtmp))
-        ltyp = cmap_to_type(mtmp.mappearance);
-    if (!game.lastseentyp) game.lastseentyp = [];
-    if (!game.lastseentyp[x]) game.lastseentyp[x] = new Array(ROWNO).fill(0);
-    game.lastseentyp[x][y] = ltyp | 0;
-}
-
 // C ref: dungeon.c:2943 update_mapseen_for(x, y) — "deferred update needs to be
 // done immediately; hide details from caller".  lock.c's not-a-door arm.
 export async function update_mapseen_for(x, y) {
@@ -3366,65 +3182,7 @@ export function mapseen_temple(_priest /* UNUSED */) {
         mptr.flags.msanctum = 1;
 }
 
-/* ── dungeon.c:3304 show_overview / :3344 traverse_mapseenchn ──────────── */
-
-// C ref: dungeon.c:3304 show_overview(why, reason) — #overview and end-of-game
-// disclosure.  The endgame levels come out FIRST so the Planes (dnum 5-ish)
-// print above the main dungeon (dnum 0).
-export async function show_overview(why, reason) {
-    const lastdun_p = { v: -1 };
-    let n;
-
-    /* lazy initialization */
-    await recalc_mapseen();
-
-    const wt = await import('./wintty.js');
-    const win = wt.tty_create_nhwindow(NHW_MENU);
-    wt.tty_start_menu(win, MENU_BEHAVE_STANDARD);
-    if (In_endgame(game.u?.uz))
-        await traverse_mapseenchn(1, { wt, win }, why, reason, lastdun_p);
-    /* if game is over or we're not in the endgame yet, show the dungeon */
-    if (why > 0 || !In_endgame(game.u?.uz))
-        await traverse_mapseenchn(0, { wt, win }, why, reason, lastdun_p);
-    wt.tty_end_menu(win, null);
-    const selected = [];
-    n = await wt.tty_select_menu(win, (why !== -1) ? PICK_NONE : PICK_ONE,
-                                selected);
-    if (n > 0) {
-        const ledger = (selected[0]?.item?.a_int ?? selected[0]?.a_int) - 1;
-        const lev = { dnum: ledger_to_dnum(ledger),
-                      dlevel: ledger_to_dlev(ledger) };
-        await query_annotation(lev);
-    }
-    wt.tty_destroy_nhwindow(win);
-}
-
-// C ref: dungeon.c:3344 traverse_mapseenchn() — display endgame levels or
-// non-endgame levels, not both.
-export async function traverse_mapseenchn(viewendgame, win, why, reason, lastdun_p) {
-    let showheader;
-
-    for (const mptr of mapseenchn()) {
-        if (viewendgame ^ (In_endgame(mptr.lev) ? 1 : 0))
-            continue;
-
-        /* only print out info for a level or a dungeon if it's of interest */
-        if (why !== 0 || interest_mapseen(mptr)) {
-            showheader = (mptr.lev.dnum !== lastdun_p.v);
-            await print_mapseen(win, mptr, why, reason, showheader);
-            lastdun_p.v = mptr.lev.dnum;
-        }
-    }
-}
-
-/* ── dungeon.c:3368 seen_string, :3460 tunesuffix ──────────────────────── */
-
-// C ref: dungeon.c:3368 seen_string(x, obj) — "players are computer scientists:
-// 0, 1, 2, n".  The body already sits above as overview_seen_string(); this is
-// the C name for it, not a second copy.
-export function seen_string(x, obj) {
-    return overview_seen_string(x, obj);
-}
+/* ── dungeon.c:3460 tunesuffix ──────────────────────────────────────────── */
 
 // C ref: dungeon.c:3460 tunesuffix(mptr, outbuf, bsz) — append the passtune
 // hint to the Castle annotation, but only if the player has heard it and the
@@ -3495,191 +3253,3 @@ async function mapseen_annotations(mptr) {
     return out;
 }
 
-// C ref: dungeon.c:3516 print_mapseen(win, mptr, final, how, printdun).
-// `win` is show_overview()'s { wt, win } pair; an ARRAY is accepted too so a
-// caller that only wants the lines (build_overview_lines()'s job today) can
-// pass one.
-export async function print_mapseen(win, mptr, final, how, printdun) {
-    let buf, tmpbuf;
-    let i, depthstart, dnum;
-    const died_here = (final === 2 && on_level(game.u?.uz, mptr.lev));
-    let any;
-
-    const heading = (s) => {
-        if (Array.isArray(win)) win.push({ text: s, attr: final ? ATR_NONE : menuHeadAttr() });
-        else add_menu_heading(win.wt, win.win, s);
-    };
-    const menu_str = (s) => {
-        if (Array.isArray(win)) win.push({ text: s, attr: ATR_NONE });
-        else add_menu_str(win.wt, win.win, s);
-    };
-    const menu_item = (a, s) => {
-        if (Array.isArray(win)) win.push({ text: s, attr: ATR_NONE, a_int: a.a_int });
-        else win.wt.tty_add_menu(win.win, null, a, '\0', '\0', ATR_NONE,
-                                 NO_COLOR, s, MENU_ITEMFLAGS_NONE);
-    };
-
-    /* Damnable special cases */
-    /* The quest and knox should appear to be level 1 to match other text. */
-    dnum = mptr.lev.dnum;
-    if (dnum === game.quest_dnum || dnum === game.knox_level?.dnum)
-        depthstart = 1;
-    else
-        depthstart = game.dungeons[dnum].depth_start;
-
-    if (printdun) {
-        if (game.dungeons[dnum].dunlev_ureached === game.dungeons[dnum].entry_lev
-            /* suppress the negative numbers in the endgame */
-            || In_endgame(mptr.lev))
-            buf = `${game.dungeons[dnum].dname}:`;
-        else if (builds_up(mptr.lev))
-            buf = `${game.dungeons[dnum].dname}: levels `
-                + `${depthstart + game.dungeons[dnum].entry_lev - 1} up to `
-                + `${depthstart + game.dungeons[dnum].dunlev_ureached - 1}`;
-        else
-            buf = `${game.dungeons[dnum].dname}: levels ${depthstart} to `
-                + `${depthstart + game.dungeons[dnum].dunlev_ureached - 1}`;
-
-        heading(buf);
-    }
-
-    /* calculate level number */
-    i = depthstart + mptr.lev.dlevel - 1;
-    if (In_endgame(mptr.lev))
-        buf = `${(final !== -1) ? TAB : ''}${endgamelevelname(i)}:`;
-    else
-        buf = `${(final !== -1) ? TAB : ''}Level ${i}:`;
-
-    /* wizmode prints out proto dungeon names for clarity */
-    if (wizard()) {
-        const slev = Is_special(mptr.lev);
-
-        if (slev != null)
-            buf += ` [${slev.proto}]`;
-    }
-    /* [perhaps print custom annotation on its own line when it's long] */
-    if (mptr.custom)
-        buf += ` "${mptr.custom}"`;
-    if (on_level(game.u?.uz, mptr.lev))
-        buf += ` <- You ${(final <= 0 || (final === 1 && how === ASCENDED)) ? 'are'
-                  : (final === 1 && how === ESCAPED) ? 'left from'
-                    : 'were'} here.`;
-
-    any = {};
-    if (final === -1)
-        /* `anything` is a UNION: writing a_int also makes a_void non-null,
-           which is what tty_add_menu() tests for selectability */
-        any.a_int = ledger_no(mptr.lev) + 1, any.a_void = true;
-    menu_item(any, buf);
-
-    if (mptr.flags.forgot)
-        return;
-
-    if (OF_INTEREST(mptr.feat)) {
-        buf = '';
-
-        i = 0; /* interest counter */
-        const COMMA = () => (i++ > 0 ? ', ' : PREFIX);
-        /* C ref: dungeon.c:3494 ADDNTOBUF / :3502 ADD2NTOBUF */
-        const ADDNTOBUF = (nam, v) => {
-            if (v) buf += `${COMMA()}${seen_string(v, nam)} ${nam}${plur(v)}`;
-        };
-        const ADD2NTOBUF = (nam, v, nam2, v2) => {
-            if (v && v2) {
-                buf += `${COMMA()}${seen_string(v, nam)} ${nam}${plur(v)}`
-                    + ` and ${seen_string(v2, nam2)} ${nam2}${plur(v2)}`;
-            } else if (v) {
-                ADDNTOBUF(nam, v);
-            } else if (v2) {
-                ADDNTOBUF(nam2, v2);
-            }
-        };
-
-        /* List interests in an order vaguely corresponding to how important
-         * they are. */
-        if (mptr.feat.nshop > 0) {
-            if (mptr.feat.nshop > 1)
-                ADDNTOBUF('shop', mptr.feat.nshop);
-            else
-                buf += `${COMMA()}${an_dg(shop_string(mptr.feat.shoptype))}`;
-        }
-        if (mptr.feat.naltar > 0 || mptr.feat.ntemple > 0) {
-            let atmp;
-
-            /* being aware of a temple doesn't guarantee being aware of its
-               altar (blind on entry, or out of view in an irregular room) */
-            ADD2NTOBUF('temple', mptr.feat.ntemple,
-                       'altar', mptr.feat.naltar);
-
-            /* only print out altar's god if they are all to your god */
-            atmp = mptr.feat.msalign;               /*    0,  1,  2,  3 */
-            atmp = Msa2amask(atmp);                /*    0,  1,  2,  4 */
-            if (Amask2align(atmp) === game.u?.ualign?.type) /* -128,-1,0,+1 */
-                buf += ` to ${align_gname(
-                    roles.findIndex((r) => r.mnum === game.urole?.mnum),
-                    game.u.ualign.type)}`;
-        }
-        ADDNTOBUF('throne', mptr.feat.nthrone);
-        ADDNTOBUF('fountain', mptr.feat.nfount);
-        ADDNTOBUF('sink', mptr.feat.nsink);
-        ADDNTOBUF('grave', mptr.feat.ngrave);
-        ADDNTOBUF('tree', mptr.feat.ntree);
-        /* capitalize afterwards */
-        i = PREFIX.length;
-        buf = buf.slice(0, i) + highc(buf[i]) + buf.slice(i + 1);
-        /* capitalizing it makes it a sentence; terminate with '.' */
-        buf += '.';
-        menu_str(buf);
-    }
-
-    for (const line of await mapseen_annotations(mptr))
-        menu_str(line);
-
-    /* print out branches */
-    if (mptr.br) {
-        buf = `${PREFIX}${br_string2(mptr.br)} to `
-            + `${game.dungeons[mptr.br.end2.dnum].dname}`;
-
-        /* mapseen objects are printed in increasing order of dlevel, so
-         * clarify which level an UPWARD branch goes to.  Unless it's the
-         * end game. */
-        if (mptr.br.end1_up && !In_endgame(mptr.br.end2))
-            buf += `, level ${depth(mptr.br.end2)}`;
-        buf += '.';
-        menu_str(buf);
-    }
-
-    /* maybe print out bones details */
-    if (mptr.final_resting_place || final > 0) {
-        let bp;
-        let kncnt = !died_here ? 0 : 1;
-
-        for (bp = mptr.final_resting_place; bp; bp = bp.next)
-            if (bp.bonesknown || wizard() || final > 0)
-                ++kncnt;
-        if (kncnt) {
-            buf = `${PREFIX}Final resting place for`;
-            menu_str(buf);
-            if (died_here) {
-                /* disclosure happens before bones creation, so listing the
-                   dead hero here doesn't give away whether bones are made */
-                const { formatkiller } = await import('./topten.js');
-                tmpbuf = formatkiller(BUFSZ, how, true);
-                /* rephrase a few death reasons to work with "you" */
-                tmpbuf = tmpbuf.replace(' himself', ' yourself');
-                tmpbuf = tmpbuf.replace(' herself', ' yourself');
-                tmpbuf = tmpbuf.replace(' his ', ' your ');
-                tmpbuf = tmpbuf.replace(' her ', ' your ');
-                buf = `${PREFIX}${TAB}you, ${tmpbuf}${--kncnt ? ',' : '.'}`;
-                menu_str(buf);
-            }
-            for (bp = mptr.final_resting_place; bp; bp = bp.next) {
-                if (bp.bonesknown || wizard() || final > 0) {
-                    buf = `${PREFIX}${TAB}${bp.who}, ${bp.how}`
-                        + `${--kncnt ? ',' : '.'}`;
-                    menu_str(buf);
-                }
-            }
-        }
-    }
-}

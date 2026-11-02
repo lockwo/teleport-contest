@@ -2,7 +2,7 @@
 // C ref: makemaz("minend") -> load_special("minend-1.lua"), the "Mimic of the
 // Mines" variant (rnd(3) == 1 of minend's three rndlevs).
 
-import { COLNO, OROOM, ROWNO } from '../const.js';
+import { M_AP_OBJECT, COLNO, OROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
 import { GEM_CLASS, TOOL_CLASS, uncurse } from '../mkobj.js';
 import { rn2 } from '../rng.js';
@@ -57,7 +57,7 @@ const MINEND1_PLACE = [[8, 16], [13, 7], [21, 8], [41, 14],
 // inside makemon().  No RNG; the retry loop is BOULDER-only.
 function mimic_appear_as(mtmp, otyp) {
     if (!mtmp) return;
-    mtmp.m_ap_type = 'obj';
+    mtmp.m_ap_type = M_AP_OBJECT;
     mtmp.mappearance = otyp;
 }
 

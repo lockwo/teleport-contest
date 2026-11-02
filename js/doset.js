@@ -28,12 +28,16 @@ import { update_topl, topl_more, render_map_to_grid, docrt, reglyph_darkroom, ro
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
 import { menu_ctx } from './windows.js';
+import { display_file } from './pager.js';
+import { MENU_TRADITIONAL, MENU_COMBINATION } from './const.js';
+import { OPTMENUHELP } from './pager_data.js';
 import { color_attr_to_str } from './coloratt.js';
 import * as OPTS from './options.js';
 import { OPT_MENU_DRIVER, handler_number_pad,
          handler_autounlock, autounlock_val, handler_autopickup_exception,
          handler_menu_colors, handler_statuslines, paranoid_confirmation_val } from './options.js';
 import { count_status_hilites, count_cond } from './botl.js';
+import { mungspaces } from './hacklib.js';
 
 // C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
 // (jsmain.js) stores only the selected symset NAME (no handling struct, unlike
@@ -145,8 +149,9 @@ const SIMPLE_BOOL_DEFAULT = {
 // map-display booleans forces flush_screen(1)/docrt() to redraw the level, so a
 // stationary pet or object pile picks up (or drops) its highlight immediately.
 const REDRAW_ON_TOGGLE = new Set([
-    'hilite_pet', 'hilite_pile', 'showrace', 'sparkle',
-    'color', 'bgcolors', 'customcolors', 'customsymbols',
+    'hilite_pet', 'hilite_pile', 'showrace', 'color', 'hitpointbar',
+    'wizmgender', 'use_inverse', 'perm_invent', 'ascii_map', 'tiled_map',
+    'customcolors', 'customsymbols',
 ]);
 
 // C ref: options.c doset_simple_menu() — the four displayed sections
@@ -749,7 +754,7 @@ function clearRow(d, from, row) {
 // Render a single full-screen options-menu page (offx == 0).
 // `entries` is the flat menu list; `page` is the 0-based page index;
 // `npages` the page count; `selected` is a Set of entry indices.
-function renderOptionsPage(entries, page, npages, selected, counts = null) {
+function renderOptionsPage(entries, page, npages, selected, counts = null, plus = null) {
     const d = disp();
     if (!d) return { row: 0 };
     d.clearScreen();
@@ -772,7 +777,10 @@ function renderOptionsPage(entries, page, npages, selected, counts = null) {
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
             // at col 1).  '?' help item is never selectable-marked here.
-            const mark = selected.has(i) ? (counts?.has(i) ? '#' : '+') : '-';
+            // C ref: wintty.c set_item_state() repaints a toggled item '+' (or '#') in
+            // place, but a full page paint (process_menu_window) shows a selected
+            // item as '*' (or '#').
+            const mark = selected.has(i) ? (counts?.has(i) ? '#' : plus?.has(i) ? '+' : '*') : '-';
             const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
             /* wintty.c process_menu_window(): ++curx < cols stops before the last column */
             d.putstr(0, r, ` ${e.a} ${mark} ${body}`.slice(0, 79), NO_COLOR, 0);
@@ -916,13 +924,20 @@ async function pickupTypesMenu(blankStatus) {
             toggle(menuClasses[menuClasses.length - 1]);
             continue;
         }
-        const cls = byAccel.get(ch) || bySym.get(ch);
+        // C ref: process_menu_window(): an explicit selector letter wins, then a
+        // mapped menu command (so '.' selects all even though '.' is also the
+        // group accelerator of the "splash of venom" class), then group accelerators.
+        const cls = byAccel.get(ch);
         if (cls) {
             toggle(cls);
             continue;
         }
         // C ref: wintty.c:1650-1698; windows.c:1562,1715 — bulk changes
         // obey the All classes entry's SKIPINVERT flag.
+        if (![',', '.', '\\', '-', '~', '@'].includes(ch) && bySym.get(ch)) {
+            toggle(bySym.get(ch));
+            continue;
+        }
         if ([',', '.', '\\', '-', '~', '@'].includes(ch)) {
             for (const cls of menuClasses) {
                 const wasSelected = selected.has(cls.a);
@@ -946,8 +961,46 @@ async function pickupTypesMenu(blankStatus) {
 // game.flags.pickup_types as the canonical class-symbol string ('' = all).
 // C ref: optfn_pickup_types() do_handler path.
 async function runPickupTypesHandler(blankStatus = true) {
-    const result = await pickupTypesMenu(blankStatus);
     game.flags = game.flags || {};
+    // C ref: options.c optfn_pickup_types() do_set via handler_pickup_types():
+    // menustyle Traditional/Combination prompt with getlin() first; only 'm' (or
+    // any other menustyle) goes on to choose_classes_menu().
+    const { menu_style } = await import('./pickup.js');
+    const ms = menu_style();
+    if (ms === MENU_TRADITIONAL || ms === MENU_COMBINATION) {
+        const tbuf = game.flags.pickup_types || '';
+        const ocl = (game.flags.inv_order || DEF_INV_ORDER_OC).map((oc) => OC_SYMS[oc] || '').join('');
+        let useMenu = false;
+        await runOptionsHandler(async () => {
+            const qbuf = `New pickup_types: [${ocl} am] (${tbuf || 'all'})`;
+            const abuf = await OPT_MENU_DRIVER.getlin(qbuf);
+            const wasspace = abuf[0] === ' '; /* before mungspaces */
+            let op = mungspaces(abuf);
+            if (wasspace && !op) {
+                /* one or more spaces will remove old value */
+            } else if (!op || op[0] === '\x1b') {
+                op = tbuf; /* restore */
+            } else if (op[0] === 'm') {
+                useMenu = true;
+                return;
+            }
+            game.flags.pickup_types = '';
+            let i = 0;
+            while (op[i] === ' ') i++;
+            if (op[i] !== 'a' && op[i] !== 'A') {
+                let bad = false, out = '';
+                for (; i < op.length; i++) {
+                    if (OC_SYMS.indexOf(op[i], 1) > 0 && !out.includes(op[i])) out += op[i];
+                    else bad = true;
+                }
+                game.flags.pickup_types = out;
+                /* C prints `op` after the scan loop advanced it past the end: always empty. */
+                if (bad) await OPT_MENU_DRIVER.error("Unknown pickup_types parameter ''");
+            }
+        });
+        if (!useMenu) return;
+    }
+    const result = await pickupTypesMenu(blankStatus);
     if (result === null) return;          // ESC: leave value unchanged
     if (result === 'all') {
         game.flags.pickup_types = '';
@@ -1033,7 +1086,9 @@ export async function runOptionsHandler(handler) {
         const res = await handler();
         if (game._toplin) {
             menu_ctx.blankStatus = false; // the handler's pline republished the status
-            await topl_more();
+            // tty_display_nhwindow(WIN_MESSAGE) returns at once on WIN_CANCELLED
+            // (== WIN_STOP, set by an ESC'd --More--): no further --More--.
+            if (!game._winStop) await topl_more();
             game._toplin = 0;
             game._pending_message = '';
         }
@@ -1189,7 +1244,13 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
 // (no pick).  Each select_menu round starts on page 1; the player pages with
 // space/'>' (forward) and '<' (back); a letter picks that page's option and
 // ends the round.  Consumes no dungeon RNG.
+// C ref: options.c doset_simple(): give_opt_msg = FALSE for the run, TRUE after
+// (which also re-enables the toggled messages idlecheckpoint turned off).
 export async function dosetSimple() {
+    try { return await dosetSimpleLoop(); } finally { game.flags.give_opt_msg_off = false; }
+}
+
+async function dosetSimpleLoop() {
     for (;;) { // doset_simple_menu() loop — one select_menu round per iteration
         game._optStatusPainted = false;
         // tty_display_nhwindow() clears WIN_MESSAGE when raising the parent
@@ -1213,9 +1274,9 @@ export async function dosetSimple() {
             renderSimpleMenuPage(pages[page], page, npages);
             if (blankTop) clearRow(disp(), 0, 0);
             game._modal_screen = 'optmenu';
-            const c = await nhgetch();
+            let c = await nhgetch();
             delete game._modal_screen;
-            const ch = String.fromCharCode(c);
+            let ch = String.fromCharCode(c);
             // C ref: wintty.c:1563-1615 — ESC cancels a numeric menu count
             // before it can cancel the menu.  Invalid input is swallowed by
             // xwaitforspace(), so it leaves that count pending.
@@ -1225,7 +1286,12 @@ export async function dosetSimple() {
             }
             if (c === 27 && count) { count = 0; continue; }
             const hit = pages[page].items.find(it => it.selectable && it.sel === ch);
-            if (!hit && !' \r\n\x1b^|><.-@,\\~:'.includes(ch)) continue;
+            if (!hit && !' \r\n\x1b'.includes(ch) && !OPTS.default_menu_cmds.includes(ch)
+                && !OPTS.mapped_menu_cmds().includes(ch)) continue;
+            if (!hit) {   /* a selector outranks a mapped menu command */
+                ch = OPTS.map_menu_cmd(ch);
+                c = ch.charCodeAt(0);
+            }
             count = 0;
 
             if (c === 27) { cancelled = true; break; }    // ESC: cancel
@@ -1340,13 +1406,22 @@ function toggleSimpleBool(name) {
 
 // C ref: options.c doset() — the 'O' command.  Runs the full options menu,
 // applies the picks, and reports toggled booleans / runs compound handlers.
+// C ref: options.c doset() `rerun:` — when '?' is the only choice picked, the
+// menu is shown again without the help rows.
 export async function doset() {
     const cmdassist_on = game.iflags?.cmdassist === undefined
         ? SIMPLE_BOOL_DEFAULT.cmdassist : !!game.iflags.cmdassist;
-    const entries = buildFullEntries(!cmdassist_on);
+    let skiphelp = !cmdassist_on;
+    while (await dosetPass(skiphelp) === 'rerun') skiphelp = true;
+    return 0;
+}
+
+async function dosetPass(skiphelp) {
+    const entries = buildFullEntries(skiphelp);
     const npages = Math.ceil(entries.length / PER_PAGE);
     const selected = new Set(); // entry indices
     const counts_sel = new Map(); // entry index -> count it was selected with ('#' marker)
+    const plus = new Set(); // entries repainted in place since the page was last painted
 
     // Map of accelerator char -> entry index for the *current* page only.
     let page = 0;
@@ -1356,20 +1431,25 @@ export async function doset() {
     let blankTop = false;
     let count = 0, counting = false;
     for (;;) {
-        renderOptionsPage(entries, page, npages, selected, counts_sel);
+        renderOptionsPage(entries, page, npages, selected, counts_sel, plus);
         if (blankTop) for (let x = 0; x < COLS; x++) disp().setCell(x, 0, ' ', NO_COLOR, 0);
         game._modal_screen = 'optmenu';
-        const c = await nhgetch();
+        let c = await nhgetch();
         delete game._modal_screen;
-        const ch = String.fromCharCode(c);
+        let ch = String.fromCharCode(c);
         // C ref: process_menu_window() count prefix: digits accumulate and ESC
         // while counting only abandons the count; any other key consumes it.
         if (ch >= '0' && ch <= '9') { count = count * 10 + (c - 48); if (count) counting = true; continue; }
         if (c === 27 && counting) { count = 0; counting = false; continue; }
         // xwaitforspace(resp) bells on anything outside the page selectors and
         // menu commands without returning, so a pending count survives it.
-        if (!entries.slice(page * PER_PAGE, (page + 1) * PER_PAGE).some(e => e.t === 'a' && e.a === ch)
-            && !' \r\n\x1b^|><.-@,\\~:'.includes(ch)) continue;
+        const isSelector = entries.slice(page * PER_PAGE, (page + 1) * PER_PAGE).some(e => e.t === 'a' && e.a === ch);
+        if (!isSelector && !' \r\n\x1b'.includes(ch) && !OPTS.default_menu_cmds.includes(ch)
+            && !OPTS.mapped_menu_cmds().includes(ch)) continue;
+        if (!isSelector) {   /* a selector outranks a mapped menu command */
+            ch = OPTS.map_menu_cmd(ch);
+            c = ch.charCodeAt(0);
+        }
         const useCount = counting, useN = count;
         counting = false; count = 0;
         if (c === 27) { cancelled = true; break; }    // ESC: cancel whole menu
@@ -1379,13 +1459,13 @@ export async function doset() {
         // no next page ("' ' finishes menus here, but stop '>' doing the
         // same"), so '>' on the last page is a no-op.
         if (ch === ' ' || ch === '>') {
-            if (page < npages - 1) { page++; blankTop = false; continue; }
+            if (page < npages - 1) { page++; blankTop = false; plus.clear(); continue; }
             if (ch === ' ') break;
             continue;
         }
-        if (ch === '<') { if (page > 0) { page--; blankTop = false; } continue; }
-        if (ch === '^') { page = 0; blankTop = false; continue; }
-        if (ch === '|') { page = npages - 1; blankTop = false; continue; }
+        if (ch === '<') { if (page > 0) { page--; blankTop = false; plus.clear(); } continue; }
+        if (ch === '^') { if (page !== 0) { page = 0; blankTop = false; plus.clear(); } continue; }
+        if (ch === '|') { if (page !== npages - 1) { page = npages - 1; blankTop = false; plus.clear(); } continue; }
         // C ref: wintty.c process_menu_window() MENU_SELECT_PAGE ',',
         // MENU_UNSELECT_PAGE '\\', MENU_INVERT_PAGE '~', MENU_SELECT_ALL '.',
         // MENU_UNSELECT_ALL '-', MENU_INVERT_ALL '@'.  Every options.c entry is
@@ -1410,10 +1490,11 @@ export async function doset() {
             // (searches every page, not just the displayed one)
             for (let i = 0; i < entries.length; i++) {
                 const e = entries[i];
-                if (e.t !== 'a' || e.kind === 'help') continue;
+                if (e.t !== 'a') continue;
                 const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
                 if (!pmatchi(`*${reply}*`, `${e.a} - ${body}`)) continue;
                 if (selected.has(i)) { selected.delete(i); counts_sel.delete(i); } else selected.add(i);
+                if (i >= page * PER_PAGE && i < (page + 1) * PER_PAGE) plus.add(i);
             }
             continue;
         }
@@ -1422,7 +1503,7 @@ export async function doset() {
         const end = Math.min(start + PER_PAGE, entries.length);
         for (let i = start; i < end; i++) {
             const e = entries[i];
-            if (e.t === 'a' && e.a === ch && e.kind !== 'help') {
+            if (e.t === 'a' && e.a === ch) {
                 // C ref: wintty.c toggle_menu_curr(): a selected item with a
                 // positive count just takes the new count; a selected item
                 // otherwise deselects; an unselected one selects (with its
@@ -1432,6 +1513,7 @@ export async function doset() {
                     else { selected.delete(i); counts_sel.delete(i); }
                 } else if (!useCount) selected.add(i);
                 else if (useN > 0) { selected.add(i); counts_sel.set(i, useN); }
+                plus.add(i);
                 break;
             }
         }
@@ -1447,18 +1529,32 @@ export async function doset() {
 
     // Apply picks in menu order (select_menu returns picks in menu order).
     const picks = [...selected].sort((a, b) => a - b).map(i => entries[i]);
+    let gavehelp = false;
     for (const e of picks) {
-        if (e.kind === 'bool') {
+        if (e.kind === 'help') {
+            // C ref: doset() HELP_IDX: display_file(OPTMENUHELP).
+            await display_file(OPTMENUHELP);
+            gavehelp = true;
+        } else if (e.kind === 'bool') {
             // parseoptions toggles the boolean; the displayed value is the
             // pre-toggle one, so a [false]/[off] option turns "on".  Read
             // that pre-toggle value LIVE (liveOptValue), not off the entry's
             // static baked body — the body can be stale for any run whose
             // rc/menu already set this option away from the snapshot's value.
+            if (e.name === 'idlecheckpoint') {
+                // C ref: options.c optfn_boolean() `#ifndef IDLECHECKPOINT`: pline the
+                // missing-support note, force it back off, give_opt_msg = FALSE.
+                game._optStatusPainted = true;
+                game.flags.give_opt_msg_off = true;   /* give_opt_msg = FALSE, sticky */
+                await update_topl("There is no underlying support for 'idlecheckpoint' compiled in.");
+                continue;
+            }
             const wasOff = !liveOptValue(e.name, e.body).on;
             applyBooleanToggle(e.name, wasOff);
             game._optStatusPainted = true;
             if (REDRAW_ON_TOGGLE.has(e.name)) game._optNeedRedraw = true;
-            await update_topl(`'${e.name}' option toggled ${wasOff ? 'on' : 'off'}.`);
+            if (!game.flags.give_opt_msg_off)
+                await update_topl(`'${e.name}' option toggled ${wasOff ? 'on' : 'off'}.`);
         } else if (e.name === 'pickup_types') {
             // The pickup_types handler pops the "Autopickup what?" menu.  C ref:
             // any pending top-line message ("'time' option toggled on.") is
@@ -1518,6 +1614,7 @@ export async function doset() {
             await runOptionsHandler(() => OPTS.handler_compound_getlin(e.name));
         }
     }
+    if (picks.length === 1 && gavehelp) return 'rerun';
     if (game._optNeedRedraw) {
         // C ref: options.c reset_needed_visuals(): reglyph_darkroom(); docrt().
         reglyph_darkroom();

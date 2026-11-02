@@ -3,7 +3,7 @@
 // spell), which scans the area around the hero for hidden doors, corridors,
 // traps and monsters, reveals them, and reports what (if anything) was found.
 
-import { FOOT, TOE } from './const.js';
+import { FOOT, TOE, NOSE, mimic_obj_corpsenm } from './const.js';
 import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
@@ -15,7 +15,8 @@ import { exercise } from './attrib.js';
 import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
          STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET,
          Is_rogue_level, Is_waterlevel, Is_airlevel } from './const.js';
-import { room_discovered, update_lastseentyp } from './dungeon.js';
+import { room_discovered } from './dungeon.js';
+import { update_lastseentyp } from './display.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
 import { NO_COLOR, CLR_WHITE, ATR_INVERSE } from './terminal.js';
 import { rnd } from './rng.js';
@@ -46,6 +47,7 @@ import { S_corr, S_room, S_darkroom, S_litcorr, S_stone, S_vwall, S_ndoor,
          MAXPCHARS, MAXMCLASSES, DEF_MIMIC, DEF_MIMIC_DEF, SYM_OFF_X, gs } from './symbols.js';
 import { SYM_BOULDER, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
 import { the, The } from './objnam.js';
+import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
 
 // objclass.h obj_material_types GOLD == 15 (the blessed-scroll "any gold
 // object" scan, o_material(obj, GOLD)).
@@ -1057,11 +1059,11 @@ export async function food_detect(sobj) {
             await docrt();
             await update_topl(`You sense a lack of ${what} nearby.`);
             if (sobj && sobj.blessed) {
-                if (!u.uedibility) await pline('Your nose starts to tingle.');
+                if (!u.uedibility) await pline(`Your ${body_part(NOSE)} starts to tingle.`);
                 u.uedibility = 1;
             }
         } else if (sobj) {
-            const buf = `Your nose twitches${(sobj.blessed && !u.uedibility)
+            const buf = `Your ${body_part(NOSE)} twitches${(sobj.blessed && !u.uedibility)
                             ? ' then starts to tingle' : ''}.`;
             if (sobj.blessed && !u.uedibility) {
                 // C saves/clears flags.beginner around strange_feeling() to
@@ -1080,7 +1082,7 @@ export async function food_detect(sobj) {
         game.known = true;
         await update_topl(`You ${sobj ? 'smell' : 'sense'} ${what} nearby.`);
         if (sobj && sobj.blessed) {
-            if (!u.uedibility) await pline('Your nose starts to tingle.');
+            if (!u.uedibility) await pline(`Your ${body_part(NOSE)} starts to tingle.`);
             u.uedibility = 1;
         }
     } else {
@@ -1114,11 +1116,11 @@ export async function food_detect(sobj) {
         }
         if (sobj) {
             if (sobj.blessed) {
-                await update_topl(`Your nose ${u.uedibility ? 'continues' : 'starts'}`
+                await update_topl(`Your ${body_part(NOSE)} ${u.uedibility ? 'continues' : 'starts'}`
                                   + ` to tingle and you smell ${what}.`);
                 u.uedibility = 1;
             } else {
-                await update_topl(`Your nose tingles and you smell ${what}.`);
+                await update_topl(`Your ${body_part(NOSE)} tingles and you smell ${what}.`);
             }
         } else {
             await update_topl(`You sense ${what}.`);
@@ -1188,7 +1190,7 @@ export async function object_detect(detector, oclass) {
             if ((!klass && !boulder) || o_in(obj, klass) || o_in(obj, boulder)) ct++;
             if (do_dknown) observe_recursively(obj);
         }
-        if ((is_cursed && mtmp.m_ap_type === 'obj'
+        if ((is_cursed && M_AP_TYPE(mtmp) === M_AP_OBJECT
              && (!klass || klass === objects[mtmp.mappearance]?.oc_class))
             || (findgold(mtmp.minvent) && (!klass || klass === COIN_CLASS))) {
             ct++;
@@ -1256,7 +1258,7 @@ export async function object_detect(detector, oclass) {
             }
         }
         /* allow a mimic to override the detected objects it is carrying */
-        if (is_cursed && mtmp.m_ap_type === 'obj'
+        if (is_cursed && M_AP_TYPE(mtmp) === M_AP_OBJECT
             && (!klass || klass === objects[mtmp.mappearance]?.oc_class)) {
             map_object({ otyp: mtmp.mappearance,
                          oclass: objects[mtmp.mappearance]?.oc_class,
@@ -1266,8 +1268,7 @@ export async function object_detect(detector, oclass) {
                          // the old literal 149 is the black dragon, so a mimic
                          // posing as a corpse or statue with no mcorpsenm named
                          // the wrong species.
-                         corpsenm: (mtmp.mcorpsenm != null) ? mtmp.mcorpsenm
-                                                            : 55 /* PM_TENGU */ }, 1);
+                         corpsenm: mimic_obj_corpsenm(mtmp) }, 1);
         } else if (findgold(mtmp.minvent) && (!klass || klass === COIN_CLASS)) {
             map_object({ otyp: GOLD_PIECE, oclass: COIN_CLASS, quan: rnd(10),
                          ox: mtmp.mx, oy: mtmp.my }, 1);
@@ -1489,7 +1490,7 @@ export async function furniture_detect() {
             } else if (glyph_is_cmap(before) && is_cmap_furniture(before.cmap)) {
                 ++found;
                 const mon = m_at(x, y);
-                if (mon && mon.m_ap_type === 'furniture') {
+                if (mon && M_AP_TYPE(mon) === M_AP_FURNITURE) {
                     // seemimic(mon) — js/apply.js:533 owns the async port; this
                     // module has no seemimic of its own.
                     mon.m_ap_type = 0;
@@ -1679,7 +1680,7 @@ export async function openone(zx, zy, num) {
                 await d_Norep(`You ${cansee(zx, zy) ? 'see'
                     : (!Deaf_hero() ? 'hear' : 'feel the shock of')} an explosion!`);
             }
-            await C.wake_nearto(zx, zy, 11 * 11);
+            await (await import('./mon.js')).wake_nearto(zx, zy, 11 * 11);
             lev.doormask = D_NODOOR;
         } else {
             lev.doormask = D_ISOPEN;
@@ -1824,7 +1825,7 @@ export function reveal_terrain_getglyph(x, y, swallowed, default_glyph, which_su
                           cell: back_to_glyph(x, y) };
             } else {
                 const mtmp = m_at(x, y);
-                if (mtmp && mtmp.m_ap_type === 'furniture') {
+                if (mtmp && M_AP_TYPE(mtmp) === M_AP_FURNITURE) {
                     glyph = { kind: 'cmap', sym: defsyms[mtmp.mappearance]?.sym || ' ' };
                 } else {
                     // C swaps levl[x][y].typ to lastseentyp[][], recalculates
@@ -2003,7 +2004,7 @@ function boulder_sym() { return def_oc_syms[ROCK_CLASS]?.sym || '`'; }
 function is_cmap_furniture(i) { return i >= S_upstair && i <= S_fountain; }
 
 // C ref: svl.lastseentyp[x][y] — the terrain the hero last SAW at a spot,
-// kept as game.lastseentyp[x][y] (dungeon.js update_lastseentyp()).
+// kept as game.lastseentyp[x][y] (display.js update_lastseentyp()).
 function lastseentyp(x, y) {
     const v = game.lastseentyp?.[x]?.[y];
     return (v != null) ? v : game.level?.at(x, y)?.typ;

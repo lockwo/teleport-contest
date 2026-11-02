@@ -4,10 +4,10 @@
 
 import { game, hooks } from './gstate.js';
 import { rn2, rn1, rnd, d } from './rng.js';
-import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING } from './const.js';
+import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING, LUCKMIN, LUCKMAX, ONAME } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { has_innate, minuhpmax, setuhpmax } from './exper.js';
-import { Poison_resistance } from './youprop.js';
+import { Poison_resistance, Wounded_legs_hero } from './youprop.js';
 const FIXED_ABIL_PROP = 67; // prop.h FIXED_ABIL (ring of sustain ability, etc.)
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
@@ -455,10 +455,10 @@ export function stone_luck(include_uncursed) {
 const LUCKSTONE = 470;
 const SPFX_LUCK_ARTIFACTS = new Set(['The Tsurugi of Muramasa',
                                      'The Orb of Fate']);
-function confers_luck_at(obj) {
+export function confers_luck_at(obj) {
     if (!obj) return false;
     if (obj.otyp === LUCKSTONE) return true;
-    return !!obj.oartifact && SPFX_LUCK_ARTIFACTS.has(obj.oname);
+    return !!obj.oartifact && SPFX_LUCK_ARTIFACTS.has(ONAME(obj));
 }
 
 // C ref: attrib.c set_moreluck(). There has just been an inventory change
@@ -471,6 +471,15 @@ export function set_moreluck() {
     if (!luckbon && !carrying_luckstone) u.moreluck = 0;
     else if (luckbon >= 0) u.moreluck = 3;
     else u.moreluck = -3;
+}
+
+// C ref: attrib.c change_luck(n): Luck is clamped to [LUCKMIN, LUCKMAX] on
+// whichever side of zero it ends up (the luckstone bonus is moreluck, not here).
+export function change_luck(n) {
+    const u = game.u;
+    u.uluck = (u.uluck || 0) + n;
+    if (u.uluck < 0 && u.uluck < LUCKMIN) u.uluck = LUCKMIN;
+    if (u.uluck > 0 && u.uluck > LUCKMAX) u.uluck = LUCKMAX;
 }
 
 // ─── attrib.c:455 restore_attrib() ─────────────────────────────────────────
@@ -509,8 +518,7 @@ const A_DEX_AT = 3;
 // C ref: youprop.h Wounded_legs.  js/allmain.js:1406 keeps the same predicate.
 function Wounded_legs_at() {
     const u = game.u;
-    return !!((u?.HWounded_legs || 0) || (u?.EWounded_legs || 0)
-        || (u?.uprops?.Wounded_legs || 0));
+    return Wounded_legs_hero();
 }
 
 // ─── attrib.c:780 postadjabil(ability) ─────────────────────────────────────

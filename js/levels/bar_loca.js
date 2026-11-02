@@ -54,7 +54,7 @@ function quest_create_monster_class_randpos(classNum, peacefulOverride) {
 // finalize is just wallification + a flip_level_rnd (no quest_flip_branch).
 // The mineralize()/kelp pass (hundreds of rn2(10) draws over the huge pool
 // field) is NOT invoked here — it runs generically after mklev() returns via
-// fastforward_fill_mineralize(), exactly as for Bar-strt.
+// makelevel_fill_and_mineralize(), exactly as for Bar-strt.
 // ════════════════════════════════════════════════════════════════════════
 
 const BAR_LOCA_MAP = [

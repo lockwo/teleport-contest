@@ -10,14 +10,15 @@ import { rn2, rnd } from './rng.js';
 import { depth } from './hacklib.js';
 import { distmin } from './hacklib.js';
 import { IS_ROOM, ROOMOFFSET, D_NODOOR, D_ISOPEN, D_LOCKED, D_TRAPPED,
-         SDOOR, DOOR, CORR, ROOM, MM_ESHK } from './const.js';
+         SDOOR, DOOR, CORR, ROOM, MM_ESHK, ALL_TRAPS } from './const.js';
 import { mksobj, mksobj_at, mkobj_at, objects, weight, CORPSE } from './mkobj.js';
 import { set_tin_variety, HEALTHY_TIN } from './eat.js';
+import { mon_learns_traps } from './montraps.js';
 import { makemon, mkclass, mpickobj, name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { m_at } from './display.js';
 import { shtypes, get_shop_item, VEGETARIAN_CLASS } from './shtypes.js';
-import { Is_special } from './dungeon.js';
+import { Is_special, ledger_no } from './dungeon.js';
 import { obj_resists } from './zap.js';
 import { inside_shop } from './shk.js';
 
@@ -133,10 +134,6 @@ export const SHKNAME_POOL = {
 };
 
 // C ref: dungeon.c ledger_no() — dlevel + the dungeon's ledger_start.
-function ledger_no_of(uz) {
-    const dungeon = game.dungeons?.[uz?.dnum ?? 0];
-    return (dungeon?.ledger_start ?? 0) + (uz?.dlevel ?? 1);
-}
 
 // C ref: u_init.c/calendar.c — ubirthday is the game-start wall-clock time
 // (mktime'd from the recording datetime), used only as nameshk()'s
@@ -172,7 +169,7 @@ function nameshk(shk, poolKey) {
     }
 
     const nseed = Math.trunc(ubirthdaySeconds() / 257);
-    let name_wanted = shk.m_id + ledger_no_of(game.u?.uz) + (nseed % 13) - (nseed % 5);
+    let name_wanted = shk.m_id + ledger_no(game.u?.uz) + (nseed % 13) - (nseed % 5);
     if (name_wanted < 0) name_wanted += 18;
     shk.female = name_wanted & 1;
 
@@ -346,7 +343,7 @@ function shkinit(shp, sroom) {
     shk.isshk = 1;
     shk.mpeaceful = 1;
     shk.msleeping = 0;
-    shk.mtrapseen = ~0;                  // mon_learns_traps(shk, ALL_TRAPS): we know all the traps already
+    mon_learns_traps(shk, ALL_TRAPS);   // we know all the traps already
     shk.eshk = shk.eshk || {};
     // C ref: makemon.c newmextra()/neweshk() zero-fills the eshk block; u_entered_shop's `visitct++ ? " again"`
     // and the bill/credit/debit arithmetic read these before any code has written them.

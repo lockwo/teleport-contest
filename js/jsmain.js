@@ -17,7 +17,7 @@ import { NetHackPanic } from './panic.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
 import { flush_screen, warmupBotlStatusFns, remember_topl, yn_prompt_history, key2txt } from './display.js';
-import { has_innate } from './exper.js';
+import { See_invisible_hero } from './youprop.js';
 import { GameDisplay } from './game_display.js';
 import {
     ROLE_NONE, ROLE_RANDOM, ROLE_RACEMASK, ROLE_GENDMASK, ROLE_ALIGNMASK,
@@ -34,7 +34,7 @@ import {
     count_ok_gend, count_ok_align, genders, gotrolefilter, ok_align, reset_role_filtering, ok_gend,
     ok_race, ok_role, pick_align, pick_gend, pick_race, pick_role, races,
     randalign, randgend, randrace, randrole, rigid_role_checks, roleName,
-    plnamesuffix, roles, str2align, str2gend, str2race, str2role, validalign, validgend,
+    plnamesuffix, plname_is_generic, roles, str2align, str2gend, str2race, str2role, validalign, validgend,
     validrace,
 } from './role.js';
 
@@ -335,6 +335,8 @@ export class NethackGame {
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
         g.keybind = opts.keybind || {};
+        // C ref: options.c add_menu_cmd_alias() — gm.mapped_menu_cmds/op.
+        g.menu_cmd_alias = opts.menu_cmd_alias || [];
         // Preserve explicit unbindings unless a later BIND reassigned the key.
         for (const key of opts.keyunbind || []) {
             if (!Object.prototype.hasOwnProperty.call(g.keybind, key))
@@ -361,23 +363,11 @@ export class NethackGame {
 
         // Initialize hero struct
         g.u = { ux: 0, uy: 0, ux0: 0, uy0: 0 };
-        // C ref: youprop.h See_invisible == (HSee_invisible || ESee_invisible).
-        // The port spells the hero's copy several ways (u.uprops.HSee_invisible
-        // from a quaffed potion, u.See_invisible from a fountain, the worn-item
-        // store uprops_extrinsic[SEE_INVIS], u.formprops, and the role/race
-        // innate table), yet most canseemon()/mon_visible() copies read only
-        // u.see_invis.  Serve ALL of them from this one accessor so every copy
-        // answers the same question (bl012: a see-invisible potion left the
-        // monmove.js canseemon copy blind to an invisible titan's boulder).
+        // C ref: youprop.h See_invisible.  youprop.js See_invisible_hero() is
+        // the one reader of every spelling the port keeps; u.see_invis serves it
+        // to the canseemon()/mon_visible() copies that read only that field.
         Object.defineProperty(g.u, 'see_invis', {
-            get: () => {
-                const u = g.u, p = u.uprops || {};
-                return has_innate('HSee_invisible')
-                    || !!(p.HSee_invisible || p.ESee_invisible || p.See_invisible
-                          || u.HSee_invisible || u.ESee_invisible || u.See_invisible
-                          || u.formprops?.See_invisible
-                          || ((u.uprops_extrinsic || {})[29 /*SEE_INVIS*/] | 0));
-            }, configurable: true });
+            get: See_invisible_hero, configurable: true });
         // C ref: optlist.h NHOPTB(blind/deaf/nudist/pauper/reroll, ...,
         // &u.uroleplay.*, ...) — these are real u.uroleplay fields, not
         // flags.*; parseNethackrc() ran before `g.u` existed, so it staged
@@ -392,6 +382,10 @@ export class NethackGame {
             nudist: !!opts.flags?.nudist,
             pauper: !!opts.flags?.pauper,
         };
+        // C ref: u_init.c u_init_misc(): OPTIONS:blind sets HBlinded |= FROMOUTSIDE
+        // (PermaBlind), which survives the Eyes of the Overworld clearing
+        // u.uroleplay.blind.
+        g.u.permablind = !!opts.flags?.blind;
         g.context = { move: 0 };
         // C ref: unixmain.c main() calls initoptions() (-> initoptions_finish()
         // -> fruitadd()) before dorecover()/newgame() -- before any object,
@@ -452,6 +446,11 @@ export class NethackGame {
         // OPTIONS supplied no name, BEFORE the restore attempt.  tty_askname()
         // opens with restore_menu() when the user has saved games, and the
         // name typed afterwards is what the restore below looks for.
+        // plnamesuffix() first strips a "-role-race-gender-align" tail off the
+        // name the rc supplied (pinning those facets); when askname() had to
+        // supply the name, the do/while runs the token scan again on it.
+        game.plnamelen = 0;
+        plnamesuffix();
         if (!game.plname) {
             const saved = (opts.flags?.selectsaved !== false) ? get_saved_games() : null;
             if (saved && !(await this._restoreMenu(saved, optsel))) {
@@ -459,7 +458,14 @@ export class NethackGame {
                 return;
             }
             if (!game.plname) await this._promptForName();
+            /* askname() runs inside plnamesuffix()'s do/while, after the
+               genericusers test: a typed generic name is kept */
+            plnamesuffix(true);
         }
+        optsel.role = g.initrole;
+        optsel.race = g.initrace;
+        optsel.gender = g.initgend;
+        optsel.align = g.initalign;
 
         if (have_saved_game()) {
             await dorestore();
@@ -480,6 +486,20 @@ export class NethackGame {
             return;
         }
 
+        // role_init() runs plnamesuffix() again, which asks for a name again
+        // when the one typed was generic (after init_objects() in newgame()).
+        game._askname = () => {
+            if (this._okMenuRenameRow !== undefined)
+                return this._promptForName(this._okMenuRenameRow);
+            /* no confirmation menu ('a'): the pick prompt stays on row 0 and
+               askname() writes the next BASE window line under it */
+            if (this._pickPromptText)
+                game.nhDisplay.putstr(0, 0, this._pickPromptText, NO_COLOR);
+            this._renameOverBase = true;
+            this._renameBase = null;
+            return this._promptForName(1);
+        };
+
         // Run game startup
         await newgame();
     }
@@ -492,7 +512,16 @@ export class NethackGame {
         this._bannerOnScreen = true;
         this._renameTextRow = null;
         disp.clearScreen();
-        if (topLine) disp.putstr(0, 0, topLine, NO_COLOR);
+        // yn_function() appends a space, and topl_putsym() starts a new row
+        // before it writes into the last column (curx == CO - 1), so a
+        // prompt of 79 or more columns spills onto row 1.
+        const wrapAt = 79;
+        const shown = topLine ? `${topLine} ` : '';
+        this._toplineRows = shown.length > wrapAt ? 2 : 1;
+        if (shown.length > wrapAt) {
+            disp.putstr(0, 0, shown.slice(0, wrapAt), NO_COLOR);
+            disp.putstr(0, 1, shown.slice(wrapAt).trimEnd(), NO_COLOR);
+        } else if (topLine) disp.putstr(0, 0, topLine, NO_COLOR);
         // C ref: restore.c restore_menu() — after "Start a new character" the
         // BASE window is cleared and only COPYRIGHT_BANNER_A is put back, so
         // the prompt below lands at row 2 instead of row 12.
@@ -519,14 +548,20 @@ export class NethackGame {
         if (this._asknamePrompted) {
             if (this._asknameRetry)
                 disp.putstr(0, promptRow - 1, 'Enter a name for your character...', NO_COLOR);
-            const prompt = `Who are you? ${name || ''}`;
+            /* the row keeps what was typed, "-role-race" suffix included,
+               although plnamesuffix() has since shortened svp.plname */
+            const typed = (name === game.plname && this._askedName) ? this._askedName : name;
+            const prompt = `Who are you? ${typed || ''}`;
             disp.putstr(0, promptRow, prompt, NO_COLOR);
             if (!topLine) disp.setCursor(Math.min(prompt.length, 79), promptRow);
         }
         // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
         // yn_function prints the prompt followed by a space and leaves
         // the cursor after that space, i.e. one column past the text.
-        if (topLine) disp.setCursor(Math.min(topLine.length + 1, 79), 0);
+        if (topLine) {
+            if (shown.length > wrapAt) disp.setCursor(shown.length - wrapAt, 1);
+            else disp.setCursor(Math.min(topLine.length + 1, 79), 0);
+        }
     }
 
     // C ref: win/tty/wintty.c erase_menu_or_text() (called from
@@ -600,7 +635,7 @@ export class NethackGame {
         }
         let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
         if (offx < 0) offx = 0;
-        if (lines.length >= rows) offx = 0;
+        if (lines.length >= rows || (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false) offx = 0;
         // Full-screen menus (offx=0) clear everything; corner menus overlay
         // but still clear WIN_MESSAGE.  C ref: wintty.c tty_display_nhwindow
         // NHW_MENU — `else { tty_clear_nhwindow(WIN_MESSAGE); }`.
@@ -610,7 +645,11 @@ export class NethackGame {
             // A full-screen role menu also wipes any leftover rename getlin line.
             this._renameTextRow = null;
         } else {
-            for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+            /* tty_clear_nhwindow(WIN_MESSAGE): home(), cl_end(), then
+               docorner(1, cury + 1, 0) for a prompt that spilled to row 1 */
+            for (let r = 0; r < (this._toplineRows || 1); r++)
+                for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
+            this._toplineRows = 1;
         }
         for (let r = 0; r < lines.length; r++) {
             const l = lines[r];
@@ -951,6 +990,7 @@ export class NethackGame {
             }
         } while (!name.length);
         game.plname = name;
+        this._askedName = name;
         this._renameOverBase = false;
         this._renameBase = null;
         // Remember a rename line so a following confirmation menu overlays it.
@@ -1399,6 +1439,7 @@ export class NethackGame {
             const prompt = build_plselection_prompt(sel.role, sel.race,
                                                     sel.gender, sel.align).trim();
             for (;;) {
+                this._pickPromptText = prompt;
                 this._renderStartupScreen(game.plname || '', prompt);
                 const rawKey = await this._readPromptKey();
                 // C ref: tty_yn_function() clean_up: gt.toplines = "<prompt> <key2txt(answer)>"; the next
@@ -1437,6 +1478,9 @@ export class NethackGame {
         // C: getconfirmation = (picksomething && pick4u != 'a' && !randomall);
         // 'a' means "pick for me and just start", and nothing was open at all
         // when the rc pinned every facet.
+        /* every facet pinned (random): no prompt drew the startup banner,
+           and whatever the rc error screen left is cleared with it */
+        if (picksomething && pick4u === '\0') this._renderStartupScreen(game.plname || '');
         while (picksomething && pick4u !== 'a') {
             this._renderSelectionOk(sel);
             // C ref: wintty.c process_menu_window — only the drawn selectors

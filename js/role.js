@@ -789,6 +789,17 @@ export function align_gname(rolenum, alignType) {
     return gnam;
 }
 
+// C ref: insight.c:3187 align_str(alignment) — the adjective form of an aligntyp.
+export function align_str(alignment) {
+    switch (alignment | 0) {
+    case A_CHAOTIC: return 'chaotic';
+    case A_NEUTRAL: return 'neutral';
+    case A_LAWFUL: return 'lawful';
+    case A_NONE: return 'unaligned';
+    }
+    return 'unknown';
+}
+
 // C ref: pray.c:2557 hallu_gods[].
 const HALLU_GODS = [
     'the Flying Spaghetti Monster', 'Eris', 'the Martians', 'Xom',
@@ -806,7 +817,7 @@ export function halu_gname(alignment, force_sane = false) {
     const hallu = !force_sane && !!u && !((u.HHalluc_resistance || 0) > 0)
         && !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
     if (!hallu) {
-        const mnum = game.urole?.mnum ?? u?.umonnum ?? 0;
+        const mnum = game.urole?.mnum ?? 0;
         const i = roles.findIndex((r) => r.mnum === mnum);
         return align_gname(i >= 0 ? i : mnum, alignment);
     }
@@ -1092,7 +1103,7 @@ export function build_plselection_prompt(rolenum, racenum, gendnum, alignnum) {
 // block and the existing chargen path is untouched — js/jsmain.js drives role
 // selection with its own method-shaped copies of setup_rolemenu() /
 // role_menu_extra() / maybe_skip_seps() (jsmain.js:466, :595, :578) and
-// js/fastforward.js:35 fastforward_role_init() is the live reduced copy of
+// allmain.js role_init() is the live reduced copy of
 // role_init()'s RNG draws.  Those are the ones the sessions run; these are the
 // C shapes, so that when the real window layer arrives the correct function is
 // already here rather than needing to be re-derived.
@@ -1260,13 +1271,29 @@ export function rolefilterstring(outbuf, which) {
 //
 // C's loop repeats until plname[] is non-empty (or askname() deferred it), so a
 // generic username asks again rather than falling through with no name.
-export function plnamesuffix() {
+// The recorder's sysconf (nethack-c/build-recorder.sh) reads
+// GENERICUSERS=play player game games nethack nethacker ec2-user, and this
+// port keeps no sysconf file, so cfgfiles.js sysopt.genericusers' value is
+// supplied here.
+const RECORDER_GENERICUSERS = 'play player game games nethack nethacker ec2-user';
+// The genericusers test at the top of plnamesuffix() for a '-'less name: true
+// when plnamesuffix() would blank plname[] so that askname() runs.
+export function plname_is_generic() {
+    const genericusers = game.sysopt?.genericusers ?? RECORDER_GENERICUSERS;
+    const name = String(game.plname || '');
+    if (!genericusers || !name) return false;
+    if (genericusers[0] === '*') return true;
+    const dash = name.indexOf('-', game.plnamelen | 0);
+    return rs_findword(genericusers, name, dash >= 0 ? dash : name.length);
+}
+
+export function plnamesuffix(namealreadyasked = false) {
     const g = game;
     let sptr, eptr, i;
 
     /* some generic user names will be ignored in favor of prompting */
-    const genericusers = g.sysopt?.genericusers;
-    if (genericusers) {
+    const genericusers = g.sysopt?.genericusers ?? RECORDER_GENERICUSERS;
+    if (genericusers && !namealreadyasked) {
         if (genericusers[0] === '*') {
             g.plname = '';
         } else {
@@ -1556,7 +1583,7 @@ const AM_LAWFUL = ROLE_LAWFUL, AM_NEUTRAL = ROLE_NEUTRAL,
 // save/restore", and it also replaces quest_init().
 //
 // RNG-wise there are exactly three places this can draw, and they are why
-// js/fastforward.js:35 exists at all:
+// allmain.js role_init() carries a reduced copy:
 //   * randrole_filtered() when no valid role was pinned;
 //   * `rn2(100) < 50` for the quest LEADER and again for the quest NEMESIS,
 //     but ONLY when that monster's permonst carries none of neuter/female/male
@@ -1721,7 +1748,7 @@ export function quest_monster_flag_fixups(ldrnum, neminum) {
 }
 
 // Live-game entry: resolve the hero's quest leader/nemesis by name and apply
-// the flag fixups (fastforward_role_init runs this where C runs role_init()).
+// the flag fixups (allmain.js role_init() runs this where C runs role_init()).
 let _questMonPristine = null;
 export function quest_monster_fixups_for_role(roleIdx, name_to_pmidx, monster_by_pmidx) {
     const q = ROLE_QUEST[roleIdx];

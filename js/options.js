@@ -2,6 +2,7 @@
 // C ref: options.c — handles OPTIONS=, BIND=, etc.
 
 import { game } from './gstate.js';
+import { panic } from './panic.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, putstr } from './windows.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR } from './terminal.js';
@@ -1587,6 +1588,7 @@ function optfn_boolean(o, negated, opts, op, result) {
         /* #ifndef IDLECHECKPOINT: pline() before window init is raw_print() */
         raw_print("There is no underlying support for 'idlecheckpoint' compiled in.");
         result.flags.idlecheckpoint = false;
+        result.flags.give_opt_msg_off = true; /* give_opt_msg = FALSE stays set */
     }
     return OPTN_OK;
 }
@@ -1761,7 +1763,11 @@ const SYMSET_NAMES = ['plain', 'Blank', 'IBMgraphics', 'IBMGraphics_1',
 
 // C ref: files.c read_sym_file() — TRUE when the name names a symset in the
 // symbols file, or is the "default" spelling that clears the entry.
+let symfile_read = false;
 function read_sym_file(name) {
+    /* parse_conf_file() on the symbols file ends with free_config_sections():
+       a CHOOSE/[section] state in the rc being read is lost */
+    symfile_read = true;
     if (!name) return true;
     for (const nm of SYMSET_NAMES) if (strcmpi_eq(name, nm)) return true;
     return fuzzymatch(name, 'Default symbols', ' -_', true)
@@ -2804,12 +2810,19 @@ function optfn_string_required(o, negated, opts, op, result, envOpt) {
     op = envOpt ? string_for_env_opt(o.name, opts, false)
                 : string_for_opt(opts, false);
     if (op === '') return OPTN_ERR;
+    if (o.name === 'windowtype') {
+        /* chosen_windowtype is WINTYPELEN (16) bytes; choose_windows() knows
+           only "tty" in this build and reports anything else */
+        const chosen = nmcpy(op, 16);
+        if (chosen.toLowerCase() !== 'tty')
+            config_error_add(`Window type ${chosen} not recognized.  The only choice is: tty`);
+        keep(o, op, result);
+        return OPTN_OK;
+    }
     if (o.name === 'name') {
-        // optn_name is what the recording harness reads back out of the rc to
-        // build its '-u' argument, so it is the value that survives into the
-        // game (see parseNethackrc()).
-        result.optname = nmcpy(op, PL_NSIZ);
-        return OPTN_OK;   /* svp.plname, not flags[] */
+        // svp.plname, not flags[].  The game's name is the recorder's -u
+        // argument, see recorder_u_name().
+        return OPTN_OK;
     }
     keep(o, op, result);
     return OPTN_OK;
@@ -2859,8 +2872,8 @@ function wc_set_window_colors(op) {
 // The `!value` forms are role FILTERS (setrolefilter()), which change what
 // chargen offers; the positive forms are validated by str2role() &c and an
 // unknown one is a config error.
-function optfn_roleopt(o, negated, opts, op, result) {
-    const r = parse_role_opt(o, negated, o.name, opts, result);
+function optfn_roleopt(o, negated, opts, op, result, duplicate) {
+    const r = parse_role_opt(o, negated, o.name, opts, result, duplicate);
     if (!r.ok) return OPTN_SILENTERR;
     if (r.op !== '!') {
         const which = o.name;
@@ -2869,6 +2882,9 @@ function optfn_roleopt(o, negated, opts, op, result) {
                     : (which === 'gender') ? str2gend(r.op)
                     : str2align(r.op);
         if (idx === ROLE_NONE) {
+            /* flags.initX = strXXX(op) assigns before the test: an unknown
+               value also forgets an earlier valid one */
+            result[which === 'alignment' ? 'align' : which] = -1;
             config_error_add(`Unknown ${o.name} '${r.op}'`);
             return OPTN_ERR;
         }
@@ -2906,7 +2922,7 @@ function setrolefilter(bufp, result) {
 
 // C ref: options.c parse_role_opt() — accepts "role:priest", "race:!orc",
 // "!role:tou rog wiz"; rejects mixed negation and a positive list.
-function parse_role_opt(o, negated, fullname, opts, result) {
+function parse_role_opt(o, negated, fullname, opts, result, duplicate) {
     const which = (o.name === 'role') ? RS_ROLE
                   : (o.name === 'race') ? RS_RACE
                   : (o.name === 'gender') ? RS_GENDER
@@ -2943,13 +2959,25 @@ function parse_role_opt(o, negated, fullname, opts, result) {
         const sp = op.indexOf(' ', i);
         const token = sp >= 0 ? op.slice(i, sp) : op.slice(i);
         if (val_negated || negated) {
-            clearrolefilter(which, result);
+            /* getoptstr() of a prior negated value ('!' prefix, saved by
+               saveoptstr(rolefilterstring())) keeps the filter being built */
+            result.rolefilter_saved ??= {};
+            if (!result.rolefilter_saved[which]) clearrolefilter(which, result);
             if (!setrolefilter(token, result)) {
                 config_error_add(`Invalid ${fullname} '${token}'`);
                 return { ok: false, op: '' };
             }
+            result.rolefilter_saved[which] = true;
             retop = '!';
         } else {
+            /* a positive value after a negated one set earlier in this file is
+               a rejected duplicate; saveoptstr(raw value) then replaces the
+               saved '!' string */
+            if (duplicate && result.rolefilter_saved?.[which]) {
+                complain_about_duplicate(o);
+                return { ok: false, op: '' };
+            }
+            if (result.rolefilter_saved) result.rolefilter_saved[which] = false;
             retop = token;
         }
         if (sp >= 0) i = sp + 1; else break;
@@ -3592,17 +3620,17 @@ function optfn_align_status(o, negated, opts, op, result) {
 function optfn_altkeyhandling(o, negated, opts, op, result) {
     return optfn_noop(o, negated, opts, op, result);
 }
-function optfn_alignment(o, negated, opts, op, result) {
-    return optfn_roleopt(o, negated, opts, op, result);
+function optfn_alignment(o, negated, opts, op, result, duplicate) {
+    return optfn_roleopt(o, negated, opts, op, result, duplicate);
 }
-function optfn_role(o, negated, opts, op, result) {
-    return optfn_roleopt(o, negated, opts, op, result);
+function optfn_role(o, negated, opts, op, result, duplicate) {
+    return optfn_roleopt(o, negated, opts, op, result, duplicate);
 }
-function optfn_race(o, negated, opts, op, result) {
-    return optfn_roleopt(o, negated, opts, op, result);
+function optfn_race(o, negated, opts, op, result, duplicate) {
+    return optfn_roleopt(o, negated, opts, op, result, duplicate);
 }
-function optfn_gender(o, negated, opts, op, result) {
-    return optfn_roleopt(o, negated, opts, op, result);
+function optfn_gender(o, negated, opts, op, result, duplicate) {
+    return optfn_roleopt(o, negated, opts, op, result, duplicate);
 }
 function optfn_catname(o, negated, opts, op, result) {
     return petname_optfn(o, negated, opts, op, result);
@@ -3800,6 +3828,9 @@ function optfn_compound(o, negated, opts, op, result, duplicate) {
     if (!fn) return optfn_noop(o, negated, opts, op, result);
     if (o.name === 'playmode')
         return optfn_playmode(o, negated, opts, op, result, duplicate);
+    if (o.name === 'role' || o.name === 'race' || o.name === 'gender'
+        || o.name === 'alignment')
+        return fn(o, negated, opts, op, result, duplicate);
     return fn(o, negated, opts, op, result);
 }
 
@@ -4034,7 +4065,7 @@ function parseoptions(optstr, tinitial, result) {
 
 // C ref: options.c complain_about_duplicate().
 function complain_about_duplicate(o) {
-    const via = using_alias ? ` (via alias: ${o.alias})` : '';
+    const via = using_alias ? ` (via alias: ${o.alias ?? '(null)'})` : ''; /* using_alias leaks out of the right-to-left recursion; libc prints a NULL %s as (null) */
     config_error_add(`${o.typ === 'C' ? 'compound' : 'boolean'}`
                      + ` option specified multiple times: ${o.name}${via}`);
 }
@@ -4052,18 +4083,6 @@ function complain_about_duplicate(o) {
 
 // C ref: hacklib.c mungspaces() — tab to space, runs of spaces to one,
 // leading/trailing space dropped; a newline ends the string.
-function mungspaces(bp) {
-    let out = '', was_space = true;
-    for (let i = 0; i < bp.length; i++) {
-        let c = bp[i];
-        if (c === '\n') break;
-        if (c === '\t') c = ' ';
-        if (c !== ' ' || !was_space) out += c;
-        was_space = (c === ' ');
-    }
-    if (was_space && out.length) out = out.slice(0, -1);
-    return out;
-}
 
 // C ref: cfgfiles.c find_optparam() — index of the first '=' or ':'.
 function find_optparam(buf) {
@@ -4270,6 +4289,25 @@ function handle_config_section(buf, st) {
     return false;
 }
 
+// scripts/record-session.mjs parseNethackrcName(): the recording harness scans
+// the rc text itself, stops at the FIRST OPTIONS line (either "OPTIONS=" or
+// "OPTIONS =") that holds a comma-separated token starting with "name:"
+// (case-insensitive), and passes that value as '-u <name>' (empty when none).
+// unixmain.c case 'u' strncpy()s it over svp.plname after initoptions().
+function recorder_u_name(rc) {
+    for (const rawLine of String(rc).split('\n')) {
+        const line = rawLine.trim();
+        const upper = line.toUpperCase();
+        if (!(upper.startsWith('OPTIONS=') || upper.startsWith('OPTIONS ='))) continue;
+        for (const opt of line.slice(line.indexOf('=') + 1).split(',')) {
+            const t = opt.trim();
+            if (t.toLowerCase().startsWith('name:'))
+                return t.slice('name:'.length).trim().slice(0, PL_NSIZ - 1);
+        }
+    }
+    return '';
+}
+
 export async function parseNethackrc(rc) {
     ({ conditions, condition_aliases } = await import('./botl.js'));
     const result = {
@@ -4296,7 +4334,11 @@ export async function parseNethackrc(rc) {
     // physical line, so the line number an error reports counts them too.
     const st = { section_current: null, section_chosen: null };
     let pending = null;
-    for (const rawLine of rc.split('\n')) {
+    // fgets() returns no line after the final newline, so a continuation still
+    // pending there is dropped (cnf_parser_done() frees parser->buf unprocessed).
+    const rcLines = rc.split('\n');
+    if (rcLines[rcLines.length - 1] === '') rcLines.pop();
+    for (const rawLine of rcLines) {
         let line = rawLine.replace(/[\r]+$/, '');
         const morelines = line.endsWith('\\');
         if (morelines) line = line.slice(0, -1);
@@ -4331,6 +4373,10 @@ export async function parseNethackrc(rc) {
             continue;
         }
         parse_config_line(buf, result);
+        if (symfile_read) {
+            symfile_read = false;
+            st.section_chosen = st.section_current = null;
+        }
     }
     config_error_done();
     // C ref: sys/unix/unixmain.c process_options() case 'u', which runs after
@@ -4338,7 +4384,7 @@ export async function parseNethackrc(rc) {
     // recording harness derives it from the rc's OPTIONS=name: value and
     // passes an empty string when there is none, so plname ends up being
     // exactly that value and a NAME= statement never reaches the game.
-    result.name = result.optname || '';
+    result.name = recorder_u_name(rc);
     if (raw_stream.length) result.config_error_raw = raw_stream;
     raw_stream = null;
     // C ref: options.c gp.plinemsg_types / gm.menu_colorings / gr.rfilter are
@@ -4871,12 +4917,6 @@ export function get_cnf_role_opt(optidx) {
 function update_file(nhfp) { return !!(nhfp && nhfp.mode & 0x02 /* WRITING */); }
 function release_data(nhfp) { return !!(nhfp && nhfp.mode & 0x04 /* FREEING */); }
 
-// C ref: panic.c panic() -- unrecoverable; the port has no equivalent, so
-// report through raw_print() and throw rather than continuing with bad state.
-function panic(msg) {
-    raw_print(`panic: ${msg}`);
-    throw new Error(`panic: ${msg}`);
-}
 
 // ---------------------------------------------------------------------------
 // The handler_*() ports below build their menus with the shared windows.js
@@ -6379,6 +6419,9 @@ export async function toggle_bool_option(p) {
 }
 
 import { ECMD_OK, ECMD_FAIL } from './const.js';
+import { mungspaces } from './hacklib.js';
+import { alternative_palette } from './coloratt.js';
+import { fruit_from_name } from './objnam.js';
 
 // C ref: options.c get_menu_cmd_key() -- the reverse of map_menu_cmd(): given
 // an internal MENU_* char, the key the player must press for it.
@@ -6389,6 +6432,26 @@ export function get_menu_cmd_key(ch) {
        both in lockstep, so a pair here is [key, command]. */
     for (const [key, cmd] of alias) if (cmd === ch) return key;
     return ch;
+}
+
+// C ref: wintty.c default_menu_cmds[] -- the MENU_* keys process_menu_window()
+// accepts (after any user-mapped ones) besides selectors, counts and ESC/NL/CR.
+export const default_menu_cmds = '^|><.-@,\\~:';
+
+// C ref: options.c map_menu_cmd() -- a key the player rebound with menu_*
+// (BIND= or OPTIONS=menu_next_page:n ...) becomes the internal MENU_* char;
+// every other key is returned unchanged.
+export function map_menu_cmd(ch) {
+    for (const [key, cmd] of game.menu_cmd_alias || []) if (key === ch) return cmd;
+    return ch;
+}
+
+// C ref: gm.mapped_menu_cmds -- the user's menu command keys, which wintty.c
+// process_menu_window() appends to the response string xwaitforspace() accepts.
+export function mapped_menu_cmds() {
+    let s = '';
+    for (const [key] of game.menu_cmd_alias || []) s += key;
+    return s;
 }
 
 // C ref: options.c collect_menu_keys() -- the scrolling keys to offer in a
@@ -6802,8 +6865,7 @@ export function optfn_cursesgraphics(o, negated, opts, op, result) {
 }
 
 // C ref: options.c optfn_palette() -- the non-MACOS9 variant; the OS9 one is
-// inside `#if 0`.  alternative_palette() is coloratt.c's "color/#RRGGBB" parser,
-// which has no port, so the value is validated only for shape here.
+// inside `#if 0`.
 export function optfn_palette(o, negated, opts, op, result) {
     if (op === '') return OPTN_ERR;
 
@@ -6811,39 +6873,13 @@ export function optfn_palette(o, negated, opts, op, result) {
         /*
          *  palette (adjust an RGB color in palette (color/R-G-B)
          */
-        if (!alternative_palette(op, result)) {
+        if (!alternative_palette(op)) {
             config_error_add(`Error in palette parameter '${op}'`);
             return OPTN_ERR;
         }
         if (!opt_initial) opt_update_basic_palette = true;
     }
     return OPTN_OK;
-}
-
-// C ref: coloratt.c alternative_palette() -- "<colorname>/#rrggbb" (or
-// "/r-g-b"); stores into ga.altpalette[clr] with COLORVAL packing.
-function alternative_palette(op, result) {
-    const slash = op.indexOf('/');
-    if (slash < 0) return false;
-    const clr = match_str2clr(op.slice(0, slash), true);
-    if (clr < 0 || clr >= CLR_MAX) return false;
-    let spec = op.slice(slash + 1);
-    let rgb = -1;
-    if (spec[0] === '#') {
-        if (!/^[0-9a-fA-F]{6}$/.test(spec.slice(1))) return false;
-        rgb = parseInt(spec.slice(1), 16);
-    } else {
-        const parts = spec.split('-');
-        if (parts.length !== 3) return false;
-        const v = parts.map((p) => parseInt(p, 10));
-        if (v.some((x) => !(x >= 0 && x <= 255))) return false;
-        rgb = (v[0] << 16) | (v[1] << 8) | v[2];
-    }
-    const tgt = result || game;
-    tgt.altpalette = tgt.altpalette || new Array(CLR_MAX).fill(0);
-    /* COLORVAL() keeps the low 24 bits; the high bit marks "set" */
-    tgt.altpalette[clr] = rgb | 0x1000000;
-    return true;
 }
 
 // C ref: options.c optfn_videocolors() -- MSDOS ttycolors[] remap.
@@ -6953,70 +6989,6 @@ export function pfxfn_IBM_(o, negated, opts, op, result) {
 
 const PL_FSIZ = 32;   /* global.h -- fruit name */
 const FOOD_CLASS = 7; /* objclass.h */
-
-// C ref: objnam.c fruit_from_name(fname, exact, &highest_fid).  js/objnam.js
-// has no port of it yet, so this private copy keeps fruitadd() faithful;
-// delete it in favour of an objnam.js export when that lands.  Returns
-// { f, highest_fid }.
-function fruit_from_name_local(fname, exact) {
-    let f, tentativef, altfname, k;
-    let highest_fid = 0;
-    const chain = () => {
-        const out = [];
-        for (let p = game.ffruit; p; p = p.nextf) out.push(p);
-        return out;
-    };
-
-    /* note: named fruits are case-sensitive... */
-    /* first try for an exact match */
-    for (f of chain()) {
-        if (f.fname === fname) return { f, highest_fid };
-        else if (f.fid > highest_fid) highest_fid = f.fid;
-    }
-
-    /* didn't match as-is; if caller is willing to accept a prefix match, try
-       to find one; we want the LONGEST prefix that matches, not the first */
-    f = null;
-    if (!exact) {
-        tentativef = null;
-        for (const g of chain()) {
-            k = g.fname.length;
-            if (fname.slice(0, k) === g.fname
-                && (!fname[k] || fname[k] === ' ')
-                && (!tentativef || k > tentativef.fname.length))
-                tentativef = g;
-        }
-        f = tentativef;
-    }
-    /* if we still don't have a match, try singularizing the target */
-    if (!f) {
-        altfname = makesingular(fname);
-        for (const g of chain()) if (g.fname === altfname) { f = g; break; }
-    }
-    if (!f && !exact) {
-        const fname_k = fname.length; /* length of assumed plural fname */
-
-        tentativef = null;
-        for (const g of chain()) {
-            k = g.fname.length;
-            let fnamebuf = fname;
-            /* bug? if singular of fname is longer than plural, failing the
-               'fname_k > k' test could skip a viable candidate ... compromise
-               and use 'fname_k >= k' */
-            const sp = fnamebuf.indexOf(' ', k);
-            if (fname_k >= k && sp >= 0) {
-                fnamebuf = fnamebuf.slice(0, sp);
-                altfname = makesingular(fnamebuf);
-                k = altfname.length; /* actually revised 'fname_k' */
-                if (g.fname === altfname
-                    && (!tentativef || k > tentativef.fname.length))
-                    tentativef = g;
-            }
-        }
-        f = tentativef;
-    }
-    return { f: f || null, highest_fid };
-}
 
 // C ref: objclass.h svb.bases[FOOD_CLASS] -- where fruitadd()'s "is this the
 // name of a real food?" scan starts.  init_objects() fills bases[] in, so the
@@ -7134,9 +7106,9 @@ export function fruitadd(str, replace_fruit) {
        has become "candied apple" by now.  JS strings don't alias, so read the
        buffer back instead of the argument. */
     const lookup = user_specified ? game.svp.pl_fruit : str;
-    const found = fruit_from_name_local(altname ? altname : lookup, false);
-    f = found.f;
-    highest_fruit_id = found.highest_fid;
+    const hfid = { value: 0 };
+    f = fruit_from_name(altname ? altname : lookup, false, hfid);
+    highest_fruit_id = hfid.value;
     if (f) return fruitadd_nonew(f, user_specified);
 
     /* Maximum number of named fruits is 127, even if obj->spe can

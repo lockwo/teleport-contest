@@ -9,14 +9,14 @@
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
 import { game, hooks } from './gstate.js';
-import { Fumbling_hero } from './youprop.js';
+import { Fumbling_hero, Wounded_legs_hero, Passes_walls_hero } from './youprop.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
-import { P_NONE, P_MARTIAL_ARTS } from './const.js';
+import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } from './const.js';
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
-import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash, You_hear, You_see } from './display.js';
+import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash, You_hear, You_see, stairway_at } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
-import { exercise, acurr_eff, adjalign } from './attrib.js';
+import { exercise, acurr_eff, adjalign, change_luck } from './attrib.js';
 import {
     A_STR, A_DEX, A_CON, A_WIS, A_CHA, A_LAWFUL, FACE, LEG,
     SDOOR, SCORR, CORR, DOOR, ROOM, STAIRS, LADDER, IRONBARS, LAVAWALL,
@@ -56,10 +56,10 @@ import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
          is_neuter_flag, mflags2_of, M2_UNDEAD, M2_WERE, M2_HUMAN, M2_ELF,
          M2_DWARF, M2_GNOME, M2_ORC, M2_DEMON, M2_GIANT,
          likes_gold_flag, is_mercenary_flag } from './monflags_data.js';
-import { canspotmon, Monnam, mon_nam, setmangry, killed, monflee,
+import { canspotmon, Monnam, mon_nam, setmangry, killed,
          attack_checks, overexertion, passive, check_caitiff, abuse_dog,
-         seemimicLocal as seemimic, glyph_is_invisible } from './uhitm.js';
-import { DEADMONSTER, fmonOrder } from './mon.js';
+         seemimicLocal as seemimic, glyph_is_invisible, shade_miss } from './uhitm.js';
+import { DEADMONSTER, fmonOrder, wake_nearto } from './mon.js';
 import { map_invisible } from './display.js';
 import { special_dmgval } from './weapon.js';
 import { goodpos, rloc_to } from './teleport.js';
@@ -67,9 +67,9 @@ import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
 import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
-import { wipe_engr_at, u_wipe_engr } from './engrave.js';
-import { getdir, wake_nearby, wake_nearto, b_trapped } from './cmd.js';
-import { is_pool, is_lava, is_pool_or_lava, is_ice, is_drawbridge_wall, find_drawbridge } from './dbridge.js';
+import { wipe_engr_at, u_wipe_engr, del_engr_at } from './engrave.js';
+import { getdir, wake_nearby, b_trapped } from './cmd.js';
+import { is_drawbridge_wall, find_drawbridge } from './dbridge.js';
 import { scatter } from './explode.js';
 import { hero_breaks, breaktest } from './dothrow.js';
 import { is_art, ART_MJOLLNIR } from './artifact.js';
@@ -78,20 +78,19 @@ import { finish_meating } from './dogmove.js';
 import { hidden_gold, money_cnt_invent, make_happy_shk, is_unpaid,
          costly_spot, costly_adjacent, addtobill, find_objowner, inside_shop,
          stolen_value, make_angry_shk } from './shk.js';
-import { currency, youmonst_data_pub as youmonst_data } from './invent.js';
+import { currency, youmonst_data_pub as youmonst_data, poly_gender } from './invent.js';
 import { set_voice } from './sounds.js';
-import { corpse_xname, killer_xname } from './objnam.js';
+import { corpse_xname, killer_xname, singular } from './objnam.js';
 
 // C ref: hacklib.c upstart(s) — capitalise the first letter in place
 // (pickup.js/invent.js each keep the same one-liner).
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-import { ECMD_OK, ECMD_TIME, ECMD_FAIL, ECMD_CANCEL } from './const.js';
+import { ECMD_OK, ECMD_TIME, ECMD_FAIL, ECMD_CANCEL, Trap_Killed_Mon } from './const.js';
 const S_LIZARD = 58;      // defsym.h S_LIZARD, as numbered in permonst.mcls
                           // (`mlet` on these rows is the display CHARACTER)
 const GLASS = 19;         // objects[].oc_material GLASS (mkobj.js's private copy)
 const MIRROR = 230;       // objects[] MIRROR
-const S_LRING = 4;        // rm.h S_LRING (sink `looted` bit)
 
 // C ref: attrib.c acurr(chridx) — effective attribute; attrib.js owns it.
 function ACURR(i) { return acurr_eff(i); }
@@ -107,14 +106,15 @@ function ACURRSTR() {
 
 function Levitation() { return Levitation_fu(); }
 import { Deaf_hero as Deaf } from './display.js';
+import { M_AP_TYPE, M_AP_NOTHING, M_AP_MONSTER, M_AP_OBJECT } from './const.js';
 function Luck() { return (game.u?.uluck | 0) + (game.u?.moreluck | 0); }
 // C ref: allmain.c Wounded_legs (HWounded_legs || EWounded_legs).
 function Wounded_legs() {
     const u = game.u;
-    return !!((u?.HWounded_legs || 0) || (u?.EWounded_legs || 0));
+    return Wounded_legs_hero();
 }
 // C ref: youprop.h Passes_walls.
-function Passes_walls() { return !!game.u?.formprops?.Passes_walls || !!game.u?.uprops?.Passes_walls; }
+function Passes_walls() { return Passes_walls_hero(); }
 
 // C ref: dokick.c martial() == (martial_bonus() || is_bigfoot(youmonst)
 //   || (uarmf && uarmf->otyp == KICKING_BOOTS)), where
@@ -187,14 +187,6 @@ function cvt_sdoor_to_door(lev) {
     lev.doormask = newmask;
 }
 
-// C ref: engrave.c del_engr_at(x, y).  fountain.js keeps the fountain caller's
-// copy; this is the grave-smashing one.
-function del_engr_at(x, y) {
-    const engr = game.level?.engravings;
-    if (!Array.isArray(engr)) return;
-    const i = engr.findIndex((e) => e.engr_x === x && e.engr_y === y);
-    if (i >= 0) engr.splice(i, 1);
-}
 
 // C ref: engrave.c disturb_grave(x, y) — kicking (or engraving on) a headstone
 // summons the grave's ghoul, once.  makemon() draws; exercise() draws rn2(2).
@@ -206,17 +198,6 @@ export async function disturb_grave(x, y) {
     const ghoul = makemon(monster_by_pmidx(name_to_pmidx('ghoul')), x, y, 0);
     if (ghoul) await makemon_appears_msg(ghoul, ghoul.mx, ghoul.my, 0); // makemon.c:1474
     exercise(A_WIS, false);
-}
-
-// C ref: cmd.c change_luck(n) — clamped Luck adjustment (eat.js/pray.js/
-// uhitm.js each keep their own copy).  LUCKADD/LUCKMAX are 3/10.
-function change_luck(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uluck = (u.uluck || 0) + n;
-    if (u.uluck < 0 && u.uluck < -10) u.uluck = -10;
-    if (u.uluck > 0 && u.uluck > 10) u.uluck = 10;
-    game.botl = true;
 }
 
 // C ref: pray.c altar_wrath(x, y) — the altar's god objects to being kicked.
@@ -259,14 +240,6 @@ function species_gone(name) {
     return ((game.mvitals?.[idx]?.mvflags ?? 0) & G_GONE) !== 0;
 }
 
-// C ref: polyself.c poly_gender() — "0/1 = same meaning as flags.female,
-// 2 = none".  So 1 is FEMALE, and dokick's `gend == 1 ? MM_MALE : MM_FEMALE`
-// is deliberate: a female hero summons the male dish washer.
-function poly_gender() {
-    const ydata = youmonst_data();
-    if (ydata && (is_neuter_flag(ydata) || !humanoid(ydata))) return 2;
-    return game.flags?.female ? 1 : 0;
-}
 
 // C ref: display.c unmap_invisible(x, y) — a square remembered as holding a
 // sensed-but-unseen monster ('I') loses that notation once the hero looks.
@@ -484,24 +457,6 @@ export async function kick_door(x, y, avrg_attrib) {
     // monster-move pass, whose first pline must page the kick message with
     // --More-- when the two won't fit on one top line.
     game._toplin = 1;
-}
-
-// C ref: potion.c sink_backs_up(x, y) — potion.js keeps the dosink() copy; this
-// is the dokick.c caller's.  mkobj_at() draws when the ring appears.
-async function sink_backs_up(x, y) {
-    const loc = game.level?.at(x, y);
-    await pline(!Deaf()
-        ? (!Blind() ? 'Flupp!  Muddy waste pops up from the drain.'
-                    : 'Flupp!  You hear a sloshing sound.')
-        : `Something splashes you in the ${body_part(FACE)}.`);
-    if ((((loc?.looted) | 0) & S_LRING) === 0) {
-        if (!Blind()) await You_see('a ring shining in its midst.');
-        mkobj_at(RING_CLASS, x, y, true);
-        newsym(x, y);
-        exercise(A_DEX, true);
-        exercise(A_WIS, true);
-        if (loc) loc.looted = ((loc.looted) | 0) | S_LRING;
-    }
 }
 
 // C ref: dokick.c kick_nondoor(x, y, avrg_attrib) — every kickable terrain that
@@ -753,7 +708,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
             exercise(A_DEX, true);
             return ECMD_TIME;
         } else if (!rn2(3)) {
-            await sink_backs_up(x, y);
+            await (await import('./fountain.js')).sink_backs_up(x, y);
             return ECMD_TIME;
         }
         await kick_ouch(x, y, '', maploc);
@@ -840,7 +795,7 @@ async function kickdmg(mon, clumsy) {
     /* squeeze some guilt feelings... */
     if (mon.mtame) {
         await abuse_dog(mon);
-        if (mon.mtame) monflee(mon, dmg ? rnd(dmg) : 1, false, false);
+        if (mon.mtame) await (await import('./monmove.js')).monflee(mon, dmg ? rnd(dmg) : 1, false, false);
         else mon.mflee = 0;
     }
 
@@ -872,7 +827,7 @@ async function kickdmg(mon, clumsy) {
                 newsym(mdx, mdy);
                 set_apparxy(mon);
                 /* C ref: dokick.c:~790 mintrap(mon, NO_TRAP_FLAGS) */
-                const { mon_mintrap, Trap_Killed_Mon } = await import('./monmove.js');
+                const { mon_mintrap } = await import('./monmove.js');
                 if (await mon_mintrap(mon, 0) === Trap_Killed_Mon)
                     trapkilled = true;
             }
@@ -918,7 +873,7 @@ async function kick_monster(mon, x, y) {
     }
 
     /* reveal hidden target even if kick ends up missing */
-    if (mon.mundetected || (mon.m_ap_type && mon.m_ap_type !== 'mon')) {
+    if (mon.mundetected || (M_AP_TYPE(mon) !== M_AP_NOTHING && M_AP_TYPE(mon) !== M_AP_MONSTER)) {
         if (mon.m_ap_type) seemimic(mon);
         mon.mundetected = 0;
         if (!canspotmon(mon)) map_invisible(x, y);
@@ -929,10 +884,10 @@ async function kick_monster(mon, x, y) {
     /* Kick attacks by kicking monsters are normal attacks, not special.
        If you have >1 kick attack, you get all of them. */
     {
-        const { youmonst_data_uh, find_roll_to_hit, missum, mon_maybe_unparalyze,
+        const { find_roll_to_hit, missum, mon_maybe_unparalyze,
                 damageum } = await import('./uhitm.js');
         const { mattk_of } = await import('./monattk_data.js');
-        const ymdata = game.u?.Upolyd ? youmonst_data_uh() : null;
+        const ymdata = game.u?.Upolyd ? youmonst_data() : null;
         if (ymdata && attacktype(ymdata, AT_KICK)) {
             const { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_DEF_DIED } = await import('./const.js');
             /* armor penalty only applies to a non-polymorphed Monk */
@@ -1060,14 +1015,6 @@ function the_k(s) {
 function The_k(s) { const t = the_k(s); return t.charAt(0).toUpperCase() + t.slice(1); }
 // C ref: objnam.c Doname2(obj) — doname() with the first letter capitalized.
 function Doname2_k(obj) { const s = obj_doname(obj); return s.charAt(0).toUpperCase() + s.slice(1); }
-// C ref: objnam.c singular(obj, func) — format with quan forced to 1.
-function singular_k(obj, fn) {
-    const savequan = obj.quan;
-    obj.quan = 1;
-    const nam = fn(obj);
-    obj.quan = savequan;
-    return nam;
-}
 
 // C ref: objclass.h Is_box(o) — the three lockable floor containers.
 function Is_box(o) {
@@ -1128,7 +1075,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             if (hit) { bx -= ddx; by -= ddy; break; }
         }
 
-        const mtmp = m_at(bx, by);
+        let mtmp = m_at(bx, by);
         const ttmp = t_at(bx, by);
         if (!mtmp && ttmp && ttmp.ttyp === WEB && !rn2(3)) {
             if (cansee(bx, by)) {
@@ -1141,8 +1088,15 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             }
             break;
         }
+        /* C ref: zap.c bhit() — a shade a non-silver missile passes through, and
+           a mimic pretending to be an object (unless the hero knows a monster
+           is there), behave as if no monster were on the square. */
+        if (mtmp && (await shade_miss(game.youmonst || game.u, mtmp, obj, true, true)
+                     || (M_AP_TYPE(mtmp) === M_AP_OBJECT
+                         && !loc?.disp_monster && !loc?.disp_warning
+                         && !glyph_is_invisible(bx, by))))
+            mtmp = null;
         if (mtmp) {
-            // shade_miss()/M_AP_OBJECT mimic evasion draw no RNG; not modelled.
             if (cansee(bx, by) && !canspotmon(mtmp)) map_invisible(bx, by);
             result = mtmp;
             break;
@@ -1278,7 +1232,7 @@ async function really_kick_object(x, y) {
                              || (costly_adjacent(shkp, x, y) && gk_kickedobj.unpaid)));
 
     await Norep_kick(`You kick ${
-        !isgold ? singular_k(gk_kickedobj, obj_doname) : obj_doname(gk_kickedobj)}.`);
+        !isgold ? singular(gk_kickedobj, obj_doname) : obj_doname(gk_kickedobj)}.`);
 
     const maploc = game.level?.at(x, y);
     if (IS_OBSTRUCTED(maploc?.typ | 0) || closed_door(x, y)) {
@@ -1742,13 +1696,6 @@ function verysmall(ptr) { return !!ptr?.verysmall; }
  * callers (impact_drop / ship_object) need add_to_migration(), which  *
  * this port does not have.                                            *
  * ------------------------------------------------------------------ */
-
-// C ref: stairs.c stairway_at(x, y) — do.js/dig.js/display.js each keep a copy.
-function stairway_at(x, y) {
-    for (let s = game.stairs; s; s = s.next)
-        if (s.sx === x && s.sy === y) return s;
-    return null;
-}
 
 // C ref: quest.c ok_to_quest() lives in js/questok.js (leaf module).
 

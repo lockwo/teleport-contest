@@ -21,6 +21,7 @@ import {
     quest_level_init_mines_flat, quest_monster, quest_trap,
     quest_non_diggable,
 } from './quest_home_common.js';
+import { setONAME } from '../const.js';
 
 // C ref: sp_lev.c create_object() passes `artif = !named` to mksobj_at, so a
 // des.object() with an explicit `name` (Excalibur) gets artif=FALSE and
@@ -144,7 +145,7 @@ export async function makemaz_kni_strt() {
         quest_drop_default_invent(arthur);
         const excalibur = quest_create_named_weapon(54 /*LONG_SWORD*/, 4, arthur);
         if (excalibur) {
-            excalibur.blessed = 1; excalibur.cursed = 0; excalibur.oname = 'Excalibur';
+            excalibur.blessed = 1; excalibur.cursed = 0; setONAME(excalibur, 'Excalibur');
             // C ref: mkobj.c create_object() -> oname(otmp, "Excalibur", ONAME_LEVEL_DEF)
             // -> artifact_exists(): registers artiexist[ART_EXCALIBUR], which
             // mksobj_init's later `rn2(40 + 10*nartifact_exist())` artif rolls

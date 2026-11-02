@@ -8,7 +8,7 @@
 import { game, register_process_static } from './gstate.js';
 import { roomAt } from './roomat.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl, Hallucination_u } from './display.js';
+import { pline, update_topl, verbalize, Hallucination_u } from './display.js';
 import { SHKNAME_POOL } from './shknam.js';
 import { shtypes } from './shtypes.js';
 import { Hello } from './role.js';
@@ -18,7 +18,7 @@ import { newomid } from './mkobj.js';
 import { get_cost, get_pricing_units, contained_cost, contained_gold,
          bill_box_content, costly_gold, picked_container, is_unpaid, inhishop,
          inside_shop, rile_shk, rouse_shk, hot_pursuit, rob_shop, call_kops,
-         pacify_shk, muteshk, Deaf, verbalize, Shknam, deserted_shop } from './shk.js';
+         pacify_shk, muteshk, Deaf, Shknam, deserted_shop } from './shk.js';
 import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';

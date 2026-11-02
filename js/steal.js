@@ -32,7 +32,7 @@ import { add_to_minv, mpickobj as mm_mpickobj } from './makemon.js';
 import { is_animal, humanoid, throws_rocks_flag } from './monflags_data.js';
 import {
     inv_cnt, freeinv, encumber_msg, doname_invent, remove_worn_item,
-    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual, setnotworn,
+    worn_item_removal, oc_delay, W_ARMOR_WORN, W_ACCESSORY_WORN, yname, bimanual, setnotworn, welded,
 } from './invent.js';
 
 import { armor_simple_name, doffing, stop_donning } from './do_wear.js';
@@ -296,6 +296,7 @@ export async function steal(mtmp, objnambuf) {
     /* set mavenge so knights don't suffer an alignment penalty in retaliation */
     if (!(was_punished && !u.uball)) mtmp.mavenge = 1;    /* !Conflict: never in these sessions */
 
+    if (otmp.unpaid) await subfrombill_st(otmp);
     freeinv(otmp);
 
     /* if we just gave a "<mon> takes off ..." message with nothing in between,
@@ -324,10 +325,6 @@ export async function steal(mtmp, objnambuf) {
 // C ref: onames.h RIN_ADORNMENT — the ring a thief grabs before rolling.
 const RIN_ADORNMENT = 173;
 
-
-// C ref: wield.c welded(obj) — a cursed wielded weapon welds to the hand.
-// `bimanual` is imported from invent.js, which owns the complete oc_bimanual set.
-function welded(obj) { return !!obj && obj === game.uwep && !!obj.cursed; }
 
 
 // ===========================================================================
@@ -382,9 +379,7 @@ function Levitation_st() { return !!game.u?.uprops?.Levitation; }
 function Flying_st() { return !!game.u?.uprops?.Flying; }
 // C ref: hacklib.c upstart(s) — capitalize the first letter in place.
 function upstart_st(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-// C ref: body.h FOOT / HAND — body_part() part indices (js/invent.js:1376
-// body_part() takes the same enum).
-const FOOT_ST = 8, HAND_ST = 5;
+const FOOT_ST = 5, HAND_ST = 6;
 
 // C ref: steal.c:58 stealgold(mtmp) — a leprechaun grabs the gold under (or in)
 // the hero.  Floor gold outweighing carried gold is taken first (and always on
@@ -673,14 +668,14 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
         if (cansee(mon.mx, mon.my)) {
             /* Some_Monnam() avoids "It pulls ... and absorbs it!" if the hero
                can see the location but not the monster */
-            await update_topl(`${Some_Monnam(mon)} pulls ${yname_st(obj)} away`
+            await update_topl(`${Some_Monnam(mon)} pulls ${yname(obj)} away`
                 + ` from you and absorbs ${(obj.quan | 0) > 1 ? 'them' : 'it'}!`);
         } else {
             const { body_part, otense } = await import('./invent.js');
             const { makeplural } = await import('./plural.js');
             let hand_s = body_part(HAND_ST);
             if (bimanual(obj)) hand_s = makeplural(hand_s);
-            await update_topl(`${upstart_st(yname_st(obj))} ${
+            await update_topl(`${upstart_st(yname(obj))} ${
                 otense(obj, 'are')} pulled from your ${hand_s}!`);
         }
         freeinv(obj);
@@ -688,7 +683,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
     } else {
         /* not carried; presumably thrown or kicked */
         if (canspotmon(mon))
-            await update_topl(`${Monnam(mon)} absorbs ${yname_st(obj)}!`);
+            await update_topl(`${Monnam(mon)} absorbs ${yname(obj)}!`);
     }
     /* add to mon's inventory */
     mpickobj(mon, obj);
@@ -698,10 +693,6 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
 function carried_st(obj) {
     return obj?.where === OBJ_INVENT || inventoryArray_st().includes(obj);
 }
-// C ref: objclass.h bimanual(otmp).  `bimanual` is imported from invent.js.
-// C ref: do_name.c yname(obj) — "your <obj>".  The file's private yname() is
-// the same reduced form; reuse rather than adding a third.
-function yname_st(obj) { return `your ${objects[obj?.otyp]?.name || 'thing'}`; }
 
 // C ref: steal.c:852 mdrop_special_objs(mon) — a monster about to bypass the
 // normal level-change rules must leave the Amulet, the invocation items and the

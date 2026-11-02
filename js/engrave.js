@@ -3,7 +3,7 @@
 //         rumors.c init_rumors(), getrumor(), get_rnd_line(), get_rnd_text();
 //         hacklib.c xcrypt().
 
-import { ceiling as ceiling_dg } from './dungeon.js';
+import { ceiling } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE,
@@ -11,7 +11,8 @@ import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE
          GRAVE, ROOM, TT_PIT, is_pit, is_hole, COLNO, ROWNO, IS_GRAVE,
          IS_ALTAR, IS_WALL, IS_DOOR, SDOOR, STONE, IS_FOUNTAIN, IS_AIR,
          ACCESSIBLE, CLOUD, DRAWBRIDGE_DOWN, DRAWBRIDGE_UP, isok,
-         Is_airlevel, Is_waterlevel, ECMD_OK } from './const.js';
+         Is_airlevel, Is_waterlevel, ECMD_OK,
+    is_pool, is_lava, is_pool_or_lava } from './const.js';
 import { RUMORS_B64, ENGRAVE_B64 } from './rumors_data.js';
 import { EPITAPH_B64 } from './epitaph_data.js';
 import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
@@ -19,13 +20,15 @@ import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
          FOOD_CLASS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS, COIN_CLASS,
          ROCK_CLASS, BALL_CLASS, CHAIN_CLASS, VENOM_CLASS,
          objects } from './mkobj.js';
-import { mflags1_of, M1_ANIMAL, is_whirly } from './monflags_data.js';
-import { attacktype, AT_HUGS } from './monattk_data.js';
+import { mflags1_of, M1_ANIMAL, M1_HIDE, M1_CLING, M1_FLY, is_whirly } from './monflags_data.js';
+import { attacktype, AT_HUGS, sticks } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS, LEVITATION, FLYING, P_RIDING, P_BASIC } from './const.js';
+import { A_WIS, P_RIDING, P_BASIC } from './const.js';
+import { Levitation_hero, Flying_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { Blind as isBlind } from './vision.js';
 import { You_see } from './display.js';
+import { mungspaces } from './hacklib.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
 // loaded lazily inside doengrave() to avoid a module-init cycle: display.js
@@ -413,25 +416,36 @@ export async function cant_reach_floor(x, y, up, check_pit, wand_engraving) {
     await pline(`${who} can't reach the ${where}.`);
 }
 
-// C ref: engrave.c can_reach_floor(check_pit).
+// C ref: engrave.c:186 can_reach_floor(check_pit) — check whether the hero can
+// reach something at ground level.
 export function can_reach_floor(check_pit) {
     const u = game.u;
     if (!u) return true;
+    /* gy.youmonst.data is the hero's own species unless polymorphed */
+    const ydata = u.Upolyd ? u.data : null;
     if (u.uswallow
-        || (u.ustuck && !(u.Upolyd && hooks.sticks(u.data))
-            && attacktype(u.ustuck.data, AT_HUGS))) return false;
-    if ((u.uprops?.Levitation || u.uprops_extrinsic?.[LEVITATION])
-        && !(u.uprops?.BLevitation || u.uprops_blocked?.[LEVITATION])) return false;
+        || (u.ustuck && !sticks(ydata)
+            /* assume that arms are pinned rather than that the hero
+               has been lifted up above the floor */
+            && attacktype(u.ustuck.data, AT_HUGS))
+        || (Levitation_hero() && !(Is_airlevel(u.uz) || Is_waterlevel(u.uz))))
+        return false;
     /* Restricted/unskilled riders can't reach the floor */
     if (u.usteed && hooks.p_skill_of(P_RIDING) < P_BASIC) return false;
-    if ((u.uprops?.Flying || u.uprops_extrinsic?.[FLYING])
-        && !(u.uprops?.BFlying || u.uprops_blocked?.[FLYING])) return true;
+    /* mondata.h ceiling_hider(): a hider that clings to the ceiling (not a
+       mimic) or flies (lurker above) */
+    if (u.uundetected && ydata && (mflags1_of(ydata) & M1_HIDE)
+        && (((mflags1_of(ydata) & M1_CLING) && ydata.mcls !== 13 /* S_MIMIC */)
+            || (mflags1_of(ydata) & M1_FLY)))
+        return false;
+
+    if (Flying_hero() || (ydata?.msize ?? 0) >= 4 /* MZ_HUGE */)
+        return true;
+
     if (check_pit) {
         const t = (game.level?.traps || []).find((tr) => tr.tx === u.ux && tr.ty === u.uy);
-        if (t && t.tseen) {
-            if (is_pit(t.ttyp) && !(u.utrap && u.utraptype === TT_PIT)) return false;
-            if (is_hole(t.ttyp)) return false;
-        }
+        if (t && (uteetering_at_seen_pit(t) || uescaped_shaft(t)))
+            return false;
     }
     return true;
 }
@@ -580,10 +594,6 @@ export function des_engraving_at(x, y, text, pristine, etype) {
     }
 }
 
-// C ref: hacklib.c mungspaces() — collapse runs of whitespace to one and trim.
-function mungspaces(s) {
-    return s.replace(/\s+/g, ' ').replace(/^ | $/g, '');
-}
 
 // C ref: engrave.c stylus_ok(obj) — getobj classifier for "write with".
 // Fingers (obj==null) and weapons/wands/gems/rings are SUGGEST; markers and
@@ -610,14 +620,10 @@ async function Yname2(obj) {
 async function yname_of(obj) {
     return (await import('./invent.js')).yname(obj);
 }
-// C ref: objnam.c Yobjnam2(obj, verb) — Yname2 plus the verb agreeing with the
-// object's quantity ("Your dagger is" / "Your daggers are").
+// C ref: objnam.c Yobjnam2(obj, verb): aobjnam() (count and verb agreement)
+// behind yobjnam()'s ownership prefix.
 async function Yobjnam2(obj, verb) {
-    const plural = (obj?.quan ?? 1) > 1;
-    let v = verb;
-    if (verb === 'are') v = plural ? 'are' : 'is';
-    else if (!plural) v = `${verb}s`;
-    return `${await Yname2(obj)} ${v}`;
+    return (await import('./invent.js')).Yobjnam2(obj, verb);
 }
 
 // C ref: obj.h is_blade() — WEAPON_CLASS with oc_skill in P_DAGGER..P_SABER
@@ -919,7 +925,6 @@ async function freehand() {
 // check_capacity() are all ported.
 async function u_can_engrave() {
     const { pline } = await import('./display.js');
-    const { is_pool, is_lava } = await import('./dbridge.js');
     const { surface } = await import('./dungeon.js');
     const u = game.u;
     // SURFACE_AT(x, y): a raised drawbridge reports what lies under it.
@@ -951,7 +956,7 @@ async function u_can_engrave() {
         return false;
     }
     // C: cantwield(youmonst.data) = nohands(ptr) || verysmall(ptr); verysmall is msize < MZ_SMALL.
-    const { youmonst_data, near_capacity } = await import('./invent.js');
+    const { youmonst_data, check_capacity } = await import('./invent.js');
     const { M1_NOHANDS } = await import('./monflags_data.js');
     const ydata = youmonst_data();
     if (ydata && ((mflags1_of(ydata) & M1_NOHANDS) !== 0 || (ydata.msize ?? 2) < 1)) {
@@ -959,10 +964,7 @@ async function u_can_engrave() {
         return false;
     }
     /* C check_capacity((char *) 0): refuse when Overtaxed or worse */
-    if (near_capacity() >= 4 /* EXT_ENCUMBER */) {
-        await pline("You can't do that while carrying so much stuff.");
-        return false;
-    }
+    if (await check_capacity()) return false;
     return true;
 }
 
@@ -1258,7 +1260,7 @@ export async function doengrave() {
     if (len === 0 || ebuf.includes('\x1b')) {
         if (de.zapwand) {
             if (!isBlind())
-                await pline(`${await Tobjnam_of(de.otmp, 'glow')}, then ${await otense_of(de.otmp, 'fade')}.`);
+                await pline(`${(await import('./invent.js')).Tobjnam(de.otmp, 'glow')}, then ${await otense_of(de.otmp, 'fade')}.`);
             de.ret = 1; // ECMD_TIME
             await maybe_newsym(de);
             return de.ret;
@@ -1521,12 +1523,6 @@ async function maybe_newsym(de) {
     newsym(game.u.ux, game.u.uy);
 }
 
-// C ref: trap.c ceiling(x, y).  Same reduction as js/dig.js ceiling(): no
-// air/water/quest/earth level reaches this file.
-function ceiling(x, y) {
-    return ceiling_dg(x, y);
-}
-
 // C ref: mondata.c resists_blnd(&youmonst) — for the hero this is
 // (Blind || Unaware) plus a polyform AD_BLND explosion/gaze attack and a
 // Sunsword-style artifact; those two need mondata/artifact state this file
@@ -1540,10 +1536,6 @@ function resists_blnd() {
 // already starts capitalised (proper noun) is left alone.
 function the_prefix(s) { return /^[A-Z]/.test(s) ? s : `The ${s}`; }
 async function The_of(obj) { return the_prefix(await xname_of(obj)); }
-// C ref: objnam.c Tobjnam(obj, verb) — The(xname(obj)) + otense(obj, verb).
-async function Tobjnam_of(obj, verb) {
-    return `${await The_of(obj)} ${await otense_of(obj, verb)}`;
-}
 async function otense_of(obj, verb) {
     const { otense } = await import('./invent.js');
     return otense(obj, verb);
@@ -1661,7 +1653,7 @@ export async function feel_engraving(ep) {
 // BITMASK rather than in an iflags field (js/options.js:4210), so the C field
 // name reads undefined here and the flag is TRUE — which is the default-off
 // answer either way.
-function sanitize_engr_text(s) {
+export function sanitize_engr_text(s) {
     const strip_8th_bit = !(game.iflags?.wc_eight_bit_input);
     let out = '';
     for (let i = 0; i < s.length; i++) {
@@ -1703,7 +1695,7 @@ export function forget_engravings() {
 // C ref: engrave.c:1524 engraving_sanity_check() — the '#sanity' wizard check.
 export async function engraving_sanity_check() {
     const { impossible } = await import('./display.js');
-    const { is_pool_or_lava, db_under_typ } = await import('./dbridge.js');
+    const { db_under_typ } = await import('./const.js');
     const { surface } = await import('./dungeon.js');
     const engravings = head_engr();
 

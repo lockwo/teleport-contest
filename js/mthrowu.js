@@ -12,6 +12,7 @@ import { objects, WEAPON_CLASS, ARMOR_CLASS, TOOL_CLASS, ROCK_CLASS,
          CORPSE, BOULDER, STATUE, HEAVY_IRON_BALL } from './mkobj.js';
 import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
+import { get_atkdam_type } from './mondata.js';
 import { acurr_eff } from './attrib.js';
 import { Hallucination_u, Deaf_hero, You_hear } from './display.js';
 
@@ -525,7 +526,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
                 await deps.blind_msg?.(singleobj);
             }
             if (hitu && singleobj.otyp === EGG) {
-                if (!game.u?.Stoned && !deps.Stone_resistance?.()
+                if (!((game.u?.uprops?.Stoned | 0) > 0) && !deps.Stone_resistance?.()
                     && !(deps.poly_when_stoned?.(deps.youmonst_data?.())
                          && await deps.polymon?.(deps.PM_STONE_GOLEM)))
                     await deps.make_stoned?.(5, null, deps.KILLED_BY ?? 0, '');
@@ -697,12 +698,6 @@ export function m_lined_up(mtarg, mtmp, deps = {}) {
                             utarget ? (ignore_boulders ? 1 : 2) : 0);
 }
 
-// C ref: mthrowu.c:1397 lined_up(mtmp) — "is mtmp in position to use a ranged
-// attack on hero?"
-export function lined_up(mtmp, deps = {}) {
-    return m_lined_up(game.youmonst, mtmp, deps) ? true : false;
-}
-
 // ── hit_bars (C ref: mthrowu.c:1417) ──────────────────────────────────────
 //
 // The noise + breakage half of an object meeting iron bars.  `objp` is C's
@@ -787,7 +782,7 @@ export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) 
     const hits = hits_bars_test(objp.obj, always_hit);
     if (hits && whodidit !== -1) {
         const { pline } = await import('./display.js');
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         const { dissolve_bars } = await import('./monmove.js');
         const { harmless_missile } = await import('./invent.js');
         const LEATHER = 7, RUBBER_HOSE = 78;       /* objclass.h / objects.h */
@@ -818,41 +813,40 @@ export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) 
 // mattackm() AT_SPIT / AT_BREA arms: the same C functions with mtarg a monster,
 // so m_lined_up() draws nothing and the missile/ray is aimed at mtarg.
 
-// C ref: mondata.c get_atkdam_type() — AD_RBRE picks a real type (rn2(8)).
-const AD_MAGM = 1, AD_DRST = 7, AD_BLND = 11,
-      AD_SPC2 = 10, AD_RBRE = 242;
-const RND_BREATH = [1, 2, 3, 4, 5, 6, 7, 8];
-function get_atkdam_type(adtyp) {
-    return adtyp === AD_RBRE ? RND_BREATH[rn2(8)] : adtyp;
-}
+const AD_MAGM = 1, AD_DRST = 7, AD_BLND = 11, AD_SPC2 = 10;
 
 export async function spitmm(mtmp, mattk, mtarg, deps = {}) {
+    const utarg = (mtarg === game.youmonst);
+    const MM = await import('./monmove.js');
     if (mtmp.mcan) {
-        if (!game.u?.Deaf && dist2(mtmp.mx, mtmp.my, game.u.ux, game.u.uy)
-                             < BOLT_LIM * BOLT_LIM) {
+        if (!Deaf_hero() && dist2(mtmp.mx, mtmp.my, game.u.ux, game.u.uy)
+                            < BOLT_LIM * BOLT_LIM) {
             const { s_suffix } = await import('./hacklib.js');
             const { mon_nam } = await import('./do_name.js');
             const { canspotmon } = await import('./uhitm.js');
-            const { pline } = await import('./display.js');
             if (canspotmon(mtmp))
-                await pline(`A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
+                await MM.pline_mon(mtmp,
+                    `A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
             else
                 await You_hear('a dry rattle nearby.');
         }
         return M_ATTK_MISS;
     }
-    if (m_lined_up(mtarg, mtmp, deps)) {
-        const tx = mtarg.mx, ty = mtarg.my;
+    if (utarg ? MM.m_lined_up(mtmp) : m_lined_up(mtarg, mtmp, deps)) {
+        const tx = utarg ? (mtmp.mux ?? game.u.ux) : mtarg.mx;
+        const ty = utarg ? (mtmp.muy ?? game.u.uy) : mtarg.my;
         const { mksobj } = await import('./mkobj.js');
+        /* C: AD_BLND/AD_DRST blinding venom; default (with impossible()) and
+           AD_ACID acid venom. */
         const otmp = mksobj((mattk.adtyp === AD_BLND || mattk.adtyp === AD_DRST)
                             ? BLINDING_VENOM : ACID_VENOM, true, false);
         if (!rn2(BOLT_LIM - distmin(mtmp.mx, mtmp.my, tx, ty))) {
             if (deps.canseemon?.(mtmp)) {
                 const { Monnam } = await import('./do_name.js');
-                const { pline } = await import('./display.js');
-                await pline(`${Monnam(mtmp)} spits venom!`);
+                const { update_topl } = await import('./display.js');
+                await update_topl(`${Monnam(mtmp)} spits venom!`);
             }
-            game.mtarget = mtarg;
+            if (!utarg) game.mtarget = mtarg;
             await m_throw(mtmp, mtmp.mx, mtmp.my, sgn(game.tbx), sgn(game.tby),
                           distmin(mtmp.mx, mtmp.my, tx, ty), otmp, deps);
             game.mtarget = null;

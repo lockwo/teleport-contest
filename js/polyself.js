@@ -9,7 +9,7 @@
 // to wiz_polyself, matching that file's existing wiz_genesis/create_particular
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
-import { Levitation_hero, Flying_hero } from './youprop.js';
+import { Levitation_hero, Flying_hero, Stunned_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
@@ -33,7 +33,7 @@ import { weapon_descr } from './weapon.js';
 import { objects as OBJECTS, maybe_adjust_light } from './mkobj.js';
 import { place_object, WEAPON_CLASS, is_flimsy } from './mkobj.js';
 import { helm_simple_name } from './do_wear.js';
-import { the } from './objnam.js';
+import { the, simpleonames } from './objnam.js';
 import { makesingular } from './plural.js';
 import { rndexp, newhp, newpw, adjabil, update_rank, rank_of, setuhpmax } from './exper.js';
 import { newuhs } from './eat.js';
@@ -43,7 +43,8 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx, golemhp_js as golemhp
 import { livelog_printf, LL_CONDUCT, LL_MINORAC } from './livelog.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_MAX, TT_PIT, TT_BURIEDBALL,
     IS_FOUNTAIN, IS_POOL, IS_LAVA, IS_AIR, In_endgame, Is_airlevel, Is_waterlevel,
-    POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL } from './const.js';
+    POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL,
+    is_pool, is_pool_or_lava } from './const.js';
 // C ref: hack.h bodypart NECK; prop.h I_SPECIAL / FROMOUTSIDE / FROMRACE — the
 // float_vs_flight() / steed_vs_stealth() / polysense() ports below need them.
 import { NECK, I_SPECIAL, FROMOUTSIDE, FROMRACE, FROMFORM, LEVITATION, FLYING } from './const.js';
@@ -57,7 +58,7 @@ import { ARM, EYE, FINGER, FINGERTIP, FOOT, HAND, HANDED, HEAD, LEG, TOE,
 import { is_hider_flag, hides_under_flag, is_were_flag, likes_gems_flag, strongmonst_flag, is_male_flag, is_flyer_flag, mflags1_of, M1_CLING, M1_SLITHY, M1_NOEYES, M1_NOHEAD, M1_BREATHLESS, M1_AMORPHOUS, M1_UNSOLID, lays_eggs_flag, mindless, msound_of, is_swimmer_flag, is_female_flag, is_neuter_flag, is_orc_flag, is_elf_flag, is_dwarf_flag, is_gnome_flag, is_giant_flag, is_undead_flag, nohands, humanoid, polyok_flag, mflags2_of, M2_HUMAN, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, is_demon_flag, M1_SEE_INVIS, M1_TPORT, M1_TPORT_CNTRL, M1_SWIM, M1_WALLWALK, M1_REGEN, is_whirly, is_animal, noncorporeal, is_golem, flaming, touch_petrifies } from './monflags_data.js';
 import { attacktype, mattk_of, AT_BREA, AT_SPIT, AT_GAZE, AT_CLAW, AT_EXPL,
     AT_ENGL, AT_HUGS, AD_MAGM, AD_CONF, AD_FIRE, AD_ELEC, AD_HALU, AD_RBRE,
-    AD_BLND, AD_DRST, AD_STCK, AD_WRAP, AD_COLD, dmgtype } from './monattk_data.js';
+    AD_BLND, AD_DRST, AD_STCK, AD_WRAP, AD_COLD, dmgtype, sticks } from './monattk_data.js';
 import { dmgtype_fromattack, poly_when_stoned } from './mondata.js';
 import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Protection_from_shape_changers } from './mon.js';
 import { monster_nearby, waterbody_name } from './cmd.js';
@@ -123,13 +124,17 @@ function is_clinger(mdat) { return !!mdat && (mflags1_of(mdat) & M1_CLING) !== 0
 function eggs_in_water(mdat) {
     return lays_eggs_flag(mdat) && mdat?.mlet === ';' && is_swimmer_flag(mdat);
 }
-// C ref: trap.c set_utrap(tim, typ).  Duplicated from trap.js (which does not
-// export it) rather than importing, to keep polyself.js off trap.js's cycle.
-function set_utrap(tim, typ) {
+// C ref: trap.c:1030 set_utrap(tim, typ) — mark the hero trapped for `tim`
+// turns (0 frees).  Lives here, beside float_vs_flight(), so trap.js and the
+// modules that cannot import it without a cycle share ONE copy.
+export function set_utrap(tim, typ) {
     const u = game.u;
     if (!u) return;
+    /* C: if (!u.utrap ^ !tim) disp.botl = TRUE; */
+    if (!u.utrap !== !tim) game.botl = true;
     u.utrap = tim;
     u.utraptype = tim ? typ : 0 /* TT_NONE */;
+    float_vs_flight(); /* maybe block Lev and/or Fly */
 }
 // C ref: mondata.h telepathic(ptr) — the three telepathy-granting forms.
 function telepathic(mdat) {
@@ -342,11 +347,6 @@ const PM_ALIGNED_CLERIC = name_to_pmidx('aligned cleric');
 const no_longer_petrify_resistant = 'No longer petrify-resistant, you';
 const MZ_HUGE = 4;
 const CORPSE_OTYP = 265;
-// C ref: u.umonnum / u.umonster as mons[] indices.  This port keeps the
-// ROLE index in u.umonster (and in u.umonnum while unpolymorphed); the role's
-// player-monster row is PM_ARCHEOLOGIST + that index.
-function umonster_pm() { return PM_ARCHEOLOGIST_ROW + (game.u?.umonster | 0); }
-function cur_umonnum_pm() { return game.u?.Upolyd ? game.u.umonnum : umonster_pm(); }
 // C ref: youprop.h Stoned / Slimed / Sick and the resistances polymon() tests;
 // the port's uprops spellings plus the current form's FROMFORM bit.
 function uprop_any(...keys) {
@@ -356,20 +356,9 @@ function uprop_any(...keys) {
 function Stoned_u() { return (game.u?.uprops?.Stoned | 0) > 0; }
 function Slimed_u() { return (game.u?.uprops?.Slimed | 0) > 0; }
 function Sick_u() { return (game.u?.uprops?.Sick | 0) > 0 || !!game.u?.sick; }
-export function Stone_resistance_u() {
-    return fromform('Stone_resistance')
-        || uprop_any('Stone_resistance', 'HStone_resistance', 'EStone_resistance', 'StoneResistance');
-}
+export function Stone_resistance_u() { return Stone_resistance_hero(); }
 hooks.Stone_resistance_u = Stone_resistance_u;
-function Sick_resistance_u() {
-    return fromform('Sick_resistance')
-        || uprop_any('Sick_resistance', 'HSick_resistance', 'ESick_resistance');
-}
-// C ref: mondata.h sticks(ptr).
-function sticks(ptr) {
-    return dmgtype(ptr, AD_STCK) || (dmgtype(ptr, AD_WRAP) && !attacktype(ptr, AT_ENGL))
-        || attacktype(ptr, AT_HUGS);
-}
+function Sick_resistance_u() { return Sick_resistance_hero(); }
 // C ref: trap.c instapetrify(str).
 export async function instapetrify(str) {
     if (Stone_resistance_u())
@@ -942,7 +931,7 @@ export async function polymon(mntmp) {
         ustuckNam = Some_Monnam(u.ustuck);
     }
 
-    const turnedInto = cur_umonnum_pm() !== mntmp;
+    const turnedInto = game.u.umonnum !== mntmp;
     let buf = turnedInto ? '' : 'new ';
     if (dochange) {
         game.flags.female = !game.flags.female;
@@ -1116,11 +1105,11 @@ export async function polymon(mntmp) {
             const { buried_ball_to_freedom } = await import('./dig.js');
             await buried_ball_to_freedom();
         }
-        set_utrap(0, 0);
+        await (await import('./trap.js')).reset_utrap(true);
     } else if ((mntmp === PM_FIRE_ELEMENTAL || mntmp === PM_SALAMANDER)
                && u.utrap && u.utraptype === TT_LAVA) {
         await pline(`The ${hliquid('lava')} now feels soothing.`);
-        set_utrap(0, 0);
+        await (await import('./trap.js')).reset_utrap(true);
     }
     const amorph = (mflags1_of(newdat) & M1_AMORPHOUS) !== 0;
     if (amorph || is_whirly(newdat) || unsolid_new) {
@@ -1138,11 +1127,11 @@ export async function polymon(mntmp) {
         && (amorph || is_whirly(newdat) || unsolid_new
             || ((newdat?.msize ?? 0) <= MZ_SMALL && u.utraptype === TT_BEARTRAP))) {
         await pline(`You are no longer stuck in the ${u.utraptype === TT_WEB ? 'web' : 'bear trap'}.`);
-        set_utrap(0, 0);
+        await (await import('./trap.js')).reset_utrap(true);
     }
     if (webmaker(newdat) && u.utrap && u.utraptype === TT_WEB) {
         await pline('You orient yourself on the web.');
-        set_utrap(0, 0);
+        await (await import('./trap.js')).reset_utrap(true);
     }
     await check_strangling(true); /* maybe start strangling */
 
@@ -1327,9 +1316,7 @@ async function newman_dead() {
 async function polyman(fmt, arg) {
     const u = game.u;
     const was_blind = Blind();
-    const seeInvis = async () => (await import('./display.js')).see_invisible()
-        || !!u.formprops?.See_invisible;
-    const had_see_invis = await seeInvis();
+    const had_see_invis = See_invisible_hero();
     const sticking = sticks(u.data) && !!u.ustuck && !u.uswallow;
     if (u.Upolyd) {
         u.acurr = { a: (u.macurr.a || []).slice() };
@@ -1383,7 +1370,7 @@ async function polyman(fmt, arg) {
         await done(GENOCIDED);
     }
 
-    if ((await seeInvis()) !== had_see_invis) {
+    if (See_invisible_hero() !== had_see_invis) {
         const { set_mimic_blocking } = await import('./display.js');
         set_mimic_blocking(); /* See_invisible just toggled */
     }
@@ -1735,9 +1722,7 @@ const Unchanging = Unchanging_hero;
 export { Unchanging as Unchanging_poly };
 const Polymorph_control = Polymorph_control_hero;
 function Stunned() {
-    const u = game.u;
-    /* HStun is timed or FROMFORM (bat, stalker): the form bit lives in u.formprops */
-    return ((u?.uprops?.Stun | 0) > 0) || ((u?.uprops?.HStun | 0) > 0) || !!u?.Stunned || !!u?.formprops?.Stunned;
+    return Stunned_hero();
 }
 // C ref: mondata.h your_race(ptr) == (mflags2 & gu.urace.selfmask).
 const RACE_SELFMASK = { human: M2_HUMAN, elven: M2_ELF, dwarven: M2_DWARF,
@@ -1757,10 +1742,6 @@ function the_unique_pm(mdat) {
     return uniq;
 }
 function type_is_pname(mdat) { return !!mdat && (mflags2_of(mdat) & M2_PNAME) !== 0; }
-// C ref: hacklib.c mungspaces().
-function mungspaces_poly(s) {
-    return String(s ?? '').replace(/\s+/g, ' ').replace(/^ | $/g, '');
-}
 
 // C ref: polyself.c rehumanize() — leave monster form.  Reached from the
 // u.mtimedone countdown (timeout.c), from losing the form's last hit point
@@ -1784,7 +1765,7 @@ export async function rehumanize() {
                an amulet of life-saving */
             return; /* don't rehumanize after all */
         } else if (game.uamul && OBJECTS[game.uamul.otyp]?.oc_oprop === PROP_UNCHANGING) {
-            await pline(`Your ${simpleonames_poly(game.uamul)} fails!`);
+            await pline(`Your ${simpleonames(game.uamul)} fails!`);
             (await import('./o_init.js')).observe_object(game.uamul);
             makeknown(game.uamul.otyp);
         }
@@ -1839,26 +1820,6 @@ export function set_ulycn(which) {
 function ParanoidWerechange() {
     return (((game.flags?.paranoia_bits) | 0) & 0x0100) !== 0;
 }
-// C ref: cmd.c paranoid_query(be_paranoid, prompt) == paranoid_ynq(...,
-// accept_q=FALSE) === 'y'.  Same shape as eat.js's private copy; this port
-// keeps one per file that needs it rather than threading an export through
-// every combat/effect module (see eat.js's own note on this duplication).
-async function paranoid_query(be_paranoid, prompt) {
-    if (!be_paranoid) return (await y_n(prompt, 'yn\x1b', 'n')) === 'y';
-    const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-    const paranoidConfirm = (((game.flags?.paranoia_bits) | 0) & 0x0001) !== 0;
-    const responsetype = paranoidConfirm ? '[yes|no]' : '[yes|n] (n)';
-    let promptprefix = '', trylimit = 6, ans, c = 'n';
-    do {
-        const raw = await hooked_tty_getlin(`${promptprefix}${prompt} ${responsetype}`, null);
-        ans = String(raw == null ? '\x1b' : raw).replace(/\s+/g, ' ').trim();
-        if (ans.toLowerCase() === 'yes') { c = 'y'; break; }
-        if (ans[0] === '\x1b') { c = 'q'; break; }
-        promptprefix = '"Yes" or "No": ';
-    } while (paranoidConfirm && ans.toLowerCase() !== 'no' && --trylimit);
-    return c === 'y';
-}
-
 // C ref: were.c:191 you_were(void) — the hero (currently human-form
 // lycanthrope) shifts into their animal were-form.  Draws no RNG of its own;
 // the only thing that can consume input is the confirmation prompt under
@@ -1872,7 +1833,7 @@ export async function you_were() {
         // C: `pmname(...) + 4` skips the "were" prefix to name just the beast.
         const beastPtr = monster_by_pmidx(u.ulycn);
         const beastName = (beastPtr?.name || '').slice(4) || 'creature';
-        if (!(await paranoid_query(ParanoidWerechange(),
+        if (!(await (await import('./eat.js')).paranoid_query(ParanoidWerechange(),
                 `Do you want to change into ${an(beastName)}?`)))
             return;
     } else if (monster_nearby()) {
@@ -1895,7 +1856,7 @@ export async function you_unwere(purify) {
     if (!Unchanging() && is_were_flag(u.data)
         && !monster_nearby()
         && (!controllable_poly
-            || !(await paranoid_query(ParanoidWerechange(), 'Remain in beast form?')))) {
+            || !(await (await import('./eat.js')).paranoid_query(ParanoidWerechange(), 'Remain in beast form?')))) {
         await rehumanize();
     } else if (is_were_flag(u.data) && !u.mtimedone) {
         u.mtimedone = rn1(200, 200);              // 40% of initial were change
@@ -2005,7 +1966,7 @@ export async function polyself(psflags) {
             mntmp = NON_PM;
             const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
             const raw = await hooked_tty_getlin('Become what kind of monster? [type the name]', null);
-            let buf = mungspaces_poly(raw);
+            let buf = mungspaces(raw);
             if (buf === '\x1b' || (buf.length && buf[0] === '\x1b')) {
                 if (forcecontrol) {            /* wizard mode #polyself */
                     await pline('Never mind.');
@@ -2043,11 +2004,11 @@ export async function polyself(psflags) {
                     await pline(klass ? "You can't polymorph into any of those."
                                       : "I've never heard of such monsters.");
                 } else if (game.flags?.debug && u.Upolyd
-                           && (mntmp === umonster_pm()
+                           && (mntmp === game.u.umonster
                                /* "priest" and "priestess" match the monster
                                   rather than the role; override that unless
                                   the text explicitly contains "aligned" */
-                               || (umonster_pm() === PM_CLERIC
+                               || (game.u.umonster === PM_CLERIC
                                    && mntmp === PM_ALIGNED_CLERIC
                                    && !/aligned/i.test(buf)))) {
                     /* wizard mode: picking your own role while poly'd reverts
@@ -2061,7 +2022,7 @@ export async function polyself(psflags) {
                 } else if (!polyok_flag(mdat)
                            && !(mntmp === PM_HUMAN
                                 || (your_race_pm(mdat) && !((mdat.geno | 0) & G_UNIQ_F))
-                                || mntmp === umonster_pm())) {
+                                || mntmp === game.u.umonster)) {
                     /* mkclass_poly() can pick a !polyok() candidate; if so,
                        usually try again */
                     if (klass) {
@@ -2161,22 +2122,7 @@ async function poly_vampyr(mntmp, controllable_poly, old_light) {
 }
 
 import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
-
-// C ref: cmd.c getdir(), reached via zap.c's zap_getdir() idiom (dynamic import
-// keeps polyself.js off cmd.js's static import cycle).  Sets u.dx/u.dy/u.dz the
-// way C's getdir() does and reports cancel as C's `!getdir()`.
-//
-// This matters far beyond the direction itself: getdir() CONSUMES A KEYSTROKE.
-// A #monster ability that skips its prompt leaves the answering key in the
-// input stream, where the command parser executes it as a command.
-async function u_getdir() {
-    const { getdir } = await import('./cmd.js');
-    const dir = await getdir();
-    const u = game.u;
-    if (!dir) { u.dx = 0; u.dy = 0; u.dz = 0; return false; }
-    u.dx = dir.dx | 0; u.dy = dir.dy | 0; u.dz = dir.dz | 0;
-    return true;
-}
+import { mungspaces } from './hacklib.js';
 
 // C ref: polyself.c dobreathe() — #monster's breath-weapon action.
 export async function dobreathe() {
@@ -2192,7 +2138,7 @@ export async function dobreathe() {
     u.uen -= 15;
     game.botl = true;
 
-    if (!(await u_getdir()))
+    if (!(await (await import('./cmd.js')).getdir()))
         return ECMD_CANCEL;
 
     // C ref: attacktype_fordmg(youmonst.data, AT_BREA, AD_ANY) — the FIRST
@@ -2214,7 +2160,7 @@ export async function dobreathe() {
 // asked first (getdir() eats the key), then a venom object marked as the
 // hero's (spe = 1) is thrown.
 async function dospit() {
-    if (!(await u_getdir()))
+    if (!(await (await import('./cmd.js')).getdir()))
         return ECMD_CANCEL;
     const u = game.u;
     const mattk = mattk_of(u.data).find((a) => a.aatyp === AT_SPIT);
@@ -2281,7 +2227,7 @@ async function dogaze() {
     const { setmangry, killed } = await import('./uhitm.js');
     const flags = game.flags || {};
     const confused = !!u.uconf;
-    const see_invis = !!u.see_invis || !!u.formprops?.See_invisible;
+    const see_invis = See_invisible_hero();
     let looked = 0;
 
     for (const mtmp of fmonOrder()) {
@@ -2681,17 +2627,6 @@ async function dospinweb() {
     return ECMD_TIME;
 }
 
-// C ref: rm.h is_pool(x, y) / is_pool_or_lava(x, y).  hack.js keeps a private
-// unexported copy of the latter; these go through const.js's IS_POOL/IS_LAVA
-// rather than repeating the terrain ordinals.
-function is_pool(x, y) {
-    const t = game.level?.at?.(x, y)?.typ;
-    return t != null && IS_POOL(t);
-}
-function is_pool_or_lava(x, y) {
-    const t = game.level?.at?.(x, y)?.typ;
-    return t != null && (IS_POOL(t) || IS_LAVA(t));
-}
 // C ref: svl.level.objects[u.ux][u.uy] — HEAD of the floor pile under the
 // hero.  place_object() prepends, so our flat array's LAST match is C's head.
 function obj_at_hero() {
@@ -2857,12 +2792,11 @@ export function float_vs_flight(mask_armf = false) {
 }
 
 // C ref: polyself.c:158 steed_vs_stealth() — riding blocks stealth unless
-// hero+steed fly.  No RNG.  (js/do_wear.js:204 BStealth() recomputes exactly
-// this rule inline instead of reading the mask written here.)
+// hero+steed fly (Flying/Levitation include their blocked masks).  No RNG.
 export function steed_vs_stealth() {
     const u = game.u;
     const p = uprops_of();
-    if (u.usteed && !HEFlying() && !HELevitation())
+    if (u.usteed && !Flying_hero() && !Levitation_hero())
         p.BStealth = (p.BStealth | 0) | FROMOUTSIDE;
     else
         p.BStealth = (p.BStealth | 0) & ~FROMOUTSIDE;
@@ -2884,9 +2818,6 @@ function can_be_strangled_u() {
         || !!(p.Breathless || p.HBreathless || p.EBreathless);
     return !nobrainer || !nonbreathing;
 }
-// C ref: objnam.c simpleonames(obj) — xname() without the enchantment/BUC
-// prefixes.  For the amulet of strangulation the two agree.
-function simpleonames_poly(obj) { return xname(obj); }
 
 // C ref: polyself.c:168 check_strangling(on) — for changing into (on=FALSE) or
 // out of (on=TRUE) a form that is immune to strangulation.  Called by polymon()
@@ -2904,7 +2835,7 @@ export async function check_strangling(on) {
             u.uprops = u.uprops || {};
             u.uprops.Strangled = 6;
             game.botl = true;
-            await pline(`Your ${simpleonames_poly(game.uamul)} ${
+            await pline(`Your ${simpleonames(game.uamul)} ${
                 was_strangled ? 'still constricts' : 'begins constricting'
             } your ${body_part(NECK)}!`); /* "throat" */
             makeknown(AMULET_OF_STRANGULATION_OTYP);
@@ -3032,11 +2963,7 @@ export function polysense() {
     ctx.warntype.polyd = 0;
     p.HWarn_of_mon = (p.HWarn_of_mon | 0) & ~FROMRACE;
 
-    /* C switches on u.umonnum, which is a mons[] index there.  In THIS port
-       u.umonnum is a ROLE index while unpolymorphed ([[umonnum-is-a-role-
-       index]]), so the switch has to run off youmonst.data's pmidx and only
-       when Upolyd — exactly the guard C's own callers rely on. */
-    const mndx = u.Upolyd ? (youmonst_data_pub()?.pmidx ?? NON_PM) : NON_PM;
+    const mndx = u.umonnum;
 
     switch (mndx) {
     case PM_PURPLE_WORM:
@@ -3064,7 +2991,7 @@ export function polysense() {
 // C indexes svm.mvitals[] with gu.urole.mnum / gu.urace.mnum, which ARE mons[]
 // rows there.  In this port roles[].mnum / races[].mnum are 0-based role/race
 // indices (js/role.js:25 / :162), so both have to be mapped to the mons[] row
-// first — the same trap as [[umonnum-is-a-role-index]].
+// first.
 const PM_ARCHEOLOGIST_ROW = 331;   /* js/monmove.js:6018 */
 let _race_rows = null;
 function race_mons_row(raceidx) {

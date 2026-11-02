@@ -8,12 +8,15 @@
 // occupation (dig_check / dighole) is a separate unported subsystem.
 
 import { game, hooks } from './gstate.js';
-import { Fumbling_hero } from './youprop.js';
+import { Invis_hero, Fumbling_hero, Deaf_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { rnd, rn2, rn1 } from './rng.js';
+import { align_str } from './role.js';
 import { hard_helmet } from './do_wear.js';
-import { newsym, feel_location, feel_newsym, You_hear, You_feel, tmp_at, fn_cmap_to_glyph } from './display.js';
-import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, STOMACH, Unaware, DISP_BEAM, DISP_END } from './const.js';
-import { unblock_point, recalc_block_point, cansee, Blind } from './vision.js';
+import { newsym, feel_location, feel_newsym, You_hear, You_feel, show_glyph_cell, flush_screen, verbalize, stairway_at } from './display.js';
+import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, STOMACH, Unaware, is_pool, is_lava, is_moat, is_pool_or_lava, is_ice } from './const.js';
+import { CLR_WHITE } from './terminal.js';
+import { unblock_point, recalc_block_point, cansee, couldsee, Blind } from './vision.js';
+import { perceives_flag } from './monflags_data.js';
 import {
     IS_WALL, IS_TREE, IS_OBSTRUCTED, IS_STWALL, IS_DOOR,
     STONE, CORR, DOOR, ROOM, SCORR, SDOOR,
@@ -27,7 +30,7 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { Is_special, ceiling as ceiling_dg, has_ceiling as has_ceiling_dg } from './dungeon.js';
+import { Is_special, ceiling, has_ceiling as has_ceiling_dg, altarmask_at, ledger_no } from './dungeon.js';
 import { inside_room } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
@@ -292,21 +295,6 @@ function rnd_treefruit_at(x, y) {
     return mksobj_at(TREEFRUITS[rn2(TREEFRUITS.length)], x, y, true, false);
 }
 
-// C ref: stairs.c stairway_at(x, y) — the stairway record on this square, or
-// null.  On_stairs(x,y) is `stairway_at(x,y) != 0`.  The stair list is a
-// singly-linked chain hanging off `game.stairs` (cf. hack.js).
-function stairway_at(x, y) {
-    for (let s = game.stairs; s; s = s.next)
-        if (s.sx === x && s.sy === y) return s;
-    return null;
-}
-
-// C ref: trap.c ceiling(x, y).  Same reduction as trap.js ceiling(): no
-// air/water/quest/earth level is generated here.
-function ceiling(x, y) {
-    return ceiling_dg(x, y);
-}
-
 // C ref: hack.c losehp(n, knam, k_format) — delegates to do.js's complete port
 // (end_running, Upolyd rehumanize, killer text, "You die...", done(DIED)).
 // C callers pass Maybe_Half_Phys(dmg), which is applied here.
@@ -510,15 +498,20 @@ export async function zap_dig() {
         diridx = xytodir_(dx, dy);
     }
     let digdepth = rn1(18, 8);
-    // C ref: dig.c:1623 tmp_at(DISP_BEAM, cmap_to_glyph(S_digbeam)); the beam
-    // glyph itself is display-only, the DISP_END restore is not (see below).
-    await tmp_at(DISP_BEAM, fn_cmap_to_glyph(78 /* S_digbeam */));
+    // C ref: dig.c:1623 tmp_at(DISP_BEAM, cmap_to_glyph(S_digbeam)): every square
+    // the hero can see keeps the S_digbeam glyph ('*', white) until DISP_END, so
+    // a --More-- raised inside the loop shows the beam so far.
+    const beam = [];
 
     while (--digdepth >= 0) {
         if (!isok(zx, zy)) break;
         const room = lvl.at(zx, zy);
         if (!room) break;
-        await tmp_at(zx, zy);
+        if (cansee(zx, zy)) {
+            beam.push([zx, zy]);
+            show_glyph_cell(zx, zy, '*', CLR_WHITE, false);
+            await flush_screen(0);
+        }
 
         if (pitdig) { /* we are already in a pit if this is true */
             let adjpit = t_at(zx, zy);
@@ -545,7 +538,7 @@ export async function zap_dig() {
                     flow_y = zy;
                     pitflow = true;
                 }
-                if (is_pool_(zx, zy) || is_lava_(zx, zy)) {
+                if (is_pool(zx, zy) || is_lava(zx, zy)) {
                     flow_x = zx - dx;
                     flow_y = zy - dy;
                     pitflow = true;
@@ -565,7 +558,7 @@ export async function zap_dig() {
                 const { update_topl } = await import('./display.js');
                 await update_topl('The door is razed!');
             }
-            // watch_dig(): only reacts in town with the Watch present; no-op.
+            await watch_dig(null, zx, zy, true);
             room.doormask = D_NODOOR;
             recalc_block_point(zx, zy); // vision
             newsym(zx, zy);
@@ -620,6 +613,7 @@ export async function zap_dig() {
                     await add_damage(zx, zy, SHOP_WALL_COST);
                     shopwall = true;
                 }
+                await watch_dig(null, zx, zy, true);
                 if (lvl.flags?.is_cavernous_lev && !in_town(zx, zy)) {
                     room.typ = CORR; room.flags = 0;
                 } else {
@@ -642,7 +636,7 @@ export async function zap_dig() {
     // C ref: dig.c:1738 tmp_at(DISP_END, 0) — newsym()s every beam square the
     // hero could see; while hallucinating each monster/object redrawn there
     // draws the display RNG.
-    await tmp_at(DISP_END, 0);
+    for (const [bx, by] of beam) newsym(bx, by);
 
     // C ref: dig.c:1738 — a pit dug beside a pool/lava (or joined to a flooded
     // pit) lets the liquid flow into every conjoined pit.
@@ -838,7 +832,7 @@ export const USE_PICK_AXE_DIG = -2;
  *    (b) use_pick_axe() tail-calls use_pick_axe2() instead of returning the
  *        USE_PICK_AXE_DIG sentinel.
  *
- *  Helpers whose owning module keeps them file-private (set_utrap, trapname,
+ *  Helpers whose owning module keeps them file-private (trapname,
  *  is_flyer, ...) are duplicated below with a `C ref:` line, the way the rest
  *  of this port does it.  Stateful cross-subsystem helpers delegate through
  *  dynamic imports so their effects and RNG calls remain in one implementation.
@@ -847,7 +841,8 @@ export const USE_PICK_AXE_DIG = -2;
 import { rnl, d } from './rng.js';
 import { m_at } from './display.js';
 import { t_at } from './mkroom.js';
-import { conjoined_pits as conjoined_pits_sync } from './trap.js';
+import { conjoined_pits as conjoined_pits_sync, reset_utrap, trapname } from './trap.js';
+import { set_utrap } from './polyself.js';
 import { bimanual as bimanual_dg } from './invent.js';
 import {
     HEAVY_IRON_BALL, CORPSE, LEASH, POT_OIL, COIN_CLASS, POTION_CLASS,
@@ -863,7 +858,7 @@ import {
     IS_ROOM, IS_WATERWALL, IS_POOL,
     AM_SANCTUM, AM_MASK, Amask2align, A_NONE, A_LAWFUL,
     PIT, HOLE, TRAPDOOR, LANDMINE, BEAR_TRAP, WEB, MAGIC_PORTAL, STATUE_TRAP,
-    VIBRATING_SQUARE, MAGIC_TRAP, ANTI_MAGIC, LEVEL_TELEP, TELEP_TRAP,
+    VIBRATING_SQUARE, MAGIC_TRAP, ANTI_MAGIC, LEVEL_TELEP, TELEP_TRAP, POLY_TRAP,
     DRAWBRIDGE_UP, DRAWBRIDGE_DOWN, DBWALL, DB_UNDER, DB_ICE, DB_LAVA, DB_MOAT,
     LAVAPOOL, MOAT, POOL, WATER, IRONBARS, LAVAWALL, ALTAR, ICE,
     TT_PIT, TT_INFLOOR, TT_BURIEDBALL,
@@ -928,7 +923,7 @@ function next2u(x, y) {
 function Luck() { const u = game.u || {}; return (u.uluck | 0) + (u.moreluck | 0); }
 
 const uprop = (nm) => (game.u?.uprops?.[nm] || 0);
-function Deaf_() { return uprop('HDeaf') > 0 || !!game.u?.Deaf; }
+function Deaf_() { return Deaf_hero(); }
 function Levitation() { return Levitation_hero(); }
 function Flying() { return Flying_hero(); }
 function Fumbling() { return Fumbling_hero(); }
@@ -945,30 +940,6 @@ function Race_idx_if(idx) { return (game.urace?.mnum ?? -1) === idx; }
 // C ref: stairs.c On_stairs(x, y) / On_ladder(x, y).
 function On_stairs(x, y) { return stairway_at(x, y) != null; }
 function On_ladder(x, y) { const s = stairway_at(x, y); return !!s && !!s.isladder; }
-
-// C ref: pray.c altarmask_at(x, y) — the mimic-appearance arm needs
-// M_AP_FURNITURE state this file does not carry, so only the terrain arm.
-function altarmask_at(x, y) {
-    if (!isok(x, y)) return 0;
-    const lev = game.level?.at(x, y);
-    return (lev && IS_ALTAR(lev.typ)) ? (lev.altarmask | 0) : 0;
-}
-
-// C ref: trap.c set_utrap(tim, typ) / reset_utrap(msg).  Duplicated (trap.js
-// does not export either) exactly as js/polyself.js:126 does.  The msg arm of
-// reset_utrap is float_vs_flight(), which this port does not model.
-function set_utrap(tim, typ) {
-    const u = game.u;
-    if (!u) return;
-    u.utrap = tim;
-    u.utraptype = tim ? typ : 0 /* TT_NONE */;
-}
-function reset_utrap(_msg) {
-    const u = game.u;
-    if (!u) return;
-    u.utrap = 0;
-    u.utraptype = 0;
-}
 
 // C ref: mkobj.c sobj_at(otyp, x, y).  NOT js/invent.js's sobj_at(): that one
 // indexes the pile as objects[x][y] while mkobj.c place_object() keeps ONE flat
@@ -991,45 +962,6 @@ function sobj_at(otyp, x, y) {
 }
 function OBJ_AT(x, y) { return floor_pile(x, y).length > 0; }
 
-// C ref: dbridge.c is_pool/is_lava/is_moat/is_pool_or_lava/is_ice.  Kept local
-// (not imported from js/dbridge.js) because dbridge.js pulls in mkobj.js and
-// dokick.js; a static import here would put dig.js on that cycle.
-// C ref: dbridge.c:45 is_pool(): `ltyp == MOAT` is not redundant with is_moat()
-// because Juiblex's swamp MOATs are not moats.  The raised-drawbridge case
-// depends on the terrain the bridge covers.
-function is_pool_(x, y) {
-    if (!isok(x, y)) return false;
-    const lev = game.level?.at(x, y);
-    if (!lev) return false;
-    return lev.typ === POOL || lev.typ === MOAT || lev.typ === WATER
-        || is_moat_(x, y);
-}
-function is_lava_(x, y) {
-    if (!isok(x, y)) return false;
-    const lev = game.level?.at(x, y);
-    if (!lev) return false;
-    return lev.typ === LAVAPOOL || lev.typ === LAVAWALL
-        || (lev.typ === DRAWBRIDGE_UP && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_LAVA);
-}
-// C ref: dbridge.c:99 is_moat() — never true on Juiblex's level.
-function is_moat_(x, y) {
-    if (!isok(x, y)) return false;
-    const lev = game.level?.at(x, y);
-    if (!lev) return false;
-    return !Is_juiblex_level(game.u?.uz)
-        && (lev.typ === MOAT
-            || (lev.typ === DRAWBRIDGE_UP
-                && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_MOAT));
-}
-function is_pool_or_lava_(x, y) { return is_pool_(x, y) || is_lava_(x, y); }
-function is_ice_(x, y) {
-    if (!isok(x, y)) return false;
-    const lev = game.level?.at(x, y);
-    if (!lev) return false;
-    return lev.typ === ICE
-        || (lev.typ === DRAWBRIDGE_UP && ((lev.drawbridgemask | 0) & DB_UNDER) === DB_ICE);
-}
-
 // C ref: trap.h undestroyable_trap(ttyp) — MAGIC_PORTAL and the vibrating
 // square survive digging.  trap.js exports one; kept local for the same
 // no-cycle reason as the liquid predicates.
@@ -1039,7 +971,7 @@ function undestroyable_trap_(ttyp) {
 // C ref: trap.h is_magical_trap(ttyp) — the trap types a dig detonates rather
 // than removes.
 function is_magical_trap_(ttyp) {
-    return ttyp === MAGIC_TRAP || ttyp === ANTI_MAGIC || ttyp === MAGIC_PORTAL
+    return ttyp === MAGIC_TRAP || ttyp === ANTI_MAGIC || ttyp === POLY_TRAP
         || ttyp === LEVEL_TELEP || ttyp === TELEP_TRAP;
 }
 
@@ -1055,16 +987,6 @@ function otyp_by_name(nm) {
 const LAND_MINE = () => otyp_by_name('land mine');
 const BEARTRAP = () => otyp_by_name('beartrap');
 const AMULET_OF_STRANGULATION = () => otyp_by_name('amulet of strangulation');
-
-// C ref: trap.c trapname(ttyp, override) — the trap's display name.
-const TRAPNAME_BY_TTYP = {
-    5: 'bear trap', 6: 'land mine', 11: 'pit', 12: 'spiked pit',
-    13: 'hole', 14: 'trap door', 18: 'web', 19: 'statue trap',
-    15: 'teleportation trap', 16: 'level teleporter', 17: 'magic portal',
-    20: 'magic trap', 21: 'anti-magic field', 22: 'polymorph trap',
-    25: 'vibrating square',
-};
-function trapname_(ttyp) { return TRAPNAME_BY_TTYP[ttyp] || 'trap'; }
 
 // C ref: mondata.h is_flyer/is_floater/grounded/passes_walls/is_watch and
 // mon.c canseemon(mtmp).  Local copies: every module that needs them keeps its
@@ -1164,9 +1086,6 @@ function get_level(dst, levnum) { dst.dnum = game.u?.uz?.dnum ?? 0; dst.dlevel =
 // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
 // js/dog.js:530 and js/save.js:287 keep the same private copy for the same
 // import-order reason; this one used to drop the +ledger_start term.
-function ledger_no(lev) {
-    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
-}
 const MIGR_RANDOM = 0; // include/dungeon.h MIGR_RANDOM (js/const.js:894)
 // C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc) — js/dog.js has
 // the faithful port (mon_leave() worm/shk/container bookkeeping plus the
@@ -1189,10 +1108,6 @@ async function u_wipe_engr(cnt) { await (await import('./engrave.js')).u_wipe_en
 async function angry_guards(silent) {
     return await (await import('./questpgr.js')).angry_guards(silent);
 }
-// C ref: pline.c verbalize(line).
-async function verbalize(line) {
-    await (await import('./display.js')).pline(`"${line}"`);
-}
 // C ref: mon.c get_iter_mons(fn) — first monster on the level for which fn()
 // answers TRUE.  js/dokick.js:278 has it, unexported.
 function get_iter_mons(fn) {
@@ -1206,74 +1121,6 @@ function xytodir_(dx, dy) {
         if (xdir[i] === dx && ydir[i] === dy) return i;
     return DIR_ERR;
 }
-// C ref: trap.c:7038 sokoban_guilt() — a luck penalty for cheating in Sokoban.
-// Both callers below (the direct DIGTYP_BOULDER branch and break_statue())
-// only run from the hero's own dig_check() occupation, so `by_you` (C's
-// `!svc.context.mon_moving` guard) is always true here.
-function sokoban_guilt_dig() {
-    if (!game.level?.flags?.sokoban_rules) return;
-    const u = game.u;
-    u.uconduct = u.uconduct || {};
-    u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-    u.uluck = (u.uluck || 0) - 1;              // C: change_luck(-1), clamped
-    if (u.uluck < -10) u.uluck = -10;
-}
-// C ref: zap.c fracture_rock(obj):5537 / break_statue(obj):5582.  js/explode.js
-// has private copies with an extra `weight` argument; these are the C shape.
-// The rn1(60, 7) is the only draw and it happens whether or not the object is
-// on the floor.
-export async function fracture_rock(obj) {
-    if (!obj) return;
-    /* NOT PORTED: the shop-billing head (billable/breakobj) */
-    if (obj.otyp === BOULDER) sokoban_guilt_dig();
-    const { weight, GEM_CLASS, ROCK: ROCK_OTYP, dealloc_oextra, place_object }
-        = await import('./mkobj.js');
-    const { obj_extract_self } = await import('./invent.js');
-    obj.otyp = ROCK_OTYP;
-    obj.oclass = GEM_CLASS;
-    obj.quan = rn1(60, 7);
-    obj.owt = weight(obj);
-    obj.dknown = obj.bknown = obj.rknown = 0;
-    obj.known = 1;                       /* rocks have no oc_uses_known */
-    dealloc_oextra(obj);
-    if (obj.where === OBJ_FLOOR) {
-        const ox = obj.ox, oy = obj.oy;
-        obj_extract_self(obj);
-        place_object(obj, ox, oy);
-        if (!does_block(ox, oy, game.level?.at(ox, oy))) {
-            unblock_point(ox, oy);
-            await vision_recalc(0);
-            newsym(ox, oy);
-        }
-    }
-}
-async function break_statue(obj) {
-    const trap = t_at(obj.ox, obj.oy);
-    if (trap && trap.ttyp === STATUE_TRAP) {
-        if (await (await import('./trap.js')).activate_statue_trap(
-            trap, obj.ox, obj.oy, true))
-            return false;
-    }
-    const { obj_extract_self } = await import('./invent.js');
-    const { place_object } = await import('./mkobj.js');
-    while (Array.isArray(obj.cobj) ? obj.cobj.length : obj.cobj) {
-        const item = Array.isArray(obj.cobj) ? obj.cobj[0] : obj.cobj;
-        obj_extract_self(item);
-        place_object(item, obj.ox, obj.oy);
-    }
-    const by_you = !game.context?.mon_moving;
-    const CORPSTAT_HISTORIC = 4;
-    if (by_you && Role_idx_if(ROLE_ARCHEOLOGIST) && ((obj.spe | 0) & CORPSTAT_HISTORIC)) {
-        const { pline } = await import('./display.js');
-        const { adjalign } = await import('./attrib.js');
-        await You_feel('guilty about damaging such a historic statue.');
-        adjalign(-1);
-    }
-    obj.spe = 0;
-    await fracture_rock(obj);
-    return true;
-}
-
 /* ---- dig.c proper ------------------------------------------------------- */
 
 // C ref: dig.c:29 rm_waslit() — was anything in the 5x3 box around the hero
@@ -1432,7 +1279,7 @@ export function dig_check(madeby, x, y) {
     } else if (madeby === BY_OBJECT
                /* the block against existing traps is mainly to prevent broken
                   wands from turning holes into pits */
-               && (ttmp || is_pool_or_lava_(x, y))) {
+               && (ttmp || is_pool_or_lava(x, y))) {
         return DIGCHECK_FAIL_OBJ_POOL_OR_TRAP;
     }
     return DIGCHECK_PASSED;
@@ -1600,9 +1447,9 @@ export async function dig() {
                 let dmg = dmgval(uwep, game.youmonst || null) + dbon();
                 if (dmg < 1) dmg = 1;
                 else if (game.uarmf) dmg = Math.trunc((dmg + 1) / 2);
-                await pline('You hit yourself in the foot.');
-                // C: Sprintf(kbuf, "chopping off %s own %s", uhis(), body_part(FOOT))
                 const { body_part } = await import('./invent.js');
+                await pline(`You hit yourself in the ${body_part(FOOT)}.`);
+                // C: Sprintf(kbuf, "chopping off %s own %s", uhis(), body_part(FOOT))
                 await losehp(dmg, `chopping off ${game.flags?.female ? 'her' : 'his'} own ${
                     body_part(FOOT)}`, 1 /* KILLED_BY */);
             } else {
@@ -1610,13 +1457,13 @@ export async function dig() {
                 await pline(`You destroy the bear trap with your ${xname(uwep)}.`);
                 const { deltrap } = await import('./trap.js');
                 deltrap(ttmp);
-                reset_utrap(true);       /* release from trap, maybe Lev or Fly */
+                await reset_utrap(true);       /* release from trap, maybe Lev or Fly */
             }
             /* we haven't made any progress toward a pit yet */
             dg.effort = 0;
             return 0;
         } else if (ttmp && dcresult === DIGCHECK_PASSED_DESTROY_TRAP) {
-            const ttmpname = trapname_(ttmp.ttyp);
+            const ttmpname = trapname(ttmp.ttyp, false);
             if (ispick) {
                 const { xname } = await import('./invent.js');
                 await pline(`You destroy ${ttmp.tseen ? `the ${ttmpname}`
@@ -1651,7 +1498,7 @@ export async function dig() {
         cleanup: {
             if (digtyp === DIGTYP_STATUE
                 && (obj = sobj_at(STATUE, dpx, dpy)) != null) {
-                if (await break_statue(obj))
+                if (await (await import('./zap.js')).break_statue(obj))
                     digtxt = 'The statue shatters.';
                 else
                     /* it was a statue trap; break_statue() printed a message
@@ -1659,7 +1506,7 @@ export async function dig() {
                     digtxt = null;
             } else if (digtyp === DIGTYP_BOULDER
                        && (obj = sobj_at(BOULDER, dpx, dpy)) != null) {
-                await fracture_rock(obj);
+                await (await import('./zap.js')).fracture_rock(obj);
                 /*[5.0: this probably isn't necessary anymore]*/
                 if ((bobj = sobj_at(BOULDER, dpx, dpy)) != null) {
                     /* another boulder here, restack it to the top */
@@ -1851,10 +1698,10 @@ export function fillholetyp(x, y, fill_if_any) {
 
     for (let x1 = lo_x; x1 <= hi_x; x1++)
         for (let y1 = lo_y; y1 <= hi_y; y1++) {
-            if (is_moat_(x1, y1)) moat_cnt++;
+            if (is_moat(x1, y1)) moat_cnt++;
             /* must come after is_moat since moats are pools but not vice-versa */
-            else if (is_pool_(x1, y1)) pool_cnt++;
-            else if (is_lava_(x1, y1)) lava_cnt++;
+            else if (is_pool(x1, y1)) pool_cnt++;
+            else if (is_lava(x1, y1)) lava_cnt++;
         }
 
     if (!fill_if_any) pool_cnt = Math.trunc(pool_cnt / 3);  /* less liquid */
@@ -1888,7 +1735,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
 
     if (at_u && u.utrap) {
         if (u.utraptype === TT_BURIEDBALL) await buried_ball_to_punishment();
-        else if (u.utraptype === TT_INFLOOR) reset_utrap(false);
+        else if (u.utraptype === TT_INFLOOR) await reset_utrap(false);
     }
 
     if (await furniture_handled(x, y, madeby_u)) return;
@@ -1908,7 +1755,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
         surface_type = (IS_ROOM(lev.typ) && !Is_earthlevel(u.uz)) ? 'floor' : 'ground';
         if (IS_ALTAR(lev.typ)) {
             old_aligntyp = Amask2align((lev.altarmask | 0) & AM_MASK);
-            furniture = `${align_str_(old_aligntyp)} `;
+            furniture = `${align_str(old_aligntyp)} `;
         }
         furniture += surface(x, y);
     } else {
@@ -1931,7 +1778,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
         ttmp.tseen = 1;                  /* C: feeltrap(ttmp) */
     }
 
-    const tname = trapname_(ttyp);
+    const tname = trapname(ttyp, true);
     const in_thru = (ttyp === HOLE) ? 'through' : 'in';
     if (madeby_u) {
         if (x !== u.ux || y !== u.uy) await pline(`You dig an adjacent ${tname}.`);
@@ -1973,7 +1820,7 @@ export async function digactualhole(x, y, madeby, ttyp) {
                 set_utrap(rn1(4, 2), TT_PIT);
                 game.vision_full_recalc = 1;   /* vision limits change */
             } else {
-                reset_utrap(true);
+                await reset_utrap(true);
             }
             if (!same_pile(oldobjs, newobjs)) {  /* something unearthed */
                 const { pickup } = await import('./pickup.js');
@@ -2080,11 +1927,6 @@ export async function digactualhole(x, y, madeby, ttyp) {
 // C ref: `oldobjs != newobjs` — C compares the HEAD of the pile chain; with the
 // flat-array pile that is "did the topmost object here change".
 function same_pile(a, b) { return (a[0] ?? null) === (b[0] ?? null); }
-// C ref: align.h align_str(alignment).
-function align_str_(a) {
-    return a === 1 ? 'lawful' : a === 0 ? 'neutral' : a === -1 ? 'chaotic'
-        : a === A_NONE ? 'unaligned' : 'unknown';
-}
 
 // C ref: dig.c:837 liquid_flow(x, y, typ, ttmp, fillmsg) — a hole that just
 // filled with water or lava.  Also called from apply.c do_break_wand() and
@@ -2093,7 +1935,7 @@ export async function liquid_flow(x, y, typ, ttmp, fillmsg) {
     const u_spot = (x === game.u?.ux && y === game.u?.uy);
 
     /* caller should have changed levl[x][y].typ to POOL, MOAT, or LAVA */
-    if (!is_pool_or_lava_(x, y)) return;
+    if (!is_pool_or_lava(x, y)) return;
 
     if (ttmp) {
         const { delfloortrap } = await import('./trap.js');
@@ -2157,15 +1999,16 @@ export async function dighole(pit_only, by_magic, cc) {
             && ((lev.wall_info | 0) & W_NONDIGGABLE) !== 0)) {
         await pline(`The ${surface(dig_x, dig_y)} ${there}here is too hard to dig in.`);
     } else if (ttmp && is_magical_trap_(ttmp.ttyp)) {
-        const { explode } = await import('./explode.js');
+        const { explode, TRAP_EXPLODE } = await import('./explode.js');
+        const { EXPL_MAGICAL } = await import('./const.js');
         const { deltrap } = await import('./trap.js');
-        await explode(dig_x, dig_y, 0, 20 + d(3, 6), 'TRAP_EXPLODE', 'EXPL_MAGICAL');
+        await explode(dig_x, dig_y, 0, 20 + d(3, 6), TRAP_EXPLODE, EXPL_MAGICAL);
         deltrap(ttmp);
         newsym(dig_x, dig_y);
-    } else if (is_pool_or_lava_(dig_x, dig_y)) {
+    } else if (is_pool_or_lava(dig_x, dig_y)) {
         const { hliquid } = await import('./do_name.js');
         const { wake_nearby } = await import('./cmd.js');
-        await pline(`The ${hliquid(is_lava_(dig_x, dig_y) ? 'lava' : 'water')
+        await pline(`The ${hliquid(is_lava(dig_x, dig_y) ? 'lava' : 'water')
                     } sloshes furiously for a moment, then subsides.`);
         await wake_nearby(false);         /* splashing */
 
@@ -2488,17 +2331,17 @@ export async function use_pick_axe2(obj) {
     } else if (Is_airlevel(u.uz) || Is_waterlevel(u.uz)) {
         /* it must be air -- water checked above */
         await pline(`You swing your ${await xname_(obj)} through thin air.`);
-    } else if (!can_reach_floor_(false)) {
-        await cant_reach_floor_(u.ux, u.uy, false, false, false);
-    } else if (is_pool_or_lava_(u.ux, u.uy)) {
+    } else if (!(await import('./engrave.js')).can_reach_floor(false)) {
+        await (await import('./engrave.js')).cant_reach_floor(u.ux, u.uy, false, false, false);
+    } else if (is_pool_or_lava(u.ux, u.uy)) {
         /* Monsters which swim also happen not to be able to dig */
-        await pline(`You cannot stay under${is_pool_(u.ux, u.uy) ? 'water' : ' the lava'} long enough.`);
+        await pline(`You cannot stay under${is_pool(u.ux, u.uy) ? 'water' : ' the lava'} long enough.`);
     } else if ((trap = t_at(u.ux, u.uy)) != null
-               && (uteetering_at_seen_pit_(trap) || uescaped_shaft_(trap))) {
+               && (uteetering_at_seen_pit(trap) || uescaped_shaft(trap))) {
         const { dotrap } = await import('./trap.js');
         await dotrap(trap, FORCEBUNGLE);
         /* might escape trap and still be teetering at brink */
-        if (!u.utrap) await cant_reach_floor_(u.ux, u.uy, false, true, false);
+        if (!u.utrap) await (await import('./engrave.js')).cant_reach_floor(u.ux, u.uy, false, true, false);
     } else if (!ispick
                /* can only dig down with an axe when doing so will trigger or
                   disarm a trap here */
@@ -2544,38 +2387,6 @@ async function conjoined_pits_(t2, t1, entering) {
     const { conjoined_pits } = await import('./trap.js');
     return conjoined_pits(t2, t1, entering);
 }
-function can_reach_floor_(check_pit) {
-    /* engrave.js exports the real one; imported lazily by the callers below */
-    const u = game.u;
-    if (!u) return true;
-    if (u.uswallow) return false;
-    if (Levitation()) return false;
-    if (Flying()) return true;
-    if (check_pit) {
-        const t = t_at(u.ux, u.uy);
-        if (t && t.tseen) {
-            if (is_pit(t.ttyp) && !(u.utrap && u.utraptype === TT_PIT)) return false;
-            if (is_hole(t.ttyp)) return false;
-        }
-    }
-    return true;
-}
-async function cant_reach_floor_(x, y, up, check_pit, wand_engraving) {
-    const { pline } = await import('./display.js');
-    const { surface } = await import('./dungeon.js');
-    const who = wand_engraving
-        ? 'The wand does nothing more, and the tip of the wand' : 'You';
-    const where = up ? ceiling(x, y)
-        : (check_pit && can_reach_floor_(false)) ? 'bottom of the pit' : surface(x, y);
-    await pline(`${who} can't reach the ${where}.`);
-}
-// C ref: trap.c uteetering_at_seen_pit(trap) / uescaped_shaft(trap).
-function uteetering_at_seen_pit_(trap) {
-    return !!trap && is_pit(trap.ttyp) && !!trap.tseen && !game.u?.utrap;
-}
-function uescaped_shaft_(trap) {
-    return !!trap && is_hole(trap.ttyp) && !!trap.tseen && !game.u?.utrap;
-}
 
 // C ref: dig.c:1361 watchman_canseeu(mtmp) — a peaceful, sighted watchman who
 // can see the hero.  RNG-free predicate for get_iter_mons().
@@ -2584,12 +2395,11 @@ export function watchman_canseeu(mtmp) {
         && !!mtmp.mpeaceful;
 }
 function m_canseeu_(mtmp) {
-    /* js/monmove.js exports m_canseeu(); this file cannot import monmove.js
-       statically (monmove.js imports dig.js for mdig_tunnel), so the shape is
-       repeated: !Invis && the monster is not blind and is in line of sight. */
+    /* C ref: vision.h m_canseeu(): (!Invis || perceives) && !Underwater && couldsee(mx, my).
+       monmove.js imports dig.js, so the pieces are read from the leaf modules. */
     if (!mtmp) return false;
-    if (game.u?.uundetected) return false;
-    return !!mtmp.mcansee;
+    if (Invis_hero() && !perceives_flag(mtmp.data)) return false;
+    return !game.u?.uinwater && couldsee(mtmp.mx, mtmp.my);
 }
 
 // C ref: dig.c:1376 watch_dig(mtmp, x, y, zap) — the Town Watch objects to
@@ -2640,7 +2450,7 @@ export function adj_pit_checks(cc, msg) {
     const ltyp = room.typ;
     room.flags = 0;                      /* C: `ltyp = room->typ, room->flags = 0` */
 
-    if (is_pool_(cc.x, cc.y) || is_lava_(cc.x, cc.y)) {
+    if (is_pool(cc.x, cc.y) || is_lava(cc.x, cc.y)) {
         /* this is handled by the caller after we return FALSE */
         return false;
     } else if (closed_door(cc.x, cc.y) || room.typ === SDOOR) {
@@ -2748,7 +2558,7 @@ export async function buried_ball_to_punishment() {
         obj_extract_self(ball);
         /* C's `if (ball->timed) stop_timer(RUST_METAL, ...)` is #if 0'd out */
         await punish_(ball);             /* ball doubles as the "unearthed" flag */
-        reset_utrap(false);
+        await reset_utrap(false);
         const { del_engr_at } = await import('./engrave.js');
         del_engr_at(cc.x, cc.y);
         newsym(cc.x, cc.y);
@@ -2766,7 +2576,7 @@ export async function buried_ball_to_freedom() {
         obj_extract_self(ball);
         place_object(ball, cc.x, cc.y);
         stackobj(ball);
-        reset_utrap(true);
+        await reset_utrap(true);
         const { del_engr_at } = await import('./engrave.js');
         del_engr_at(cc.x, cc.y);
         newsym(cc.x, cc.y);
@@ -2823,7 +2633,7 @@ export async function bury_an_obj(otmp, dealloced) {
         obj_extract_self(otmp);
     }
 
-    const under_ice = is_ice_(otmp.ox, otmp.oy);
+    const under_ice = is_ice(otmp.ox, otmp.oy);
     if ((otmp.otyp === ROCK && !under_ice) || otmp.otyp === BOULDER) {
         /* merges into burying material; boulder removal is for #wizbury */
         if (dealloced) dealloced.dealloced = true;

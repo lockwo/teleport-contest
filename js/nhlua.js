@@ -60,6 +60,7 @@
 //   * l_nhcore_init() (nhlua.c:140) — js/mklev.js:316, as the align shuffle.
 
 import { game } from './gstate.js';
+import { panic as _panic } from './panic.js';
 import { s_suffix } from './hacklib.js';
 import { rn2 } from './rng.js';
 import {
@@ -93,8 +94,7 @@ import { flip_level } from './sp_lev.js';
 import { gx, gy } from './sp_lev.js';
 import { parse_conf_str, l_get_config_errors } from './cfgfiles.js';
 import { moveloop_core } from './allmain.js';
-import { pline, impossible, topl_more } from './display.js';
-import { verbalize } from './shk.js';
+import { pline, verbalize, impossible, topl_more } from './display.js';
 
 const TRUE = true, FALSE = false;
 
@@ -222,8 +222,6 @@ function _checkoption(v, def, opts) {
    the same way wintty.js:48 does. */
 function _impossible(msg) { game._impossible = String(msg); }
 
-/* panic.c panic() — aborts the process in C. */
-function _panic(msg) { throw new Error(String(msg)); }
 
 /* files.c paniclog() */
 function _paniclog(type, line) {

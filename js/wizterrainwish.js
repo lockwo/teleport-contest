@@ -17,7 +17,7 @@ import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { newsym } from './display.js';
 import { maketrap, Can_fall_thru } from './trap.js';
-import { make_grave } from './engrave.js';
+import { make_grave, del_engr_at } from './engrave.js';
 import { recalc_block_point } from './vision.js';
 import {
     NO_TRAP, TRAPNUM, ROCKTRAP, MAGIC_PORTAL, HOLE, TRAPDOOR,
@@ -37,10 +37,10 @@ import {
     // produced masks that js/dbridge.js is_moat()/is_lava()/is_ice() — which
     // use these, the correct, values — then misread.
     DB_UNDER, DB_FLOOR, DB_MOAT, DB_LAVA, DB_ICE,
+    is_pool, is_lava, is_ice
 } from './const.js';
 import { isok } from './hacklib.js';
 import { fix_wall_spines } from './mklev.js';
-import { is_pool, is_lava, is_ice } from './dbridge.js';
 
 // C ref: drawing.c defsyms[].explanation for S_arrow_trap..S_trapped_chest,
 // which is exactly what trap.c:7154 trapname(ttyp, TRUE) returns.  Indexed by
@@ -55,18 +55,8 @@ const TRAP_EXPLANATIONS = [
     'vibrating square', 'trapped door', 'trapped chest',
 ];
 
-// C ref: align.c align_str(alignment).
-function align_str(al) {
-    switch (al) {
-    case A_CHAOTIC: return 'chaotic';
-    case A_NEUTRAL: return 'neutral';
-    case A_LAWFUL: return 'lawful';
-    case A_NONE: return 'unaligned';
-    default: return 'unknown';
-    }
-}
-
 import { an } from './hacklib.js';
+import { align_str } from './role.js';
 function An(s) { return upstart(an(s)); }
 // C ref: hacklib.c upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
@@ -104,14 +94,6 @@ function dbterrainmesg(out, newtype, lev) {
     out.push(`${newtype} ${lev.typ === DRAWBRIDGE_UP ? 'in front of' : 'under'} the drawbridge.`);
 }
 
-// C ref: engrave.c:461 del_engr_at(x, y).  js/dbridge.js:850 and js/dokick.js:180
-// keep the same one-liner; the engraving list is the only state it touches.
-function del_engr_at(x, y) {
-    if (!game.level?.engravings) return;
-    game.level.engravings = game.level.engravings.filter(
-        (ep) => ep.engr_x !== x || ep.engr_y !== y,
-    );
-}
 
 function lvlflags() {
     const lvl = game.level;
@@ -418,7 +400,7 @@ export function wizterrainwish(d, out) {
                 await set_uinwater(0); /* leave the water */
                 await (await import('./display.js')).docrt();
             } else if (hu.utrap && hu.utraptype === TT_LAVA && !is_lava(hu.ux, hu.uy)) {
-                await (await import('./trap.js')).reset_utrap_fu(false);
+                await (await import('./trap.js')).reset_utrap(false);
             }
         });
         recalc_block_point(x, y);

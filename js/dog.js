@@ -1,24 +1,19 @@
 // dog.js - Pet creation.
 // C ref: dog.c - pet_type, makedog.
 
+import { ledger_no } from './dungeon.js';
 import { game, hooks } from './gstate.js';
 import { roomAt } from './roomat.js';
 import { rn2, rnd, getRngLog } from './rng.js';
 import { roles } from './role.js';
-import { COLNO, ROWNO, NON_PM, DOOR, W_SADDLE, DISMOUNT_THROWN, DISMOUNT_GENERIC, D_CLOSED, D_LOCKED, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING } from './const.js';
+import { COLNO, ROWNO, NON_PM, W_SADDLE, DISMOUNT_THROWN, DISMOUNT_GENERIC, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING, ONAME, has_oname, setMGIVENNAME, is_pool } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { mon_has_amulet } from './monspecial.js';
-import { set_malign, monster_by_pmidx, propagate, name_to_pmidx } from './makemon.js';
+import { set_malign, monster_by_pmidx, propagate, name_to_pmidx, put_saddle_on_mon } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
-import { goodpos_onscary } from './teleport.js';
+import { enexto_gpflags } from './teleport.js';
 import { m_at, set_msg_mon } from './display.js';
-
-// C ref: include/onames.h — SADDLE object type index (mkobj.js OBJECTS table
-// row [235, "SADDLE", ...]).  A saddle is a TOOL_CLASS object whose
-// mksobj_init() has no SADDLE case, so the only RNG it consumes is the single
-// rnd(2) inside next_ident() that assigns o_id.
-const SADDLE = 235;
 
 export const PM_LITTLE_DOG = 16;
 export const PM_KITTEN = 32;
@@ -55,79 +50,6 @@ export function pet_type() {
     if (game.preferred_pet === 'd')
         return PM_LITTLE_DOG;
     return rn2(2) ? PM_KITTEN : PM_LITTLE_DOG;
-}
-
-// C ref: teleport.c goodpos — minimal version for starting-pet placement:
-// accessible terrain, not the hero, no monster already there.
-function goodpos(x, y, mdat, checkscary) {
-    if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;
-    if (game.u?.ux === x && game.u?.uy === y) return false;
-    if (m_at(x, y)) return false;
-    const loc = game.level?.at(x, y);
-    const typ = loc?.typ;
-    if (typ == null || typ < DOOR) return false; // !ACCESSIBLE(typ)
-    // C ref: monmove.c:2193 accessible() = ACCESSIBLE(...) && !closed_door(x,y)
-    // -- this closed-door term was missing (same bug already fixed in
-    // js/makemon.js's goodpos_spawn for random spawns, never propagated to
-    // this separate copy used for the starting pet), so the pony could be
-    // planted inside a shut/locked door instead of the next ring-1 candidate.
-    if (typ === DOOR && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0)
-        return false;
-    if (checkscary && goodpos_onscary(x, y, mdat)) return false;
-    return true;
-}
-
-// C ref: teleport.c collect_coords — gather candidate spots in expanding
-// rings around <cx,cy>, each ring shuffled (consuming RNG identically to
-// the C engine), and return them in collection order.  maxradius 0 means
-// the whole map.
-function collect_coords(cx, cy, maxradius) {
-    const out = [];
-    const rowrange = (cy < ROWNO / 2) ? (ROWNO - 1 - cy) : cy;
-    const colrange = (cx < COLNO / 2) ? (COLNO - 1 - cx) : cx;
-    const k = Math.max(rowrange, colrange);
-    maxradius = maxradius ? Math.min(maxradius, k) : k;
-
-    for (let radius = 1; radius <= maxradius; radius++) {
-        const ringStart = out.length;
-        const lox = cx - radius, hix = cx + radius;
-        const loy = cy - radius, hiy = cy + radius;
-        for (let y = Math.max(loy, 0); y <= hiy; y++) {
-            if (y > ROWNO - 1) break;
-            for (let x = Math.max(lox, 1); x <= hix; x++) {
-                if (x > COLNO - 1) break;
-                if (x !== lox && x !== hix && y !== loy && y !== hiy) continue;
-                out.push({ x, y });
-            }
-        }
-        // Shuffle this ring's entries (Fisher-Yates), matching C exactly.
-        let n = out.length - ringStart;
-        let base = ringStart;
-        while (n > 1) {
-            const kk = rn2(n);
-            if (kk) {
-                const tmp = out[base];
-                out[base] = out[base + kk];
-                out[base + kk] = tmp;
-            }
-            base++;
-            n--;
-        }
-    }
-    return out;
-}
-
-// C ref: teleport.c enexto_core — first goodpos spot, nearest rings first
-// (1-3 steps), then whole map.  Returns {x,y} or null.
-function enexto(xx, yy, mdat, checkscary = true) {
-    const near = collect_coords(xx, yy, 3);
-    for (const c of near)
-        if (goodpos(c.x, c.y, mdat, checkscary)) return c;
-    const all = collect_coords(xx, yy, 0);
-    for (let i = near.length; i < all.length; i++)
-        if (goodpos(all[i].x, all[i].y, mdat, checkscary)) return all[i];
-    // C teleport.c:196-202 retries without GP_CHECKSCARY only if no safe spot exists.
-    return checkscary ? enexto(xx, yy, mdat, false) : null;
 }
 
 function logged_d(n, x) {
@@ -216,7 +138,7 @@ function makedog_mon(pettype, x, y) {
     // we're past mklev, relocate to the nearest good position via enexto.
     let mx = x, my = y;
     if (x === (game.u?.ux ?? 0) && y === (game.u?.uy ?? 0) && !game.in_mklev) {
-        const cc = enexto(x, y, monster_by_pmidx(pettype));
+        const cc = enexto_gpflags(x, y, monster_by_pmidx(pettype), 0);
         if (cc) { mx = cc.x; my = cc.y; }
     }
 
@@ -282,46 +204,6 @@ function makedog_mon(pettype, x, y) {
     return mtmp;
 }
 
-// C ref: steed.c put_saddle_on_mon — when called with a NULL saddle (as
-// makedog() does for an initial pony), it creates the saddle itself via
-// mksobj(SADDLE, TRUE, FALSE), fully identifies it, gives it to the monster
-// (mpickobj), and sets the W_SADDLE worn masks.
-//
-// RNG: can_saddle()/which_armor()/fully_identify_obj()/mpickobj()/
-// update_mon_extrinsics() consume no RNG for this path (the pet is tame, so
-// mpickobj()'s !mtame branch is skipped).  The ONLY RNG consumed is the
-// single rnd(2) inside mksobj()->next_ident() for the saddle's o_id.  This
-// must be emitted in makedog() between makemon() and u_init (matching C),
-// which is exactly where the recorded sessions show C emitting an
-// rnd(2) @ next_ident(mkobj.c:521).
-function put_saddle_on_mon(saddle, mtmp) {
-    // can_saddle(pony) is TRUE and which_armor(mtmp, W_SADDLE) is NULL for a
-    // freshly created pony, so we always proceed.
-    if (!saddle) {
-        saddle = mksobj(SADDLE, true, false); // consumes rnd(2) via next_ident
-        if (!saddle)
-            return;
-        saddle.known = saddle.bknown = saddle.rknown = 1; // fully_identify_obj
-        saddle.dknown = 1;
-        // C ref: steal.c mpickobj() — makedog() saddles the pony BEFORE
-        // initedog() sets mtame, and the not-yet-displayed pony isn't seen
-        // (canseemon false), so unknow_object() undoes the identification:
-        // the hero no longer knows the saddle's BUC ("a saddle", not "an
-        // uncursed saddle").
-        saddle.bknown = saddle.rknown = 0;
-    }
-    // mpickobj(mtmp, saddle): hand the saddle to the (tame) monster.
-    // add_to_minv() prepends (mkobj.c:2648); keep minvent newest-first.
-    if (!mtmp.minvent) mtmp.minvent = [];
-    saddle.where = OBJ_MINVENT;
-    saddle.ocarry = mtmp;
-    mtmp.minvent.unshift(saddle);
-    // misc_worn_check |= W_SADDLE; saddle->owornmask = W_SADDLE; ...
-    mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) | W_SADDLE;
-    saddle.owornmask = W_SADDLE;
-    saddle.leashmon = mtmp.m_id;
-}
-
 export function makedog() {
     const g = game;
     if (g.preferred_pet === 'n') {
@@ -346,8 +228,16 @@ export function makedog() {
         // put_saddle_on_mon() creates the saddle itself, consuming a single
         // rnd(2) inside mksobj(SADDLE)->next_ident() for the saddle's o_id.
         // This must be emitted here (between makemon and u_init) to match C.
-        if (!g.u?.uroleplay?.pauper && pettype === PM_PONY)
+        if (!g.u?.uroleplay?.pauper && pettype === PM_PONY) {
+            // C ref: makedog() saddles the pony inside makemon()'s window,
+            // BEFORE initedog() sets mtame, so mpickobj() takes its !mtame
+            // branch and unknow_object() forgets the saddle's BUC.  This port
+            // builds the pet already tame, so present it untame for the call.
+            const tame = mtmp.mtame;
+            mtmp.mtame = 0;
             put_saddle_on_mon(null, mtmp);
+            mtmp.mtame = tame;
+        }
     }
 
     // C ref: dog.c makedog():232 — the pet's name comes from gd.dogname /
@@ -369,7 +259,7 @@ export function makedog() {
         }
         // C: `if (!gp.petname_used++ && *petname)` — only the first pet of the
         // game gets the configured name.
-        if (petname && !g.petname_used) mtmp.mgivenname = petname;
+        if (petname && !g.petname_used) setMGIVENNAME(mtmp, petname);
         g.petname_used = (g.petname_used || 0) + 1;
     }
     // Place the pet on the level so the renderer can draw it.
@@ -520,9 +410,6 @@ export async function m_into_limbo(mtmp) {
 // dungeon's ledger number), which was never RNG-exercised because nothing
 // drained migrating_mons/kept keep_mon_accessible() monsters accessible
 // before this wiring pass.
-function ledger_no(lev) {
-    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
-}
 
 // C ref: mon.c place_monster(mon, x, y) — put mon on the map at <x,y>.
 // (js/vault.js:207 is the module-private copy.)
@@ -662,8 +549,6 @@ export async function make_familiar(otmp, x, y, quietly) {
 
     if (!mtmp)
         return null;
-
-    const { is_pool } = await import('./dbridge.js');
     const MON = await import('./mon.js');
     if (is_pool(mtmp.mx, mtmp.my)
         /* C ref: mon.c minliquid(); the faithful port is module-private at
@@ -688,9 +573,9 @@ export async function make_familiar(otmp, x, y, quietly) {
             }
         }
         /* if figurine has been named, give same name to the monster */
-        if (otmp.oname) {
+        if (has_oname(otmp)) {
             const { christen_monst } = await import('./do_name.js');
-            mtmp = christen_monst(mtmp, otmp.oname);
+            mtmp = christen_monst(mtmp, ONAME(otmp));
         }
     }
     if (reallytame)
@@ -968,8 +853,8 @@ export async function mon_arrive(mtmp, when) {
             const { rloc_to } = await import('./teleport.js');
             await rloc_to(mtmp, u.ux, u.uy);
         } else {
-            const { mnexto_rloc } = await import('./do.js');
-            await mnexto_rloc(mtmp, RLOC_NOMSG);
+            const { mnexto } = await import('./mon.js');
+            await mnexto(mtmp, RLOC_NOMSG);
         }
         mtmp.mstate &= ~MON_STILL_ARRIVING;
         return;

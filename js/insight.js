@@ -1,4 +1,4 @@
-import { Half_gas_damage_hero } from './youprop.js';
+import { Half_gas_damage_hero, Lev_at_will_hero } from './youprop.js';
 // insight.js — the ^X / end-of-game enlightenment display.
 //
 // C ref: src/insight.c enlightenment() and its section helpers
@@ -14,8 +14,8 @@ import { Half_gas_damage_hero } from './youprop.js';
 // already carry the leading space that C's `Sprintf(" %s%s%s%s.", …)` prepends.
 
 import { game } from './gstate.js';
-import { s_suffix } from './hacklib.js';
-import { roles, align_gname } from './role.js';
+import { s_suffix, just_an, strcmpi } from './hacklib.js';
+import { roles, align_gname, align_str } from './role.js';
 import {
     A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA,
     A_LAWFUL, A_NEUTRAL, A_CHAOTIC,
@@ -23,10 +23,11 @@ import {
     G_GONE, G_GENOD, G_EXTINCT,
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_SKILLED, P_TWO_WEAPON_COMBAT,
     P_BARE_HANDED_COMBAT, In_quest, In_endgame, Is_knox_level,
+    is_pool, is_lava, is_pool_or_lava
 } from './const.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
-import { update_topl } from './display.js';
+import { update_topl, pline } from './display.js';
 import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON, getnow } from './calendar.js';
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
@@ -38,6 +39,8 @@ import { Infravision, Blind } from './vision.js';
 import { objects as OBJECTS } from './mkobj.js';
 import { simpleonames } from './objnam.js';
 import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
+import { sticks } from './monattk_data.js';
+import { W_ARMC, W_ARM, W_ARMU, W_ARMH, W_ARMG, W_ARMF, W_ARMS, W_AMUL, W_TOOL, W_RING, W_RINGL, W_WEP } from './const.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation } from './mhitu.js';
 import { YOUMONST } from './mhitm_ad.js';
@@ -169,10 +172,9 @@ function what_gives(propidx) {
     // C ref: artifact.c:2419 — C matches ANY worn non-artifact object whose slot
     // bits equal the property's extrinsic word, not just one whose oc_oprop is
     // the property.  Dragon armor grants its property through
-    // dragon_armor_handling() (yellow: EStone_resistance |= W_ARM), which this
-    // port keeps on u.E<Prop>.
-    const hk = PROPKEY[propidx];
-    const eb = hk ? ((game.u?.[`E${hk.startsWith('H') ? hk.slice(1) : hk}`] | 0) & W_GIVES_PROP) : 0;
+    // dragon_armor_handling() (yellow: EStone_resistance |= W_ARM), kept in the
+    // same extrinsic store as every other worn source.
+    const eb = worn_extrinsic(propidx) & W_GIVES_PROP;
     if (eb)
         for (const o of worn_property_sources())
             if (!o.oartifact && eb === ((o.owornmask || 0) & W_GIVES_PROP))
@@ -391,9 +393,6 @@ function n_times(n) {
     return `${n} times`;
 }
 
-function alignStr(t) {
-    return t === A_LAWFUL ? 'lawful' : t === A_NEUTRAL ? 'neutral' : 'chaotic';
-}
 
 const GENDER_ADJ = ['male', 'female'];
 
@@ -413,7 +412,7 @@ const GENDER_ADJ = ['male', 'female'];
 // they must call this with basic=false to skip that whole section.
 export function enlightenment_lines(final = 0, basic = true) {
     const u = game.u || {};
-    const rolemnum = game.urole?.mnum ?? u.umonnum ?? 9;
+    const rolemnum = game.urole?.mnum ?? 9;
     const roleDef = roles.find((r) => r.mnum === rolemnum) || roles[rolemnum] || {};
     // align_gname()/godForAlign() index the roles[] ARRAY (not the PM_ mnum,
     // which differs for Rogue/Ranger), so resolve the array index here.
@@ -496,14 +495,14 @@ export function enlightenment_lines(final = 0, basic = true) {
         : (u.ualign?.type !== u.ualignbase?.[A_ORIGINAL])
             ? (!final ? 'now ' : 'belatedly ')
             : (!u.uconduct?.gnostic && (game.moves | 0) > 1000) ? 'nominally ' : '';
-    out(` You ${final ? 'were' : 'are'} ${alignStr(aligntype)}, ${algnAdv}on a mission for ${align_gname(roleIdx, aligntype)}`);
+    out(` You ${final ? 'were' : 'are'} ${align_str(aligntype)}, ${algnAdv}on a mission for ${align_gname(roleIdx, aligntype)}`);
     let pan = ` who ${final ? 'was' : 'is'} opposed by`;
     if (aligntype !== A_LAWFUL)
-        pan += ` ${align_gname(roleIdx, A_LAWFUL)} (${alignStr(A_LAWFUL)}) and`;
+        pan += ` ${align_gname(roleIdx, A_LAWFUL)} (${align_str(A_LAWFUL)}) and`;
     if (aligntype !== A_NEUTRAL)
-        pan += ` ${align_gname(roleIdx, A_NEUTRAL)} (${alignStr(A_NEUTRAL)})${aligntype !== A_CHAOTIC ? ' and' : ''}`;
+        pan += ` ${align_gname(roleIdx, A_NEUTRAL)} (${align_str(A_NEUTRAL)})${aligntype !== A_CHAOTIC ? ' and' : ''}`;
     if (aligntype !== A_CHAOTIC)
-        pan += ` ${align_gname(roleIdx, A_CHAOTIC)} (${alignStr(A_CHAOTIC)})`;
+        pan += ` ${align_gname(roleIdx, A_CHAOTIC)} (${align_str(A_CHAOTIC)})`;
     pan += '.';
     out(pan);
     // C ref: insight.c background_enlightenment() — show original alignment and
@@ -514,13 +513,13 @@ export function enlightenment_lines(final = 0, basic = true) {
     let difalgn = ((u.ualign?.type !== u.ualignbase?.[A_CURRENT]) ? 1 : 0)
         + ((u.ualignbase?.[A_CURRENT] !== u.ualignbase?.[A_ORIGINAL]) ? 2 : 0);
     if (difalgn & 1) {
-        youAre(`actually ${alignStr(u.ualignbase?.[A_CURRENT])}`);
+        youAre(`actually ${align_str(u.ualignbase?.[A_CURRENT])}`);
         difalgn &= ~1;
     }
     if (difgend || difalgn)
         out(` You started out ${difgend ? GENDER_ADJ[initgend] : ''}${
             (difgend && difalgn) ? ' and ' : ''}${
-            difalgn ? alignStr(u.ualignbase?.[A_ORIGINAL]) : ''}.`);
+            difalgn ? align_str(u.ualignbase?.[A_ORIGINAL]) : ''}.`);
 
     // handedness (URIGHTY defaults TRUE); "normally" when the current form
     // has no hands (body_part(HANDED) != "handed").
@@ -961,7 +960,7 @@ export function enlightenment_lines(final = 0, basic = true) {
         if (_wizard() || _discover())
             youAre(`running in ${_wizard() ? 'debug' : 'explore'} mode`);
         if (game.flags?.bones === false)
-            youHave('disabled loading and storing of bones levels');
+            youHave(`disabled loading${final === 2 /* ENL_GAMEOVERDEAD */ ? ' and storing' : ''} of bones levels`);
         else if (!u.numbones)
             enlLine('You ', final ? 'didn\'t encounter' : 'haven\'t encountered', ' any bones levels', '');
         else
@@ -1784,7 +1783,6 @@ import { MALE, FEMALE } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 import { def_monsyms } from './symbols.js';
 import { enc_stat, botl_score } from './botl.js';
-import { is_pool, is_lava, is_pool_or_lava } from './dbridge.js';
 import { AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_ACID, AD_DGST, AD_MAGM,
          AD_DRST, AD_DRLI, dmgtype } from './monattk_data.js';
 import { surface, Is_bigroom } from './dungeon.js';
@@ -1803,6 +1801,7 @@ import { ansimpleoname,
          carrying, near_capacity, body_part, youmonst_data_pub, Hate_silver } from './invent.js';
 import { makeplural } from './plural.js';
 import { y_monnam, a_monnam } from './do_name.js';
+import { mungspaces } from './hacklib.js';
 
 // ── window shim (wintty.h / C's ge.en_win) ──────────────────────────────────
 const NHW_MENU = 4, NHW_TEXT = 5;   // wintype.h window types
@@ -1926,13 +1925,7 @@ function highc(c) { return c ? c.toUpperCase() : c; }
 function lowc(c) { return c ? c.toLowerCase() : c; }
 // C ref: hacklib.c upstart() — capitalise the first character in place.
 function upstart(s) { return s ? highc(s.charAt(0)) + s.slice(1) : s; }
-// C ref: hacklib.c mungspaces() — collapse runs of spaces and strip trailing.
-function mungspaces(s) { return String(s).replace(/ +/g, ' ').replace(/ +$/, ''); }
 function digit(c) { return c >= '0' && c <= '9'; }
-function strcmpi(a, b) {
-    const x = String(a).toLowerCase(), y = String(b).toLowerCase();
-    return (x < y) ? -1 : (x > y) ? 1 : 0;
-}
 // C ref: hacklib.c ordin() — "st"/"nd"/"rd"/"th".
 function ordin(n) {
     const dd = n % 10;
@@ -1942,20 +1935,6 @@ function ordin(n) {
 // C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
 function the_str(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
 
-// C ref: hacklib.c just_an(outbuf, str) — the bare article plus a space.
-function just_an(str) {
-    const s = String(str || '');
-    if (!s) return '';
-    if (s.length === 1) return 'a ';
-    return /^[aeiou]/i.test(s) ? 'an ' : 'a ';
-}
-// C ref: calendar.c midnight() — getlt()->tm_hour == 0.  calendar.js keeps
-// getlt() module-private (js/calendar.js:10); the fix is to export it.
-function midnight() {
-    const dt = String(game.datetime || '');
-    if (!/^\d{14}$/.test(dt)) return false;
-    return Number(dt.slice(8, 10)) === 0;
-}
 // C ref: you.h Role_switch == gu.urole.mnum.
 function Role_switch() { return game.urole?.mnum; }
 // role.c align_gname() takes only the alignment in C; this port's version
@@ -1963,23 +1942,13 @@ function Role_switch() { return game.urole?.mnum; }
 // mnum (they differ for Rogue/Ranger), so resolve it the way the reduced
 // enlightenment_lines() above does.
 function role_arr_idx() {
-    const mnum = Role_switch() ?? game.u?.umonnum ?? 9;
+    const mnum = Role_switch() ?? 9;
     const i = roles.findIndex((r) => r.mnum === mnum);
     return (i >= 0) ? i : mnum;
 }
 function align_gname_c(alignment) { return align_gname(role_arr_idx(), alignment); }
 // C ref: pray.c u_gname() == align_gname(u.ualign.type).
 function u_gname() { return align_gname_c(game.u?.ualign?.type ?? A_NONE); }
-// C ref: insight.c:3187 align_str(alignment).
-export function align_str(alignment) {
-    switch (alignment | 0) {
-    case A_CHAOTIC: return 'chaotic';
-    case A_NEUTRAL: return 'neutral';
-    case A_LAWFUL: return 'lawful';
-    case A_NONE: return 'unaligned';
-    }
-    return 'unknown';
-}
 // C ref: you.h URIGHTY == (u.uhandedness == RIGHT_HANDED), and RIGHT_HANDED
 // is 0 (js/invent.js:4555 documents the same encoding).
 function URIGHTY() { return (game.u?.uhandedness | 0) === 0; }
@@ -2516,7 +2485,7 @@ export function background_enlightenment(_unused_mode, final) {
     }
 
     /* for gameover, these have been obtained in really_done() */
-    if (final ? game.iflags?.at_midnight : midnight()) {
+    if (final ? game.iflags?.at_midnight : midnight_cal()) {
         enl_msg('It ', 'is ', 'was ', 'the midnight hour', '', final);
     } else if (final ? game.iflags?.at_night : night()) {
         enl_msg('It ', 'is ', 'was ', 'nighttime', '', final);
@@ -2758,10 +2727,10 @@ export function one_characteristic(mode, final, attrindx) {
 }
 // C ref: attrib.h STR18(x) == 18 + x — the 18/01..18/100 encoding.
 function STR18(x) { return 18 + x; }
-// C ref: artifact.c u_wield_art(art) — no artifact is wielded on any covered
-// path and js/artifact.js keeps its equivalent private, so this reads FALSE.
-const ART_OGRESMASHER = 0;
-function u_wield_art(_art) { return false; }
+// C ref: artifact.h u_wield_art(art) == (uwep && uwep->oartifact == art);
+// ART_OGRESMASHER is artifact.js's artilist index.
+const ART_OGRESMASHER = 16;
+function u_wield_art(art) { return !!game.uwep && game.uwep.oartifact === art; }
 
 // ── insight.c:939 status_enlightenment() ───────────────────────────────────
 export function status_enlightenment(mode, final) {
@@ -3064,8 +3033,8 @@ export function status_enlightenment(mode, final) {
     }
 }
 // ── youprop.h helpers status_enlightenment() needs ────────────────────────
-// C ref: youprop.h Lev_at_will == ((HLevitation & I_SPECIAL) != 0L).
-function Lev_at_will() { return (H_prop(LEVITATION) & I_SPECIAL) !== 0; }
+// C ref: youprop.h Lev_at_will.
+function Lev_at_will() { return Lev_at_will_hero(); }
 // C ref: youprop.h Underwater == (u.uinwater && !Swimming) is not quite it;
 // hack.h Underwater == (u.uinwater && (!Swimming || !Breathless)).  The port
 // tracks only u.uinwater, so mirror C's shape against that.
@@ -3081,23 +3050,21 @@ const LENSES = 232; // js/invent.js:160
 function Blindfolded() {
     return !!(game.ublindf && game.ublindf.otyp !== LENSES);
 }
-// C ref: youprop.h Blindfolded_only == (!(HBlinded || EBlinded) && Blindfolded).
+// C ref: youprop.h Blindfolded_only == (Blindfolded && !Blinded), with
+// Blinded == (HBlinded && !BBlinded) and Blindfolded == EBlinded: the worn
+// blindfold's own extrinsic bit must not count as "other" blindness.
 export function Blindfolded_only() {
-    return !H_prop(BLINDED) && !E_prop(BLINDED) && Blindfolded();
+    return Blindfolded() && !H_prop(BLINDED);
 }
 // C ref: youprop.h BlindedTimeout == (HBlinded & TIMEOUT).
 function BlindedTimeout() { return H_prop(BLINDED) & TIMEOUT_MASK; }
-// C ref: mondata.h haseyes(ptr) == !(mflags1 & M1_NOEYES).  A null data row
-// (an unpolymorphed hero: u.umonnum is a ROLE index here, so youmonst.data is
-// not a valid mons[] row — [[umonnum-is-a-role-index]]) reads as having eyes.
+// C ref: mondata.h haseyes(ptr) == !(mflags1 & M1_NOEYES).
 function haseyes(ptr) { return !ptr || ((mflags1_of(ptr) & M1_NOEYES) === 0); }
 // C ref: mondata.h U_AP_TYPE == gy.youmonst.m_ap_type (the hero's mimic
 // disguise lives on game.u in this port, numeric M_AP_*).
 function U_AP_TYPE() { return game.u?.m_ap_type | 0; }
 // C ref: mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST).
 function digests(ptr) { return dmgtype(ptr, AD_DGST); }
-// C ref: mondata.h sticks(ptr) — a form that grabs rather than being grabbed.
-function sticks(ptr) { return !!ptr?.sticky; }
 // C ref: youprop.h EWounded_legs — the left/right/both bitmask.
 function EWounded_legs() {
     return (game.u?.uprops?.EWounded_legs | 0) || (game.u?.EWounded_legs | 0);
@@ -3331,32 +3298,33 @@ function u_adtyp_resistance_obj(dmgtyp) {
         return 90;
     return 0;
 }
-// C ref: zap.c:5722 item_what(dmgtyp) — wizard mode only; names the WORN SLOT
-// that protects inventory, via the same *_simple_name() family the "take off
-// your %s" messages use (e.g. a worn blue dragon scale mail reads "dragon
-// mail", not "blue dragon scale mail") — " by your <name>", not "(from your
-// <name>)".  what_gives(prop) finds the granting object; which slot it
-// occupies picks the naming function, mirroring C's `xtrinsic & W_ARMx` chain
-// since this port has no xtrinsic bitmask to switch on directly.
+// C ref: zap.c:5722 item_what(dmgtyp) — wizard mode only; the " by your <item>"
+// tail, chosen from the extrinsic word's W_* slot bits exactly as C does (two
+// rings giving the property read "rings").
 function item_what(dmgtyp) {
     if (!_wizard())
         return '';
     const prop = adtyp_to_prop(dmgtyp);
-    const o = prop ? what_gives(prop) : null;
-    if (!o) return '';
-    let what;
-    if (o === game.uarmc) what = cloak_simple_name(o);
-    else if (o === game.uarm) what = suit_simple_name(o);
-    else if (o === game.uarmu) what = shirt_simple_name(o);
-    else if (o === game.uarmh) what = helm_simple_name(o);
-    else if (o === game.uarmg) what = gloves_simple_name(o);
-    else if (o === game.uarmf) what = boots_simple_name(o);
-    else if (o === game.uarms) what = shield_simple_name(o);
-    else if (o === game.uamul || o === game.ublindf) what = simpleonames(o);
-    else if (o === game.uleft || o === game.uright) what = simpleonames(o);
-    else if (o === game.uwep) what = simpleonames(o);
-    else return ''; /* W_ART only (merely carried): C's chain matches no slot */
-    return what ? ` by your ${what}` : '';
+    const xtrinsic = prop ? worn_extrinsic(prop) : 0;
+    let what = null;
+    if (!prop || !xtrinsic) {
+        /* 'what' stays null */
+    } else if (xtrinsic & W_ARMC) what = cloak_simple_name(game.uarmc);
+    else if (xtrinsic & W_ARM) what = suit_simple_name(game.uarm);
+    else if (xtrinsic & W_ARMU) what = shirt_simple_name(game.uarmu);
+    else if (xtrinsic & W_ARMH) what = helm_simple_name(game.uarmh);
+    else if (xtrinsic & W_ARMG) what = gloves_simple_name(game.uarmg);
+    else if (xtrinsic & W_ARMF) what = boots_simple_name(game.uarmf);
+    else if (xtrinsic & W_ARMS) what = shield_simple_name(game.uarms);
+    else if (xtrinsic & (W_AMUL | W_TOOL))
+        what = simpleonames((xtrinsic & W_AMUL) ? game.uamul : game.ublindf);
+    else if (xtrinsic & W_RING) {
+        if ((xtrinsic & W_RING) === W_RING) /* both */
+            what = 'rings';
+        else
+            what = simpleonames((xtrinsic & W_RINGL) ? game.uleft : game.uright);
+    } else if (xtrinsic & W_WEP) what = simpleonames(game.uwep);
+    return what ? ` by your ${String(what).slice(0, 40)}` : '';
 }
 
 // ── insight.c:1486 attributes_enlightenment() ──────────────────────────────
@@ -3834,7 +3802,7 @@ const something = 'something';
 function Invisible() { return !!(Prop(INVIS) && !Prop(SEE_INVIS)); }
 // C ref: youprop.h PermaBlind == ((HBlinded & FROMOUTSIDE) != 0), i.e. only
 // OPTIONS:blind; an eyeless form's FROMFORM blindness is not permanent.
-function PermaBlind() { return !!((H_prop(BLINDED) & FROMOUTSIDE) || game.u?.uroleplay?.blind); }
+function PermaBlind() { return !!((H_prop(BLINDED) & FROMOUTSIDE) || game.u?.permablind); }
 // C ref: youprop.h Breathless / Amphibious — MAGICAL_BREATHING plus the form's
 // M1_BREATHLESS / M1_AMPHIBIOUS bits.
 function Breathless() {
@@ -4520,11 +4488,6 @@ const ATR_INVERSE = 7;   // wintype.h
 function menu_headings_attr() {
     return game.iflags?.menu_headings?.attr ?? ATR_INVERSE;
 }
-// C ref: pline.c pline().  The live #vanquished path above uses
-// game._pending_message instead; update_topl() is the topline writer this port
-// pairs with pline() ([[pline-vs-update-topl-trap]] — the two are NOT
-// interchangeable, so a wiring pass must re-measure this choice).
-async function pline(msg) { await update_topl(msg); }
 // C ref: windows.c yn_function(query, resp, def, restorecursor).
 // js/extcmd-handlers.js owns the port's copy; imported lazily because that
 // module statically imports insight.js (a cycle if taken at the top).

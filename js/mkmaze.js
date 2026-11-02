@@ -5,6 +5,8 @@
 // des.mazewalk(), by the .lua special levels (hellfill.lua in particular).
 
 import { game } from './gstate.js';
+import { has_mgivenname } from './const.js';
+import { setONAME } from './const.js';
 import { dist2 } from './hacklib.js';
 import { rn2, rn1, rnd } from './rng.js';
 import {
@@ -617,12 +619,13 @@ async function replace_bubble_contents(b, dx, dy) {
         case 'hero': {
             // do.js imports this module (fumaroles), so the two hero helpers
             // are pulled in on demand rather than statically.
-            const { u_on_newpos, mnexto_rloc } = await import('./do.js');
+            const { mnexto } = await import('./mon.js');
+            const { u_on_newpos } = await import('./dungeon.js');
             const mtmp = m_at(cons.x, cons.y);
             const ux0 = g.u.ux, uy0 = g.u.uy;
             await u_on_newpos(cons.x, cons.y);
             newsym(ux0, uy0);            /* clean up old position */
-            if (mtmp) await mnexto_rloc(mtmp, RLOC_NOMSG);
+            if (mtmp) await mnexto(mtmp, RLOC_NOMSG);
             break;
         }
         case 'trap':
@@ -771,12 +774,7 @@ function is_pool_bubble(x, y) {
 
 import { rn1 as mm_rn1 } from './rng.js';
 import {
-    IS_STWALL, SPACE_POS, TRAPNUM, NO_TRAP, is_pit, is_hole,
-    VIBRATING_SQUARE, MKTRAP_MAZEFLAG, MKTRAP_SEEN, ROCKTRAP,
-    FIRE_TRAP as MM_FIRE_TRAP, WEB as MM_WEB, SQKY_BOARD as MM_SQKY_BOARD,
-    RUST_TRAP as MM_RUST_TRAP, ROLLING_BOULDER_TRAP as MM_ROLLING_BOULDER_TRAP,
-    HOLE as MM_HOLE, MAGIC_TRAP as MM_MAGIC_TRAP, LANDMINE as MM_LANDMINE,
-    PIT as MM_PIT,
+    IS_STWALL, SPACE_POS, VIBRATING_SQUARE, MKTRAP_MAZEFLAG,
     NO_MM_FLAGS, MM_NONAME, CORPSTAT_NONE,
     LR_BRANCH, LR_PORTAL, LR_UPSTAIR, LR_DOWNSTAIR,
     LR_TELE, LR_UPTELE, LR_DOWNTELE,
@@ -791,7 +789,6 @@ import { makemon as mm_makemon, set_malign as mm_set_malign,
          monster_by_pmidx as mm_monster_by_pm,
          name_to_pmidx as mm_name_to_pmidx,
          mpickobj as mm_mpickobj } from './makemon.js';
-import { level_difficulty as mm_level_difficulty } from './dungeon.js';
 import {
     objects as MM_OBJECTS, mksobj as mm_mksobj, mkobj as mm_mkobj,
     mkobj_at as mm_mkobj_at, mksobj_at as mm_mksobj_at, mkgold as mm_mkgold,
@@ -833,7 +830,6 @@ const MM_PM_MINOTAUR = mm_name_to_pmidx('minotaur');
 const MM_PM_ORC = mm_name_to_pmidx('orc');
 const MM_PM_ORC_SHAMAN = mm_name_to_pmidx('orc shaman');
 const MM_PM_ORC_CAPTAIN = mm_name_to_pmidx('orc-captain');
-const MM_PM_GIANT_SPIDER = mm_name_to_pmidx('giant spider');
 
 // C ref: decl.c gr.ransacked — set by check_ransacked() while makemaz() picks
 // the proto level name, read by fixup_special() after the level is built and
@@ -982,9 +978,7 @@ export async function migr_booty_item(otyp, gang) {
     const otmp = mm_mksobj_migr_to_species(otyp, 0x00000080 /*M2_ORC*/, true, false);
     if (otmp && gang) {
         new_oname(otmp, gang.length + 1); /* removes old name if present */
-        if (!otmp.oextra) otmp.oextra = {};
-        otmp.oextra.oname = gang;
-        otmp.oname = gang;
+        setONAME(otmp, gang);
         if (MM_OBJECTS[otyp]?.oc_class === MM_FOOD_CLASS) {
             if (otyp === MM_SLIME_MOLD)
                 otmp.spe = fruitadd(orcfruit[rn2(orcfruit.length)], null);
@@ -1053,7 +1047,7 @@ export async function stolen_booty() {
     for (mtmp of fmonOrder()) {
         if (DEADMONSTER(mtmp)) continue;
 
-        if (mm_is_orc(mtmp.data) && !mm_has_mgivenname(mtmp) && rn2(10)) {
+        if (mm_is_orc(mtmp.data) && !has_mgivenname(mtmp) && rn2(10)) {
             /*
              * We'll consider the orc captain from the level description to be
              * the captain of a rival orc horde who is there to see what has
@@ -1087,12 +1081,6 @@ export async function stolen_booty() {
 // C ref: &mons[pmidx].  js/makemon.js exports monster_by_pmidx() but it is not
 // in this file's static graph; the one-line lookup is inlined so the two
 // makemon() call sites above stay synchronous like C's.
-// C ref: mondata.h has_mgivenname(mtmp).  js/const.js:2884 exports the real
-// one but under a name this file does not import; kept local rather than
-// widening the const.js import list of an existing line.
-function mm_has_mgivenname(mtmp) {
-    return !!(mtmp?.mextra?.mgivenname || mtmp?.mgivenname);
-}
 
 // C ref: hacklib.c upstart(s) — capitalise the first letter IN PLACE.
 // js/hack.js:3082 and js/wizcmds.js:418 both carry a private copy.
@@ -1176,14 +1164,14 @@ export async function fixup_special() {
             break;
         }
         if (place_it)
-            place_lregion(r.lx, r.ly, r.hx, r.hy,
+            await place_lregion(r.lx, r.ly, r.hx, r.hy,
                           r.nlx, r.nly, r.nhx, r.nhy, r.rtype, lev);
         r.rname = null;   /* C free()s the name string */
     }
 
     /* place dungeon branch if not placed above */
     if (!added_branch && mm_Is_branchlev(g.u?.uz))
-        place_lregion(0, 0, 0, 0, 0, 0, 0, 0, LR_BRANCH, null);
+        await place_lregion(0, 0, 0, 0, 0, 0, 0, 0, LR_BRANCH, null);
 
     /* Still need to add some stuff to level file */
     if (Is_medusa_level(g.u?.uz)) {
@@ -1357,94 +1345,7 @@ export async function populate_maze() {
         mm_mkgold(0, mm.x, mm.y);
     }
     for (i = mm_rn1(6, 7); i; i--)                       // mkmaze.c:1122
-        await mm_mktrap_mazeflag();
-}
-
-// C ref: mklev.c:2036 mktrap(0, MKTRAP_MAZEFLAG, (struct mkroom *) 0,
-// (coord *) 0) — the exact form populate_maze() uses, with num==0 and no room
-// and no coord, so the kind comes from the traptype_rnd() retry loop and the
-// position from mazexy().  mklev.c's mktrap() is not exported (js/mklev.js has
-// mktrap_room()/mktrap_random_kind() as privates), so this spells out just
-// that one argument combination — but it now spells out ALL of it, including
-// the tail.  The tail matters even when it does nothing: C evaluates
-// `lvl <= (unsigned) rnd(4)` as the FOURTH conjunct, after in_mklev, kind and
-// MKTRAP_NOVICTIM, so the rnd(4) is drawn for every trap on the level however
-// deep it is.  Skipping it cost one draw per maze trap.
-async function mm_mktrap_mazeflag() {
-    const SP = await import('./sp_lev.js');
-    const { In_hell: mm_In_hell } = await import('./dungeon.js');
-    const g = game;
-    const uz = g.u?.uz;
-    const lvl = mm_level_difficulty();
-    let kind;
-
-    /* C: the num>NO_TRAP and Is_rogue_level() arms cannot fire here — num is 0
-       and a maze is never the Rogue level. */
-    if (mm_In_hell(uz) && !rn2(5)) {
-        /* bias the frequency of fire traps in Gehennom */
-        kind = MM_FIRE_TRAP;
-    } else {
-        do {
-            kind = SP.splev_traptype_rnd(MKTRAP_MAZEFLAG);
-        } while (kind === NO_TRAP);
-    }
-
-    if (is_hole(kind) && !mm_Can_fall_thru(uz)) kind = ROCKTRAP;
-
-    let m;
-    {
-        let tryct = 0;
-        const avoid_boulder = (is_pit(kind) || is_hole(kind));
-        do {
-            if (++tryct > 200) return;
-            m = mazexy();
-        } while (mm_occupied(m.x, m.y)
-                 || (avoid_boulder && mm_sobj_at_boulder(m.x, m.y)));
-    }
-
-    const t = await maketrap(m.x, m.y, kind);
-    /* we should always get the type of trap we asked for, but be paranoid */
-    kind = t ? t.ttyp : NO_TRAP;
-
-    if (kind === MM_WEB)
-        mm_makemon(mm_monster_by_pm(MM_PM_GIANT_SPIDER), m.x, m.y, NO_MM_FLAGS);
-    /* populate_maze() passes neither MKTRAP_SEEN nor MKTRAP_NOSPIDERONWEB, and
-       traptype_rnd() never yields MAGIC_PORTAL, so C's tseen and u.ucamefrom
-       arms are both unreachable from here. */
-    void MKTRAP_SEEN; void TRAPNUM;
-
-    if (g.in_mklev && kind !== NO_TRAP
-        && lvl <= rnd(4)                                 // mklev.c:2137
-        && kind !== MM_SQKY_BOARD && kind !== MM_RUST_TRAP
-        && !(kind === MM_ROLLING_BOULDER_TRAP
-             && t.launch?.x === t.tx && t.launch?.y === t.ty)
-        && !is_pit(kind) && (kind < MM_HOLE || kind === MM_MAGIC_TRAP)) {
-        if (kind === MM_LANDMINE) {
-            /* a victim killed by a land mine leaves an unconcealed pit and no
-               scattered objects */
-            t.ttyp = MM_PIT;
-            t.tseen = 1;
-        }
-        if (SP._mktrap_victim) SP._mktrap_victim(t);
-    }
-}
-
-// C ref: dungeon.c Can_fall_thru(lev) — js/trap.js exports it, but under a name
-// this file's existing trap.js import does not list.
-function mm_Can_fall_thru(uz) {
-    const g = game;
-    if (!uz) return false;
-    if (Is_stronghold(uz)) return true;
-    const dgn = g.dungeons?.[uz.dnum];
-    return !!dgn && uz.dlevel < (dgn.num_dunlevs ?? 1);
-}
-
-// C ref: invent.c sobj_at(BOULDER, x, y) — js/mklev.js:6371 has a copy.
-function mm_sobj_at_boulder(x, y) {
-    for (const o of (game.level?.objects || []))
-        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y
-            && o.otyp === MM_BOULDER) return true;
-    return false;
+        await (await import('./mklev.js')).mktrap(0, MKTRAP_MAZEFLAG, null, null);
 }
 
 // C ref: mkmaze.c:1127 makemaz(s) — the entry point mklev() uses for every

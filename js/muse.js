@@ -22,8 +22,9 @@
 // recorder's monster dump (swarm/bin/mondiff.mjs / movepair.mjs) showed it.
 //
 
-import { game } from './gstate.js';
-import { ceiling } from './dungeon.js';
+import { Half_spell_damage_hero, Antimagic_hero, See_invisible_hero } from './youprop.js';
+import { game, hooks } from './gstate.js';
+import { ceiling, ledger_no } from './dungeon.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, depth, s_suffix } from './hacklib.js';
 import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
@@ -33,9 +34,10 @@ import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
     AD_FIRE, AD_COLD, AD_HEAL, AD_MAGM, AD_RBRE } from './monattk_data.js';
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
-    objects as OBJECTS, place_object, weight, nextoid, add_to_container, unknow_object } from './mkobj.js';
+    objects as OBJECTS, place_object, weight, nextoid, add_to_container, unknow_object, unbless } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
 import { set_mon_data, slimeproof, monstseesu, monstunseesu } from './mondata.js';
+import { mon_knows_traps, mon_learns_traps } from './montraps.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
 import { mondied_mm, monkilled_mm, mondead_mm as mondead } from './mhitm.js';
@@ -45,7 +47,7 @@ import { hard_helmet } from './do_wear.js';
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
 // (unlike a `const` arrow, which would be in its temporal dead zone here).
 import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item,
-    objectsAt, mon_knows_traps, mon_learns_traps, mon_mintrap,
+    objectsAt, mon_mintrap,
     in_your_sanctuary, monflee as monflee_full, locomotion, accessible } from './monmove.js';
 // base_mmove() is likewise a hoisted `export function`, so the cycle is safe.
 import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_carry,
@@ -55,13 +57,13 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
 import { update_topl, set_msg_mon, Norep, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at, You_feel } from './display.js';
-import { Monnam, mon_nam, monflee, x_monnam, seemimicLocal } from './uhitm.js';
+import { Monnam, mon_nam, x_monnam, seemimicLocal } from './uhitm.js';
 import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT } from './do_name.js';
 import { same_race, dog_nutrition, monnear } from './dogmove.js';
 import { YMonnam, noit_mon_nam, mhe, mhim, monverbself } from './do_name.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { obj_doname, distant_name_pub, xname, makeknown, trycall, hands_obj, bimanual,
-    W_ARMOR_WORN, W_ACCESSORY_WORN, welded, youmonst_data, ansimpleoname, obj_extract_self }
+    welded, youmonst_data, ansimpleoname, obj_extract_self, canletgo, splitobj }
     from './invent.js';
 import { observe_object } from './o_init.js';
 import { removed_from_icebox } from './pickup.js';
@@ -70,7 +72,7 @@ import { resists_blnd_u } from './mhitu.js';
 import { mon_has_special, mon_has_amulet } from './monspecial.js';
 import { inhishop } from './shk.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon, is_pool, is_lava, is_ice } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -268,6 +270,7 @@ function canseemon(mtmp) {
 function canspotmon(mtmp) { return canseemon(mtmp) || sensemon(mtmp); }
 // C ref: hack.h Deaf / Blind / Hallucination.
 import { Deaf_hero as Deaf } from './display.js';
+import { vtense } from './plural.js';
 
 // C ref: objnam.c singular(otmp, doname) — name the stack as if quan were 1.
 function singular_doname(obj) {
@@ -288,13 +291,6 @@ import { an } from './hacklib.js';
 function the_(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: hacklib.c upstart().
 function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-// C ref: hacklib.c vtense(subj, verb) with fakename[0] ("player") as the
-// subject: always the third-person singular form.
-function vtense_s(verb) {
-    if (/[sxz]$/.test(verb) || /(ch|sh)$/.test(verb)) return `${verb}es`;
-    if (/[^aeiou]y$/.test(verb)) return `${verb.slice(0, -1)}ies`;
-    return `${verb}s`;
-}
 // C ref: trap.c trapname(ttyp, override) — draws off the display rng while the
 // hero hallucinates, so it must be the real one (dynamic: trap.js is a hub).
 async function trapname(ttyp, override) {
@@ -450,31 +446,6 @@ export async function m_useup(mtmp, obj) {
     const { m_useupall } = await import('./mthrowu.js');
     await m_useupall(mtmp, obj);
 }
-// C ref: invent.c splitobj(obj, num) — peel `num` off a stack.
-function m_splitobj(obj, num) {
-    const copy = { ...obj, quan: num };
-    copy.o_id = nextoid(obj, copy); /* nextoid(): o_id parity loop + next_ident()'s rnd(2) */
-    obj.quan = (obj.quan || 1) - num;
-    obj.owt = weight(obj);
-    copy.owt = weight(copy);
-    return copy;
-}
-// C ref: do.c canletgo(obj, word) — the muse callers pass "" so no message is
-// ever printed; only the yes/no answer matters.
-function canletgo(obj) {
-    if (!obj) return false;
-    const worn = obj.owornmask || 0;
-    // C: `obj->owornmask & (W_ARMOR | W_ACCESSORY)`.  These must be the bits
-    // js/invent.js actually stamps on a HERO object, not the prop.h values:
-    // the local W_AMUL literal here was 0x100, which is invent.js's W_WEP, so
-    // canletgo() answered FALSE for every wielded weapon and the bullwhip
-    // disarm (find_misc MUSE_BULLWHIP) could never fire.
-    if ((worn & (W_ARMOR_WORN | W_ACCESSORY_WORN)) !== 0)
-        return false;
-    if (obj === game.uwep && welded_hero(obj)) return false;
-    if (obj === game.u?.uball || obj === game.u?.uchain) return false;
-    return true;
-}
 // C ref: wield.c welded(obj) — hero's cursed wielded weapon.  uwep is on
 // `game`, not `game.u`; the old read made every weapon un-welded, so a bullwhip
 // yanked a cursed weapon C leaves stuck ("The whip slips free.").
@@ -487,8 +458,6 @@ function welded_hero(obj) {
 function obj_is_plural(obj) { return (obj?.quan || 1) > 1; }
 // C ref: objclass.h bcsign(obj).
 function bcsign(obj) { return (obj?.blessed ? 1 : 0) - (obj?.cursed ? 1 : 0); }
-// C ref: potion.c unbless(obj).
-function unbless(obj) { obj.blessed = 0; obj.bknown = 0; }
 // C ref: objnam.c exclam(force).
 function exclam(force) { return force < 0 ? '?' : force <= 4 ? '.' : '!'; }
 
@@ -627,9 +596,6 @@ function pm_index_by_name(name) {
 // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
 // js/dog.js:530, js/dig.js:1097 and js/save.js:287 keep the same private
 // copy for the same import-order reason.
-function ledger_no(lev) {
-    return (lev?.dlevel | 0) + (game.dungeons?.[lev?.dnum ?? 0]?.ledger_start | 0);
-}
 // C ref: dog.c:886 migrate_to_level(mtmp, tolev, xyloc, cc) — js/dog.js has
 // the faithful port (mon_leave() worm/shk/container bookkeeping plus the
 // migrating_mons chain do.js's goto_level() now drains); delegate instead of
@@ -1052,21 +1018,6 @@ export function find_defensive(mtmp, tryescape) {
 
 // C ref: monsters.h NODIAG(mndx) — grid bugs only.
 function NODIAG(ptr) { return ptr?.name === 'grid bug'; }
-// C ref: dbridge.c is_ice / is_pool / is_lava.  Every literal here was one off
-// the port's own rm.h numbering (const.js): ICE is 33 not 21 (21 is LAVAWALL),
-// and POOL/MOAT/WATER are 16/17/18 not 17/18/19 — so is_ice never fired, is_pool
-// answered "water" for a drawbridge, and a monster judged whether it could dig
-// down through the wrong terrain.  The DB_UNDER (drawbridge-up) arms are the
-// same omission dungeon.js documents.
-function is_ice(x, y) { return levl_typ(x, y) === ICE; }
-function is_pool(x, y) {
-    const typ = levl_typ(x, y);
-    return typ === POOL || typ === MOAT || typ === WATER;
-}
-function is_lava(x, y) {
-    const typ = levl_typ(x, y);
-    return typ === LAVAPOOL || typ === LAVAWALL;
-}
 
 /* ------------------------------------------------------------------------ *
  * muse.c:756 reveal_trap / :779 mon_escape / :795 use_defensive
@@ -1155,8 +1106,8 @@ export async function use_defensive(mtmp) {
         await m_flee(mtmp);
         /* take the scroll out of minvent in advance so it survives the tele */
         let scroll = otmp;
-        if ((scroll.quan || 1) > 1) scroll = m_splitobj(scroll, 1);
-        else await (await import('./worn.js')).extract_from_minvent(mtmp, scroll, false, false);
+        if ((scroll.quan || 1) > 1) scroll = splitobj(scroll, 1);
+        await (await import('./worn.js')).extract_from_minvent(mtmp, scroll, false, false);
         await mreadmsg(mtmp, scroll);
         if (obj_is_cursed || mtmp.mconf) {
             const { random_teleport_level, get_level } = await import('./do.js');
@@ -1281,7 +1232,7 @@ export async function use_defensive(mtmp) {
         if (vis && t) {
             set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} ${
-                vtense_s(locomotion(mtmp.data, 'jump'))} into a ${
+                vtense(null, locomotion(mtmp.data, 'jump'))} into a ${
                 await trapname(t.ttyp, false)}!`);
         }
         if (t) reveal_trap(t, vis);
@@ -1375,7 +1326,7 @@ export async function use_defensive(mtmp) {
         if (vis && t) {
             set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} ${
-                vtense_s(locomotion(mtmp.data, 'jump'))} onto a ${
+                vtense(null, locomotion(mtmp.data, 'jump'))} onto a ${
                 await trapname(t.ttyp, false)}!`);
         }
         if (t) reveal_trap(t, vis);
@@ -1496,6 +1447,8 @@ export function rnd_defensive_item(mtmp) {
         }
     }
 }
+
+hooks.rnd_defensive_item = rnd_defensive_item;
 
 /* ------------------------------------------------------------------------ *
  * muse.c:1293 linedup_chk_corpse / :1299 m_use_undead_turning
@@ -1733,18 +1686,9 @@ function hero_hates_light() { return false; }
 // js/invent.js now installs the same fact into the extrinsic word, so once the
 // property accessors are converted this collapses to
 // `worn_extrinsic(ANTIMAGIC) || HAntimagic`.
-function Antimagic_muse() {
-    if (game.u?.formprops?.Antimagic) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const W_ARMOR_MASK = 0x7f;  // monst.h W_ARMOR: the seven armour slots
-    for (const o of (game.invent || []))
-        if (((o.owornmask || 0) & W_ARMOR_MASK)
-            && OBJECTS[o.otyp]?.oc_oprop === 12 /* prop.h ANTIMAGIC */)
-            return true;
-    const u = game.u;
-    return !!(u?.uprops?.Antimagic || u?.Antimagic || u?.HAntimagic || u?.EAntimagic);
-}
+function Antimagic_muse() { return Antimagic_hero(); }
 function Half_spell_damage_muse() {
-    return (game.u?.uprops?.HHalf_spell_damage || 0) > 0;
+    return Half_spell_damage_hero();
 }
 // C ref: worn.c find_mac(mon).
 function find_mac_muse(mon) { return worn_find_mac(mon); }
@@ -1797,9 +1741,9 @@ async function mbhitm(mtmp, otmp, hits_you) {
             // C ref: muse.c:1639 hit("wand", mtmp, exclam(tmp)) / :1643
             // miss("wand", mtmp) — both print for an UNSEEN target too, naming
             // it "it" (a blind hero still reads "The wand hits it!").
-            const { hit, resist_damage } = await import('./zap.js');
+            const { hit, resist } = await import('./zap.js');
             await hit('wand', mtmp, exclam(tmp));
-            await resist_damage(mtmp, otmp.oclass, tmp, true, m_using);
+            await resist(mtmp, otmp.oclass, tmp, true, m_using);
             learnit = true;
         } else {
             const { miss } = await import('./zap.js');
@@ -1844,7 +1788,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
                 /* context.bypasses=True: if resist() happens to be fatal,
                    make_corpse() will set obj->bypass on the new corpse */
                 if (game.context) game.context.bypasses = true;
-                await Z.resist_damage(mtmp, otmp.oclass, rnd(8), false);
+                await Z.resist(mtmp, otmp.oclass, rnd(8), false);
             }
             if (wake) {
                 if (!DEADMONSTER(mtmp)) await Z.wakeup(mtmp, false);
@@ -2144,6 +2088,10 @@ export function rnd_offensive_item(mtmp) {
     }
 }
 
+/* makemon.js m_initinv() is a sync caller that muse.js's import graph cannot
+   reach statically (TDZ cycle). */
+hooks.rnd_offensive_item = rnd_offensive_item;
+
 /* ------------------------------------------------------------------------ *
  * muse.c:2094 find_misc(mtmp)
  *
@@ -2156,7 +2104,7 @@ export function rnd_offensive_item(mtmp) {
  *   * MUSE_BULLWHIP  rn2(5)  (wielded bullwhip, hero adjacent and armed)
  *   * MUSE_BAG       rn2(5)  (any container that isn't a bag of tricks)
  * ------------------------------------------------------------------------ */
-export function find_misc(mtmp) {
+export async function find_misc(mtmp) {
     const mdat = mtmp.data;
     const x = mtmp.mx, y = mtmp.my;
     const stuck = (mtmp === game.u?.ustuck);
@@ -2218,8 +2166,8 @@ export function find_misc(mtmp) {
             && u_at(mux, muy)
             && m_next2u(mtmp)
             && !game.u?.uswallow
-            && (canletgo(uwep)
-                || (game.u?.twoweap && canletgo(game.uswapwep)))) {
+            && (await canletgo(uwep, '')
+                || (game.u?.twoweap && await canletgo(game.uswapwep, '')))) {
             m.misc = obj; m.has_misc = MUSE_BULLWHIP;
         }
         /* Note: peaceful/tame monsters won't make themselves invisible unless
@@ -2227,13 +2175,13 @@ export function find_misc(mtmp) {
         if (m.has_misc === MUSE_WAN_MAKE_INVISIBLE) continue;
         if (obj.otyp === OT().WAN_MAKE_INVISIBLE && (obj.spe | 0) > 0
             && !mtmp.minvis && !mtmp.invis_blkd
-            && (!mtmp.mpeaceful || See_invisible())
+            && (!mtmp.mpeaceful || See_invisible_hero())
             && (!attacktype(mtmp.data, AT_GAZE) || mtmp.mcan)) {
             m.misc = obj; m.has_misc = MUSE_WAN_MAKE_INVISIBLE;
         }
         if (m.has_misc === MUSE_POT_INVISIBILITY) continue;
         if (obj.otyp === OT().POT_INVISIBILITY && !mtmp.minvis
-            && !mtmp.invis_blkd && (!mtmp.mpeaceful || See_invisible())
+            && !mtmp.invis_blkd && (!mtmp.mpeaceful || See_invisible_hero())
             && (!attacktype(mtmp.data, AT_GAZE) || mtmp.mcan)) {
             m.misc = obj; m.has_misc = MUSE_POT_INVISIBILITY;
         }
@@ -2267,8 +2215,6 @@ export function find_misc(mtmp) {
     return !!m.has_misc;
 }
 
-// C ref: hack.h See_invisible.
-function See_invisible() { return !!game.u?.formprops?.See_invisible || !!game.u?.see_invis; }
 // C ref: worn.c wearing_iron_shoes(mon).
 function wearing_iron_shoes(mon) {
     const boots = which_armor(mon, W_ARMF);
@@ -2479,7 +2425,7 @@ export async function use_misc(mtmp) {
             const { trapname } = await import('./trap.js');
             set_msg_mon(mtmp);
             await update_topl(`${Some_Monnam(mtmp)} deliberately ${
-                vtense_s(locomotion(mtmp.data, 'jump'))} onto a ${
+                vtense(null, locomotion(mtmp.data, 'jump'))} onto a ${
                 t.tseen ? trapname(t.ttyp, false) : 'hidden trap'}!`);
         }
         const oldx = mtmp.mx, oldy = mtmp.my;
@@ -2510,8 +2456,8 @@ export async function use_misc(mtmp) {
         // out through the `if (!obj) break` after already rolling its rn2(4).
         let obj = game.uwep;
 
-        if (!obj || !canletgo(obj)
-            || (game.u?.twoweap && canletgo(game.uswapwep) && rn2(2)))
+        if (!obj || !await canletgo(obj, '')
+            || (game.u?.twoweap && await canletgo(game.uswapwep, '') && rn2(2)))
             obj = game.uswapwep;
         if (!obj) break; /* shouldn't happen after find_misc() */
 
@@ -2530,7 +2476,7 @@ export async function use_misc(mtmp) {
             await update_topl(`${The_whip} fails to wrap around ${the_weapon}.`);
             return 1;
         }
-        await update_topl(`${The_whip} wraps around ${the_weapon} you're wielding!`);
+        await urgent_topl(`${The_whip} wraps around ${the_weapon} you're wielding!`);
         if (welded_hero(obj)) {
             await update_topl(`${obj_is_plural(obj) ? 'They are' : 'It is'} welded to your ${
                 hand}${!obj.bknown ? '!' : '.'}`);
@@ -2632,7 +2578,7 @@ export function rnd_misc_item(mtmp) {
         if (mtmp.isgd) return 0;
         return rn2(6) ? POT_SPEED : OT().WAN_SPEED_MONSTER;
     case 1:
-        if (mtmp.mpeaceful && !See_invisible()) return 0;
+        if (mtmp.mpeaceful && !See_invisible_hero()) return 0;
         return rn2(6) ? OT().POT_INVISIBILITY : OT().WAN_MAKE_INVISIBLE;
     case 2:
         return OT().POT_GAIN_LEVEL;
@@ -2640,6 +2586,8 @@ export function rnd_misc_item(mtmp) {
         return 0;
     }
 }
+
+hooks.rnd_misc_item = rnd_misc_item;
 
 /* ------------------------------------------------------------------------ *
  * muse.c:2705 searches_for_item(mon, obj)
@@ -2982,7 +2930,7 @@ async function muse_unslime(mon, obj, trap, by_you) {
             newsym(ox, oy);
             newsym(mon.mx, mon.my);
             if (vis)
-                await update_topl(`${Mnam} ${vtense_s(locomotion(mon.data, 'move'))} ${
+                await update_topl(`${Mnam} ${vtense(null, locomotion(mon.data, 'move'))} ${
                     is_floater(mon.data) ? 'over' : 'onto'} ${
                     trap.tseen ? 'the' : 'a'} fire trap!`);
         }
@@ -3014,11 +2962,7 @@ async function muse_unslime(mon, obj, trap, by_you) {
         const was_lit = !!obj.lamplit;
         let saw_lit = false;
         if ((o.quan || 1) > 1) {
-            o = m_splitobj(o, 1);
-            o.timed = 0;
-            o.lamplit = 0;
-            o.owornmask = 0;
-            mon.minvent.splice(mon.minvent.indexOf(obj) + 1, 0, o);
+            o = splitobj(o, 1);
         }
         if (vis && !was_lit) {
             set_msg_mon(mon);

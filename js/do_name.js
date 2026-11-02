@@ -8,6 +8,8 @@
 // the preference unchanged" (which js/dungeon.js, js/do_wear.js and
 // js/dbridge.js each did separately) silently skips those display-stream draws,
 // so every later hallucination pick reads the wrong offset.
+import { Deaf_hero, See_invisible_hero } from './youprop.js';
+import { setONAME, MGIVENNAME, has_mgivenname, setMGIVENNAME } from './const.js';
 import { game } from './gstate.js';
 import { rn2, rn1 } from './rng.js';
 import { rn2_on_display_rng } from './disprng.js';
@@ -16,11 +18,12 @@ import { BOGUSMON_B64 } from './bogusmon_data.js';
 import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
          MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL } from './makemon.js';
 import { mflags2_of, M2_PNAME, msound_of } from './monflags_data.js';
-import { objects } from './mkobj.js';
+import { objects, SIR_TERRY_NOVELS } from './mkobj.js';
 import { m_at } from './display.js';
 import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
-import { makeplural } from './plural.js';
+import { makeplural, vtense } from './plural.js';
+import { mungspaces } from './hacklib.js';
 
 // Keep higher-level naming dependencies behind registration: a static import
 // of uhitm.js or mondata.js here creates a cycle during module initialization.
@@ -153,9 +156,6 @@ export function obj_pmname(obj) {
 // load-bearing: SUPPRESS_SADDLE hides "saddled" for a named steed, SUPPRESS_IT
 // forces a real name for a monster the hero cannot see, AUGMENT_IT turns "it"
 // into "someone"/"something", EXACT_NAME defeats hallucination.
-function has_mgivenname(mtmp) {
-    return !!(mtmp?.mgivenname || mtmp?.mextra?.mgivenname);
-}
 const highc = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 export function l_monnam(mtmp) {
@@ -281,7 +281,7 @@ export function monverbself(mon, monnamtext, verb, othertext) {
     /* verb starts plural; this will yield singular except for "themselves" */
     let verbs = verb;
     if (selfbuf !== 'themselves') {
-        verbs = vtense_s(verb);
+        verbs = vtense(null, verb);
     } else {
         /* a match indicates that it stayed plural */
         subj = makeplural(subj);
@@ -294,12 +294,6 @@ export function monverbself(mon, monnamtext, verb, othertext) {
     }
     return `${subj} ${verbs}${othertext ? ' ' + othertext : ''} ${selfbuf}`;
 }
-// C ref: objnam.c vtense() — the singular form of a plural verb.
-function vtense_s(verb) {
-    if (verb === 'are') return 'is';
-    if (verb === 'have') return 'has';
-    return /(s|x|z|ch|sh)$/.test(verb) ? verb + 'es' : verb + 's';
-}
 
 // ── mextra name slots (do_name.c:94-160) ──
 // C allocates/frees an ONAME/MGIVENNAME buffer inside the obj/monst extras; in
@@ -310,14 +304,14 @@ export function new_mgivenname(mtmp, _lth) {
     return mtmp?.mextra;
 }
 export function free_mgivenname(mtmp) {
-    if (mtmp) { mtmp.mgivenname = null; if (mtmp.mextra) mtmp.mextra.mgivenname = null; }
+    setMGIVENNAME(mtmp, null);
 }
 export function new_oname(obj, _lth) {
     if (obj && !obj.oextra) obj.oextra = {};
     return obj?.oextra;
 }
 export function free_oname(obj) {
-    if (obj) { obj.oname = null; if (obj.oextra) obj.oextra.oname = null; }
+    setONAME(obj, null);
 }
 
 // C ref: hacklib.c fuzzymatch(s1, s2, ignore_chars, caseblind) — compare two
@@ -399,9 +393,7 @@ export async function name_from_player(prompt, _defname /* EDIT_GETLIN is off */
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const s = await hooked_tty_getlin(prompt, null);
     if (s == null || s === '' || s[0] === '\x1b') return null;
-    // C ref: hacklib.c mungspaces() — strip leading/trailing blanks, collapse
-    // internal runs to one space.
-    let t = String(s).replace(/\s+/g, ' ').replace(/^ | $/g, '');
+    let t = mungspaces(String(s));
     if (t.length >= PL_PSIZ) t = t.slice(0, PL_PSIZ - 1);
     return t;
 }
@@ -411,20 +403,14 @@ export function christen_monst(mtmp, name) {
     if (!mtmp) return mtmp;
     if (!name || !name.length) { free_mgivenname(mtmp); return mtmp; }
     new_mgivenname(mtmp, name.length + 1);
-    mtmp.mgivenname = name;
-    mtmp.mextra.mgivenname = name;
+    setMGIVENNAME(mtmp, name);
     return mtmp;
 }
 
 // C ref: monst.h / youprop.h readers used by do_mgivenname().
 const G_UNIQ = 0x1000;          // mkobj.h / monflag.h G_UNIQ
 const MS_ANIMAL = 17;           // sounds.h MS_ANIMAL
-function See_invisible_dn() {
-    const u = game.u || {}, p = u.uprops || {};
-    return !!(u.see_invis || u.See_invisible || p.See_invisible
-              || p.HSee_invisible || p.ESee_invisible);
-}
-function Deaf_dn() { return !!(game.u?.Deaf || (game.u?.uprops?.HDeaf | 0) > 0); }
+function Deaf_dn() { return Deaf_hero(); }
 // C ref: monst.h helpless(mon) — asleep, paralyzed/frozen or not yet arrived.
 function helpless_dn(mon) {
     return !!(mon && (mon.msleeping || !mon.mcanmove));
@@ -482,7 +468,7 @@ export async function do_mgivenname() {
                     || mtmp.mundetected
                     || M_AP_TYPE_dn(mtmp) === 1 /* M_AP_FURNITURE */
                     || M_AP_TYPE_dn(mtmp) === 2 /* M_AP_OBJECT */
-                    || (mtmp.minvis && !See_invisible_dn())))) {
+                    || (mtmp.minvis && !See_invisible_hero())))) {
             await pline('I see no monster there.');
             return;
         }
@@ -492,7 +478,7 @@ export async function do_mgivenname() {
     const monnambuf = distant_monnam(mtmp, ARTICLE_THE);
     const qbuf = `What do you want to call ${monnambuf}?`;
     const buf = await name_from_player(qbuf,
-        has_mgivenname(mtmp) ? (mtmp.mgivenname || mtmp.mextra?.mgivenname) : null);
+        has_mgivenname(mtmp) ? MGIVENNAME(mtmp) : null);
     if (buf === null)
         return;
 
@@ -646,32 +632,8 @@ export function roguename() {
                   : 'Glenn Wichman';
 }
 
-// C ref: do_name.c:1591 sir_Terry_novels[] — publication order; the index
-// macros below depend on it, so the list must stay complete and ordered.
-const SIR_TERRY_NOVELS = [
-    'The Colour of Magic', 'The Light Fantastic', 'Equal Rites', 'Mort',
-    'Sourcery', 'Wyrd Sisters', 'Pyramids', 'Guards! Guards!', 'Eric',
-    'Moving Pictures', 'Reaper Man', 'Witches Abroad', 'Small Gods',
-    'Lords and Ladies', 'Men at Arms', 'Soul Music', 'Interesting Times',
-    'Maskerade', 'Feet of Clay', 'Hogfather', 'Jingo', 'The Last Continent',
-    'Carpe Jugulum', 'The Fifth Elephant', 'The Truth', 'Thief of Time',
-    'The Last Hero', 'The Amazing Maurice and His Educated Rodents',
-    'Night Watch', 'The Wee Free Men', 'Monstrous Regiment',
-    'A Hat Full of Sky', 'Going Postal', 'Thud!', 'Wintersmith',
-    'Making Money', 'Unseen Academicals', 'I Shall Wear Midnight', 'Snuff',
-    'Raising Steam', "The Shepherd's Crown",
-];
 const NVL_COLOUR_OF_MAGIC = 0, NVL_SOURCERY = 4, NVL_MASKERADE = 17,
       NVL_AMAZING_MAURICE = 27, NVL_THUD = 33;
-// C ref: do_name.c:1610 noveltitle(novidx) — DRAWS rn2(SIZE) even when novidx
-// already names a title, so the draw happens on every novel that is generated.
-export function noveltitle(novidx) {
-    const k = SIR_TERRY_NOVELS.length;
-    let j = rn2(k);
-    if (novidx && novidx.idx === -1) novidx.idx = j;
-    else if (novidx && novidx.idx >= 0 && novidx.idx < k) j = novidx.idx;
-    return SIR_TERRY_NOVELS[j];
-}
 // C ref: do_name.c:1626 lookup_novel(lookname, idx) — canonicalise a
 // player-typed title, accepting the documented variant spellings.
 export function lookup_novel(lookname, idx) {

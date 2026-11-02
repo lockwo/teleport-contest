@@ -6,6 +6,7 @@
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { pline, putmsghistory } from './display.js';
+import { mungspaces } from './hacklib.js';
 
 const SECTIONSCOPE = 1;
 const TITLESCOPE = 2;
@@ -36,11 +37,6 @@ async function tribute_lines() {
     return _tributeLines;
 }
 
-// C ref: hacklib.c mungspaces() — collapse runs of whitespace to one space and
-// trim leading and trailing space.
-function mungspaces(s) {
-    return s.replace(/[ \t\n\v\f\r]+/g, ' ').replace(/^ /, '').replace(/ $/, '');
-}
 
 // C ref: C atoi() — leading integer, 0 when there is none.
 function atoi(s) {

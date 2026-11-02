@@ -19,7 +19,7 @@ import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, quest_create_monster,
     quest_place_stair, quest_region_light, quest_set_door, shuffle,
-    vly_non_diggable,
+    vly_non_diggable, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { quest_lua_random, quest_terrain_at } from './quest_home_common.js';
 import { S_DOG } from '../symbols.js';
@@ -59,7 +59,7 @@ export async function makemaz_sam_goal() {
     // load_special -> load nhlib.lua top-level shuffle(align): rn2(3), rn2(2).
     shuffle(['law', 'neutral', 'chaos']);
     // des.level_init({ style = "solidfill", fg = " " }) — rn2(2) + fill STONE.
-    rn2(2);
+    quest_level_init_solidfill();
     // des.level_flags("mazelevel", "noteleport") — no RNG.
     if (g.level?.flags) {
         g.level.flags.is_maze_lev = true;

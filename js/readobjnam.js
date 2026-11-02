@@ -22,6 +22,7 @@
 // set (n / maxprob) and ordering that the single rn2(maxprob) resolves to.
 
 import { rn2, rn1, rnd } from './rng.js';
+import { ONAME } from './const.js';
 import {
     objects,
     mksobj,
@@ -90,6 +91,7 @@ import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { wizterrainwish } from './wizterrainwish.js';
 import { u_safe_from_fatal_corpse, st_all } from './pickup.js';
+import { mungspaces, strncmpi, strcmpi } from './hacklib.js';
 
 const NUM_OBJECTS = objects.length;
 
@@ -171,15 +173,11 @@ function numGlassGems() {
 
 // ── hacklib string helpers (C ref: hacklib.c) ─────────────────────────────
 function digit(c) { return c >= '0' && c <= '9'; }
-function strcmpi(a, b) { return a.toLowerCase() === b.toLowerCase(); }
-function strncmpi(a, b, n) {
-    return (a || '').slice(0, n).toLowerCase() === (b || '').slice(0, n).toLowerCase();
-}
 // C `!BSTRCMPI(base, base + len - n, str)` is true when the n-char tail of
 // `base` case-insensitively equals `str`.  Returns that boolean directly.
 function bstrcmpi_tail(s, suffixLen, str) {
     if (s.length < suffixLen) return false; /* C: ptr before base => no match */
-    return strcmpi(s.slice(s.length - suffixLen), str);
+    return !strcmpi(s.slice(s.length - suffixLen), str);
 }
 function atoiPrefix(s) {
     const m = /^-?\d+/.exec(s);
@@ -192,8 +190,6 @@ function strsubst(bp, orig, repl) {
     const i = bp.indexOf(orig);
     return i < 0 ? bp : bp.slice(0, i) + repl + bp.slice(i + orig.length);
 }
-// mungspaces: collapse internal whitespace and trim (C: hacklib.c).
-function mungspaces(s) { return String(s).replace(/\s+/g, ' ').replace(/^ | $/g, ''); }
 
 // SPE limit (C objnam.c uses SPE_LIM=99 via the wizard path; honored loosely).
 const SPE_LIM = 99;
@@ -286,9 +282,9 @@ function preparse(d) {
         res = 0;
         let l = 0;
         const bp = d.bp;
-        if (strncmpi(bp, 'an ', 3)) { d.cnt = 1; l = 3; }
-        else if (strncmpi(bp, 'a ', 2)) { d.cnt = 1; l = 2; }
-        else if (strncmpi(bp, 'the ', 4)) { l = 4; }
+        if (!strncmpi(bp, 'an ', 3)) { d.cnt = 1; l = 3; }
+        else if (!strncmpi(bp, 'a ', 2)) { d.cnt = 1; l = 2; }
+        else if (!strncmpi(bp, 'the ', 4)) { l = 4; }
         else if (!d.cnt && digit(bp[0]) && bp !== '0') {
             d.cnt = atoiPrefix(bp);
             let i = 0;
@@ -305,125 +301,125 @@ function preparse(d) {
             while (i < rest.length && rest[i] === ' ') i++;
             strip(d, 1 + i);
             continue;
-        } else if (strncmpi(bp, 'blessed ', 8) || strncmpi(bp, 'holy ', 5)) {
+        } else if (!strncmpi(bp, 'blessed ', 8) || !strncmpi(bp, 'holy ', 5)) {
             d.blessed = 1; d.uncursed = d.iscursed = 0;
-            l = strncmpi(bp, 'blessed ', 8) ? 8 : 5;
-        } else if (strncmpi(bp, 'cursed ', 7) || strncmpi(bp, 'unholy ', 7)) {
+            l = !strncmpi(bp, 'blessed ', 8) ? 8 : 5;
+        } else if (!strncmpi(bp, 'cursed ', 7) || !strncmpi(bp, 'unholy ', 7)) {
             d.iscursed = 1; d.blessed = d.uncursed = 0; l = 7;
-        } else if (strncmpi(bp, 'uncursed ', 9)) {
+        } else if (!strncmpi(bp, 'uncursed ', 9)) {
             d.uncursed = 1; d.blessed = d.iscursed = 0; l = 9;
         } else if ((l = matchAny(bp, ['rustproof ', 'erodeproof ', 'corrodeproof ',
             'fixed ', 'fireproof ', 'rotproof ', 'tempered ', 'crackproof '])) > 0) {
             d.erodeproof = 1;
-        } else if (strncmpi(bp, 'lit ', 4) || strncmpi(bp, 'burning ', 8)) {
-            d.islit = 1; l = strncmpi(bp, 'lit ', 4) ? 4 : 8;
-        } else if (strncmpi(bp, 'unlit ', 6) || strncmpi(bp, 'extinguished ', 13)) {
-            d.islit = 0; l = strncmpi(bp, 'unlit ', 6) ? 6 : 13;
+        } else if (!strncmpi(bp, 'lit ', 4) || !strncmpi(bp, 'burning ', 8)) {
+            d.islit = 1; l = !strncmpi(bp, 'lit ', 4) ? 4 : 8;
+        } else if (!strncmpi(bp, 'unlit ', 6) || !strncmpi(bp, 'extinguished ', 13)) {
+            d.islit = 0; l = !strncmpi(bp, 'unlit ', 6) ? 6 : 13;
         // C ref: objnam.c:4021 — "wet"/"moist" only apply to towels, and this
         // is the ONE prefix that draws: rn2(3) for "wet", rnd(2) for "moist".
-        } else if (strncmpi(bp, 'moist ', 6) || strncmpi(bp, 'wet ', 4)) {
-            if (strncmpi(bp, 'wet ', 4)) { d.wetness = 3 + rn2(3); l = 4; }
+        } else if (!strncmpi(bp, 'moist ', 6) || !strncmpi(bp, 'wet ', 4)) {
+            if (!strncmpi(bp, 'wet ', 4)) { d.wetness = 3 + rn2(3); l = 4; }
             else { d.wetness = rnd(2); l = 6; }
-        } else if (strncmpi(bp, 'unlabeled ', 10) || strncmpi(bp, 'unlabelled ', 11)
-            || strncmpi(bp, 'blank ', 6)) {
+        } else if (!strncmpi(bp, 'unlabeled ', 10) || !strncmpi(bp, 'unlabelled ', 11)
+            || !strncmpi(bp, 'blank ', 6)) {
             d.unlabeled = 1;
-            l = strncmpi(bp, 'unlabeled ', 10) ? 10 : strncmpi(bp, 'unlabelled ', 11) ? 11 : 6;
-        } else if (strncmpi(bp, 'poisoned ', 9)) {
+            l = !strncmpi(bp, 'unlabeled ', 10) ? 10 : !strncmpi(bp, 'unlabelled ', 11) ? 11 : 6;
+        } else if (!strncmpi(bp, 'poisoned ', 9)) {
             d.ispoisoned = 1; l = 9;
-        } else if (strncmpi(bp, 'trapped ', 8)) {
+        } else if (!strncmpi(bp, 'trapped ', 8)) {
             d.trapped = wizard() ? 1 : 0; l = 8;
-        } else if (strncmpi(bp, 'untrapped ', 10)) {
+        } else if (!strncmpi(bp, 'untrapped ', 10)) {
             d.trapped = 2; l = 10;
         // C ref: objnam.c:4046 — box/chest lock states, also door states for
         // the wizard-mode terrain wish (js/wizterrainwish.js already reads
         // d.locked/d.open/d.broken/d.doorless/d.looted).
-        } else if (strncmpi(bp, 'locked ', 7)) {
+        } else if (!strncmpi(bp, 'locked ', 7)) {
             d.locked = d.closed = 1;
             d.unlocked = d.broken = d.open = d.doorless = 0; l = 7;
-        } else if (strncmpi(bp, 'unlocked ', 9)) {
+        } else if (!strncmpi(bp, 'unlocked ', 9)) {
             d.unlocked = d.closed = 1;
             d.locked = d.broken = d.open = d.doorless = 0; l = 9;
-        } else if (strncmpi(bp, 'broken ', 7)) {
+        } else if (!strncmpi(bp, 'broken ', 7)) {
             d.broken = 1;
             d.locked = d.unlocked = d.open = d.closed = d.doorless = 0; l = 7;
-        } else if (strncmpi(bp, 'open ', 5)) {
+        } else if (!strncmpi(bp, 'open ', 5)) {
             d.open = 1;
             d.closed = d.locked = d.broken = d.doorless = 0; l = 5;
-        } else if (strncmpi(bp, 'closed ', 7)) {
+        } else if (!strncmpi(bp, 'closed ', 7)) {
             d.closed = 1;
             d.open = d.locked = d.broken = d.doorless = 0; l = 7;
-        } else if (strncmpi(bp, 'doorless ', 9)) {
+        } else if (!strncmpi(bp, 'doorless ', 9)) {
             d.doorless = 1;
             d.open = d.closed = d.locked = d.unlocked = d.broken = 0; l = 9;
         // looted: fountain/sink/throne/tree; disturbed: grave.
-        } else if (strncmpi(bp, 'looted ', 7) || strncmpi(bp, 'disturbed ', 10)) {
-            d.looted = 1; l = strncmpi(bp, 'looted ', 7) ? 7 : 10;
-        } else if (strncmpi(bp, 'greased ', 8)) {
+        } else if (!strncmpi(bp, 'looted ', 7) || !strncmpi(bp, 'disturbed ', 10)) {
+            d.looted = 1; l = !strncmpi(bp, 'looted ', 7) ? 7 : 10;
+        } else if (!strncmpi(bp, 'greased ', 8)) {
             d.isgreased = 1; l = 8;
-        } else if (strncmpi(bp, 'zombifying ', 11)) {
+        } else if (!strncmpi(bp, 'zombifying ', 11)) {
             d.zombify = true; l = 11;
-        } else if (strncmpi(bp, 'very ', 5)) {
+        } else if (!strncmpi(bp, 'very ', 5)) {
             d.very = 1; l = 5;
-        } else if (strncmpi(bp, 'thoroughly ', 11)) {
+        } else if (!strncmpi(bp, 'thoroughly ', 11)) {
             d.very = 2; l = 11;
         } else if ((l = matchAny(bp, ['rusty ', 'burnt ', 'cracked '])) > 0
-            || strncmpi(bp, 'rusted ', (l = 7)) || strncmpi(bp, 'burned ', (l = 7))) {
+            || !strncmpi(bp, 'rusted ', (l = 7)) || !strncmpi(bp, 'burned ', (l = 7))) {
             d.eroded = 1 + d.very; d.very = 0;
-        } else if (strncmpi(bp, 'corroded ', 9) || strncmpi(bp, 'rotted ', 7)) {
+        } else if (!strncmpi(bp, 'corroded ', 9) || !strncmpi(bp, 'rotted ', 7)) {
             d.eroded2 = 1 + d.very; d.very = 0;
-            l = strncmpi(bp, 'corroded ', 9) ? 9 : 7;
-        } else if (strncmpi(bp, 'partly eaten ', 13) || strncmpi(bp, 'partially eaten ', 16)) {
-            d.halfeaten = 1; l = strncmpi(bp, 'partly eaten ', 13) ? 13 : 16;
-        } else if (strncmpi(bp, 'historic ', 9)) {
+            l = !strncmpi(bp, 'corroded ', 9) ? 9 : 7;
+        } else if (!strncmpi(bp, 'partly eaten ', 13) || !strncmpi(bp, 'partially eaten ', 16)) {
+            d.halfeaten = 1; l = !strncmpi(bp, 'partly eaten ', 13) ? 13 : 16;
+        } else if (!strncmpi(bp, 'historic ', 9)) {
             d.ishistoric = 1; l = 9;
-        } else if (strncmpi(bp, 'diluted ', 8)) {
+        } else if (!strncmpi(bp, 'diluted ', 8)) {
             d.isdiluted = 1; l = 8;
-        } else if (strncmpi(bp, 'empty ', 6)) {
+        } else if (!strncmpi(bp, 'empty ', 6)) {
             d.contents = TIN_EMPTY; l = 6;
-        } else if (strncmpi(bp, 'small ', 6)) {
+        } else if (!strncmpi(bp, 'small ', 6)) {
             // C ref: objnam.c:4102 — "small"/"large" are glob size prefixes,
             // but they are also part of monster and object names ("small
             // mimic", "large box"), so only consume them ahead of a glob.
-            if (!strncmpi(bp.slice(6), 'glob', 4) && strstri(bp.slice(6), ' glob') < 0) break;
+            if (strncmpi(bp.slice(6), 'glob', 4) && strstri(bp.slice(6), ' glob') < 0) break;
             d.gsize = 1; l = 6;
-        } else if (strncmpi(bp, 'medium ', 7)) {
+        } else if (!strncmpi(bp, 'medium ', 7)) {
             d.gsize = 2; l = 7;
-        } else if (strncmpi(bp, 'large ', 6)) {
-            if (!strncmpi(bp.slice(6), 'glob', 4) && strstri(bp.slice(6), ' glob') < 0) break;
+        } else if (!strncmpi(bp, 'large ', 6)) {
+            if (strncmpi(bp.slice(6), 'glob', 4) && strstri(bp.slice(6), ' glob') < 0) break;
             /* "very large " had "very " peeled off on the previous pass */
             d.gsize = (d.very !== 1) ? 3 : 4; l = 6;
-        } else if (strncmpi(bp, 'real ', 5)) {
+        } else if (!strncmpi(bp, 'real ', 5)) {
             /* don't negate 'fake' here; C comments why */
             d.real = 1; l = 5;
-        } else if (strncmpi(bp, 'fake ', 5)) {
+        } else if (!strncmpi(bp, 'fake ', 5)) {
             d.fake = 1; d.real = 0; l = 5;
-        } else if (strncmpi(bp, 'female ', 7)) {
+        } else if (!strncmpi(bp, 'female ', 7)) {
             d.mgend = FEMALE;
             // C: strsubst() deletes the word from the buffer save_bp points
             // into, rather than advancing past it, so the backtracked string
             // no longer carries it.
             if (save_bp !== null) { d.bp = strsubst(d.bp, 'female ', ''); save_bp = strsubst(save_bp, 'female ', ''); l = 0; }
             else l = 7;
-        } else if (strncmpi(bp, 'male ', 5)) {
+        } else if (!strncmpi(bp, 'male ', 5)) {
             d.mgend = MALE;
             if (save_bp !== null) { d.bp = strsubst(d.bp, 'male ', ''); save_bp = strsubst(save_bp, 'male ', ''); l = 0; }
             else l = 5;
-        } else if (strncmpi(bp, 'neuter ', 7)) {
+        } else if (!strncmpi(bp, 'neuter ', 7)) {
             d.mgend = NEUTRAL;
             if (save_bp !== null) { d.bp = strsubst(d.bp, 'neuter ', ''); save_bp = strsubst(save_bp, 'neuter ', ''); l = 0; }
             else l = 7;
-        } else if ((strncmpi(bp, 'corpse ', 7) || strncmpi(bp, 'statue ', 7)
-                    || strncmpi(bp, 'figurine ', 9))
-                   && strncmpi(bp.slice(strncmpi(bp, 'figurine ', 9) ? 9 : 7), 'of ', 3)) {
+        } else if ((!strncmpi(bp, 'corpse ', 7) || !strncmpi(bp, 'statue ', 7)
+                    || !strncmpi(bp, 'figurine ', 9))
+                   && !strncmpi(bp.slice(!strncmpi(bp, 'figurine ', 9) ? 9 : 7), 'of ', 3)) {
             // C ref: objnam.c:4149 — the corpse/statue/figurine gender hack:
             // skip "statue of [a ]" so "statue of a female gnome ruler" can be
             // read as a female gnome ruler, then backtrack at the end.
-            l = strncmpi(bp, 'figurine ', 9) ? 9 : 7;
+            l = !strncmpi(bp, 'figurine ', 9) ? 9 : 7;
             l += 3;
             let more_l = 0;
-            if (strncmpi(bp.slice(l), 'a ', (more_l = 2))
-                || strncmpi(bp.slice(l), 'an ', (more_l = 3))
-                || strncmpi(bp.slice(l), 'the ', (more_l = 4)))
+            if (!strncmpi(bp.slice(l), 'a ', (more_l = 2))
+                || !strncmpi(bp.slice(l), 'an ', (more_l = 3))
+                || !strncmpi(bp.slice(l), 'the ', (more_l = 4)))
                 l += more_l;
             save_bp = bp; save_pfx = d.pfx;
         } else {
@@ -436,7 +432,7 @@ function preparse(d) {
 }
 
 function matchAny(bp, words) {
-    for (const w of words) if (strncmpi(bp, w, w.length)) return w.length;
+    for (const w of words) if (!strncmpi(bp, w, w.length)) return w.length;
     return 0;
 }
 
@@ -459,7 +455,7 @@ function parse_charges(d) {
         const head = d.bp.slice(0, cut);          // bp truncated before '('
         let p = d.bp.slice(op + 1);               // chars after '('
         let tail = '';                            // chars after the ')'
-        if (strncmpi(p, 'lit)', 4)) {
+        if (!strncmpi(p, 'lit)', 4)) {
             d.islit = 1;
             // C points at ')'; trailing chars are whatever follows it.
             tail = p.slice(4);
@@ -504,7 +500,7 @@ function postparse1(d) {
         d.un = d.bp.slice(p + 8);
         d.bp = d.bp.slice(0, p);
         for (const r of o_ranges)
-            if (strcmpi(d.bp, r[0])) { d.oclass = r[1]; return 1; }
+            if (!strcmpi(d.bp, r[0])) { d.oclass = r[1]; return 1; }
     }
     if ((p = strstri(d.bp, ' labeled ')) >= 0) {
         d.dn = d.bp.slice(p + 9); d.bp = d.bp.slice(0, p);
@@ -526,19 +522,19 @@ function postparse1(d) {
         const q = strstri(d.bp, aoy);
         if (aoy && q >= 0 && (q === 0 || d.bp[q - 1] === ' ')) {
             let sIdx = 0;
-            if (strncmpi(d.bp.slice(sIdx), 'cheap ', 6)) { d.fake = 1; sIdx += 6; }
-            if (strncmpi(d.bp.slice(sIdx), 'plastic ', 8)) { d.fake = 1; sIdx += 8; }
-            if (strncmpi(d.bp.slice(sIdx), 'imitation ', 10)) { d.fake = 1; sIdx += 10; }
+            if (!strncmpi(d.bp.slice(sIdx), 'cheap ', 6)) { d.fake = 1; sIdx += 6; }
+            if (!strncmpi(d.bp.slice(sIdx), 'plastic ', 8)) { d.fake = 1; sIdx += 8; }
+            if (!strncmpi(d.bp.slice(sIdx), 'imitation ', 10)) { d.fake = 1; sIdx += 10; }
             d.real = d.fake ? 0 : 1;
             d.typ = d.real ? OT('AMULET_OF_YENDOR') : OT('FAKE_AMULET_OF_YENDOR');
             return 2; /* typfnd */
         }
     }
     // "pair of"/"set of" prefixes
-    if (strncmpi(d.bp, 'pair of ', 8)) { strip(d, 8); d.cnt *= 2; }
-    else if (strncmpi(d.bp, 'pairs of ', 9)) { strip(d, 9); if (d.cnt > 1) d.cnt *= 2; }
-    else if (strncmpi(d.bp, 'set of ', 7)) strip(d, 7);
-    else if (strncmpi(d.bp, 'sets of ', 8)) strip(d, 8);
+    if (!strncmpi(d.bp, 'pair of ', 8)) { strip(d, 8); d.cnt *= 2; }
+    else if (!strncmpi(d.bp, 'pairs of ', 9)) { strip(d, 9); if (d.cnt > 1) d.cnt *= 2; }
+    else if (!strncmpi(d.bp, 'set of ', 7)) strip(d, 7);
+    else if (!strncmpi(d.bp, 'sets of ', 8)) strip(d, 8);
 
     // C ref: objnam.c:4337-4368 — intercept pudding globs; they're a valid
     // wish target but must not be treated like a corpse.  A count magnifies
@@ -547,8 +543,8 @@ function postparse1(d) {
     {
         const bp = d.bp;
         let gp = -1;
-        if (strcmpi(bp, 'glob') || bstrcmpi_tail(bp, 5, ' glob')
-            || strcmpi(bp, 'globs') || bstrcmpi_tail(bp, 6, ' globs')
+        if (!strcmpi(bp, 'glob') || bstrcmpi_tail(bp, 5, ' glob')
+            || !strcmpi(bp, 'globs') || bstrcmpi_tail(bp, 6, ' globs')
             || (gp = strstri(bp, 'glob of ')) >= 0
             || (gp = strstri(bp, 'globs of ')) >= 0) {
             const monstr = gp < 0 ? bp : bp.slice(gp).slice(strstri(bp.slice(gp), ' of ') + 4);
@@ -577,7 +573,7 @@ function postparse1(d) {
     if (!['wand ', 'spellbook ', 'gauntlets ', 'gloves ', 'finger ']
         .some((word) => strstri(d.bp, word) >= 0)) {
         if ((p = strstri(d.bp, 'tin of ')) >= 0) {
-            if (!strcmpi(d.bp.slice(p + 7), 'spinach')) {
+            if (strcmpi(d.bp.slice(p + 7), 'spinach')) {
                 const tvariety = { value: RANDOM_TIN };
                 const meat = d.bp.slice(p + 7);
                 const skip = tin_variety_txt(meat, tvariety);
@@ -599,7 +595,7 @@ function postparse1(d) {
     }
 
     if (!['samurai sword', 'wizard lock', 'death wand', 'master key',
-        'ninja-to', 'magenta'].some((word) => strncmpi(d.bp, word, word.length))) {
+        'ninja-to', 'magenta'].some((word) => !strncmpi(d.bp, word, word.length))) {
         if (d.mntmp < LOW_PM && d.bp.length > 2) {
             const match = name_to_monplus(d.bp);
             d.mntmp = match.mntmp;
@@ -614,10 +610,10 @@ function postparse1(d) {
                 const prev = obp.charAt(obp.length - d.bp.length - 1);
                 if (d.bp[0] === ' ') {
                     strip(d, 1);
-                } else if (strncmpi(d.bp, 's ', 2)
-                           || (obp.length > d.bp.length && strncmpi(prev + d.bp, "s' ", 3))) {
+                } else if (!strncmpi(d.bp, 's ', 2)
+                           || (obp.length > d.bp.length && !strncmpi(prev + d.bp, "s' ", 3))) {
                     strip(d, 2);
-                } else if (strncmpi(d.bp, 'es ', 3) || strncmpi(d.bp, "'s ", 3)) {
+                } else if (!strncmpi(d.bp, 'es ', 3) || !strncmpi(d.bp, "'s ", 3)) {
                     strip(d, 3);
                 } else if (!d.bp.length && !d.actualn && !d.dn && !d.un && !d.oclass) {
                     /* no referent; they don't really mean a monster type */
@@ -658,7 +654,7 @@ const GUARDIAN_CORPSE = {
 // bear trap / land mine disambiguation.  C ref: objnam.c:4436-4660.
 function postparse1b(d) {
     // makesingular (C makesingular(bp)); approximate for the exercised wishes.
-    if (d.bp && !strcmpi(d.bp, 'tricks') && !strcmpi(d.bp, 'clothes')) {
+    if (d.bp && strcmpi(d.bp, 'tricks') && strcmpi(d.bp, 'clothes')) {
         const sng = makesingular(d.bp);
         if (sng !== d.bp) { if (d.cnt === 1) d.cnt = 2; d.bp = sng; }
     }
@@ -668,7 +664,7 @@ function postparse1b(d) {
 
     // C ref: objnam.c:4469 — two fixups the shuffled spellings list can't do:
     // "grey spell..." -> "gray spell...", and British "armour" -> "armor".
-    if (strncmpi(d.bp, 'grey spell', 10))
+    if (!strncmpi(d.bp, 'grey spell', 10))
         d.bp = d.bp.slice(0, 2) + 'a' + d.bp.slice(3);
     {
         const q = strstri(d.bp, 'armour');
@@ -677,7 +673,7 @@ function postparse1b(d) {
 
     // C objnam.c:4480 — the matching dragon species selects colored scales.
     const dragon = dragonIndex(d.mntmp);
-    if (strcmpi(d.bp, 'scales') && dragon !== NON_PM) {
+    if (!strcmpi(d.bp, 'scales') && dragon !== NON_PM) {
         d.typ = OT('GRAY_DRAGON_SCALES') + dragon;
         d.mntmp = NON_PM;
         return 2;
@@ -687,7 +683,7 @@ function postparse1b(d) {
     // [un]holy water" (the bare adjectives were eaten by preparse); neither is
     // an actual potion type, so resolve it to POT_WATER and set the b/u/c.
     if (bstrcmpi_tail(d.bp, 10, 'holy water')) {
-        if (d.bp.length >= 12 && strncmpi(d.bp.slice(d.bp.length - 12), 'un', 2)) {
+        if (d.bp.length >= 12 && !strncmpi(d.bp.slice(d.bp.length - 12), 'un', 2)) {
             d.iscursed = 1; d.blessed = d.uncursed = 0;
         } else {
             d.blessed = 1; d.iscursed = d.uncursed = 0;
@@ -698,9 +694,9 @@ function postparse1b(d) {
 
     // C ref: objnam.c:4502 — accept "paperback"/"paperback book", reject
     // "paperback spellbook" (which returns no object at all).
-    if (strncmpi(d.bp, 'paperback', 9)) {
+    if (!strncmpi(d.bp, 'paperback', 9)) {
         const rest = d.bp.slice(9);
-        if (!rest.length || strncmpi(rest, ' book', 5)) {
+        if (!rest.length || !strncmpi(rest, ' book', 5)) {
             d.typ = OT('SPE_NOVEL');
             return 2;
         }
@@ -725,7 +721,7 @@ function postparse1b(d) {
     // C ref: objnam.c:4528 postparse1() — the gold-piece early-out returns the
     // object directly (no mksobj otyp path, so no blessorcurse/spe draws).
     if (bstrcmpi_tail(d.bp, 10, 'gold piece') || bstrcmpi_tail(d.bp, 7, 'zorkmid')
-        || strcmpi(d.bp, 'gold') || strcmpi(d.bp, 'money') || strcmpi(d.bp, 'coin')
+        || !strcmpi(d.bp, 'gold') || !strcmpi(d.bp, 'money') || !strcmpi(d.bp, 'coin')
         || d.bp[0] === '$') {
         if (d.cnt > 5000 && !wizard()) d.cnt = 5000;
         else if (d.cnt < 1) d.cnt = 1;
@@ -753,11 +749,11 @@ function postparse1b(d) {
         for (let i = 0; i < WRP.length; i++) {
             const [w, sym] = WRP[i];
             const j = w.length;
-            if (strncmpi(d.bp, w, j)) {
+            if (!strncmpi(d.bp, w, j)) {
                 d.oclass = sym;
                 if (d.oclass !== AMULET_CLASS) {
                     strip(d, j);
-                    if (strncmpi(d.bp, ' of ', 4)) d.actualn = d.bp.slice(4);
+                    if (!strncmpi(d.bp, ' of ', 4)) d.actualn = d.bp.slice(4);
                 } else {
                     d.actualn = d.bp;
                 }
@@ -771,7 +767,7 @@ function postparse1b(d) {
                     if (d.bp.endsWith(' ')) d.bp = d.bp.slice(0, -1);
                 } else {
                     // C: amulet without "of" ("versus poison amulet").
-                    if (strncmpi(d.bp, 'versus poison ', 14)) {
+                    if (!strncmpi(d.bp, 'versus poison ', 14)) {
                         d.typ = OT('AMULET_VERSUS_POISON');
                         return 2;
                     }
@@ -789,13 +785,13 @@ function postparse1b(d) {
     // C ref: objnam.c:4636 -- wizard mode: "bear trap"/"land mine" with a
     // "trapped " prefix or any suffix other than " object" is the trap, not
     // the disarmed trap object.
-    if (wizard() && (strncmpi(d.bp, 'bear', 4) || strncmpi(d.bp, 'land', 4))) {
+    if (wizard() && (!strncmpi(d.bp, 'bear', 4) || !strncmpi(d.bp, 'land', 4))) {
         const beartrap = d.bp[0].toLowerCase() === 'b';
         let zp = d.bp.slice(4);
         if (zp[0] === ' ') zp = zp.slice(1);
-        if (strncmpi(zp, beartrap ? 'trap' : 'mine', 4)) {
+        if (!strncmpi(zp, beartrap ? 'trap' : 'mine', 4)) {
             zp = zp.slice(4);
-            if (d.trapped === 2 || strcmpi(zp, ' object')) {
+            if (d.trapped === 2 || !strcmpi(zp, ' object')) {
                 d.typ = OT(beartrap ? 'BEARTRAP' : 'LAND_MINE');
                 return 2;
             } else if (d.trapped === 1 || zp !== '') {
@@ -812,7 +808,7 @@ function postparse2(d) {
     // C ref: objnam.c readobjnam_postparse2():4671 — "grey stone" and friends
     // must be tested before the generic " stone" suffix below.
     for (const r of o_ranges)
-        if (strcmpi(d.bp, r[0])) { d.typ = rnd_class(r[2], r[3]); return 2; }
+        if (!strcmpi(d.bp, r[0])) { d.typ = rnd_class(r[2], r[3]); return 2; }
 
     // C ref: objnam.c:4676 — a trailing " stone"/" gem" fixes the class and
     // leaves the colour/name for the search.
@@ -821,9 +817,9 @@ function postparse2(d) {
         d.oclass = GEM_CLASS;
         d.dn = d.actualn = d.bp;
         return 1; /* srch */
-    } else if (strcmpi(d.bp, 'looking glass')) {
+    } else if (!strcmpi(d.bp, 'looking glass')) {
         /* avoid a false hit on "* glass" */
-    } else if (bstrcmpi_tail(d.bp, 6, ' glass') || strcmpi(d.bp, 'glass')) {
+    } else if (bstrcmpi_tail(d.bp, 6, ' glass') || !strcmpi(d.bp, 'glass')) {
         let str = d.bp;
         // "broken glass" is a non-existent item; "broken" may already have
         // been eaten by the chest/box prefix loop.
@@ -831,11 +827,11 @@ function postparse2(d) {
             d.otmp = null;
             return 3;
         }
-        if (strncmpi(str, 'worthless ', 10)) str = str.slice(10);
-        if (strncmpi(str, 'piece of ', 9)) str = str.slice(9);
-        if (strncmpi(str, 'colored ', 8)) str = str.slice(8);
-        else if (strncmpi(str, 'coloured ', 9)) str = str.slice(9);
-        if (strcmpi(str, 'glass')) {
+        if (!strncmpi(str, 'worthless ', 10)) str = str.slice(10);
+        if (!strncmpi(str, 'piece of ', 9)) str = str.slice(9);
+        if (!strncmpi(str, 'colored ', 8)) str = str.slice(8);
+        else if (!strncmpi(str, 'coloured ', 9)) str = str.slice(9);
+        if (!strcmpi(str, 'glass')) {
             // C DRAWS rn2(NUM_GLASS_GEMS) here to pick a random colour.
             d.typ = firstGlassGem() + rn2(numGlassGems());
             if (objects[d.typ].oc_class === GEM_CLASS) return 2;
@@ -860,7 +856,7 @@ function noClassSearch(bp) {
         ['ring mail', 9], ['studded leather armor', 21], ['leather armor', 13],
         ['tooled horn', 11], ['food ration', 11], ['meat ring', 9],
     ];
-    for (const [w, n] of guards) if (strncmpi(bp, w, n)) return true;
+    for (const [w, n] of guards) if (!strncmpi(bp, w, n)) return true;
     return false;
 }
 
@@ -873,9 +869,9 @@ function postparse3(d) {
     if (!d.oclass && d.actualn) {
         for (let i = gemBase(); i > 0 && i <= LAST_REAL_GEM; i++) {
             const zn = objects[i] && objects[i].name;
-            if (zn && strcmpi(d.actualn, zn)) { d.typ = i; return 2; }
+            if (zn && !strcmpi(d.actualn, zn)) { d.typ = i; return 2; }
         }
-        if (strcmpi(d.actualn, 'tin')) { d.typ = OT('TIN'); return 2; }
+        if (!strcmpi(d.actualn, 'tin')) { d.typ = OT('TIN'); return 2; }
     }
 
     // rnd_otyp_by_namedesc tries actualn, dn, un, origbp in turn.
@@ -902,7 +898,7 @@ function postparse3(d) {
     // C ref: objnam.c:4762 Japanese_items[] — the Samurai's alternate names.
     if (d.actualn) {
         for (const [sym, jname] of JAPANESE_ITEMS)
-            if (strcmpi(d.actualn, jname)) { d.typ = OT(sym); return 2; }
+            if (!strcmpi(d.actualn, jname)) { d.typ = OT(sym); return 2; }
     }
 
     // armor "mail" retry
@@ -912,7 +908,7 @@ function postparse3(d) {
     }
 
     // C ref: objnam.c:4782 — bare "spinach" is a tin of spinach.
-    if (strcmpi(d.bp, 'spinach')) {
+    if (!strcmpi(d.bp, 'spinach')) {
         d.contents = TIN_SPINACH;
         d.typ = OT('TIN');
         return 2;
@@ -927,8 +923,8 @@ function postparse3(d) {
         for (;;) {
             let l = 0;
             if (!fp) break;
-            if (strncmpi(fp, 'an ', 3)) { cntf = 1; l = 3; }
-            else if (strncmpi(fp, 'a ', 2)) { cntf = 1; l = 2; }
+            if (!strncmpi(fp, 'an ', 3)) { cntf = 1; l = 3; }
+            else if (!strncmpi(fp, 'a ', 2)) { cntf = 1; l = 2; }
             else if (!cntf && digit(fp[0])) {
                 cntf = atoiPrefix(fp);
                 let i = 0;
@@ -936,11 +932,11 @@ function postparse3(d) {
                 while (fp[i] === ' ') i++;
                 fp = fp.slice(i);
                 continue;
-            } else if (strncmpi(fp, 'blessed ', 8)) { blessedf = 1; l = 8; }
-            else if (strncmpi(fp, 'cursed ', 7)) { iscursedf = 1; l = 7; }
-            else if (strncmpi(fp, 'uncursed ', 9)) { uncursedf = 1; l = 9; }
-            else if (strncmpi(fp, 'partly eaten ', 13)) { halfeatenf = 1; l = 13; }
-            else if (strncmpi(fp, 'partially eaten ', 16)) { halfeatenf = 1; l = 16; }
+            } else if (!strncmpi(fp, 'blessed ', 8)) { blessedf = 1; l = 8; }
+            else if (!strncmpi(fp, 'cursed ', 7)) { iscursedf = 1; l = 7; }
+            else if (!strncmpi(fp, 'uncursed ', 9)) { uncursedf = 1; l = 9; }
+            else if (!strncmpi(fp, 'partly eaten ', 13)) { halfeatenf = 1; l = 13; }
+            else if (!strncmpi(fp, 'partially eaten ', 16)) { halfeatenf = 1; l = 16; }
             else break;
             fp = fp.slice(l);
         }
@@ -1005,7 +1001,7 @@ export function readobjnam(bp, forWish = true) {
     if (bp == null) return any(d);
 
     d.bp = mungspaces(d.bp);
-    if (strcmpi(d.bp, 'nothing') || strcmpi(d.bp, 'nil') || strcmpi(d.bp, 'none'))
+    if (!strcmpi(d.bp, 'nothing') || !strcmpi(d.bp, 'nil') || !strcmpi(d.bp, 'none'))
         return { kind: 'nothing' };
     d.fruitbuf = d.bp;
 
@@ -1048,10 +1044,10 @@ function wiztrap(d) {
         if (wizterrainwish(d, messages)) return { kind: 'hands', messages };
     }
     if (!d.oclass && !d.typ) {
-        if (strncmpi(d.bp, 'polearm', 7)) {
+        if (!strncmpi(d.bp, 'polearm', 7)) {
             d.typ = rnd_otyp_by_wpnskill(P_POLEARMS);
             return typfnd(d);
-        } else if (strncmpi(d.bp, 'hammer', 6)) {
+        } else if (!strncmpi(d.bp, 'hammer', 6)) {
             d.typ = rnd_otyp_by_wpnskill(P_HAMMER);
             return typfnd(d);
         }
@@ -1395,7 +1391,7 @@ function finalize(d) {
        and make them pay; charge them for the wish anyway! */
     if ((is_quest_artifact(otmp)
          || (otmp.oartifact && rn2(nartifact_exist()) > 1)) && !wizard()) {
-        artifact_exists(otmp, otmp.oname || '', false, ONAME_NO_FLAGS);
+        artifact_exists(otmp, ONAME(otmp), false, ONAME_NO_FLAGS);
         return { kind: 'hands', messages: [
             `For a moment, you feel something in your ${makeplural(body_part(HAND))}, but it disappears!`] };
     }

@@ -6,6 +6,7 @@
 // missing is the Wizard's own bookkeeping and, more importantly, nasty() —
 // mcastu.c's "summon nasties" spell reached a `default:` that drew nothing.
 
+import { Deaf_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { update_topl, pline, newsym, You_feel } from './display.js';
@@ -14,7 +15,7 @@ import { AT_MAGC, attacktype } from './monattk_data.js';
 import { mflags3_of } from './monflags_data.js';
 import { In_W_tower } from './teleport.js';
 import { mon_has_amulet, mon_has_special, any_quest_artifact } from './monspecial.js';
-import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel } from './const.js';
+import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel, LARGEST_INT } from './const.js';
 import { In_hell as dungeon_In_hell } from './dungeon.js';
 
 const FAKE_AMULET_OF_YENDOR = 212;
@@ -275,7 +276,6 @@ export async function resurrect() {
         verb = 'elude';
         const { mon_arrive, Wiz_arrive } = await import('./dog.js');
         const { mon_catchup_elapsed_time } = await import('./dogmove.js');
-        const LARGEST_INT = 0x7fffffff;
         const migr = game.migrating_mons || (game.migrating_mons = []);
         for (let i = 0; i < migr.length; ) {
             const cand = migr[i];
@@ -320,7 +320,7 @@ function uprop(...names) {
     for (const n of names) if ((p[n] | 0) > 0 || p[n] === true) return true;
     return false;
 }
-function Deaf() { return uprop('Deaf', 'HDeaf', 'EDeaf'); }
+function Deaf() { return Deaf_hero(); }
 function In_hell() { return dungeon_In_hell(game.u?.uz); }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -578,7 +578,7 @@ export async function tactics(mtmp) {
         /* FALLTHRU */
     case STRAT_NONE: /* harass */
         if (!mm.noteleport_level(mtmp) && !rn2(!mtmp.mflee ? 5 : 33))
-            await mnexto_wiz(mtmp);
+            await mon.mnexto(mtmp, RLOC_MSG);
         return 0;
 
     default: { /* kill, maim, pillage! */
@@ -619,7 +619,7 @@ export async function tactics(mtmp) {
             } else {
                 /* a monster is standing on it - cause some trouble */
                 if (!rn2(5) && !mm.noteleport_level(mtmp))
-                    await mnexto_wiz(mtmp);
+                    await mon.mnexto(mtmp, RLOC_MSG);
                 return 0;
             }
         } else { /* a monster has it - 'port beside it. */
@@ -634,13 +634,6 @@ export async function tactics(mtmp) {
 }
 function In_W_tower_wiz(x, y) {
     return In_W_tower(x, y, game.u?.uz);
-}
-// C ref: teleport.c mnexto(mtmp, rlocflags) — js/do.js:467 and js/vault.js:442
-// each keep a private copy; js/do.js exports mnexto_rloc(), which is the same
-// call with the flags threaded through.
-async function mnexto_wiz(mtmp) {
-    const d = await import('./do.js');
-    if (typeof d.mnexto_rloc === 'function') await d.mnexto_rloc(mtmp, RLOC_MSG);
 }
 // C ref: mon.c monnear(mon, x, y) == dist2 < 3 with the NODIAG exception;
 // js/dogmove.js:2167 exports the port, and vision.c cansee() comes from

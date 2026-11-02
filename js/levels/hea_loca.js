@@ -6,7 +6,7 @@ import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, quest_place_stair,
     quest_set_door, reset_xystart_size, splev_region_lit, vly_altar,
-    vly_non_diggable, vly_object, TEMPLE_RTYPE,
+    vly_non_diggable, vly_object, TEMPLE_RTYPE, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { quest_align_shuffle, quest_monster } from './quest_home_common.js';
 import { mkmap_mines, pri_create_trap, pri_region_rect } from './pri_loca.js';
@@ -45,7 +45,7 @@ export async function makemaz_hea_loca() {
     // des.level_init({ style="solidfill", fg=" " }) — one rn2(2); the fill
     // itself (STONE, column 0 only observable) is wholesale overwritten by
     // the mines init below (mkmap_init_map fills every x>=1 cell already).
-    rn2(2);                                              // sp_lev.c:2992
+    quest_level_init_solidfill();                                              // sp_lev.c:2992
 
     // des.level_flags("mazelevel", "hardfloor") — no "noflip" here (unlike
     // Pri-loca), so the finalize tail below draws the flip rn2(2)s.

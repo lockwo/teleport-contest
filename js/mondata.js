@@ -9,7 +9,8 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     AT_TUCH, AT_STNG, AT_HUGS, AT_ENGL, AT_TENT, AT_WEAP, AT_ANY,
     AT_SPIT, AT_BREA, AT_EXPL, AT_GAZE, AT_MAGC,
     AD_FIRE, AD_COLD, AD_ELEC, AD_ACID, AD_PHYS, AD_DCAY, AD_RUST,
-    AD_DRST, AD_DRLI, AD_STON, AD_DRDX, AD_DRCO, AD_WERE, AD_BLND }
+    AD_DRST, AD_DRLI, AD_STON, AD_DRDX, AD_DRCO, AD_WERE, AD_BLND,
+    AD_MAGM, AD_SLEE, AD_DISN, AD_RBRE }
     from './monattk_data.js';
 import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
@@ -50,6 +51,16 @@ export const resists_sleep = (mon) => resists_bit(mon, 0x04);
 export const resists_disint = (mon) => resists_bit(mon, 0x08);
 export const resists_poison = (mon) => resists_bit(mon, 0x20);
 export const resists_ston = (mon) => resists_bit(mon, 0x80);
+
+// C ref: mondata.c:1660 get_atkdam_type(adtyp) — AD_RBRE ("random breath")
+// picks one of eight real damage types (ROLL_FROM == rn2(8) DRAW); every other
+// adtyp passes straight through.
+const RND_BREATH_TYP = [AD_MAGM, AD_FIRE, AD_COLD, AD_SLEE,
+                        AD_DISN, AD_ELEC, AD_DRST, AD_ACID];
+export function get_atkdam_type(adtyp) {
+    if (adtyp === AD_RBRE) return RND_BREATH_TYP[rn2(RND_BREATH_TYP.length)];
+    return adtyp;
+}
 
 // C ref: mondata.h completelyburns/completelyrots/completelyrusts — the golems
 // a passive element destroys outright.
@@ -151,9 +162,9 @@ export function max_passive_dmg(mdef, magr) {
 //   * `ptr.mlet` (js/makemon.js:621) is the display CHARACTER; the numeric
 //     defsym.h S_* class index is `ptr.mcls` (:620).  Every C `ptr->mlet ==
 //     S_FOO` below is therefore written `ptr.mcls === S_FOO`.
-//   * `u.umonnum` is a ROLE index here, not C's urole.mnum, so `u.data` is a
-//     bogus mons[] row while unpolymorphed — every u.data read is guarded by
-//     `u.Upolyd`, exactly as C's Upolyd does.
+//   * `u.data` is only set by set_uasmon() once the hero polymorphs, so every
+//     u.data read is guarded by `u.Upolyd` (or goes through invent.js
+//     youmonst_data(), which reads mons[u.umonnum]).
 // ─────────────────────────────────────────────────────────────────────────────
 
 // C ref: include/defsym.h MONSYMS — the numeric class indices this file needs.
@@ -335,7 +346,7 @@ export function hates_blessings(ptr) {
 // while blind: false for a Strangled hero, a silent / headless form, or a
 // buzzing / burbling one.  mtmp === null means &youmonst.  An unpolymorphed hero
 // is a role monster (voiced, has a head) so only a polymorphed hero needs the
-// table lookup (u.umonnum is a role index, not a mons[] index, unless Upolyd).
+// table lookup.
 const MS_SILENT = 0, MS_BUZZ = 10, MS_BURBLE = 16; // C ref: monflag.h
 export function can_chant(mtmp = null) {
     const u = game.u;
@@ -392,6 +403,14 @@ export function cantvomit(ptr) {
         || ptr?.name === 'pony')
         return true;
     return false;
+}
+
+// C ref: mondata.h is_mplayer(ptr) — PM_ARCHEOLOGIST..PM_WIZARD, a range of the
+// mons[] table, not a flag.
+export function is_mplayer(ptr) {
+    if (ptr?.pmidx == null) return false;
+    const lo = name_to_pmidx('archeologist'), hi = name_to_pmidx('wizard');
+    return lo >= 0 && hi >= lo && ptr.pmidx >= lo && ptr.pmidx <= hi;
 }
 
 // C ref: mondata.c:700 dmgtype_fromattack(ptr, dtyp, atyp) — the FIRST mattk[]
@@ -496,9 +515,7 @@ export function big_little_match(montyp1, montyp2) {
 
 // C ref: mondata.c:1359 raceptr(mtmp) — the permonst for a monster's RACE.  For
 // the hero it is mons[urace.mnum] while unpolymorphed and u.data once poly'd —
-// which is exactly why the Upolyd guard cannot be dropped in this port:
-// u.umonnum is a ROLE index here, so an unguarded u.data reads a bogus mons[]
-// row (a Wizard reads as a jackal).
+// which is why the Upolyd guard stays: u.data is only set once poly'd.
 export function raceptr(mtmp) {
     if (is_you(mtmp) && !Upolyd())
         return monster_by_pmidx(game.urace?.mnum ?? 0);

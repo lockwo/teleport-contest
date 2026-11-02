@@ -37,6 +37,7 @@ import { monster_by_pmidx } from './makemon.js';
 import { rgbstr_to_int32, set_map_customcolor } from './coloratt.js';
 import { config_error_add } from './options.js';
 import { game } from './gstate.js';
+import { panic } from './panic.js';
 
 /* onames.h values the recorder build produced; the siblings mkobj.js already
    exports are imported above.  Each is objects[<n>].name. */
@@ -97,8 +98,6 @@ function dupstr(s) { return String(s ?? ''); }
 /* C strcmpi()/strcmp() == 0 */
 const strcmpi_eq = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const strcmp_eq = (a, b) => String(a) === String(b);
-/* panic() — js/ has three private copies; this is a fourth by the same rule. */
-function panic(msg) { throw new Error(`glyphs.js: ${msg}`); }
 /* topten.js's FILE shim: fp is { out: "" }. */
 function Fprintf(fp, s) { fp.out += s; }
 /* flag.h iflags, on the shared game object (the js/cmd.js idiom). */

@@ -21,7 +21,7 @@
 // consume no RNG, so leaving them un-modelled in detail is RNG-faithful.
 
 import { game, hooks } from './gstate.js';
-import { Fumbling_hero } from './youprop.js';
+import { Fumbling_hero, Wounded_legs_hero, Stunned_hero, Stone_resistance_hero } from './youprop.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
 import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
@@ -29,10 +29,9 @@ import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
 import { m_at, Hallucination_u } from './display.js';
 import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
 import { killed, corpse_chance, make_corpse } from './uhitm.js';
-import { is_pool, is_lava } from './dbridge.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
-import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { monster_by_pmidx, name_to_pmidx, can_saddle, put_saddle_on_mon } from './makemon.js';
 import { surface } from './dungeon.js';
 import { hliquid, mon_nam, mon_pmname } from './do_name.js';
 import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
@@ -45,7 +44,8 @@ import { x_monnam } from './uhitm.js';
 import { isok, MAXULEV, W_SADDLE, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED,
          D_NODOOR, D_BROKEN, Is_rogue_level, SUPPRESS_IT, SUPPRESS_INVISIBLE,
          SUPPRESS_HALLUCINATION, NO_KILLER_PREFIX, KILLED_BY_AN,
-         M_AP_FURNITURE, M_AP_OBJECT, LEG, I_SPECIAL, has_mgivenname } from './const.js';
+         M_AP_FURNITURE, M_AP_OBJECT, LEG, I_SPECIAL, has_mgivenname,
+    is_pool, is_lava } from './const.js';
 import { greatest_erosion } from './weapon.js';
 
 import { Maybe_Half_Phys } from './zap.js';
@@ -86,8 +86,7 @@ export async function mount_steed(mtmp, force) {
 
     // C ref: steed.c:229-239 — a wounded hero cannot mount, and this guard
     // runs before checking whether a monster is at the requested location.
-    if ((u.HWounded_legs || 0) || (u.EWounded_legs || 0)
-        || (u.uprops?.Wounded_legs || 0)) {
+    if (Wounded_legs_hero()) {
         const { legs_in_no_shape } = await import('./do.js');
         await legs_in_no_shape('riding', false);
         // C ref: steed.c:233 reads (HWounded_legs & BOTH_SIDES) -- the intrinsic/timeout word's low bits, not EWounded_legs' side mask.
@@ -116,8 +115,8 @@ export async function mount_steed(mtmp, force) {
     }
 
     // "Can the player reach and see the monster?"
-    const ap = mtmp?.m_ap_type;
-    const mimicking = ap === 'furniture' || ap === 'obj' || ap === M_AP_FURNITURE || ap === M_AP_OBJECT;
+    const ap = (mtmp?.m_ap_type | 0) & 7;
+    const mimicking = ap === M_AP_FURNITURE || ap === M_AP_OBJECT;
     const blind_telepat = Blind_telepat();
     if (!mtmp || (!force && ((Blind() && !blind_telepat) || mtmp.mundetected || mimicking))) {
         await pline('I see nobody there.');
@@ -204,8 +203,7 @@ export async function mount_steed(mtmp, force) {
     // rnd() is only drawn when every earlier term is false.
     if (!force
         && (Confusion_std() || Fumbling_std() || Glib_std()
-            || (u.HWounded_legs || 0) || (u.EWounded_legs || 0)
-            || (u.uprops?.Wounded_legs || 0)
+            || Wounded_legs_hero()
             || saddle?.cursed || saddle?.greased
             || (u.ulevel + (mtmp.mtame || 0) < rnd(MAXULEV / 2 + 5)))) {
         if (lev) {
@@ -397,7 +395,7 @@ function landing_spot(reason, forceit) {
 export async function dismount_steed(reason) {
     const u = game.u;
     const save_utrap = u.utrap;
-    let repair_leg_damage = !!((u.HWounded_legs || 0) || (u.EWounded_legs || 0));
+    let repair_leg_damage = Wounded_legs_hero();
     // C evaluates `have_spot = landing_spot(&cc, reason, 0)` in the declarations,
     // BEFORE the `if (!mtmp) return` sanity check: a second dismount after the
     // steed already left (steedintrap's trapkilled dismount_steed(DISMOUNT_POLY)
@@ -554,11 +552,7 @@ function u_locomotion_std(def) {
     return def;
 }
 // C ref: youprop.h Stunned.
-function Stunned_std() {
-    if (game.u?.formprops?.Stunned) return true; /* FROMFORM: polyself.js set_uasmon() */
-    const u = game.u;
-    return (u?.uprops?.Stun || u?.ustun || 0) > 0;
-}
+function Stunned_std() { return Stunned_hero(); }
 // C ref: mondata.h grounded(ptr) — none of the steeds() classes (quadruped/
 // unicorn/angel/centaur/dragon/jabberwock) carry M1_CLING, so the is_clinger
 // term (and has_ceiling(), which only gates it) is always true and need not
@@ -663,11 +657,9 @@ function is_wizard_steed() { return !!game.flags?.debug; }
 // steed.c: the remaining top-level functions, translated.  APPEND-ONLY —
 // nothing above this line calls anything below it.
 //
-// can_saddle() and put_saddle_on_mon() are steed.c functions whose only live
-// copies are PRIVATE in other files (js/makemon.js:2150 and js/cmd.js:4353 for
-// can_saddle, js/dog.js:288 for put_saddle_on_mon).  use_saddle()/poly_steed()
-// need them, so they are translated here — in their C home — and the three
-// private copies should import these instead of drifting further.
+// can_saddle() and put_saddle_on_mon() are steed.c functions that live in
+// js/makemon.js (level creation and makedog() need them synchronously);
+// use_saddle()/poly_steed() import them from there.
 // ===========================================================================
 
 import { canspotmon, Monnam as Monnam_uhitm } from './uhitm.js';
@@ -688,11 +680,7 @@ import { A_DEX, A_CHA, A_WIS, ECMD_OK, ECMD_TIME, ECMD_CANCEL,
          BOTH_SIDES, TT_BEARTRAP, TT_PIT, TT_WEB, NO_TRAP_FLAGS, RLOC_ERR,
          RLOC_NOMSG, TELEDS_ALLOW_DRAG, VIBRATING_SQUARE } from './const.js';
 
-// C ref: steed.c:8 steeds[] — the monster CLASSES that can be ridden, as
-// defsym.h MONSYM indices: S_QUADRUPED 17, S_UNICORN 21, S_ANGEL 27,
-// S_CENTAUR 29, S_DRAGON 30, S_JABBERWOCK 36.
-const STEED_CLASSES = new Set([17, 21, 27, 29, 30, 36]);
-const S_CENTAUR = 29, S_GHOST = 54, S_VORTEX = 22;
+const S_CENTAUR = 29, S_GHOST = 54, S_VORTEX = 22, S_EYE = 5, S_LIGHT = 25;
 // C ref: monflag.h MZ_MEDIUM / MZ_LARGE.
 const MZ_MEDIUM = 2, MZ_LARGE = 3;
 // C ref: hack.h:1013/1019 ARTICLE_YOUR / SUPPRESS_SADDLE.
@@ -725,55 +713,7 @@ function bigmonst_std(ptr) { return (ptr?.msize ?? MZ_MEDIUM) >= MZ_LARGE; }
 function is_swimmer_std(ptr) { return (mflags1_of(ptr) & 0x2 /*M1_SWIM*/) !== 0; }
 function is_flyer_std(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
 // C ref: mondata.h is_floater(ptr) — mlet == S_EYE || mlet == S_LIGHT.
-function is_floater_std(ptr) { return ptr?.mcls === 11 || ptr?.mcls === 12; }
-
-// C ref: steed.c:26 can_saddle(mtmp) — a saddleable class, at least
-// medium-sized, non-humanoid (centaurs excepted) and made of solid flesh.
-export function can_saddle(mtmp) {
-    const ptr = mtmp?.data;
-    if (!ptr) return false;
-    return STEED_CLASSES.has(ptr.mcls) && (ptr.msize ?? MZ_MEDIUM) >= MZ_MEDIUM
-        && (!humanoid_std(ptr) || ptr.mcls === S_CENTAUR) && !amorphous_std(ptr)
-        && !noncorporeal_std(ptr) && !is_whirly_std(ptr) && !unsolid_std(ptr);
-}
-
-// C ref: steed.c:142 put_saddle_on_mon(saddle, mtmp) — the saddle enters the
-// monster's inventory with the W_SADDLE worn mask set.  Passing a null saddle
-// makes one (makedog()'s starting pony path, which js/dog.js:288 already runs
-// for its single rnd(2) o_id draw).
-export async function put_saddle_on_mon(saddle, mtmp) {
-    if (!can_saddle(mtmp) || which_armor(mtmp, W_SADDLE)) {
-        /* impossible("put_saddle_on_mon: saddle obj could get orphaned") */
-        return;
-    }
-    if (!saddle) {
-        const { mksobj } = await import('./mkobj.js');
-        saddle = mksobj(SADDLE_OTYP(), true, false);
-        if (!saddle) return;
-        /* fully_identify_obj(saddle) */
-        saddle.known = saddle.bknown = saddle.rknown = 1;
-        saddle.dknown = 1;
-    }
-    {   /* mpickobj(mtmp, saddle) — panic("merged saddle?") if it merged */
-        const { mpickobj } = await import('./steal.js');
-        mpickobj(mtmp, saddle);
-    }
-    mtmp.misc_worn_check = (mtmp.misc_worn_check | 0) | W_SADDLE;
-    saddle.owornmask = W_SADDLE;
-    saddle.leashmon = mtmp.m_id;
-    /* C: update_mon_extrinsics(mtmp, saddle, TRUE, FALSE) — no port. */
-}
-// C ref: onames.h SADDLE, resolved by name so an objects[] shift can't
-// re-point it.
-let _saddle_otyp = -1;
-function SADDLE_OTYP() {
-    if (_saddle_otyp < 0) {
-        _saddle_otyp = 0;
-        for (let i = 0; i < objects.length; i++)
-            if (objects[i]?.name === 'saddle') { _saddle_otyp = i; break; }
-    }
-    return _saddle_otyp;
-}
+function is_floater_std(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIGHT; }
 
 // C ref: steed.c:36 use_saddle(otmp) — the #apply-a-saddle command.
 export async function use_saddle(otmp) {
@@ -1031,7 +971,7 @@ export async function poly_steed(steed, oldshape) {
 function u_handsy_std() { return true; }
 // C ref: you.h Underwater / Stone_resistance / Confusion / Fumbling / Glib.
 function Underwater_std() { return !!game.u?.uinwater; }
-function Stone_resistance_std() { return !!game.u?.formprops?.Stone_resistance || !!game.u?.uprops?.Stone_resistance; }
+function Stone_resistance_std() { return Stone_resistance_hero(); }
 function Confusion_std() { return !!(game.u?.uconf || game.u?.HConfusion); }
 function Fumbling_std() { return Fumbling_hero(); }
 function Glib_std() { return !!game.u?.uprops?.Glib; }

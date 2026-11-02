@@ -7,7 +7,7 @@
 
 import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, just_an } from './hacklib.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle } from './role.js';
@@ -35,7 +35,8 @@ import { A_WIS, UTOTYPE_NONE, UTOTYPE_PORTAL, UTOTYPE_RMPORTAL, MAGIC_PORTAL,
          STRAT_WAITMASK } from './const.js';
 import { livelog_printf, LL_ACHIEVE } from './livelog.js';
 
-// dat/quest.lua questtext.common.legacy.text
+// dat/quest.lua questtext.common.legacy.text; the last paragraph of
+// questtext.common.pauper_legacy.text differs (LEGACY_PAUPER_TAIL).
 const LEGACY_TEXT = [
     'It is written in the Book of %d:',
     '',
@@ -54,6 +55,14 @@ const LEGACY_TEXT = [
     'to recover the Amulet for your deity, or die in the',
     'attempt.  Your hour of destiny has come.  For the sake',
     'of us all:  Go bravely with %d!',
+];
+// pauper_legacy: lines 12-16 of the text (the `You, ...` paragraph).
+const LEGACY_PAUPER_TAIL = [
+    'You, an untrained %r, have been unable to adequately',
+    'prepare to be the instrument of %d.  Nevertheless, you',
+    'are destined to recover the Amulet for your deity, or die',
+    'in the attempt.  Your hour of destiny has come.  For the',
+    'sake of us all:  Go bravely with %d!',
 ];
 
 // alignment-index (0 lawful, 1 neutral, 2 chaotic) → A_* value
@@ -91,7 +100,10 @@ export async function com_pager_legacy() {
     const alignType = alignTypeFromIndex(g.initalign);
     const female = !!g.flags?.female;
 
-    const lines = LEGACY_TEXT.map((l) => convert_line(l, role, alignType, female));
+    // C ref: allmain.c com_pager(u.uroleplay.pauper ? "pauper_legacy" : "legacy").
+    const text = g.u?.uroleplay?.pauper
+        ? [...LEGACY_TEXT.slice(0, 12), ...LEGACY_PAUPER_TAIL] : LEGACY_TEXT;
+    const lines = text.map((l) => convert_line(l, role, alignType, female));
 
     // maxcol mirrors tty_putstr: strlen(str)+1 over all lines.
     let maxcol = 0;
@@ -105,8 +117,13 @@ export async function com_pager_legacy() {
     // Omikami") pushes offx below 10, which the H2344 path allows.
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
+    // C ref: tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0 and
+    // (offy 0) term_clear_screen(); process_text_window() then prints each line
+    // at column 0 with no leading space, the --More-- at column 1.
+    const overlay = (g.flags?.menu_overlay ?? g.iflags?.menu_overlay) !== false;
+    if (!overlay) { offx = 0; disp.clearScreen(); }
     // The leading space printed for each menu line shifts text to offx+1.
-    const textCol = offx + 1;
+    const textCol = overlay ? offx + 1 : 0;
 
     // The legend is a tty NHW_MENU window overlaying the already-drawn map.
     // With menu_overlay on (offx != 0/10) it does NOT clear the whole screen:
@@ -125,8 +142,9 @@ export async function com_pager_legacy() {
         if (lines[i]) disp.putstr(textCol, i, lines[i], NO_COLOR, 0);
     }
     blankCols(moreRow);
-    disp.putstr(textCol, moreRow, '--More--', NO_COLOR, 0);
-    disp.setCursor(textCol + 8, moreRow);
+    const moreCol = offx + 1;
+    disp.putstr(moreCol, moreRow, '--More--', NO_COLOR, 0);
+    disp.setCursor(moreCol + 8, moreRow);
 
     // C ref: win/tty/wintty.c dmore() -> getline.c xwaitforspace(quitchars):
     // only space/return/escape dismiss a text window's --More--; any other
@@ -2668,21 +2686,6 @@ const MIN_QUEST_LEVEL = 14; // at least this u.ulevel to start
 const ALIGN_STR = { [A_LAWFUL]: 'lawful', [A_NEUTRAL]: 'neutral', [A_CHAOTIC]: 'chaotic' };
 
 // C ref: u.ualignbase[A_ORIGINAL] — see js/questok.js align_original().
-// C ref: objnam.c just_an() — the article for a noun phrase. Only the general
-// rule and the "wun"/long-'u' exceptions matter for rank titles.
-function just_an(str) {
-    const c0 = (str[0] || '').toLowerCase();
-    if (!str[1] || str[1] === ' ') return 'aefhilmnosx'.includes(c0) ? 'an ' : 'a ';
-    const low = str.toLowerCase();
-    if (low.startsWith('the ')) return '';
-    const vowel = 'aeiou'.includes(c0);
-    const wunOrLongU = low.startsWith('one') || low.startsWith('eu')
-        || low.startsWith('uke') || low.startsWith('ukulele')
-        || low.startsWith('unicorn') || low.startsWith('uranium') || low.startsWith('useful');
-    if ((vowel && !wunOrLongU) || (c0 === 'x' && !'aeiou'.includes((str[1] || '').toLowerCase())))
-        return 'an ';
-    return 'a ';
-}
 const an_ = (s) => just_an(s) + s;
 const An_ = (s) => { const t = an_(s); return t.charAt(0).toUpperCase() + t.slice(1); };
 
@@ -2752,7 +2755,7 @@ function qtext_pronoun(who, which, argText) {
                             align_original()) === 'goddess' ? 1 : 0)
             : who === 'l' ? (q?.ldrgend ?? 0)
             // A null nemgend is role.c:2059's rn2(100) coin flip, which
-            // fastforward.js draws but does not keep; 0 (male) until it does.
+            // allmain.js role_init() draws but does not keep; 0 (male) until it does.
             : who === 'n' ? (q?.nemgend ?? game.quest_status?.nemgend ?? 0)
             : 2;
         pnoun = GENDER_PRONOUNS[gend]?.[lw] ?? '?';

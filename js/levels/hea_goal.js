@@ -7,7 +7,7 @@ import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, quest_create_object,
     quest_place_stair, reset_xystart_size, splev_region_lit, vly_non_diggable,
-    vly_object,
+    vly_object, quest_level_init_solidfill,
 } from '../sp_lev.js';
 import { quest_align_shuffle, quest_monster } from './quest_home_common.js';
 import { quest_named_object_at } from './quest_common.js';
@@ -49,7 +49,7 @@ export async function makemaz_hea_goal() {
 
     // des.level_init({ style="solidfill", fg="P" }) — one rn2(2); the fill
     // itself is wholesale overwritten by the mines init below.
-    rn2(2);                                              // sp_lev.c:2992
+    quest_level_init_solidfill();                                              // sp_lev.c:2992
 
     // des.level_flags("mazelevel") — no hardfloor, no noflip.
     if (g.level?.flags) g.level.flags.is_maze_lev = true;

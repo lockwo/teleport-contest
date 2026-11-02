@@ -16,7 +16,7 @@
 
 import { Invis } from './monmove.js'; /* youprop.h Invis: (HInvis || EInvis) && !BInvis */
 import { game, hooks, register_process_static } from './gstate.js';
-import { s_suffix, depth as depth_of_level } from './hacklib.js';
+import { s_suffix, depth as depth_of_level, strncmp, strncmpi } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          mksobj, place_object, remove_object, dealloc_obj,
          newomid, MAGIC_LAMP, OIL_LAMP, BRASS_LANTERN, MAGIC_MARKER,
@@ -29,7 +29,7 @@ import { get_obj_location as real_get_obj_location } from './light.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg, enexto_spawn } from './makemon.js';
 import { rn2, rnd } from './rng.js';
-import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel } from './display.js';
+import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag, is_vampire, is_elf_flag, is_human_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
@@ -41,7 +41,7 @@ import { observe_object, discover_object, record_price_quote } from './o_init.js
 // drop an rn2() draw from every "(unpaid, N ...)" render.
 import { currency, objects_at, count_contents, obj_extract_self, obfree,
          xname, doname_invent, ansimpleoname, is_pick, carrying,
-         update_inventory, xprname, body_part, tty_text_window, youmonst_data } from './invent.js';
+         update_inventory, xprname, body_part, tty_text_window, youmonst_data, poly_gender } from './invent.js';
 import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          isok, IS_DOOR, IS_ROOM, IS_WALL, ZAP_POS, REPAIR_DELAY, BOLT_LIM,
          SVALL, D_CLOSED, D_BROKEN, PL_NSIZ, ANY_TYPE, ANY_SHOP, OROOM,
@@ -814,13 +814,11 @@ export function Shknam(shkp) {
 }
 
 const plur = (n) => (n === 1 ? '' : 's');
-// C ref: pline.c verbalize() — the line wrapped in double quotes.
-const verbalize = (line) => update_topl(`"${line}"`);
 // C ref: monst.h DEADMONSTER(mon).
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: you.h noit_mhe/noit_mhim/noit_mhis (js/do_name.js).
 import { noit_mhe, noit_mhim, noit_mhis } from './do_name.js';
-import { Blind_telepat } from './youprop.js';
+import { Blind_telepat, Detect_monsters_hero } from './youprop.js';
 
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack on the
 // chain.  It stops there and does NOT descend into containers (that is
@@ -1005,6 +1003,7 @@ export async function money2mon(mon, amount) {
         freeinv(ygold);
     }
     add_to_minv(mon, give);          /* gold merges with the shk's purse */
+    game.botl = true;
     return amount;
 }
 
@@ -1055,6 +1054,7 @@ export async function pay(tmp, shkp) {
     const balance = (tmp <= 0) ? tmp : await check_credit(tmp, shkp);
     if (balance > 0) await money2mon(shkp, balance);
     else if (balance < 0) await money2u(shkp, -balance);
+    game.botl = true;
     if (robbed) shkp.eshk.robbed = Math.max(0, robbed - tmp);
 }
 
@@ -1313,7 +1313,7 @@ export const no_money = (stashed) => `Moreover, you${stashed ? ' seem to' : ''} 
 export const not_enough_money = (shkp) =>
     `Besides, you don't have enough to interest ${noit_mhim(shkp)}.`;
 
-export { helpless, muteshk, Deaf, verbalize, plur, noit_mhe, noit_mhim, noit_mhis };
+export { helpless, muteshk, Deaf, plur, noit_mhe, noit_mhim, noit_mhis };
 
 // ═══════════════════════════════════════════════════════════════════════════
 // THE REST OF shk.c
@@ -1330,7 +1330,7 @@ const Izchak_speaks = [
     "%s says: 'Slow down.  Think clearly.'",
     "%s says: 'You need to take things one at a time.'",
     "%s says: 'I don't like poofy coffee... give me Colombian Supremo.'",
-    '%s says that getting the devteam’s agreement on anything is difficult.',
+    "%s says that getting the devteam's agreement on anything is difficult.",
     '%s says that he has noticed those who serve their deity will prosper.',
     "%s says: 'Don't try to steal from me - I have friends in high places!'",
     "%s says: 'You may well need something from this shop in the future.'",
@@ -1380,8 +1380,6 @@ function search_special(type) {
     return null;
 }
 
-const strncmp = (a, b, n) => ((a || '').slice(0, n) === (b || '').slice(0, n) ? 0 : 1);
-const strncmpi = (a, b, n) => (strncmp((a || '').toLowerCase(), (b || '').toLowerCase(), n));
 const the = (s) => (/^[A-Z]/.test(s) ? s : `the ${s}`);
 const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const sgn = (x) => Math.sign(x || 0);
@@ -1411,12 +1409,6 @@ const is_silent = (ptr) => (msound_of(ptr) ?? MS_SILENT_) === MS_SILENT_;
 const is_demon = (ptr) => (mf2(ptr) & M2_DEMON) !== 0;
 const humanoid = (ptr) => (mf1(ptr) & M1_HUMANOID) !== 0;
 const is_neuter = (ptr) => (mf2(ptr) & M2_NEUTER) !== 0;
-// C ref: polyself.c poly_gender() — 0/1 as flags.female, 2 = none.
-function poly_gender() {
-    const ptr = game.u?.Upolyd ? game.u.data : null;
-    if (ptr && (is_neuter(ptr) || !humanoid(ptr))) return 2;
-    return game.flags?.female ? 1 : 0;
-}
 
 // C ref: shk.c addupbill(shkp):496.  (Real port: js/shkroom.js, private.)
 function addupbill(shkp) {
@@ -1806,7 +1798,7 @@ export async function deserted_shop(enterstring) {
 
     if ((game.u?.uprops?.Blind || 0) > 0
         && !(Blind_telepat()
-             || (game.u?.uprops?.Detect_monsters || 0) > 0))
+             || Detect_monsters_hero()))
         ++n; /* force feedback to be less specific */
 
     await update_topl(`This shop ${(m < n) ? 'seems to be' : 'is'} ${
@@ -1881,7 +1873,7 @@ export async function shopper_financial_report() {
 export async function noisy_shop(sroom) {
     const mtmp = sroom?.resident;
     if (mtmp && inhishop(mtmp)) {
-        const { wake_nearto } = await import('./cmd.js');
+        const { wake_nearto } = await import('./mon.js');
         await wake_nearto(mtmp.mx, mtmp.my, 11 * 11);
     }
 }
@@ -3377,7 +3369,7 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
                 if (await canseemon(shkp) && dist2(x, y, shkp.mx, shkp.my) <= 2)
                     await update_topl(`${Shknam(shkp)} untraps ${ansimpleoname(otmp)}.`);
                 else if (ttmp.tseen && cansee(ttmp.tx, ttmp.ty))
-                    await update_topl(`The ${await trapname_(ttmp.ttyp)} vanishes.`);
+                    await update_topl(`The ${(await import('./trap.js')).trapname(ttmp.ttyp, true)} vanishes.`);
             }
             mpickobj(shkp, otmp);
             break;
@@ -3386,11 +3378,11 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
         case PIT:
         case SPIKED_PIT:
             if (!catchup && ttmp.tseen && cansee(ttmp.tx, ttmp.ty))
-                await update_topl(`The ${await trapname_(ttmp.ttyp)} is filled in.`);
+                await update_topl(`The ${(await import('./trap.js')).trapname(ttmp.ttyp, true)} is filled in.`);
             break;
         default:
             if (!catchup && ttmp.tseen && cansee(ttmp.tx, ttmp.ty))
-                await update_topl(`The ${await trapname_(ttmp.ttyp)} vanishes.`);
+                await update_topl(`The ${(await import('./trap.js')).trapname(ttmp.ttyp, true)} vanishes.`);
             break;
         }
         deltrap(ttmp);
@@ -3452,13 +3444,6 @@ export async function repair_damage(shkp, tmp_dam, catchup) {
 
     if (disposition < 3) disposition = 2;
     return disposition;
-}
-
-// C ref: trap.c trapname(ttyp, override) — js/trap.js exports the underlying
-// TRAP_EXPLANATION lookup as trap_explanation(), not trapname().
-async function trapname_(ttyp) {
-    const { trap_explanation } = await import('./trap.js');
-    return trap_explanation(ttyp) || 'trap';
 }
 
 // C ref: shk.c fix_shop_damage():4850 — catch-up repairs when a level is

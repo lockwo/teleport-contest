@@ -49,6 +49,7 @@ import {
     update_primary_symset, update_rogue_symset, set_symhandling,
 } from './const.js';
 import { config_error_add, match_sym, sym_val } from './options.js';
+import { mungspaces } from './hacklib.js';
 
 const BUFSZ = 256;              /* global.h */
 const SYMBOLS = "symbols";      /* global.h:29 — replacement symbol sets */
@@ -98,9 +99,6 @@ nyi.There = (msg) => unported('There()');
 
 /* hacklib.c mungspaces() — collapse runs of whitespace to one space and strip
    leading/trailing.  Seven private copies already exist across js/. */
-function mungspaces(bp) {
-    return String(bp).replace(/\s+/g, ' ').replace(/^ | $/g, '');
-}
 /* C strcmpi()/strncmpi() == 0 */
 const strcmpi_eq = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 const strncmpi_eq = (a, b, n) =>

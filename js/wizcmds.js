@@ -68,13 +68,14 @@ import {
 } from './sp_lev.js';
 import { load_lua } from './nhlua.js';
 import { findit } from './detect.js';
-import { olfaction } from './eat.js';
+import { olfaction, paranoid_query } from './eat.js';
 import { canspotmon, x_monnam, mon_nam, killed } from './uhitm.js';
 import { is_undead_flag, nonliving } from './monflags_data.js';
 import { mklev } from './mklev.js';
 import { done } from './end.js';
 import { keepdogs } from './dog.js';
 import { setpaid } from './shk.js';
+import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 
 /* ------------------------------------------------------------------ */
 /*  local helpers                                                     */
@@ -135,37 +136,6 @@ function In_W_tower(x, y, lev) {
                                dndest.nhx, dndest.nhy);
 }
 
-// C ref: objnam.c mungspaces().
-function mungspaces(s) { return String(s ?? '').replace(/\s+/g, ' ').trim(); }
-
-// C ref: cmd.c paranoid_ynq(be_paranoid, prompt, accept_q) / paranoid_query().
-// Not exported by any module (js/cmd.js, js/eat.js and js/extcmd-handlers.js
-// each keep a private copy); this mirrors js/eat.js's.
-async function paranoid_ynq(be_paranoid, prompt, accept_q) {
-    let c = 'n';
-    if (be_paranoid) {
-        const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
-        const paranoidConfirm = (((game.flags?.paranoia_bits) | 0) & 0x0001) !== 0;
-        const responsetype = paranoidConfirm
-            ? (accept_q ? '[yes|no|quit]' : '[yes|no]')
-            : (accept_q ? '[yes|n|q] (n)' : '[yes|n] (n)');
-        let promptprefix = '', trylimit = 6, ans;
-        do {
-            const raw = await hooked_tty_getlin(`${promptprefix}${prompt} ${responsetype}`, null);
-            ans = mungspaces(raw == null ? '\x1b' : raw);
-            if (ans.toLowerCase() === 'yes') { c = 'y'; break; }
-            if (ans.toLowerCase() === 'quit' || ans[0] === '\x1b') { c = 'q'; break; }
-            promptprefix = '"Yes" or "No": ';
-        } while (paranoidConfirm && ans.toLowerCase() !== 'no' && --trylimit);
-    } else {
-        c = await y_n(prompt, accept_q ? 'ynq\x1b' : 'yn\x1b', 'n');
-    }
-    if (c !== 'y' && (c !== 'q' || !accept_q)) c = 'n';
-    return c;
-}
-async function paranoid_query(be_paranoid, prompt) {
-    return (await paranoid_ynq(be_paranoid, prompt, false)) === 'y';
-}
 
 // C ref: getpos.c getpos(&cc, force, goal).  js/hack.js's getpos() takes the
 // start position by value and returns {x,y} or null for "cancelled"; C returns
@@ -293,8 +263,8 @@ export async function wiz_makemap() {
         await mklev();
         // C ref: mklev.c:1404-1420,1561-1570 — finish the deferred room fill
         // and mineralization before makemap_prepost places the hero and pets.
-        const { fastforward_fill_mineralize } = await import('./fastforward.js');
-        if (!game._bones_loaded) await fastforward_fill_mineralize();
+        const { makelevel_fill_and_mineralize } = await import('./mklev.js');
+        if (!game._bones_loaded) await makelevel_fill_and_mineralize();
         await makemap_prepost(false, was_in_W_tower);
     } else {
         await unavail('wizmakemap');
@@ -332,6 +302,10 @@ export async function wiz_kill() {
 
     for (;;) {
         await pline(`${prompt}:`);
+        await flush_screen(1); // tty pline() draws at once; getpos() reads before any redraw
+        // C getpos.c:843-844 curs(WIN_MAP, cx, cy); flush_screen(0): from the second
+        // pass cc is the previous pick, so the cursor waits there, not on the hero.
+        if (game.nhDisplay?.setCursor) game.nhDisplay.setCursor(cc.x - 1, cc.y + 1);
         prompt = 'Next monster';
 
         if (game.flags) game.flags.verbose = false;
@@ -351,7 +325,7 @@ export async function wiz_kill() {
             if (!mtmp) {
                 const qbuf = `${role_is_samurai() ? 'Perform seppuku'
                                                   : 'Commit suicide'}?`;
-                if (await paranoid_query(true, qbuf)) {
+                if (await (await import('./eat.js')).paranoid_query(true, qbuf)) {
                     set_killer(`${uhis()} own player`, KILLED_BY);
                     await done(DIED);
                 }
@@ -391,11 +365,9 @@ export async function wiz_kill() {
                 svc.mon_moving = true;
                 await pline(`${upstart(Mn)} is ${
                     nonliving(mtmp.data) ? 'destroyed' : 'killed'}.`);
-                /* C: monkilled(mtmp, (char *) 0, AD_PHYS) — mon.c monkilled()
-                   has no JS port, so the kill routes through js/uhitm.js
-                   killed() (this port's xkilled()).  DIVERGENCE: the hero is
-                   awarded the experience on this 'm'-prefix arm. */
-                await killed(mtmp, { nomsg: true });
+                /* C: monkilled(mtmp, (char *) 0, AD_PHYS): the null second arg
+                   suppresses monkilled()'s own death line. */
+                await (await import('./mhitm.js')).monkilled_mm(mtmp, 0 /* AD_PHYS */, null);
                 svc.mon_moving = false;
             }
             /* end the targetting loop if an engulfer dropped the hero onto a
@@ -564,7 +536,7 @@ export async function wiz_panic() {
         u.uen = u.uenmax = 1000;
         return ECMD_OK;
     }
-    if (await paranoid_query(true,
+    if (await (await import('./eat.js')).paranoid_query(true,
                              'Do you want to call panic() and end your game?'))
         nyi_panic('Crash test (#panic).');
     return ECMD_OK;
@@ -577,7 +549,7 @@ export async function wiz_fuzzer() {
         await pline('The fuzz tester will make NetHack execute random keypresses.');
         await pline('There is no conventional way out of this mode.');
     }
-    if (await paranoid_query(true, 'Do you want to start fuzz testing?')) {
+    if (await (await import('./eat.js')).paranoid_query(true, 'Do you want to start fuzz testing?')) {
         /* Thoth, take the reins */
         const iflags = (game.iflags ||= {});
         if ((await y_n('Do you want to call panic() after impossible()?')) === 'n')
@@ -909,8 +881,8 @@ export function size_obj(otmp) {
     let sz = SIZEOF_OBJ;
     /* this port keeps oname/omonst/omailcmd either inside obj.oextra or
        directly on the object; both count as "has oextra" */
-    const oname = otmp.oname || ONAME(otmp);
-    const omonst = otmp.omonst || OMONST(otmp);
+    const oname = ONAME(otmp);
+    const omonst = OMONST(otmp);
     const omailcmd = otmp.omailcmd || OMAILCMD(otmp);
 
     if (otmp.oextra || oname || omonst || omailcmd) {
@@ -1007,7 +979,7 @@ export function size_monst(mtmp, incl_wsegs) {
     if (mtmp.wormno && incl_wsegs)
         sz += size_wseg(mtmp);
 
-    if (mtmp.mextra || mtmp.mcorpsenm != null || given || egd || epri
+    if (mtmp.mextra || given || egd || epri
         || eshk || emin || edog || ebones) {
         sz += SIZEOF_MEXTRA;
         if (given)
@@ -1715,7 +1687,6 @@ async function wizcustom_select_menu(wt, win) {
         /* dmore() parks the cursor just past the morestr */
         disp.setCursor(cw.offx + 1 + morestr.length, row);
     };
-    const MENU_CMDS = '^|><.-@,\\~:';
     let curr_page = 0;
     let counting = false, reset_count = true, finished = false, count = 0;
 
@@ -1732,11 +1703,13 @@ async function wizcustom_select_menu(wt, win) {
             const k = await nhgetch();
             ch = String.fromCharCode(k);
             if (k === 27 || k === 10 || k === 13 || ' 0123456789'.includes(ch)
-                || MENU_CMDS.includes(ch))
+                || default_menu_cmds.includes(ch) || mapped_menu_cmds().includes(ch))
                 break;
             if (lines.some((p) => p.selector === ch && p.identifier?.a_void))
                 break;
         }
+        if (!lines.some((p) => p.selector === ch && p.identifier?.a_void))
+            ch = map_menu_cmd(ch);   /* an explicit selector outranks a mapped menu command */
         switch (ch) {
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':

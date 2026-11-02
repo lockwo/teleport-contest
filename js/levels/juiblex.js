@@ -6,6 +6,7 @@
 // level carries "noflip", so lspo_finalize_level()'s flip_level_rnd draws
 // NOTHING here (`(flp & 1) && rn2(2)` short-circuits on allow_flips == 0).
 
+import { M_AP_FURNITURE } from '../const.js';
 import {
     ANTI_MAGIC, COLNO, FOUNTAIN, MAGIC_TRAP, MOAT, ROOM, ROWNO, SLP_GAS_TRAP,
     SWAMP,
@@ -180,7 +181,7 @@ export async function makemaz_juiblex() {
                 mx: c.x - gx.xstart, my: c.y - gy.ystart,
             });
             if (mtmp) {                 // appear_as = "ter:fountain"
-                mtmp.m_ap_type = 'furniture';
+                mtmp.m_ap_type = M_AP_FURNITURE;
                 mtmp.mappearance = SMS_S_FOUNTAIN;
             }
         }

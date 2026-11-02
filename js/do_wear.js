@@ -6,16 +6,19 @@
 // per-slot <Armor>_on()/<Armor>_off() side effects, the wearability checks, and
 // the equipment-accessibility predicates, and invent.js calls into it.
 
+import { Detect_monsters_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
-import { pline, update_topl, newsym, see_monsters, You_feel, see_invisible } from './display.js';
+import { pline, update_topl, newsym, see_monsters, You_feel } from './display.js';
+import { See_invisible_hero } from './youprop.js';
 import { Blind } from './vision.js';
-import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE } from './mkobj.js';
+import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE, curse } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
 import { A_INT, A_WIS, A_DEX, A_CHA, TT_BEARTRAP, TT_INFLOOR, TT_LAVA, TT_BURIEDBALL,
-         TIMEOUT, FROMOUTSIDE, ICE, ACID_RES, W_TOOL, W_AMUL, GETOBJ_SUGGEST, GETOBJ_EXCLUDE } from './const.js';
+         TIMEOUT, FROMOUTSIDE, ICE, ACID_RES, DRAIN_RES, SICK_RES, INFRAVISION, FREE_ACTION, STONE_RES, SLOW_DIGESTION, W_TOOL, W_AMUL, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
+    is_pool, is_lava } from './const.js';
 import {
     WA_ARM, WA_ARMC, WA_ARMH, WA_ARMS, WA_ARMG, WA_ARMF, WA_ARMU,
     W_ARMOR_WORN, W_RINGL, W_RINGR,
@@ -23,7 +26,7 @@ import {
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
     Ring_off, Ring_on, Amulet_on, remove_worn_item, setworn_accessory, Amulet_off, Blindf_on, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
-    otense, Yname2, makeknown_credit, cmdq_pop, worn_extrinsic, set_worn_extrinsic, corpse_xname,
+    otense, Yname2, Tobjnam, makeknown_credit, cmdq_pop, worn_extrinsic, worn_blocked, set_worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
 import { makeplural } from './plural.js';
@@ -31,7 +34,7 @@ import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
 import { youmonst_data_pub, nohands_youmonst, empty_handed, cmdq_clear, encumber_msg } from './invent.js';
 import { mflags1_of, M1_HUMANOID, M1_SLITHY } from './monflags_data.js';
-import { acurr_eff } from './attrib.js';
+import { acurr_eff, change_luck } from './attrib.js';
 import { has_innate } from './exper.js';
 import { uchangealign } from './pray.js';
 import { A_CG_HELM_ON, A_CG_HELM_OFF, A_CURRENT, A_NEUTRAL, A_CHAOTIC, A_LAWFUL, CQ_CANNED,
@@ -198,57 +201,14 @@ export function armor_simple_name(obj) {
 
 /* ---- property helpers -------------------------------------------------- */
 // `oldprop` in C is `u.uprops[objects[otyp].oc_oprop].extrinsic & ~WORN_<slot>`,
-// i.e. the property's extrinsic from the OTHER slots.  js/invent.js now
-// maintains that word (worn_extrinsics_on/off) and exposes worn_extrinsic(prop),
-// so these hand-rolled per-property scans are redundant and should be replaced
-// by `worn_extrinsic(p) & ~slotbit` when the accessor conversion lands.  Only
-// the properties this file toggles have an entry.
-function extrinsic_stealth_except(obj) {
-    for (const o of [game.uarmc, game.uarmf, game.uleft, game.uright]) {
-        if (!o || o === obj) continue;
-        if (o.otyp === ELVEN_CLOAK || o.otyp === ELVEN_BOOTS || o.otyp === RIN_STEALTH)
-            return true;
-    }
-    return false;
-}
-function extrinsic_displacement_except(obj) {
-    const o = game.uarmc;
-    return !!o && o !== obj && o.otyp === CLOAK_OF_DISPLACEMENT;
-}
-function extrinsic_fumbling_except(obj) {
-    for (const o of [game.uarmf, game.uarmg]) {
-        if (!o || o === obj) continue;
-        if (o.otyp === FUMBLE_BOOTS || o.otyp === GAUNTLETS_OF_FUMBLING) return true;
-    }
-    return false;
-}
-function extrinsic_invis_except(obj) {
-    for (const o of [game.uarmc, game.uleft, game.uright]) {
-        if (!o || o === obj) continue;
-        if (o.otyp === CLOAK_OF_INVISIBILITY || o.otyp === 198 /*RIN_INVISIBILITY*/)
-            return true;
-    }
-    return false;
-}
-// C ref: do_wear.c:236/1307 — "levitation from another already-worn source"
-// gate shared by Boots_on()/Ring_on(); a levitation ring is the only other
-// ported source (potion/wand timers aren't separately trackable from this
-// port's flat uprops.Levitation field once combined with a worn item, same
-// approximation as SPEED_BOOTS's efastArm check above).
-function extrinsic_levitation_except(obj) {
-    const RIN_LEVITATION_OTYP = 183;
-    for (const o of [game.uleft, game.uright]) {
-        if (!o || o === obj) continue;
-        if (o.otyp === RIN_LEVITATION_OTYP) return true;
-    }
-    return false;
-}
+// i.e. the property's extrinsic from the OTHER slots (and other sources such as
+// carried artifacts).  js/invent.js maintains that word in worn_extrinsics_on/off.
+const STEALTH_P = 42, FUMBLING_P = 25, LEVITATION_P = 48, DISPLACED_P = 41, INVIS_P = 40;
+function oldprop_of(prop, slotmask) { return worn_extrinsic(prop) & ~slotmask; }
 function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth || u.uprops?.HStealth || has_innate('HStealth')); }
-function BStealth() {
-    /* C: stealth is blocked while riding unless hero+steed fly */
-    const u = game.u || {};
-    return !!u.usteed && !u.uprops?.Flying;
-}
+/* C ref: youprop.h BStealth == u.uprops[STEALTH].blocked: FROMOUTSIDE while
+   riding a non-flyer (polyself.js steed_vs_stealth()) plus worn blockers. */
+function BStealth() { return !!((game.u?.uprops?.BStealth | 0) || worn_blocked(42 /* STEALTH */)); }
 function HFumbling() { const u = game.u || {}; return (u.HFumbling | 0); }
 function Hallucination() {
     const u = game.u || {};
@@ -263,25 +223,10 @@ function Glib() {
 // LEVITATION=48, FLYING=49); the flat u.uprops field holds only the
 // intrinsic/timer half, so a worn levitation ring or levitation boots used to
 // read as "not levitating" here.
-function Levitation() {
-    return !!((game.u?.uprops?.Levitation | 0) || worn_extrinsic(48 /*LEVITATION*/));
-}
-function Flying() {
-    return !!((game.u?.uprops?.Flying | 0) || worn_extrinsic(49 /*FLYING*/));
-}
-function Role_if(pm) { return (game.urole?.mnum ?? game.u?.umonnum) === pm; }
+function Levitation() { return Levitation_hero(); }
+function Flying() { return Flying_hero(); }
+function Role_if(pm) { return (game.urole?.mnum) === pm; }
 const PM_ARCHEOLOGIST = 0, PM_WIZARD = 12;
-
-// C ref: attrib.c change_luck() — LUCKMIN/LUCKMAX clamps (-10/10 without the
-// luckstone terms).  u.uluck != 0 makes rnl() draw an extra rn2(37+|Luck|), so
-// this is never cosmetic.
-const LUCKMIN = -10, LUCKMAX = 10;
-export function change_luck(n) {
-    const u = u_();
-    u.uluck = (u.uluck | 0) + n;
-    if (u.uluck < 0 && u.uluck < LUCKMIN) u.uluck = LUCKMIN;
-    if (u.uluck > 0 && u.uluck > LUCKMAX) u.uluck = LUCKMAX;
-}
 
 // C ref: do_name.c hcolor() — hallucination substitutes a random color drawn
 // from the DISPLAY rng (rn2_on_display_rng), which is a separate stream from
@@ -318,15 +263,14 @@ export async function toggle_displacement(obj, oldprop, on) {
     if (on ? game.initial_don : game.context?.takeoff?.cancelled_don) return;
     const u = game.u || {};
     if (!oldprop
-        && !(u.uprops?.DISPLACED_intrinsic)
+        && !(u.uprops?.HDisplaced | 0)
+        && !((u.uprops?.BDisplaced | 0) || worn_blocked(DISPLACED_P))
         && ((!Blind() && !u.uswallow
-             && !((await import('./monmove.js')).Invis() && !see_invisible())) /* see self */
+             && !((await import('./monmove.js')).Invis() && !See_invisible_hero())) /* see self */
             /* senseself(): Unblind_telepat, Blind_telepat while blind, Detect_monsters */
             || (await import('./worn.js')).Unblind_telepat()
             || (Blind() && (await import('./youprop.js')).Blind_telepat())
-            || !!(u.uprops?.Detect_monsters || u.uprops?.HDetect_monsters
-                  || u.uprops?.EDetect_monsters || u.HDetect_monsters || u.EDetect_monsters
-                  || ((u.uprops_extrinsic || {})[37 /* DETECT_MONSTERS */] | 0)))) {
+            || Detect_monsters_hero())) {
         if (obj) makeknown(obj.otyp);
         // C ref: do_wear.c You_feel() is pline(), i.e. update_topl(): the
         // following on_msg() ("You are now wearing ...") must page THIS line
@@ -366,18 +310,18 @@ export async function Boots_on() {
         break;
     }
     case ELVEN_BOOTS:
-        await toggle_stealth(uarmf, extrinsic_stealth_except(uarmf), true);
+        await toggle_stealth(uarmf, oldprop_of(STEALTH_P, WA_ARMF), true);
         break;
     case FUMBLE_BOOTS: {
         const u = u_();
         /* the extrinsic itself comes from setworn(); only the timer is here */
         u.EFumbling = (u.EFumbling | 0) | WA_ARMF;
-        if (!extrinsic_fumbling_except(uarmf) && !(HFumbling() & ~TIMEOUT))
+        if (!oldprop_of(FUMBLING_P, WA_ARMF) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
     case LEVITATION_BOOTS: {
-        const oldprop = extrinsic_levitation_except(uarmf);
+        const oldprop = oldprop_of(LEVITATION_P, WA_ARMF);
         /* C: !oldprop && !HLevitation && !(BLevitation & FROMOUTSIDE) */
         if (!oldprop && !(game.u?.uprops?.Levitation | 0)
             && !((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE)) {
@@ -407,8 +351,9 @@ export async function Boots_off() {
     const otmp = game.uarmf;
     if (!otmp) return 0;
     const otyp = otmp.otyp;
-    const oldprop_stealth = extrinsic_stealth_except(otmp);
-    const oldprop_fumble = extrinsic_fumbling_except(otmp);
+    const oldprop_stealth = oldprop_of(STEALTH_P, WA_ARMF);
+    const oldprop_fumble = oldprop_of(FUMBLING_P, WA_ARMF);
+    const oldprop_lev = oldprop_of(LEVITATION_P, WA_ARMF);
     takeoff_mask_clear(WA_ARMF);
     /* setworn(0, W_ARMF) happens BEFORE the levitation case in C */
     worn_slot_clear(WA_ARMF);
@@ -423,7 +368,6 @@ export async function Boots_off() {
     case WATER_WALKING_BOOTS:
     {
         /* check for lava since fireproofed boots make it viable */
-        const { is_pool, is_lava } = await import('./dbridge.js');
         const T = await import('./trap.js');
         const u = game.u;
         if ((is_pool(u.ux, u.uy) || is_lava(u.ux, u.uy))
@@ -452,7 +396,7 @@ export async function Boots_off() {
         /* C: !oldprop && !HLevitation && !(BLevitation & FROMOUTSIDE)
            && !cancelled_don -> float_down(0, 0) unless in lava_effects(),
            else float_vs_flight() */
-        if (!extrinsic_levitation_except(otmp) && !(game.u?.uprops?.Levitation | 0)
+        if (!oldprop_lev && !(game.u?.uprops?.Levitation | 0)
             && !((game.u?.uprops?.BLevitation | 0) & FROMOUTSIDE)
             && !game.context?.takeoff?.cancelled_don) {
             if (!game._in_lava_effects)
@@ -482,25 +426,25 @@ export async function Cloak_on() {
         makeknown(uarmc.otyp);
         break;
     case ELVEN_CLOAK:
-        await toggle_stealth(uarmc, extrinsic_stealth_except(uarmc), true);
+        await toggle_stealth(uarmc, oldprop_of(STEALTH_P, WA_ARMC), true);
         break;
     case CLOAK_OF_DISPLACEMENT:
-        await toggle_displacement(uarmc, extrinsic_displacement_except(uarmc), true);
+        await toggle_displacement(uarmc, oldprop_of(DISPLACED_P, WA_ARMC), true);
         break;
     case MUMMY_WRAPPING:
         /* the wrapping is already worn, so C tests the raw Invis sources */
         if ((game.u?.uprops?.HInvis || game.u?.HInvis || game.u?.uprops?.EInvis || game.u?.EInvis
              || ((game.u?.uprops_extrinsic || {})[40 /* INVIS */] | 0)) && !Blind()) {
             newsym_here();
-            await pline(`You can ${see_invisible()
+            await pline(`You can ${See_invisible_hero()
                 ? 'no longer see through yourself' : 'see yourself'}!`);
         }
         break;
     case CLOAK_OF_INVISIBILITY:
-        if (!extrinsic_invis_except(uarmc) && !game.u?.uprops?.HInvis && !Blind()) {
+        if (!oldprop_of(INVIS_P, WA_ARMC) && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(uarmc.otyp);
             newsym_here();                    /* C do_wear.c:360 */
-            await pline(`Suddenly you can${see_invisible() ? ' see through' : 'not see'} yourself.`);
+            await pline(`Suddenly you can${See_invisible_hero() ? ' see through' : 'not see'} yourself.`);
         }
         break;
     case OILSKIN_CLOAK:
@@ -524,9 +468,9 @@ export async function Cloak_off() {
     const otmp = game.uarmc;
     if (!otmp) return 0;
     const otyp = otmp.otyp;
-    const oldstealth = extrinsic_stealth_except(otmp);
-    const olddisp = extrinsic_displacement_except(otmp);
-    const oldinvis = extrinsic_invis_except(otmp);
+    const oldstealth = oldprop_of(STEALTH_P, WA_ARMC);
+    const olddisp = oldprop_of(DISPLACED_P, WA_ARMC);
+    const oldinvis = oldprop_of(INVIS_P, WA_ARMC);
     takeoff_mask_clear(WA_ARMC);
     worn_slot_clear(WA_ARMC);
     otmp.owornmask = (otmp.owornmask | 0) & ~WA_ARMC;
@@ -544,14 +488,14 @@ export async function Cloak_off() {
     case MUMMY_WRAPPING:
         if ((await import('./monmove.js')).Invis() && !Blind()) {
             newsym_here();                    /* C do_wear.c:409 */
-            await pline(`You can ${see_invisible() ? 'see through yourself' : 'no longer see yourself'}.`);
+            await pline(`You can ${See_invisible_hero() ? 'see through yourself' : 'no longer see yourself'}.`);
         }
         break;
     case CLOAK_OF_INVISIBILITY:
         if (!oldinvis && !game.u?.uprops?.HInvis && !Blind()) {
             makeknown(CLOAK_OF_INVISIBILITY);
             newsym_here();                    /* C do_wear.c:417 */
-            await pline(`Suddenly you can ${see_invisible() ? 'no longer see through yourself' : 'see yourself'}.`);
+            await pline(`Suddenly you can ${See_invisible_hero() ? 'no longer see through yourself' : 'see yourself'}.`);
         }
         break;
     case ALCHEMY_SMOCK:
@@ -601,7 +545,7 @@ export async function Helmet_on() {
         if (game.uarmh && !game.uarmh.cursed) {
             if (Blind()) await pline(`${Tobjnam(game.uarmh, 'vibrate')} for a moment.`);
             else await pline(`${Tobjnam(game.uarmh, 'glow')} ${hcolor('black')} for a moment.`);
-            game.uarmh.cursed = true; game.uarmh.blessed = false; /* curse() */
+            await curse(game.uarmh);
             if (Blind()) game.uarmh.bknown = 0;
             else if (Role_if(6 /*PM_CLERIC*/)) game.uarmh.bknown = 1;
             else if (game.uarmh.bknown) update_inventory();
@@ -693,7 +637,7 @@ export async function Gloves_on() {
     case GAUNTLETS_OF_FUMBLING: {
         const u = u_();
         u.EFumbling = (u.EFumbling | 0) | WA_ARMG;
-        if (!extrinsic_fumbling_except(uarmg) && !(HFumbling() & ~TIMEOUT))
+        if (!oldprop_of(FUMBLING_P, WA_ARMG) && !(HFumbling() & ~TIMEOUT))
             u.HFumbling = (u.HFumbling | 0) + rnd(20); /* incr_itimeout */
         break;
     }
@@ -740,7 +684,7 @@ export async function wielding_corpse(obj, how, voluntary) {
 export async function Gloves_off() {
     const gloves = game.uarmg;
     if (!gloves) return 0;
-    const oldprop_fumble = extrinsic_fumbling_except(gloves);
+    const oldprop_fumble = oldprop_of(FUMBLING_P, WA_ARMG);
     const on_purpose = !game.context?.mon_moving && !gloves.in_use;
     takeoff_mask_clear(WA_ARMG);
     switch (gloves.otyp) {
@@ -840,12 +784,14 @@ export async function Shirt_off() {
 export async function dragon_armor_handling(otmp, puton, on_purpose) {
     if (!otmp) return;
     const u = u_();
-    const setE = (name, on) => {
-        u[name] = on ? ((u[name] | 0) | WA_ARM) : ((u[name] | 0) & ~WA_ARM);
+    /* C: E<Prop> |= W_ARM / &= ~W_ARM on u.uprops[prop].extrinsic */
+    const setE = (prop, on) => {
+        const e = worn_extrinsic(prop);
+        set_worn_extrinsic(prop, on ? (e | WA_ARM) : (e & ~WA_ARM));
     };
     switch (otmp.otyp) {
     case BLACK_DRAGON_SCALES: case BLACK_DRAGON_SCALE_MAIL:
-        setE('EDrain_resistance', puton);
+        setE(DRAIN_RES, puton);
         break;
     case BLUE_DRAGON_SCALES: case BLUE_DRAGON_SCALE_MAIL:
         if (puton) {
@@ -859,10 +805,10 @@ export async function dragon_armor_handling(otmp, puton, on_purpose) {
         }
         break;
     case GREEN_DRAGON_SCALES: case GREEN_DRAGON_SCALE_MAIL:
-        setE('ESick_resistance', puton);
+        setE(SICK_RES, puton);
         break;
     case RED_DRAGON_SCALES: case RED_DRAGON_SCALE_MAIL:
-        setE('EInfravision', puton);
+        setE(INFRAVISION, puton);
         await see_monsters();
         break;
     case GOLD_DRAGON_SCALES: case GOLD_DRAGON_SCALE_MAIL:
@@ -871,17 +817,17 @@ export async function dragon_armor_handling(otmp, puton, on_purpose) {
         if (puton && u.uprops) u.uprops.Hallucination = 0;
         break;
     case ORANGE_DRAGON_SCALES: case ORANGE_DRAGON_SCALE_MAIL:
-        setE('EFree_action', puton);
+        setE(FREE_ACTION, puton);
         break;
     case YELLOW_DRAGON_SCALES: case YELLOW_DRAGON_SCALE_MAIL:
-        setE('EStone_resistance', puton);
+        setE(STONE_RES, puton);
         if (!puton) {
             await wielding_corpse(game.uwep, otmp, on_purpose);
             await wielding_corpse(game.uswapwep, otmp, on_purpose);
         }
         break;
     case WHITE_DRAGON_SCALES: case WHITE_DRAGON_SCALE_MAIL:
-        setE('ESlow_digestion', puton);
+        setE(SLOW_DIGESTION, puton);
         break;
     default:
         break;
@@ -1646,12 +1592,6 @@ export function helm_simple_name(obj) { return hard_helmet(obj) ? 'helm' : 'hat'
 function surface_here() {
     const loc = game.level?.at?.(game.u?.ux, game.u?.uy);
     return (loc && loc.typ === ICE) ? 'ice' : 'floor';
-}
-
-function Tobjnam(obj, verb) {
-    const nm = xname(obj);
-    const v = otense(obj, verb);
-    return `${/^[A-Z]/.test(nm) ? '' : 'The '}${nm} ${v}`.replace(/^The The /, 'The ');
 }
 
 // C ref: wield.c:68 will_weld(optr) / :1053 welded(obj) — a cursed wielded

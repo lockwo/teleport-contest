@@ -1,13 +1,8 @@
 // dbridge.js — C ref: src/dbridge.c (drawbridge create/open/close/destroy, plus
 // the terrain-class predicates that live in this file).
 //
-// The is_pool()/is_lava()/is_ice()/is_moat() family is defined HERE in C, not in
-// rm.h: each one resolves a raised drawbridge (DRAWBRIDGE_UP) to the terrain
-// stored in drawbridgemask & DB_UNDER.  Eight modules in js/ carry a private
-// copy that drops that arm (js/dungeon.js:1189, js/mkroom.js:21, js/muse.js:1060,
-// js/polyself.js:953, js/teleport.js:51, js/sit.js:37, js/mhitm.js:674,
-// js/ball.js:46); js/cmd.js:156 and js/monmove.js:928 have the full version.
-// These are the canonical ones — see `deferred` for the consolidation list.
+// The is_pool()/is_lava()/is_pool_or_lava()/is_ice()/is_moat() family of dbridge.c
+// lives in js/const.js (a leaf module every caller can import statically).
 //
 // RNG: dbridge.c draws in exactly three places — e_missed() rnd(8),
 // e_jumps() rnd(10), and destroy_drawbridge()'s debris loop
@@ -16,14 +11,15 @@
 // single draw attributed to dbridge.c, so none of the three is confirmed by a
 // trace; they are transcribed straight from the C.
 
-import { game, hooks } from './gstate.js';
+import { Deaf_hero, Stunned_hero, Levitation_hero, Flying_hero, Wwalking_hero, Swimming_hero, Passes_walls_hero, Fumbling_hero } from './youprop.js';
+import { game } from './gstate.js';
 import { hliquid, mhe } from './do_name.js';
 import {
     STONE, DBWALL, POOL, MOAT, WATER, DRAWBRIDGE_UP, LAVAPOOL,
     LAVAWALL, DOOR, ROOM, ICE, DRAWBRIDGE_DOWN, D_NODOOR, W_NONDIGGABLE,
     ICED_MOAT, DB_NORTH, DB_SOUTH, DB_EAST, DB_WEST, DB_DIR, DB_MOAT, DB_LAVA,
-    DB_ICE, DB_UNDER, IS_WALL, IS_DRAWBRIDGE, IS_WATERWALL, isok,
-    Is_juiblex_level, Is_stronghold,
+    DB_ICE, DB_UNDER, db_under_typ, IS_WALL, IS_DRAWBRIDGE, IS_WATERWALL, isok,
+    Is_stronghold, is_pool, is_lava,
     KILLED_BY_AN, NO_KILLER_PREFIX, CRUSHING, DROWNING, BURNING,
     XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR,
     MAY_HIT } from './const.js';
@@ -32,14 +28,16 @@ import { m_at, newsym, pline, canseemon_shared, You_see, You_hear } from './disp
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
 import { t_at, deltrap, spoteffects } from './trap.js';
 import { mksobj_at, objects } from './mkobj.js';
-import { DEADMONSTER, mmove_of } from './mon.js';
+import { DEADMONSTER, mmove_of, wake_nearto } from './mon.js';
 import { killed, mon_nam, Monnam } from './uhitm.js';
 import { update_monster_region } from './region.js';
-import { wake_nearto } from './cmd.js';
 import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK, noncorporeal } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { revive_nasty } from './do.js';
+import { del_engr_at } from './engrave.js';
 import { delallobj, sobj_at } from './invent.js';
+import { vtense } from './plural.js';
+import { youmonst_data } from './invent.js';
 
 const OTYP = new Map(objects.map((o) => [o.sym, o.otyp]));
 const IRON_CHAIN = OTYP.get('IRON_CHAIN');
@@ -75,67 +73,6 @@ function impossible(...args) {
 // C ref: dbridge.c:37 is_waterwall(x, y).
 export function is_waterwall(x, y) {
     return !!(isok(x, y) && IS_WATERWALL(levl_typ(x, y)));
-}
-
-// C ref: dbridge.c:45 is_pool(x, y).  `ltyp == MOAT` is NOT redundant with
-// is_moat(): the Juiblex level has MOATs that are not moats.
-export function is_pool(x, y) {
-    if (!isok(x, y)) return false;
-    const ltyp = levl_typ(x, y);
-    return ltyp === POOL || ltyp === MOAT || ltyp === WATER || is_moat(x, y);
-}
-
-// C ref: dbridge.c:61 is_lava(x, y).
-export function is_lava(x, y) {
-    if (!isok(x, y)) return false;
-    const loc = levl(x, y);
-    if (!loc) return false;
-    const ltyp = loc.typ;
-    return ltyp === LAVAPOOL || ltyp === LAVAWALL
-        || (ltyp === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_LAVA);
-}
-
-// C ref: dbridge.c:76 is_pool_or_lava(x, y).
-export function is_pool_or_lava(x, y) {
-    return is_pool(x, y) || is_lava(x, y);
-}
-hooks.is_pool_or_lava = is_pool_or_lava; /* makemon.js pickvampshape() */
-
-// C ref: dbridge.c:85 is_ice(x, y).
-export function is_ice(x, y) {
-    if (!isok(x, y)) return false;
-    const loc = levl(x, y);
-    if (!loc) return false;
-    const ltyp = loc.typ;
-    return ltyp === ICE
-        || (ltyp === DRAWBRIDGE_UP && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_ICE);
-}
-
-// C ref: dbridge.c:99 is_moat(x, y).
-export function is_moat(x, y) {
-    if (!isok(x, y)) return false;
-    const loc = levl(x, y);
-    if (!loc) return false;
-    const ltyp = loc.typ;
-    return !Is_juiblex_level(game.u?.uz)
-        && (ltyp === MOAT
-            || (ltyp === DRAWBRIDGE_UP
-                && ((loc.drawbridgemask | 0) & DB_UNDER) === DB_MOAT));
-}
-
-// C ref: dbridge.c:115 db_under_typ(mask) — the terrain a raised drawbridge
-// covers.  DB_FLOOR falls through to STONE, exactly as in C.
-export function db_under_typ(mask) {
-    switch (mask & DB_UNDER) {
-    case DB_ICE:
-        return ICE;
-    case DB_LAVA:
-        return LAVAPOOL;
-    case DB_MOAT:
-        return MOAT;
-    default:
-        return STONE;
-    }
 }
 
 // C ref: dbridge.c:136 is_drawbridge_wall(x, y) — is this wall/door the
@@ -288,11 +225,6 @@ function u_to_e(etmp) {
     etmp.edata = youmonst_data();
 }
 
-// C ref: monst.h gy.youmonst.data == &mons[u.umonnum].
-function youmonst_data() {
-    const idx = game.u?.umonnum ?? game.urole?.malenum ?? game.urole?.mnum;
-    return idx == null ? null : monster_by_pmidx(idx);
-}
 
 // C ref: dbridge.c:329 set_entity(x, y, etmp).
 function set_entity(x, y, etmp) {
@@ -373,15 +305,20 @@ async function e_died(etmp, xkill_flags, how) {
     const mk_message = (dest) => ((dest & XKILL_NOMSG) !== 0 ? null : '');
     const mk_corpse = (dest) => ((dest & XKILL_NOCORPSE) !== 0);
 
-    // C: `if (svc.context.mon_moving) monkilled(...) else xkilled(...)`.
-    // js/uhitm.js killed() is the shared xkilled(); the only monkilled() in the
-    // port is private to js/muse.js:626.  Using killed() for the mon_moving arm
-    // too is the one KNOWN divergence in this function: monkilled() prints
-    // "<Monster> is killed!" instead of "You kill <monster>!" and awards the
-    // hero no experience.  Both arms end in mondead(), so the monster dies and
-    // the corpse rolls happen either way.  See `deferred`.
-    await killed(etmp.emon, { nomsg: mk_message(xkill_flags) === null,
-                              nocorpse: mk_corpse(xkill_flags) });
+    // C: `if (svc.context.mon_moving) monkilled(...) else xkilled(...)`; the
+    // fake AD_DGST damage type of mk_corpse() makes monkilled() skip the corpse.
+    const { monkilled_mm } = await import('./mhitm.js');
+    const AD_PHYS_ = 0, AD_DGST_ = 26;
+    const kill_emon = async () => {
+        if (game.context?.mon_moving)
+            await monkilled_mm(etmp.emon, mk_corpse(xkill_flags) ? AD_DGST_ : AD_PHYS_,
+                               mk_message(xkill_flags));
+        else /* you caused it */
+            await killed(etmp.emon, { nomsg: (xkill_flags & XKILL_NOMSG) !== 0,
+                                      nocorpse: (xkill_flags & XKILL_NOCORPSE) !== 0,
+                                      noconduct: (xkill_flags & XKILL_NOCONDUCT) !== 0 });
+    };
+    await kill_emon();
 
     /* if etmp gets life-saved, kill it again; otherwise we might end up
        trying to place another monster on the same spot */
@@ -389,7 +326,10 @@ async function e_died(etmp, xkill_flags, how) {
         const seeit = canspotmon(etmp.emon);
 
         xkill_flags |= XKILL_NOMSG | XKILL_NOCONDUCT;
-        await killed(etmp.emon, { nomsg: true, nocorpse: mk_corpse(xkill_flags) });
+        if (game.context?.mon_moving)
+            await monkilled_mm(etmp.emon, mk_corpse(xkill_flags) ? AD_DGST_ : AD_PHYS_, '');
+        else /* you caused it */
+            await kill_emon();
 
         if (DEADMONSTER(etmp.emon)) {
             if (seeit)
@@ -857,14 +797,6 @@ function set_killer(name, format) {
 }
 function killer_name() { return game.killer?.name || ''; }
 
-// C ref: engrave.c:461 del_engr_at(x, y).  js/fountain.js:674 has the same
-// private copy; it belongs in an engrave.js module.
-function del_engr_at(x, y) {
-    const engr = game.level?.engravings;
-    if (!engr) return;
-    for (let i = engr.length - 1; i >= 0; i--)
-        if (engr[i].engr_x === x && engr[i].engr_y === y) engr.splice(i, 1);
-}
 
 // C ref: rm.h OBJ_AT(x, y) — is there a floor object here?
 function OBJ_AT(x, y) {
@@ -887,16 +819,6 @@ function floor_pile(x, y) {
 // C ref: do_name.c hliquid(liquidpref) — the preferred word unless the hero is
 // hallucinating (which draws off the DISPLAY rng, not the game rng).
 // js/do_name.js owns hliquid().
-
-// C ref: objnam.c vtense(subj, verb) — 2nd->3rd person for a singular subject.
-// (js/trap.js:700 and js/dogmove.js:2028 each have a private copy.)
-function vtense(_subj, verb) {
-    if (verb === 'are') return 'is';
-    if (verb === 'have') return 'has';
-    if (/(s|x|z|ch|sh)$/.test(verb)) return verb + 'es';
-    if (/[^aeiou]y$/.test(verb)) return verb.slice(0, -1) + 'ies';
-    return verb + 's';
-}
 
 // C ref: mondata.h — flag predicates, taken from the generated tables.
 function is_flyer(ptr) { return (mflags1_of(ptr) & M1_FLY) !== 0; }
@@ -935,18 +857,18 @@ function HProp(...keys) {
     }
     return 0;
 }
-function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0; }
-function Flying() { return HProp('Flying', 'HFlying', 'EFlying') > 0; }
-function Wwalking() { return HProp('Wwalking', 'HWwalking', 'EWwalking') > 0; }
-export function Swimming() { return !!game.u?.formprops?.Swimming || HProp('Swimming', 'HSwimming', 'ESwimming') > 0; }
+function Levitation() { return Levitation_hero(); }
+function Flying() { return Flying_hero(); }
+function Wwalking() { return Wwalking_hero(); }
+export function Swimming() { return Swimming_hero(); }
 export function Breathless() { return HProp('Breathless', 'HBreathless', 'EBreathless') > 0; }
 export function Amphibious() { return HProp('Amphibious', 'HAmphibious', 'EAmphibious') > 0; }
-function Passes_walls() { return !!game.u?.formprops?.Passes_walls || HProp('Passes_walls', 'HPasses_walls', 'EPasses_walls') > 0; }
+function Passes_walls() { return Passes_walls_hero(); }
 function Confusion() { return HProp('Confusion', 'HConfusion', 'EConfusion') > 0; }
-function Stunned() { return !!game.u?.formprops?.Stunned || HProp('Stunned', 'HStun', 'EStun') > 0; }
-function Fumbling() { return HProp('Fumbling', 'HFumbling', 'EFumbling') > 0; }
+function Stunned() { return Stunned_hero(); }
+function Fumbling() { return Fumbling_hero(); }
 function Hallucination() { return HProp('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu; }
 // C ref: youprop.h Unaware — asleep, unconscious or otherwise not perceiving.
 function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
-function Deaf() { return HProp('Deaf', 'HDeaf', 'EDeaf') > 0; }
+function Deaf() { return Deaf_hero(); }
 function Underwater() { return !!(game.u?.uinwater); }

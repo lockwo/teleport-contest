@@ -69,3 +69,39 @@ export function depth(uz) {
 }
 
 // C ref: rn2(x) already in rng.js — re-export not needed
+
+// C ref: hacklib.c mungspaces() — remove excess whitespace: tabs become
+// spaces, runs of spaces collapse to one, leading and trailing space are
+// dropped, and a newline ends the string.
+export function mungspaces(bp) {
+    bp = String(bp ?? '');
+    let out = '', was_space = true;
+    for (let i = 0; i < bp.length; i++) {
+        let c = bp[i];
+        if (c === '\n') break;
+        if (c === '\t') c = ' ';
+        if (c !== ' ' || !was_space) out += c;
+        was_space = (c === ' ');
+    }
+    if (was_space && out.length > 0) out = out.slice(0, -1);
+    return out;
+}
+
+/* C ref: hacklib.c:700 strncmp(s1, s2, n) / strncmpi(s1, s2, n) — C's -1/0/1
+   ordering (0 means equal); the i form folds case with lowc().  C stops at the
+   terminating NUL, so the shorter string sorts first.  strcmpi(a, b) is
+   strncmpi(a, b, -1) (global.h:113). */
+export function strncmp(s1, s2, n) {
+    s1 = String(s1 ?? ''); s2 = String(s2 ?? '');
+    for (let i = 0; n-- !== 0; i++) {
+        if (i >= s2.length) return (i < s1.length) ? 1 : 0; /* s1 >= s2 */
+        if (i >= s1.length) return -1;                      /* s1  < s2 */
+        const t1 = s1.charCodeAt(i), t2 = s2.charCodeAt(i);
+        if (t1 !== t2) return (t1 > t2) ? 1 : -1;
+    }
+    return 0; /* s1 == s2 */
+}
+export function strncmpi(s1, s2, n) {
+    return strncmp(String(s1 ?? '').toLowerCase(), String(s2 ?? '').toLowerCase(), n);
+}
+export function strcmpi(a, b) { return strncmpi(a, b, -1); }

@@ -2,22 +2,24 @@
 // C ref: nethack-c/upstream/src/eat.c
 
 import { makeplural } from './plural.js';
+import { has_oname } from './const.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear, flush_screen, display_nhwindow_message } from './display.js';
-import { poison_strdmg, exercise, acurr_eff, adjattrib, adjalign } from './attrib.js';
+import { poison_strdmg, exercise, acurr_eff, adjattrib, adjalign, change_luck } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
          INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_DELETED, COST_BITE,
-         SELL_NORMAL, SELL_DONTSELL, Is_astralevel } from './const.js';
+         SELL_NORMAL, SELL_DONTSELL, Is_astralevel,
+    is_ice, is_pool_or_lava } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
-import { SICK, STONED, VOMITING, SLIMED, HUNGER } from './const.js';
+import { SICK, STONED, VOMITING, SLIMED, HUNGER, LIGHT_HEADED } from './const.js';
 import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
-import { more_experienced, newexplevel, pluslvl, has_innate, has_innate_fromoutside } from './exper.js';
-import { Poison_resistance, Wwalking_hero, Flying_hero } from './youprop.js';
+import { more_experienced, newexplevel, pluslvl, has_innate_fromoutside } from './exper.js';
+import { incr_itimeout, set_itimeout, Poison_resistance, Wwalking_hero, Flying_hero, Hunger_hero, Acid_resistance_hero, Sick_resistance_hero, Stone_resistance_hero } from './youprop.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -435,14 +437,13 @@ function is_metallic_eat(obj) {
     const m = _mkobj?.objects?.[obj.otyp]?.material | 0;
     return m >= 11 && m <= 17;
 }
+// C ref: gy.youmonst.data == &mons[u.umonnum].  invent.js youmonst_data() is the
+// shared reader, but invent.js imports eat.js, so it cannot be a static import here.
+function hero_data_eat() {
+    return monster_by_pmidx(game.u?.umonnum) || game.u?.data || null;
+}
 function is_organic_eat(obj) {
     return (_mkobj?.objects?.[obj.otyp]?.material | 0) <= 8;
-}
-// C ref: gy.youmonst.data — u.umonnum is a ROLE index unless polymorphed.
-function hero_data_eat() {
-    const u = game.u;
-    if (u?.Upolyd) return monster_by_pmidx(u.umonnum) || u?.data || null;
-    return monster_by_pmidx(331 + (u?.umonnum ?? 0)) || u?.data || null;
 }
 // C ref: hack.h maybe_polyd(is_orc(youmonst.data), Race_if(PM_ORC)) etc. — a
 // polymorphed hero is judged by the form's M2_ race flag, an unpolymorphed one
@@ -781,8 +782,6 @@ export function unfaint() {
 function ParanoidEating() {
     return (((game.flags?.paranoia_bits) | 0) & 0x0200) !== 0;
 }
-// C ref: objnam.c mungspaces() — collapse runs of whitespace and trim.
-function mungspaces(s) { return String(s).replace(/\s+/g, ' ').trim(); }
 // C ref: cmd.c paranoid_ynq(be_paranoid, prompt, accept_q) / paranoid_query().
 // When not paranoid this is plain yn_function(prompt, "yn", 'n'); when paranoid
 // the answer is typed on the top line and only a full "yes" confirms (and, with
@@ -823,7 +822,7 @@ export async function paranoid_ynq(be_paranoid, prompt, accept_q) {
     if (c !== 'y' && (c !== 'q' || !accept_q)) c = 'n';
     return c;
 }
-async function paranoid_query(be_paranoid, prompt) {
+export async function paranoid_query(be_paranoid, prompt) {
     return (await paranoid_ynq(be_paranoid, prompt, false)) === 'y';
 }
 
@@ -873,16 +872,9 @@ async function lesshungry_eat(num) {
 }
 
 // C ref: youprop.h Breathless / Hunger / Strangled, as choke() reads them.
-// The port stores intrinsics by name and extrinsics on the worn object, so
-// Hunger also has to look at the ring slots (objects[].oc_oprop HUNGER).
-const RIN_HUNGER_OTYP = 184, AMULET_OF_STRANGULATION_OTYP = 203;
+const AMULET_OF_STRANGULATION_OTYP = 203;
 function u_Breathless() { return _invent.Breathless_hero(); }
-function u_Hunger() {
-    const p = game.u?.uprops;
-    return !!(p?.Hunger || p?.HHunger || p?.EHunger)
-        || game.uleft?.otyp === RIN_HUNGER_OTYP
-        || game.uright?.otyp === RIN_HUNGER_OTYP;
-}
+function u_Hunger() { return Hunger_hero(); }
 function u_Strangled() {
     const p = game.u?.uprops;
     return !!(p?.Strangled || p?.HStrangled);
@@ -934,7 +926,6 @@ export async function vomit() {
             await altar_wrath(u.ux, u.uy);
         }
         if (mon_acidic(form)) {
-            const { is_ice } = await import('./dbridge.js');
             if (is_ice(u.ux, u.uy)) {
                 const { melt_ice } = await import('./zap.js');
                 await melt_ice(u.ux, u.uy, 'Your stomach acid melts straight through the ice!');
@@ -977,7 +968,7 @@ async function choke(food) {
         let kname;
         if (food) {
             await update_topl(`You choke over your ${foodword(food)}.`);
-            kname = (food.oclass === 5 /* COIN_CLASS */)
+            kname = (food.oclass === COIN_CLASS)
                 ? 'a very rich meal' : I.killer_xname(food);
         } else {
             await update_topl('You choke over it.');
@@ -1124,7 +1115,6 @@ export async function floorfood(verb, corpsecheck) {
     const feeding = verb === 'eat', offering = verb === 'sacrifice';
     _getobj_else = 0;
     const { can_reach_floor } = await import('./engrave.js');
-    const { is_pool_or_lava } = await import('./dbridge.js');
     // 'm' prefix (menu_requested) for #eat means "skip floor food"
     const skipfloor = !!game.iflags?.menu_requested || !can_reach_floor(true)
         || (feeding && !!u.usteed)
@@ -1144,9 +1134,9 @@ export async function floorfood(verb, corpsecheck) {
                 if (c === 'y') {
                     const { deltrap } = await import('./trap.js');
                     deltrap(ttmp);
-                    if (u_in_beartrap) { u.utrap = 0; u.utraptype = 0; game.botl = true; }
+                    if (u_in_beartrap) await (await import('./trap.js')).reset_utrap(true);
                     const beartrap = _mkobj.mksobj(244 /* BEARTRAP */, true, false);
-                    if (await check_capacity(`You only manage to ${
+                    if (await _invent.check_capacity(`You only manage to ${
                         u_in_beartrap ? 'free yourself from' : 'disarm'} the bear trap.`)
                         && beartrap) {
                         const { dropy } = await import('./invent.js');
@@ -1253,18 +1243,6 @@ export function offer_ok(obj) {
     return I.GETOBJ_SUGGEST;
 }
 
-// C ref: hack.c check_capacity(str) — refuse the action while carrying at
-// least EXT_ENCUMBER (Overtaxed).  doeat() calls it right after floorfood(),
-// so an overloaded hero burns no turn even after answering the floor prompt.
-async function check_capacity(str) {
-    if (_invent && _invent.near_capacity() >= EXT_ENCUMBER) {
-        // You_cant() contracts to "can't"; "cannot" is not a NetHack string.
-        await pline(str || "You can't do that while carrying so much stuff.");
-        return true;
-    }
-    return false;
-}
-
 export async function doeat() {
     await loadEatDeps();
     const u = game.u;
@@ -1284,7 +1262,7 @@ export async function doeat() {
         game.context._getobj_cancelled = false;
         return ECMD_OK_;                              // ECMD_OK
     }
-    if (await check_capacity()) return ECMD_OK_;      // ECMD_OK
+    if (await _invent.check_capacity()) return ECMD_OK_;      // ECMD_OK
 
     // C ref: eat.c:2834 — blessed food detection warns about bad food.
     if (u.uedibility) {
@@ -1530,7 +1508,7 @@ async function fprefx(otmp) {
             await update_topl(Halluc ? 'Oh wow, like, superior, man!'
                                      : 'This food really hits the spot!');
         else if ((u?.uhunger ?? 900) < 700)
-            await update_topl('This satiates your stomach!');
+            await update_topl(`This satiates your ${_invent.body_part(STOMACH)}!`);
         break;
     case TRIPE_RATION:
         // hero is humanoid and not carnivorous-only, and no role is an orc by
@@ -1615,7 +1593,7 @@ async function fprefx_default(otmp, Halluc) {
         return false;
     }
     if (otmp.otyp === APPLE && otmp.cursed
-        && !(game.u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance')))
+        && !(await import('./zap.js')).Sleep_resistance())
         return false;   /* skip core joke; feedback deferred to fpostfx() */
     if (otmp.otyp === APPLE) {
         await pline('Delicious!  Must be a Macintosh!');
@@ -1754,8 +1732,7 @@ async function fpostfx(otmp) {
         // sleep for rn1(11, 20) turns.  fprefx() deliberately printed nothing
         // for this case, and this arm was missing, so a cursed apple used to
         // be eaten in complete silence with no roll at all.
-        if (otmp.cursed
-            && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
+        if (otmp.cursed && !(await import('./zap.js')).Sleep_resistance()) {
             if (game.urace?.adj === 'dwarven' && game.u?.uhallu)
                 await update_topl('"Heigh-ho, ho-hum, I think I\'ll skip work today."');
             else if (Deaf_hero() || game.flags?.acoustics === false)
@@ -1893,16 +1870,6 @@ async function maybe_cannibal(pm, allowmsg) {
         return true;
     }
     return false;
-}
-
-// C ref: attrib.c change_luck(n).
-function change_luck(n) {
-    const u = game.u;
-    if (!u) return;
-    u.uluck = (u.uluck || 0) + n;
-    const LUCKMAX = 10, LUCKMIN = -10;   // you.h LUCKMAX/LUCKMIN (LUCKADD is the luckstone bonus, not the cap)
-    if (u.uluck < 0 && u.uluck < LUCKMIN) u.uluck = LUCKMIN;
-    if (u.uluck > 0 && u.uluck > LUCKMAX) u.uluck = LUCKMAX;
 }
 
 // Species names of the domestic animals cprefx() penalizes.
@@ -2291,7 +2258,7 @@ async function rottenfood_eat(obj) {
     const hallu = !!u?.uhallu;
     if (!rn2(4)) {                                          // eat.c:1817
         await You_feel(hallu ? 'rather trippy.'
-                           : 'rather light headed.');
+                           : `rather ${(await import('./invent.js')).body_part(LIGHT_HEADED)}.`);
         if (u) {
             if (!u.uprops) u.uprops = {};
             const newval = (u.uprops.Confusion || 0) + d(2, 4);   // eat.c:1822
@@ -2399,7 +2366,7 @@ async function eatcorpse(otmp) {
             : speciesVegetarian(mnum) ? 'protoplasm' : 'meat';
         await update_topl(`Ulch - that ${what} was tainted`
                           + `${cannibal ? ', you cannibal' : ''}!`);
-        if (u?.uprops?.Sick_resistance) {
+        if (Sick_resistance_hero()) {
             await update_topl("It doesn't seem at all sickening, though...");
         } else {
             let sick_time = rn1(10, 10);                   // eat.c:1909
@@ -2417,7 +2384,7 @@ async function eatcorpse(otmp) {
         if (carried(otmp)) _invent.useup(otmp);
         else await _invent.useupf(otmp, 1);
         return 2;
-    } else if (sp && mon_acidic(sp) && !u?.uprops?.Acid_resistance) {
+    } else if (sp && mon_acidic(sp) && !Acid_resistance_hero()) {
         tp++;
         await update_topl('You have a very bad case of stomach acid.');
         await losehp_eat(rnd(15), !glob ? 'acidic corpse' : 'acidic glob',
@@ -2434,7 +2401,7 @@ async function eatcorpse(otmp) {
         else
             await update_topl('You seem unaffected by the poison.');
     } else if ((rotted > 5 || (rotted > 3 && rn2(5)))
-               && !u?.uprops?.Sick_resistance) {       // eat.c:1939
+               && !Sick_resistance_hero()) {       // eat.c:1939
         tp++;
         await You_feel(`${u?.uprops?.Sick ? 'very ' : ''}sick.`);
         await losehp_eat(rnd(8), !glob ? 'cadaver' : 'rotted glob',
@@ -2564,6 +2531,7 @@ const P_TIMEOUT = 0x00FFFFFF, P_FROMOUTSIDE = 0x04000000;
 // hack.h ECMD_* (cmd.c return codes).  doeat() above returns a boolean; the
 // new command entry points return these so a caller can distinguish CANCEL.
 import { ECMD_OK as ECMD_OK_, ECMD_TIME as ECMD_TIME_, ECMD_CANCEL as ECMD_CANCEL_ } from './const.js';
+import { mungspaces } from './hacklib.js';
 
 // attrib.h A_CHA (js/const.js A_CHA == 5).
 const A_CHA_EAT = 5, A_INT_EAT = 1, A_WIS_EAT = 2;
@@ -2641,7 +2609,7 @@ function ACURRSTR() {
     return Math.min(v, 125) - 100;
 }
 // C ref: mondata.h metallivorous(gy.youmonst.data) / cantwield(...) — read off
-// the hero's current form (u.umonnum is a ROLE index unless polymorphed).
+// the hero's current form.
 function metallivorous_hero() {
     return (mflags1_of(hero_data_eat()) & M1_METALLIVORE) !== 0;
 }
@@ -2711,12 +2679,6 @@ function uprop_set(prop, val) {
 function uprop_has_outside(prop) {
     return (uprop_get(prop) & P_FROMOUTSIDE) !== 0
         || has_innate_fromoutside(PROP_KEY[prop]);
-}
-function set_itimeout(prop, val) {
-    uprop_set(prop, (uprop_get(prop) & ~P_TIMEOUT) | (val & P_TIMEOUT));
-}
-function incr_itimeout(prop, incr) {
-    set_itimeout(prop, (uprop_get(prop) & P_TIMEOUT) + incr);
 }
 
 // C ref: eat.c:163 eatmdone() — the nomovemsg callback that ends the mimicry a
@@ -2841,7 +2803,7 @@ export function eating_dangerous_corpse(res) {
 // became vulnerable and then sees the hero come through unharmed.
 export function maybe_extend_timed_resist(prop) {
     const timeout = temp_resist(prop);
-    if (timeout === 1) set_itimeout(prop, 2);
+    if (timeout === 1) set_itimeout(PROP_KEY[prop], 2);
 }
 
 // C ref: eat.c:576 eating_conducts(pd) — the food/vegan/vegetarian conduct
@@ -2916,11 +2878,8 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
         // likely; a cockatrice tentacle-touch is caught before reaching here).
         if (is_hero(magr)) {
             const props = u.uprops || {};
-            const stoneResistant = props.Stone_resistance || props.StoneResistance
-                || props.HStone_resistance || props.EStone_resistance
-                || ((_invent.youmonst_data_pub()?.mresists || 0) & MR_STONE)
-                || (game.invent || []).some((obj) =>
-                    obj.owornmask && _mkobj.objects[obj.otyp]?.oc_oprop === P_STONE_RES);
+            const stoneResistant = Stone_resistance_hero()
+                || ((_invent.youmonst_data_pub()?.mresists || 0) & MR_STONE);
             if (!stoneResistant && !props.Stoned)
                 await T.potion.make_stoned(5, null, 0, pd.name);
         } else {
@@ -3208,7 +3167,7 @@ export async function givit(type, ptr) {
         if (!has_outside(P_POISON_RES)) {
             // C: You_feel(Poison_resistance ? "especially healthy." :
             // "healthy."), tested BEFORE the bit is set.
-            await You_feel(uprop_get(P_POISON_RES)
+            await You_feel(Poison_resistance()
                            ? 'especially healthy.' : 'healthy.');
             grant(P_POISON_RES);
         }
@@ -3239,16 +3198,16 @@ export async function givit(type, ptr) {
         }
         break;
     case P_ACID_RES:
-        if (!uprop_get(P_ACID_RES))
+        if (!Acid_resistance_hero())
             await You_feel(`${Halluc ? 'secure from flashbacks'
                           : 'less concerned about being harmed by acid'}.`);
-        incr_itimeout(P_ACID_RES, d(3, 6));
+        incr_itimeout(PROP_KEY[P_ACID_RES], d(3, 6));
         break;
     case P_STONE_RES:
-        if (!uprop_get(P_STONE_RES))
+        if (!(await import('./invent.js')).Stone_resistance_hero())
             await You_feel(`${Halluc ? 'unusually limber'
                           : 'less concerned about becoming petrified'}.`);
-        incr_itimeout(P_STONE_RES, d(3, 6));
+        incr_itimeout(PROP_KEY[P_STONE_RES], d(3, 6));
         break;
     default:
         break;                          /* "impossible intrinsic" */
@@ -3764,7 +3723,8 @@ export async function eataccessory(otmp) {
             /* gives sleep resistance instead */
             if (!uprop_has_outside(P_SLEEP_RES))
                 await accessory_has_effect(otmp);
-            if (!uprop_get(P_SLEEP_RES)) await You_feel('wide awake.');
+            if (!(await import('./zap.js')).Sleep_resistance())
+                await You_feel('wide awake.');
             uprop_set(P_SLEEP_RES, uprop_get(P_SLEEP_RES) | P_FROMOUTSIDE);
             break;
         case AMULET_OF_CHANGE:
@@ -3848,7 +3808,7 @@ export async function eataccessory(otmp) {
                 if (!uprop_get(P_LEVITATION)) {
                     const { float_up } = await import('./trap.js');
                     await float_up();
-                    incr_itimeout(P_LEVITATION, d(10, 20));
+                    incr_itimeout(PROP_KEY[P_LEVITATION], d(10, 20));
                     _invent.makeknown(typ);
                 }
                 break;
@@ -3985,7 +3945,7 @@ export async function edibility_prompts(otmp) {
     const mnum = otmp.corpsenm;
     let rotted = 0;
 
-    const foodsmell = Tobjnam_eat(otmp, 'smell');
+    const foodsmell = _invent.Tobjnam(otmp, 'smell');
     const it_or_they = ((otmp.quan | 0) === 1) ? 'it' : 'they';
 
     if (cadaver || otmp.otyp === EGG || otmp.otyp === TIN
@@ -4014,11 +3974,11 @@ export async function edibility_prompts(otmp) {
     // Checked from most detrimental to least.
     let buf = '';
     const sp = ismnum(mnum) ? monster_by_pmidx(mnum) : null;
-    if (cadaver && rotted > 5 && !u?.uprops?.Sick_resistance) {
+    if (cadaver && rotted > 5 && !Sick_resistance_hero()) {
         buf = `${foodsmell} like ${it_or_they} could be tainted!`;
     } else if (stoneorslime) {
         buf = `${foodsmell} like ${it_or_they} could be something very dangerous!`;
-    } else if (cadaver && rotted > 5 && u?.uprops?.Sick_resistance) {
+    } else if (cadaver && rotted > 5 && Sick_resistance_hero()) {
         // Tainted meat with Sick_resistance has to be handled here even though
         // there is no danger, because it can't match the (rotted > 3) test.
         buf = `${foodsmell} like ${it_or_they} could be tainted.`;
@@ -4028,13 +3988,13 @@ export async function edibility_prompts(otmp) {
                && !Poison_resistance()) {
         buf = `${foodsmell} like ${it_or_they} might be poisonous!`;
     } else if (otmp.otyp === APPLE && otmp.cursed
-               && !(u?.uprops?.Sleep_resistance || has_innate('HSleep_resistance'))) {
+               && !(await import('./zap.js')).Sleep_resistance()) {
         /* causes sleep, for long enough to be dangerous */
         buf = `${foodsmell} like ${it_or_they} might have been poisoned.`;
     } else if (cadaver && !speciesVegetarian(mnum)
                && !(u?.uconduct?.unvegetarian) && Role_if_MONK_eat()) {
         buf = `${foodsmell} unhealthy.`;
-    } else if (cadaver && sp && mon_acidic(sp) && !u?.uprops?.Acid_resistance) {
+    } else if (cadaver && sp && mon_acidic(sp) && !Acid_resistance_hero()) {
         buf = `${foodsmell} rather acidic.`;
     // C's rust-monster arm needs Upolyd.
     /* Breaks conduct, but otherwise safe. */
@@ -4057,14 +4017,6 @@ export async function edibility_prompts(otmp) {
     return 0;
 }
 
-// C ref: objnam.c Tobjnam(obj, verb) — "The <obj> <verb>s"/"<Objs> <verb>",
-// capitalised.  js/do_wear.js:1385, js/apply.js:1035 and js/dothrow.js:115 each
-// keep a private copy; this is the same one-liner over otense().
-function Tobjnam_eat(obj, verb) {
-    const nm = _invent ? _invent.xname(obj) : objName(obj);
-    const s = `The ${nm} ${_invent ? _invent.otense(obj, verb) : verb + 's'}`;
-    return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 // C ref: eat.c:2734 doeat_nonfood(otmp) — a metallivorous or gelatinous-cube
 // hero is eating something that isn't food.  One turn, no split.
@@ -4190,9 +4142,9 @@ function oc_nutrition(otmp) {
 // && fully identified.  js/wield.js:129 keeps this port's only copy
 // (module-private).  C's caller also requires
 // `otmp->oartifact < ART_ORB_OF_DETECTION` (the un-prefixed artifacts).
-const ART_ORB_OF_DETECTION = 28;   /* artilist.h ordinal */
+const ART_ORB_OF_DETECTION = 21;   /* js/artifact.js ART_ORB_OF_DETECTION (this port's artilist ordinal; C's is also 21) */
 function obj_is_pname_eat(obj) {
-    return !!obj?.oartifact && !!obj?.oname
+    return !!obj?.oartifact && has_oname(obj)
         && (obj.oartifact | 0) < ART_ORB_OF_DETECTION;
 }
 

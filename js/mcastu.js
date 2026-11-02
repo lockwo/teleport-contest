@@ -7,6 +7,7 @@
 // rn2(m_lev) EVERY such turn, so leaving it out desyncs the stream for any level
 // carrying a spellcaster (seed0360 step 205: a gnomish wizard 7 squares away).
 
+import { Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, See_invisible_hero } from './youprop.js';
 import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
 import { rn2, d } from './rng.js';
@@ -125,7 +126,7 @@ function spell_would_be_useless(mtmp, spellnum) {
         break;
     case MCAST_DISAPPEAR:
         if (mtmp.minvis || mtmp.invis_blkd) return true;
-        if (mtmp.mpeaceful && !See_invisible()) return true;
+        if (mtmp.mpeaceful && !See_invisible_hero()) return true;
         break;
     case MCAST_CURE_SELF:
         if (mtmp.mhp === mtmp.mhpmax) return true;
@@ -428,10 +429,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
 // Small property shims.  Each names the C predicate it stands in for; all are
 // RNG-free and constant for the heroes these sessions drive.
 function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.BlindedFromForm | 0) > 0; }
-// C ref: youprop.h See_invisible/Invis/Displaced — one copy each: u.see_invis
-// is the hero's canonical See_invisible accessor (jsmain.js), and
-// monmove.js owns Invis()/Displaced() (worn-item extrinsics included).
-function See_invisible() { return !!game.u?.see_invis; }
+// C ref: youprop.h Invis/Displaced — monmove.js owns them (worn-item extrinsics included).
 import { Deaf_hero as Deaf } from './display.js';
 function perceives(mdat) { return !!(mdat && mdat.perceives); }
 
@@ -675,7 +673,7 @@ export async function mcast_disappear(mtmp) {
             const { Monnam } = await import('./uhitm.js');
             set_msg_mon(mtmp);
             await update_topl(`${Monnam(mtmp)} suddenly `
-                + `${!See_invisible() ? 'disappears' : 'becomes transparent'}!`);
+                + `${!See_invisible_hero() ? 'disappears' : 'becomes transparent'}!`);
         }
         await mon_set_minvis(mtmp, false);
         const { canspotmon } = await import('./uhitm.js');
@@ -1098,15 +1096,15 @@ async function make_confused_(xtime, talk) {
 // ---- hero property / naming shims (all RNG-free) ------------------------
 function Upolyd() { return !!game.u?.Upolyd; }
 function Blind_() { return Blind(); }
-function Stunned_() { return !!game.u?.formprops?.Stunned || !!(game.u?.uprops?.Stun || game.u?.Stunned); }
+function Stunned_() { return Stunned_hero(); }
 function Confusion_() { return HProp_('Confusion') > 0; }
 function HConfusion_() { return HProp_('Confusion'); }
 function HStun_() { return HProp_('Stun'); }
 // (Free_action is the shared accessor imported from invent.js.)
-function Half_spell_damage() { return HProp_('HHalf_spell_damage') > 0 || !!worn_extrinsic(55 /* HALF_SPDAM */); }
-function Half_physical_damage() { return HProp_('HHalf_physical_damage') > 0 || !!worn_extrinsic(56 /* HALF_PHDAM */); }
+function Half_spell_damage() { return Half_spell_damage_hero(); }
+function Half_physical_damage() { return Half_physical_damage_hero(); }
 function Shock_resistance_() { return Shock_resistance(); }
-function Detect_monsters_() { return HProp_('HDetect_monsters') > 0; }
+function Detect_monsters_() { return Detect_monsters_hero(); }
 function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
 function HProp_(name) { return (game.u?.uprops?.[name] | 0); }
 function ACURR_(i) { return acurr_eff(i); }

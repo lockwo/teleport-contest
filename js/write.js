@@ -8,6 +8,7 @@ import { objects, MAXOCLASSES, mksobj, bcsign, SCROLL_CLASS, SPBOOK_CLASS, SCR_B
          SPE_BLANK_PAPER, SPE_NOVEL, SPE_BOOK_OF_THE_DEAD } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { A_WIS, MAXULEV, ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
+import { mungspaces } from './hacklib.js';
 
 // C ref: include/objects.h otyp / monsters.h index (js/mkobj.js numbering,
 // which carries SCR_MAIL like the recorder's MAIL_STRUCTURES build).
@@ -35,9 +36,6 @@ function same_ci(a, b) {
 
 // C ref: hacklib.c mungspaces() — tabs become spaces, runs collapse, and
 // leading/trailing space goes.
-function mungspaces(s) {
-    return s.replace(/[ \t]+/g, ' ').replace(/^ | $/g, '');
-}
 
 // C ref: write.c:16 cost(otmp) — base cost of a scroll or a spellbook.
 async function cost(otmp) {
@@ -330,7 +328,7 @@ export async function dowrite(pen) {
     const { known_spell, spe_Unknown, spe_Fresh, spe_GoingStale } = await import('./spell.js');
     const spell_knowledge = (paper.oclass === SPBOOK_CLASS)
         ? known_spell(new_obj.otyp) : spe_Unknown;
-    const is_wizard = (game.urole?.mnum ?? u.umonnum) === PM_WIZARD;
+    const is_wizard = (game.urole?.mnum) === PM_WIZARD;
     /* if known, then either by-name or by-descr works */
     if (!objects[new_obj.otyp].oc_name_known
         /* else if named, then only by-descr works */
