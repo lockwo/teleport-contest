@@ -41,7 +41,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx, golemhp_js as golemhp
     is_home_elemental, MGEND_MALE, MGEND_FEMALE, MGEND_NEUTRAL,
     infravision } from './makemon.js';
 import { livelog_printf, LL_CONDUCT, LL_MINORAC } from './livelog.js';
-import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_MAX, TT_PIT, TT_BURIEDBALL,
+import { A_STR, A_INT, A_WIS, A_CON, A_DEX, A_CHA, A_MAX, TT_PIT, TT_BURIEDBALL,
     IS_FOUNTAIN, IS_POOL, IS_LAVA, IS_AIR, In_endgame, Is_airlevel, Is_waterlevel,
     POLY_CONTROLLED, POLY_MONSTER, POLY_REVERT, POLY_LOW_CTRL,
     is_pool, is_pool_or_lava } from './const.js';
@@ -900,6 +900,11 @@ export async function polymon(mntmp) {
         // C: `u.acurr = u.macurr` sets no disp.botl, so a pline before the new
         // form's stats are set still shows the old St on the status line.
         status_hold('str', acurr_eff(A_STR));
+        status_hold('dex', acurr_eff(A_DEX));
+        status_hold('con', acurr_eff(A_CON));
+        status_hold('int', acurr_eff(A_INT));
+        status_hold('wis', acurr_eff(A_WIS));
+        status_hold('cha', acurr_eff(A_CHA));
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
         game.flags.female = !!u.mfemale;
@@ -1752,7 +1757,7 @@ function type_is_pname(mdat) { return !!mdat && (mflags2_of(mdat) & M2_PNAME) !=
 export async function rehumanize() {
     const u = game.u;
     const fp = u.uprops || {};
-    const was_flying = !!(fp.Flying || fp.HFlying || fp.EFlying);
+    const was_flying = !!Flying_hero();
 
     /* You can't revert back while unchanging */
     if (Unchanging()) {
@@ -1789,8 +1794,7 @@ export async function rehumanize() {
     await encumber_msg();
     const { update_inventory } = await import('./invent.js');
     await update_inventory();
-    const fp2 = u.uprops || {};
-    if (was_flying && !(fp2.Flying || fp2.HFlying || fp2.EFlying) && u.usteed) {
+    if (was_flying && !Flying_hero() && u.usteed) {
         const { mon_nam } = await import('./do_name.js');
         await pline(`You and ${mon_nam(u.usteed)} return gently to the ${surface(u.ux, u.uy)}.`);
     }
@@ -2351,7 +2355,11 @@ async function dohide() {
     const on_ceiling = is_clinger(mdat) || Flying_hero();
 
     if (u.ustuck || (u.utrap && (u.utraptype !== TT_PIT || on_ceiling))) {
-        await pline(`You can't hide while you're ${!u.ustuck ? 'trapped' : 'being held'}.`);
+        const digests = (ptr) => mattk_of(ptr).some((a) => a.aatyp === AT_ENGL && a.adtyp === 26 /* AD_DGST */);
+        await pline(`You can't hide while you're ${!u.ustuck ? 'trapped'
+            : u.uswallow ? (digests(u.ustuck.data) ? 'swallowed' : 'engulfed')
+            : !sticks(mdat) ? 'being held'
+            : humanoid(u.ustuck.data) ? 'holding someone' : 'holding that creature'}.`);
         if (u.uundetected || (ismimic && u.m_ap_type)) {
             u.uundetected = 0;
             u.m_ap_type = 0;
@@ -2620,7 +2628,7 @@ async function dospinweb() {
     if (ttmp) {
         await pline('You spin a web.');
         ttmp.madeby_u = 1;
-        TR.seetrap(ttmp); /* feeltrap() */
+        TR.feeltrap(ttmp);
         if ((await import('./shkroom.js')).in_rooms(x, y, C.SHOPBASE).length)
             await (await import('./shk.js')).add_damage(x, y, C.SHOP_WEB_COST);
     }

@@ -40,7 +40,7 @@ const MAGIC_TOOL = new Set([MAGIC_FLUTE, FROST_HORN, FIRE_HORN,
 // C ref: hack.h:1456 — ECMD_OK 0x00, ECMD_TIME 0x01, ECMD_CANCEL 0x02,
 // ECMD_FAIL 0x04.  js/apply.js carries its OWN renumbering (ECMD_TIME 2), so
 // its dispatch translates this return value; do not compare the two directly.
-import { ECMD_OK, ECMD_TIME, TT_PIT, TT_BURIEDBALL } from './const.js';
+import { ECMD_OK, ECMD_TIME, TT_PIT, TT_BURIEDBALL, has_mgivenname } from './const.js';
 import { reset_utrap } from './trap.js';
 import { set_utrap } from './polyself.js';
 const TOOL_CLASS = 6;
@@ -120,11 +120,12 @@ async function awaken_monsters(distance) {
 
 // C ref: music.c:84 put_monsters_to_sleep(distance).
 async function put_monsters_to_sleep(distance) {
-    const { sleep_monst } = await import('./zap.js');
+    const { sleep_monst, slept_monst } = await import('./zap.js');
     for (const mtmp of monsterList().slice()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mdistu(mtmp) < distance && await sleep_monst(mtmp, d(10, 10), TOOL_CLASS)) {
-            mtmp.msleeping = 1;
+            mtmp.msleeping = 1; /* 10d10 turns + wake_nearby to rouse */
+            await slept_monst(mtmp);
         }
     }
 }
@@ -218,7 +219,7 @@ async function charm_monsters(distance) {
 async function do_pit(x, y, tu_pit) {
     const u = game.u;
     const { maketrap } = await import('./trap.js');
-    const { Monnam, mon_nam, killed } = await import('./uhitm.js');
+    const { Monnam, mon_nam, killed, x_monnam } = await import('./uhitm.js');
     const chasm = maketrap(x, y, PIT);
     if (!chasm) return;
     chasm.tseen = 1;
@@ -267,7 +268,9 @@ async function do_pit(x, y, tu_pit) {
                 mtmp.mhp = (mtmp.mhp | 0) - rnd(m_already_trapped ? 4 : 6);
                 if (DEADMONSTER(mtmp)) {
                     if (!cansee(x, y)) await update_topl('It is destroyed!');
-                    else await update_topl(`You destroy ${mon_nam(mtmp)}!`);
+                    else await update_topl(`You destroy ${mtmp.mtame
+                        ? x_monnam(mtmp, 1 /*ARTICLE_THE*/, 'poor', has_mgivenname(mtmp) ? 0x08 : 0, false)
+                        : mon_nam(mtmp)}!`);
                     await killed(mtmp, { nomsg: true });
                 }
             }
@@ -277,7 +280,7 @@ async function do_pit(x, y, tu_pit) {
             await update_topl('Your chain breaks!');
             await reset_utrap(true);
         }
-        if (Levitation() || Flying() || is_clinger(game.u?.mdat)) {
+        if (Levitation() || Flying() || is_clinger((await import('./invent.js')).youmonst_data_pub())) {
             if (!tu_pit) {
                 await update_topl('A chasm opens up under you!');
                 await update_topl("You don't fall in!");

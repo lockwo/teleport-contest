@@ -2,21 +2,18 @@
 // sp_lev.js re-exports makemaz_soko1 so existing importers are unaffected; the
 // shared special-level machinery still lives there and is imported below.
 
-import { level_difficulty } from '../dungeon.js';
 import { M_AP_OBJECT, BURN, COLNO, DOOR, FILL_NORMAL, LR_MONGEN, ROOMOFFSET, ROWNO, SDOOR, ZOO } from '../const.js';
 import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
 import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
-import { dist2, distmin } from '../hacklib.js';
-import { MM_ASLEEP, MM_NOGRP, makemon } from '../makemon.js';
 import {
     BAG_OF_HOLDING, BOULDER, FOOD_CLASS, RING_CLASS, SCR_SCARE_MONSTER, WAND_CLASS, curse,
-    mkgold, mksobj_at, uncurse,
+    mksobj_at, uncurse,
 } from '../mkobj.js';
-import { rn1, rn2, rnd } from '../rng.js';
+import { rn2, rnd } from '../rng.js';
 import {
-    add_sp_room, bigrm_get_level_extends, level_flip_extents, bigrm_level_init_solidfill, bigrm_load_map,
+    add_doors_to_room, link_doors_rooms, add_sp_room, bigrm_get_level_extends, level_flip_extents, bigrm_level_init_solidfill, bigrm_load_map,
     bigrm_wallification, flip_level, flood_fill_irregular, gx, gy, percent, q_absx, q_absy,
     quest_create_monster_randpos, quest_place_stair, quest_set_door, record_level_prize, shuffle,
     soko_create_object_class_random, soko_mktrap, soko_region_lit_grow,
@@ -163,62 +160,8 @@ function soko_region_zoo(x1, y1) {
 // measures dist2 from.  Getting this wrong scales every gold pile in the zoo
 // (seed0360 step 211: rn1(676,10) / rn1(2500,10) instead of C's rn1(100,10)).
 function soko_link_doors_to_room(croom) {
-    const rmno = croom.roomnoidx + ROOMOFFSET;
-    const seen = new Set();
-    let fdoor = null;
-    const maybe_add_door = (x, y) => {
-        const loc = game.level?.at(x, y);
-        if (!loc || !(loc.typ === DOOR || loc.typ === SDOOR)) return;
-        if (loc.roomno !== rmno) return;   /* == maybe_add_door's roomno test */
-        const key = x + ',' + y;
-        if (seen.has(key)) return;         /* add_door dedups per room */
-        seen.add(key);
-        fdoor = { x, y };                  /* inserted AT fdoor: last wins */
-    };
-    // add_doors_to_room: x outer, y inner, over the bounding box grown by 1.
-    for (let x = croom.lx - 1; x <= croom.hx + 1; x++)
-        for (let y = croom.ly - 1; y <= croom.hy + 1; y++) maybe_add_door(x, y);
-    // link_doors_rooms: whole map, y outer, x inner.
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 0; x < COLNO; x++) maybe_add_door(x, y);
-    croom.doorct = seen.size;
-    croom.fdoor = fdoor;
-}
-
-// C ref: mkroom.c fill_zoo() ZOO case — makemon(NULL,...) (random monster)
-// per eligible cell (x outer, y inner), each carrying gold scaled by
-// (dist2 to the first door)^2, capped by a per-room gold budget.
-function soko_fill_zoo(croom) {
-    if (!croom.fdoor && croom.doorct == null) soko_link_doors_to_room(croom);
-    const rmno = croom.roomnoidx + ROOMOFFSET;
-    const lvl = level_difficulty();
-    let goldlim = 500 * lvl;
-    for (let sx = croom.lx; sx <= croom.hx; sx++) {
-        for (let sy = croom.ly; sy <= croom.hy; sy++) {
-            const loc = game.level?.at(sx, sy);
-            if (!loc || loc.roomno !== rmno || loc.edge) continue;
-            if (croom.doorct && distmin(sx, sy, croom.fdoor.x, croom.fdoor.y) <= 1)
-                continue;
-            const mon = makemon(null, sx, sy, MM_ASLEEP | MM_NOGRP);
-            if (mon) mon.msleeping = 1;
-            let i;
-            if (croom.doorct) {
-                const distval = dist2(sx, sy, croom.fdoor.x, croom.fdoor.y);
-                i = distval * distval;
-            } else {
-                i = goldlim;
-            }
-            if (i >= goldlim) i = 5 * lvl;
-            goldlim -= i;
-            mkgold(rn1(i, 10), sx, sy);
-        }
-    }
-    // This function IS the ZOO arm of C's fill_special_room() loop, run inline
-    // at the point lspo_finalize_level() would run it (it needs soko's own
-    // fdoor-as-coord bookkeeping, which the generic path does not have).
-    // Downgrade needfill to FILL_LVLFLAGS_ONLY so the generic fill_special_room
-    // pass that follows only applies has_zoo instead of stocking it twice.
-    croom.needfill = 2; /* FILL_LVLFLAGS_ONLY */
+    add_doors_to_room(croom);   // sp_lev.c:5544, at region creation (bounding box x outer, y inner)
+    link_doors_rooms();         // sp_lev.c:6022 at finalize (whole map y outer, x inner)
 }
 
 // dat/soko1-N.lua as data.  Everything here is in FILE ORDER — the des.*
@@ -345,13 +288,6 @@ export async function makemaz_soko1() {
         if (flp) {
             flip_level(flp);
             soko_flip_exclusions(flp);
-            // flip_level flips svd.doors[] too; sroom->fdoor is an INDEX, so
-            // the already-chosen door travels with the map.
-            if (zoo?.fdoor) {
-                const { minx, maxx, miny, maxy } = level_flip_extents();
-                if (flp & 1) zoo.fdoor.y = miny + maxy - zoo.fdoor.y;
-                if (flp & 2) zoo.fdoor.x = minx + maxx - zoo.fdoor.x;
-            }
         }
 
         // solidify_map + non_diggable/non_passwall (RNG-free; order vs. the
@@ -362,21 +298,6 @@ export async function makemaz_soko1() {
         // premapped: reveal the whole level's background+boulders+traps into
         // hero memory (RNG-free).
         premap_detect();
-
-        // fill_special_room() loop — this level's one special room (the zoo).
-        // C-faithful peace_minded/inventory generation for the zoo's random
-        // monsters (game._full_mon_gen); NOT enabled around the mimics above
-        // — m_initinv_full() doesn't have a correct S_MIMIC case, and a
-        // hostile mimic never reaches the peace_minded call anyway, so the
-        // plain path is both correct and simpler there.
-        if (zoo) {
-            g._full_mon_gen = true;
-            try {
-                soko_fill_zoo(zoo);
-            } finally {
-                g._full_mon_gen = false;
-            }
-        }
     } finally {
         g._full_mon_gen = false;
     }

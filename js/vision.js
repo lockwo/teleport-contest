@@ -15,7 +15,7 @@ import { newsym } from './display.js';
 import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
 import { has_innate } from './exper.js';
-import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
+import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MON_DETACH } from './const.js';
 
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
@@ -167,6 +167,8 @@ function _blocks(level, x, y) {
     if (mons) {
         for (const m of mons) {
             if (!m || m.mx !== x || m.my !== y) continue;
+            /* m_at() grid: not a steed, nor off-grid/dead monster still in fmon */
+            if (m.mridden || m.mgridoff || ((m.mstate | 0) & MON_DETACH)) continue;
             if (m.minvis && !game.u?.uprops?.See_invisible) continue;
             if (is_lightblocker_mappear(m)) return true;
         }

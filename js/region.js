@@ -27,7 +27,7 @@ import { nonliving, immune_poisongas, mflags1_of, M1_BREATHLESS, M1_NOEYES,
 import { attacktype_fordmg, AT_BREA, AD_DRST, AD_RBRE } from './monattk_data.js';
 import { has_innate } from './exper.js';
 import { Poison_resistance } from './youprop.js';
-import { You_feel } from './display.js';
+import { You_feel, m_at } from './display.js';
 
 const MAX_CLOUD_SIZE = 150;
 
@@ -119,7 +119,7 @@ export async function add_region(reg) {
             if (!isok(x, y)) continue;
             const isInside = inside_region(reg, x, y);
             if (isInside) {
-                const mtmp = (game.level?.monsters || []).find((m) => !m.mridden && m.mx === x && m.my === y);
+                const mtmp = m_at(x, y);
                 if (mtmp && !reg.monsters.includes(mtmp)) reg_push_mon(reg, mtmp);
             }
             if (reg.visible) {
@@ -204,7 +204,10 @@ export async function run_regions() {
         }
         for (let j = 0; j < reg.monsters.length; j++) {
             const mtmp = reg.monsters[j];
-            const dead = !mtmp || (mtmp.mhp != null && mtmp.mhp <= 0);
+            /* C: find_mid(reg->monsters[j], FM_FMON) fails for a monster that was
+               freed by dmonsfree(); dealloc_monst() wipes the JS object. */
+            const dead = !mtmp || mtmp.m_id == null
+                || (mtmp.mhp != null && mtmp.mhp <= 0);
             const died = dead ? true : await inside_gas_cloud(reg, mtmp);
             if (died) {
                 reg.monsters[j] = reg.monsters[reg.monsters.length - 1];
@@ -372,7 +375,7 @@ function m_poisongas_ok_u() {
 // display glyph, activate it, and announce "enveloped in gas/steam" unless
 // the hero was already inside a cloud before this one was created.
 async function make_gas_cloud(cloud, damage, insideCloud) {
-    cloud.herosFault = !game._in_mklev && !game.context?.mon_moving;
+    cloud.herosFault = !game.in_mklev && !game.context?.mon_moving;
     cloud.insideF = INSIDE_GAS_CLOUD;
     cloud.expireF = EXPIRE_GAS_CLOUD;
     cloud.arg = damage;
@@ -382,7 +385,7 @@ async function make_gas_cloud(cloud, damage, insideCloud) {
         : { ch: '#', color: 7 /* CLR_GRAY, S_cloud */ };
     await add_region(cloud);
 
-    if (!game._in_mklev && !insideCloud && is_hero_inside_gas_cloud()) {
+    if (!game.in_mklev && !insideCloud && is_hero_inside_gas_cloud()) {
         const { update_topl } = await import('./display.js');
         await update_topl(`You are enveloped in a cloud of ${damage ? 'noxious gas' : 'steam'}!`);
         game.last_msg = PLNMSG_ENVELOPED_IN_GAS; /* C: iflags.last_msg, after the You() */
@@ -405,7 +408,7 @@ function add_region_nodisplay(reg) {
         for (let y = b.ly; y <= b.hy; y++) {
             if (!isok(x, y)) continue;
             if (!inside_region(reg, x, y)) continue;
-            const mtmp = (game.level?.monsters || []).find((m) => !m.mridden && m.mx === x && m.my === y);
+            const mtmp = m_at(x, y);
             if (mtmp && !reg.monsters.includes(mtmp)) reg_push_mon(reg, mtmp);
             if (reg.visible) block_point(x, y);
         }
@@ -423,7 +426,7 @@ export function create_gas_cloud_selection(sel, damage) {
         add_rect_to_reg(cloud, { lx: c.x, ly: c.y, hx: c.x, hy: c.y });
     // make_gas_cloud() tail; the "enveloped in steam" line is gated on
     // !in_mklev, and this form is only reachable from mklev.
-    cloud.herosFault = !game._in_mklev && !game.context?.mon_moving;
+    cloud.herosFault = !game.in_mklev && !game.context?.mon_moving;
     cloud.insideF = INSIDE_GAS_CLOUD;
     cloud.expireF = EXPIRE_GAS_CLOUD;
     cloud.arg = damage;
@@ -547,7 +550,7 @@ function expire_gas_cloud(reg) {
 // region's monster list, matching C's boolean return).
 async function inside_gas_cloud(reg, mtmp) {
     const isHero = !mtmp;
-    const data = isHero ? game.u?.data : mtmp?.data;
+    const data = isHero ? (await import('./invent.js')).youmonst_data() : mtmp?.data;
     const name = data?.name || '';
 
     // C ref: region.c — fog clouds maintain their own gas clouds indefinitely
@@ -967,7 +970,7 @@ export async function create_force_field(x, y, radius, ttl) {
         tmprect.hy--;
     }
     ff.ttl = ttl;
-    if (!game._in_mklev && !game.context?.mon_moving)
+    if (!game.in_mklev && !game.context?.mon_moving)
         ff.herosFault = true; /* set_heros_fault(): assume the player made it */
     /* ff->can_enter_f = enter_force_field; */
     /* ff->can_leave_f = enter_force_field; */

@@ -3,7 +3,8 @@
 // Stripped-down version for contest: emits the same rn2/rnd/rne PRNG call
 // sequence as C during level generation so RNG parity is preserved.
 
-import { Half_physical_damage_hero, Half_spell_damage_hero, Lev_at_will_hero, Swimming_hero, Passes_walls_hero } from './youprop.js';
+import { search_special } from './mkroom.js';
+import { Half_physical_damage_hero, Half_spell_damage_hero, Lev_at_will_hero, Swimming_hero, Passes_walls_hero, Fumbling_hero, Wwalking_hero } from './youprop.js';
 import { has_mgivenname, Trap_Effect_Finished } from './const.js';
 import { count_level_features } from './mklev.js';
 import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
@@ -13,6 +14,7 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
          feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp } from './display.js';
+import { map_trap } from './detect.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
 import { del_engr_at } from './engrave.js';
@@ -77,15 +79,17 @@ import {
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
     SPE_NOVEL, has_omonst, remove_object, HEAVY_IRON_BALL, KICKING_BOOTS,
-    erosion_matters,
+    erosion_matters, is_flammable,
 } from './mkobj.js';
 // C ref: objects.h IRON_SHOES (js/do_wear.js:66).
 const IRON_SHOES_OTYP = 164;
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx } from './makemon.js';
+import { enexto_gpflags } from './teleport.js';
 import { likes_gems_flag, M1_MINDLESS, mflags1_of, is_animal, M1_FLY,
          amorphous_flag, unsolid_flag, passes_walls_flag, M1_ACID, throws_rocks_flag,
          M1_AMPHIBIOUS, M1_BREATHLESS, M1_CLING, M1_HIDE, M1_TUNNEL, M1_NEEDPICK, M1_SLITHY,
          is_swimmer_flag, can_teleport_flag, strongmonst_flag, is_whirly, flaming } from './monflags_data.js';
+import { mindless as mindless_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg, sticks } from './monattk_data.js';
 import { S_HUMAN } from './symbols.js';
 import { GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT, ROLL, LAUNCH_UNSEEN, LAUNCH_KNOWN } from './const.js';
@@ -756,7 +760,11 @@ export function maketrap(x, y, typ) {
         if (lev) {
             let clear_flags = true;
             if (lev.typ === DRAWBRIDGE_UP) {
+                /* bridge is closed and we're putting a hole or pit at the span
+                   spot; terrain becomes room floor even if it was moat, lava,
+                   or ice */
                 clear_flags = false; // keep lev.drawbridgemask
+                lev.drawbridgemask = ((lev.drawbridgemask | 0) & ~28 /* DB_UNDER */) | 16 /* DB_FLOOR */;
             } else if (IS_ROOM(lev.typ)) {
                 set_levltyp(x, y, ROOM);
             } else if (lev.typ === STONE || lev.typ === SCORR) {
@@ -1011,15 +1019,10 @@ export async function water_damage(obj, ostr, force) {
 
 // ── erode_obj (general) ───────────────────────────────────────────────────
 // C ref: objclass.h material predicates for the other 4 erosion types (IRON's
-// is_rustprone is already defined above).  Scoped to worn armor: destroy_arm()
-// (the only caller) never passes anything else, so the WAN_FIRE/candle carve-
-// outs in C's is_flammable (armor is never one of those otypes) are omitted.
+// is_rustprone is already defined above); is_flammable is mkobj.c's own (candle
+// and fire-resistant carve-outs included).
 const MAT_LIQUID = 1, MAT_WOOD = 8, MAT_DRAGON_HIDE = 10, MAT_COPPER = 13,
     MAT_PLASTIC = 18, MAT_GLASS = 19;
-function is_flammable(obj) {
-    const mat = objects[obj?.otyp]?.material;
-    return (mat <= MAT_WOOD && mat !== MAT_LIQUID) || mat === MAT_PLASTIC;
-}
 function is_rottable(obj) {
     const mat = objects[obj?.otyp]?.material;
     return (mat <= MAT_WOOD && mat !== MAT_LIQUID) || mat === MAT_DRAGON_HIDE;
@@ -1466,7 +1469,9 @@ export async function sink_into_lava() {
 
         u.utrap -= (1 << 8);
         if (u.utrap < (1 << 8)) {
-            game._killer_name = 'molten lava';
+            game.killer = Object.assign(game.killer || { id: 0, next: null },
+                                        { name: 'molten lava', format: KILLED_BY });
+            game._killer_name = (await import('./topten.js')).formatkiller(BUFSZ, DISSOLVED, false);
             await urgent_topl('You sink below the surface and die.');
             const { burn_away_slime } = await import('./timeout.js');
             await burn_away_slime();
@@ -1794,7 +1799,7 @@ async function trapeffect_web(trap, trflags) {
     const forcetrap = (trflags & FORCETRAP) !== 0 || (trflags & FAILEDUNTRAP) !== 0;
     const viasitting = (trflags & VIASITTING) !== 0;
 
-    seetrap(trap); // feeltrap()
+    feeltrap(trap);
     if (await mu_maybe_destroy_web_you(webmsgok, trap)) return;
     const ydat = youmonst_data_pub();
     if (ydat && (ydat.pmidx === PM_CAVE_SPIDER_TRAP || ydat.pmidx === PM_GIANT_SPIDER_TRAP)) { /* webmaker */
@@ -1945,8 +1950,7 @@ async function trapeffect_bear_trap(trap, trflags) {
     const dmg = d(2, 4);
     if ((Levitation_fu() || Flying_fu()) && !forcetrap)
         return;
-    // C feeltrap(trap) just marks it seen for a sighted hero == seetrap().
-    seetrap(trap);
+    feeltrap(trap);
     const ydat = youmonst_data_pub();
     if (amorphous_flag(ydat) || is_whirly(ydat) || unsolid_flag(ydat)) {
         await pline(`${A_Your} bear trap closes harmlessly through you.`);
@@ -2052,7 +2056,7 @@ async function domagictrap() {
                     await self_invis_message();
                 }
             } else if (!einv && !(game.u?.Upolyd
-                                  && ['stalker', 'black light'].includes(game.youmonst?.data?.name))) {
+                                  && ['stalker', 'black light'].includes(youmonst_data_pub()?.name))) {
                 if (!Blind()) {
                     if (!(await import('./youprop.js')).See_invisible_hero())
                         await update_topl('You can see yourself again!');
@@ -2191,7 +2195,7 @@ async function trapeffect_rocktrap(trap, _trflags) {
     }
     let dmg = d(2, 6);
     trap.once = 1;
-    seetrap(trap); // C feeltrap(trap) == seetrap() for a sighted hero
+    feeltrap(trap);
     const otmp = t_missile(ROCK, trap);
     place_object(otmp, u.ux, u.uy);
     otmp.where = OBJ_FLOOR; otmp.ox = u.ux; otmp.oy = u.uy;
@@ -2387,7 +2391,7 @@ async function trapeffect_pit(trap, trflags) {
                 : (conj_pit || deliberate) ? 'stepped into a pit of iron spikes'
                 : adj_pit ? 'stumbled into a pit of iron spikes'
                 : 'fell into a pit of iron spikes';
-            await losehp(rnd(conj_pit ? 4 : adj_pit ? 6 : 10), spikeKnam, NO_KILLER_PREFIX);
+            await losehp(Maybe_Half_Phys(rnd(conj_pit ? 4 : adj_pit ? 6 : 10)), spikeKnam, NO_KILLER_PREFIX);
             if (!rn2(6)) {
                 const { poisoned } = await import('./attrib.js');
                 await poisoned('spikes', A_STR,
@@ -2400,7 +2404,7 @@ async function trapeffect_pit(trap, trflags) {
                    && !(plunged && (Flying || (mflags1_of(youmonst_data_pub()) & M1_CLING) !== 0))) {
             /* plunging flyers take spike damage but not pit damage */
             const pitKnam = plunged ? 'deliberately plunged into a pit' : 'fell into a pit';
-            await losehp(rnd(adj_pit ? 3 : 6), pitKnam, NO_KILLER_PREFIX);
+            await losehp(Maybe_Half_Phys(rnd(adj_pit ? 3 : 6)), pitKnam, NO_KILLER_PREFIX);
         }
         if (Punished_fu() && !carried(game.u.uball)) {
             const { unplacebc, ballfall, placebc } = await import('./ball.js');
@@ -2753,7 +2757,7 @@ export async function animate_statue(statue, x, y, cause, fail_reason) {
     const { msound_of, hides_under_flag: hides_under_flag_trap } = await import('./monflags_data.js');
     const { quest_info } = await import('./questpgr.js');
     const { christen_monst } = await import('./do_name.js');
-    const { set_malign, newcham } = await import('./makemon.js');
+    const { set_malign, newcham_wizard_aware } = await import('./makemon.js');
     const MS_GUARDIAN = 38; /* monflag.h */
     const PM_DOPPELGANGER = name_to_pmidx('doppelganger');
     const PM_FLESH_GOLEM = name_to_pmidx('flesh golem');
@@ -2803,7 +2807,7 @@ export async function animate_statue(statue, x, y, cause, fail_reason) {
                NON_PM; otherwise, set form to match the statue */
             if (mon) await (await import('./makemon.js')).makemon_appears_msg(mon, x, y, mmflags);
             if (mon && mon.cham != null && mon.cham >= 0)
-                newcham(mon, mptr);
+                await newcham_wizard_aware(mon, mptr);
         } else {
             if (cause === C.ANIMATE_SPELL)
                 mmflags |= C.MM_ADJACENTOK;
@@ -3000,7 +3004,7 @@ export async function dofiretrap(box) {
         if (u.uhpmax < uhpmin) {
             setuhpmax(Math.min(olduhpmax, uhpmin), false);
             game.botl = true;
-            if (!u.uprops?.Drain_resistance) await losexp(null);
+            if (!(await import("./youprop.js")).Drain_resistance_hero()) await losexp(null);
         }
         if (u.uhp > u.uhpmax) { u.uhp = u.uhpmax; game.botl = true; }
         monstunseesu(M_SEEN_FIRE);
@@ -3038,7 +3042,7 @@ const MAXULEV = 30;
 // C ref: obj.h Is_box(otmp).
 function Is_box_otyp(otyp) { return otyp === LARGE_BOX || otyp === CHEST; }
 // C ref: mondata.h mindless(ptr).
-function mindless_pm(ptr) { return ((ptr?.mflags1 | 0) & M1_MINDLESS) !== 0; }
+function mindless_pm(ptr) { return mindless_flag(ptr); }
 // C ref: mon.h helpless(mon) — can't act this turn.
 function helpless_mon(mon) {
     return !mon?.mcanmove || !!mon?.msleeping || (mon?.mfrozen | 0) > 0;
@@ -3073,21 +3077,44 @@ export async function could_untrap(verbosely, check_floor) {
 }
 
 // C ref: trap.c:5289 untrap_prob(ttmp) — 0 on success, non-0 on failure.
-function untrap_prob(ttmp) {
+// C ref: obj.h is_blade(otmp) — WEAPON_CLASS with oc_skill in P_DAGGER..P_SABER.
+function is_blade_tr(obj) {
+    const sk = objects[obj?.otyp]?.oc_skill ?? 0;
+    return !!obj && obj.oclass === WEAPON_CLASS && sk >= 1 /* P_DAGGER */ && sk <= 9 /* P_SABER */;
+}
+// C ref: trap.c untrap_prob()/disarm_holdingtrap() — the blade a hero would
+// cut a web with: the wielded weapon, else the active secondary weapon.
+function web_blade_tr() {
+    const u = game.u;
+    return (game.uwep && is_blade_tr(game.uwep)) ? game.uwep
+        : (game.uswapwep && u?.twoweap && is_blade_tr(game.uswapwep)) ? game.uswapwep
+        : null;
+}
+async function untrap_prob(ttmp) {
     const u = game.u;
     let chance = 3;
 
+    /* non-spiders are less adept at dealing with webs */
     if (ttmp.ttyp === WEB) {
-        // is_blade()/ART_STING/attacks(AD_FIRE) need the artifact + weapon
-        // subsystems; a non-webmaker hero without a blade takes chance 7.
+        const wep = web_blade_tr();
         const data = u?.data;
         const webmaker = data?.name === 'cave spider' || data?.name === 'giant spider';
-        if (!webmaker) chance = 7; /* 5.0: used to be 30 */
+
+        if (wep && !m_at(ttmp.tx, ttmp.ty)) {
+            /* primary or secondary weapon is a blade (which includes
+               daggers but not axes or bladed polearms) */
+            const { is_art, attacks, ART_STING } = await import('./artifact.js');
+            if (is_art(game.uwep, ART_STING) || attacks(AD_FIRE, wep))
+                chance = 1;
+            /* else chance stays 3 */
+        } else if (!webmaker) {
+            chance = 7; /* 5.0: used to be 30 */
+        }
     }
     if (u?.uprops?.Confusion || Hallucination_u()) chance++;
     if (Blind()) chance++;
-    if (u?.uprops?.Stun || u?.Stunned || u?.formprops?.Stunned) chance += 2;
-    if (u?.HFumbling || u?.EFumbling) chance *= 2;
+    if ((await import('./youprop.js')).Stunned_hero()) chance += 2;
+    if (Fumbling_hero()) chance *= 2;
     /* Your own traps are better known than others. */
     if (ttmp.madeby_u) chance--;
     if (game.urole?.mnum === ROLE_MNUM_RANGER && ttmp.ttyp === BEAR_TRAP && chance <= 3)
@@ -3212,7 +3239,7 @@ async function try_disarm(ttmp, force_failure) {
         return 0;
     }
     /* We might be forced to move onto the trap's location. */
-    if (sobj_at_floor(BOULDER, ttmp.tx, ttmp.ty) && !u?.uprops?.Passes_walls
+    if (sobj_at_floor(BOULDER, ttmp.tx, ttmp.ty) && !Passes_walls_hero()
         && !under_u) {
         await pline('There is a boulder in your way.');
         return 0;
@@ -3230,7 +3257,7 @@ async function try_disarm(ttmp, force_failure) {
     }
 
     /* Will our hero succeed? */
-    if (force_failure || untrap_prob(ttmp)) {
+    if (force_failure || await untrap_prob(ttmp)) {
         if (rnl(5)) {
             await pline('Whoops...');
             if (mtmp) { /* must be a trap that holds monsters */
@@ -3318,9 +3345,16 @@ async function disarm_holdingtrap(ttmp) {
         await pline(`You disarm ${which} bear trap.`);
         await cnv_trap_obj(BEARTRAP_OTYP, 1, ttmp, false);
     } else if (ttmp.ttyp === WEB) {
-        // is_blade()/artifact webs need the weapon subsystem; a bare-handed
-        // hero always gets the plain removal line.
-        await pline(`You succeed in removing ${which} web.`);
+        const wep = web_blade_tr();
+        const { is_art, attacks, ART_STING, bare_artifactname } = await import('./artifact.js');
+        if (wep && wep.oartifact
+            && (is_art(game.uwep, ART_STING) || attacks(AD_FIRE, wep)))
+            await pline(`${bare_artifactname(game.uwep)} ${
+                is_art(game.uwep, ART_STING) ? 'cuts' : 'burns'} through ${which} web!`);
+        else if (wep)
+            await pline(`You cut through ${which} web.`);
+        else
+            await pline(`You succeed in removing ${which} web.`);
         deltrap(ttmp);
     }
     newsym(u.ux + u.dx, u.uy + u.dy);
@@ -3409,7 +3443,7 @@ async function help_monster_out(mtmp, ttmp) {
     }
     /* check_capacity(0) */
     if (await check_capacity()) return 1;
-    const uprob = untrap_prob(ttmp);
+    const uprob = await untrap_prob(ttmp);
     if (uprob && !helpless_mon(mtmp)) {
         await pline(`You try to reach out your ${body_part(ARM_BP)}s, but ${
             mon_nam(mtmp)} backs away skeptically.`);
@@ -3580,8 +3614,9 @@ export async function chest_trap(obj, bodypart, disarm) {
             const blindgas = ['humid', 'odorless', 'pungent', 'chilling', 'acrid', 'biting'];
             const gascol = Blind() ? blindgas[rn2(6)] : rndcolor();
             await pline(`A cloud of ${gascol} gas billows from ${the_str(xname(obj))}.`);
-            if (!u?.uprops?.Stun) {
-                const hres = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0);
+            if (!(await import('./youprop.js')).Stunned_hero()) {
+                const hres = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0)
+                    || worn_extrinsic(24 /* HALLUC_RES */) || u.formprops?.Halluc_resistance;
                 if (Hallucination_u())
                     await pline('What a groovy feeling!');
                 else
@@ -3610,7 +3645,7 @@ async function disarm_box(box, force, confused) {
     if (box.otrapped) {
         let ch = acurr_eff(A_DEX) + (u.ulevel | 0);
         if (game.urole?.mnum === ROLE_MNUM_ROGUE) ch *= 2;
-        if (!force && (confused || u?.HFumbling || u?.EFumbling
+        if (!force && (confused || Fumbling_hero()
                        || rnd(75 + Math.trunc(level_difficulty() / 2)) > ch)) {
             await chest_trap(box, FINGER, true);
         } else {
@@ -3776,7 +3811,8 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
     // C ref: trap.c:5998 — at most one container per move may be checked.
     if (floor_reachable && boxcnt) {
         const { ynq } = await import('./invent.js');
-        for (const otmp of (game.level?.objects || [])) {
+        /* C walks level.objects[x][y] via nexthere: topmost first (flat array is deepest-first) */
+        for (const otmp of [...(game.level?.objects || [])].reverse()) {
             if (!(otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y
                   && Is_box_otyp(otmp.otyp))) continue;
             const { safe_qbuf } = await import('./pickup.js');
@@ -3825,7 +3861,7 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
             const ch = 15 + ((game.urole?.mnum === ROLE_MNUM_ROGUE)
                 ? (u.ulevel | 0) * 3 : (u.ulevel | 0));
             exercise(A_DEX, true);
-            if (!force && (confused || u?.HFumbling || u?.EFumbling
+            if (!force && (confused || Fumbling_hero()
                            || rnd(75 + Math.trunc(level_difficulty() / 2)) > ch)) {
                 await pline('You set it off!');
                 const { b_trapped } = await import('./cmd.js');
@@ -3951,8 +3987,7 @@ async function tele_trap(trap) {
     // Gehennom demon court, the level flag (covetous polyforms bypass it) and
     // wand-of-stasis, not just the level flag.
     const { noteleport_level } = await import('./monmove.js');
-    if (In_endgame(u?.uz) || u?.uprops?.Antimagic || u?.Antimagic
-        || u?.HAntimagic || u?.EAntimagic || worn_extrinsic(ANTIMAGIC)
+    if (In_endgame(u?.uz) || (await import('./youprop.js')).Antimagic_hero()
         || noteleport_level({ data: youmonst_data_pub() })) {
         await You_feel('a wrenching sensation.');
     } else if (!(await (await import('./apply.js')).next_to_u())) {
@@ -3968,8 +4003,7 @@ async function tele_trap(trap) {
         let mtmp = m_at(trap.teledest.x, trap.teledest.y);
         settrack();
         if (mtmp) {
-            const { enexto_spawn } = await import('./makemon.js');
-            const cc = enexto_spawn(mtmp.mx, mtmp.my, mtmp.data);
+            const cc = enexto_gpflags(mtmp.mx, mtmp.my, mtmp.data, 0);
             if (!cc) {
                 await update_topl('You shudder for a moment.');
             } else {
@@ -4002,16 +4036,6 @@ export async function vault_tele() {
     await scrolltele(null);
 }
 
-// C ref: mkroom.c:765 search_special(type) — first room (then subroom) whose
-// rtype matches.  ANY_TYPE/ANY_SHOP are not needed by the callers here.
-function search_special(type) {
-    for (const croom of (game.level?.rooms || []))
-        if (croom.rtype === type) return croom;
-    for (const croom of (game.level?.subrooms || []))
-        if (croom.rtype === type) return croom;
-    return null;
-}
-
 // C ref: trap.c:2087 trapeffect_level_telep(&youmonst, ...) — the hero branch:
 // seetrap() then level_tele_trap().
 async function trapeffect_level_telep(trap, trflags) {
@@ -4034,8 +4058,7 @@ export async function level_tele_trap(trap, trflags) {
 
     // Antimagic (shieldeff has no RNG) and In_endgame both abort before the
     // deltrap, leaving the trap in place.
-    const antimagic = !!(u?.uprops?.Antimagic || u?.Antimagic
-        || u?.HAntimagic || u?.EAntimagic || worn_extrinsic(ANTIMAGIC));
+    const antimagic = (await import('./youprop.js')).Antimagic_hero();
     if ((antimagic && !intentional) || In_endgame(u?.uz)) {
         await You_feel('a wrenching sensation.');
         return;
@@ -4073,8 +4096,7 @@ async function trapeffect_anti_magic(trap, _trflags) {
         return;
     }
     seetrap(trap);
-    if (u.uprops?.Antimagic || u.Antimagic || u.HAntimagic || u.EAntimagic
-        || worn_extrinsic(ANTIMAGIC)) {
+    if ((await import('./youprop.js')).Antimagic_hero()) {
         const { ART_MAGICBANE, is_art, defends_when_carried } = await import('./artifact.js');
         const { is_quest_artifact } = await import('./questpgr.js');
         let damage = rnd(4);
@@ -4085,8 +4107,7 @@ async function trapeffect_anti_magic(trap, _trflags) {
         if (inventoryArray().some(obj => obj.oartifact && !is_quest_artifact(obj)
             && defends_when_carried(AD_MAGM, obj)))
             damage += rnd(4);
-        if (u.uprops?.Passes_walls || u.HPasses_walls || u.EPasses_walls
-            || worn_extrinsic(PASSES_WALLS) || passes_walls_flag(game.youmonst?.data))
+        if (Passes_walls_hero())
             damage = Math.trunc((damage + 3) / 4);
         await You_feel(damage >= hp ? 'unbearably torpid!'
             : damage >= Math.trunc(hp / 4) ? 'very lethargic.' : 'sluggish.');
@@ -4111,7 +4132,7 @@ export async function drain_en(n, max_already_drained) {
     let punct = max_already_drained ? '!' : '.';
     let mesg;
     if ((u.uenmax ?? 0) < 1) {
-        if (u.uen || u.uenmax) { u.uen = 0; u.uenmax = 0; }
+        if (u.uen || u.uenmax) { u.uen = 0; u.uenmax = 0; game.botl = true; }
         mesg = 'momentarily lethargic';
     } else {
         if (n > Math.trunc(((u.uen ?? 0) + u.uenmax) / 3)) n = rnd(n);  // trap.c:5222
@@ -4125,6 +4146,7 @@ export async function drain_en(n, max_already_drained) {
         } else if (u.uen > u.uenmax) {
             u.uen = u.uenmax;
         }
+        game.botl = true;
     }
     await You_feel(`${mesg}${punct}`);
 }
@@ -4268,10 +4290,7 @@ async function dismount_steed_fu(reason) {
 // TIMED_PROPS keys), E<Prop> is invent.js's worn_extrinsic() store, and the
 // FROMFORM bit is polyself.js set_uasmon()'s u.formprops.
 function uprop_word(key) { return game.u?.uprops?.[key] | 0; }
-export function Wwalking_fu() {
-    return !!(uprop_word('HWwalking') || uprop_word('EWwalking') || worn_extrinsic(WWALKING))
-        && !Is_waterlevel(game.u?.uz);
-}
+export function Wwalking_fu() { return Wwalking_hero(); }
 export function Swimming_fu() { return Swimming_hero(); }
 function Magical_breathing_fu() {
     return !!(uprop_word('HMagical_breathing') || worn_extrinsic(MAGICAL_BREATHING));
@@ -4293,7 +4312,9 @@ export function Teleport_control_fu() {
 }
 function Passes_walls_fu() { return Passes_walls_hero(); }
 function Fire_resistance_fu() {
-    return !!(uprop_word('HFire_resistance') || worn_extrinsic(FIRE_RES)
+    return !!(uprop_word('HFire_resistance') || uprop_word('Fire_resistance')
+              || uprop_word('EFire_resistance') || worn_extrinsic(FIRE_RES)
+              || has_innate('HFire_resistance')
               || game.u?.formprops?.Fire_resistance);
 }
 // C ref: youprop.h Punished == (uball != 0); read.c punish() sets u.uball.
@@ -4680,7 +4701,7 @@ export async function dotrap(trap, trflags = 0) {
         // dropped: an already-seen MAGIC_PORTAL / VIBRATING_SQUARE /
         // ANTI_MAGIC draws NO rn2(5) at all, and neither does a Fumbling,
         // bungling, plunging or pit-to-pit step.
-        const fumbling = !!(u?.HFumbling || u?.EFumbling);
+        const fumbling = !!(Fumbling_hero());
         if (already_seen && !fumbling && !undestroyable_trap(ttype)
             && ttype !== ANTI_MAGIC && !forcebungle && !plunged
             && !conj_pit && !adj_pit
@@ -5454,10 +5475,11 @@ async function dosinkfall() {
     const fell_on_sink = 'fell onto a sink';
     const levbits = (u.uprops?.Levitation | 0) || (u.uprops?.HLevitation | 0)
                   || (u.uprops?.ELevitation | 0);
-    const lev_boots = game.uarmf?.otyp === LEVITATION_BOOTS_SF;
+    let lev_boots = game.uarmf?.otyp === LEVITATION_BOOTS_SF;
     const innate_lev = (levbits & (FROMOUTSIDE | FROM_FORM)) !== 0;
     const blockd_lev = (u.uprops?.BLevitation | 0) === I_SPECIAL;
-    const flying = !!(u.uprops?.Flying || u.HFlying || u.EFlying);
+    const flying = !!(u.uprops?.Flying || u.HFlying || u.EFlying
+                      || ((u.uprops_extrinsic || {})[49 /* FLYING */] | 0));
     const ufall = !innate_lev && !blockd_lev && !flying;
 
     if (!ufall) {
@@ -5478,7 +5500,8 @@ async function dosinkfall() {
         await losehp(Maybe_Half_Phys(dmg), fell_on_sink, NO_KILLER_PREFIX);
         exercise(A_DEX, false);
         await selftouch('Falling, you');
-        for (const obj of (game.level?.objects || [])) {
+        /* nexthere chain: topmost first */
+        for (const obj of [...(game.level?.objects || [])].reverse()) {
             if (obj.ox !== u.ux || obj.oy !== u.uy) continue;
             if (obj.where !== OBJ_FLOOR) continue;
             if (obj.oclass === WEAPON_CLASS || is_weptool(obj)) {
@@ -5493,6 +5516,8 @@ async function dosinkfall() {
 
     if (ufall || lev_boots) {
         await stop_donning(lev_boots ? game.uarmf : null);
+        /* recalculate in case uarmf just got set to null */
+        lev_boots = game.uarmf?.otyp === LEVITATION_BOOTS_SF;
     }
 
     /* C: ELevitation &= ~W_ARTI; HLevitation &= ~(I_SPECIAL|TIMEOUT);
@@ -5554,6 +5579,10 @@ export async function spoteffects(pick) {
         /* or transformed trap (land mine -> pit) */
         && (!spottrap || !trap || trap.ttyp === spottraptyp))
         return;
+
+    /* when float_down() puts hero into lava and she teleports out,
+       defer spoteffects() until after "you are back on solid <surface>" */
+    if (game._in_lava_effects) return;
 
     ++inspoteffects;
     spotterrain = terrain_here;
@@ -5693,7 +5722,8 @@ export function force_launch_placement() {
     }
 }
 
-function feeltrap(trap) { if (!trap) return; trap.tseen = true; newsym(trap.tx, trap.ty); }
+// C ref: trap.c:3588 feeltrap() -- like seetrap() but overrides vision: map the trap glyph even if unseen.
+export function feeltrap(trap) { if (!trap) return; trap.tseen = true; map_trap(trap, true); newsym(trap.tx, trap.ty); }
 function sgn_(n) { return n > 0 ? 1 : (n < 0 ? -1 : 0); }
 function distmin_(x0, y0, x1, y1) {
     const dx = Math.abs(x0 - x1), dy = Math.abs(y0 - y1);
@@ -5705,7 +5735,7 @@ function distmin_(x0, y0, x1, y1) {
 async function trapeffect_rolling_boulder_trap(trap, _trflags) {
     const style = ROLL | (trap.tseen ? LAUNCH_KNOWN : 0);
     feeltrap(trap);
-    await pline('Click!  You trigger a rolling boulder trap!');
+    await pline(`${!(await import('./display.js')).Deaf_hero() ? 'Click!  ' : ''}You trigger a rolling boulder trap!`);
     game._toplin = 1;
     const r = await launch_obj(BOULDER, trap.launch.x, trap.launch.y,
                                trap.launch2.x, trap.launch2.y, style);
@@ -5736,6 +5766,7 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     let singleobj;
     if ((otmp.quan || 1) === 1) {
         obj_extract_self(otmp);
+        (await import('./monmove.js')).maybe_unhide_at(otmp.ox, otmp.oy);
         singleobj = otmp;
     } else {
         singleobj = splitobj(otmp, 1);
@@ -5745,6 +5776,20 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     // extraction does not, so do it here (and after every extraction below).
     if (otyp === BOULDER) recalc_block_point(x1, y1);
     newsym(x1, y1);
+    /* in case you're using a pick-axe to chop the boulder that's being
+       launched (perhaps a monster triggered it), destroy context so that
+       the next dig attempt never thinks that you're resuming
+       the previous effort */
+    {
+        const dg = game.context?.digging;
+        if ((otyp === BOULDER || otyp === STATUE_OTYP) && dg && dg.pos
+            && singleobj.ox === dg.pos.x && singleobj.oy === dg.pos.y)
+            game.context.digging = {
+                level: { dnum: 0, dlevel: 0 }, pos: { x: 0, y: 0 },
+                down: false, chew: false, warned: false, quiet: false,
+                effort: 0, lastdigtime: 0,
+            };
+    }
     let dist = distmin_(x1, y1, x2, y2);
     let x = x1, y = y1;
     const dx = sgn_(x2 - x1), dy = sgn_(y2 - y1);
@@ -6088,8 +6133,8 @@ export async function openholdingtrap(mon, noticed) {
         case TT_INFLOOR: trapdescr = 'ground'; break;
         case TT_BURIEDBALL: trapdescr = 'your anchor'; which = ''; break;
         case TT_BEARTRAP: case TT_PIT: case TT_WEB:
-            trapdescr = trapname(t ? t.ttyp
-                : (u.utraptype === TT_WEB ? WEB : u.utraptype === TT_PIT ? PIT : BEAR_TRAP), false);
+            trapdescr = trapname(u.utraptype === TT_WEB ? WEB
+                : u.utraptype === TT_PIT ? PIT : BEAR_TRAP, false);
             break;
         default: trapdescr = 'trap'; break;
         }

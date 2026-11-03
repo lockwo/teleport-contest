@@ -36,7 +36,8 @@ import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
 import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object, weight, nextoid, add_to_container, unknow_object, unbless } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
-import { set_mon_data, slimeproof, monstseesu, monstunseesu } from './mondata.js';
+import { set_mon_data, slimeproof, monstseesu, monstunseesu, resists_ston as md_resists_ston,
+    resists_acid as md_resists_acid } from './mondata.js';
 import { mon_knows_traps, mon_learns_traps } from './montraps.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
@@ -46,7 +47,7 @@ import { hard_helmet } from './do_wear.js';
 // onscary() is an `export function` declaration in monmove.js, so the
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
 // (unlike a `const` arrow, which would be in its temporal dead zone here).
-import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item,
+import { onscary, m_next2u, m_lined_up, m_carrying, mon_would_take_item, blocking_terrain,
     objectsAt, mon_mintrap,
     in_your_sanctuary, monflee as monflee_full, locomotion, accessible } from './monmove.js';
 // base_mmove() is likewise a hoisted `export function`, so the cycle is safe.
@@ -56,7 +57,7 @@ import { base_mmove, healmon, DEADMONSTER, monsterList, mon_hates_silver, can_ca
 // --More-- for the UNACKNOWLEDGED previous one first (or appends to it when both
 // fit).  js/display.js pline() only overwrites the pending text, so monster
 // messages that land mid-turn must go through update_topl() to get C's boundary.
-import { update_topl, set_msg_mon, Norep, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at, You_feel } from './display.js';
+import { canseemon_shared, update_topl, set_msg_mon, Norep, urgent_topl, shieldeff, newsym, map_invisible, cls, docrt, show_monster_and_self, see_with_infrared, stairway_at, You_hear, Hallucination_u, Hallucination_u as Hallucination, m_at, You_feel } from './display.js';
 import { Monnam, mon_nam, x_monnam, seemimicLocal } from './uhitm.js';
 import { ARTICLE_A, SUPPRESS_INVISIBLE, SUPPRESS_SADDLE, SUPPRESS_IT, AUGMENT_IT } from './do_name.js';
 import { same_race, dog_nutrition, monnear } from './dogmove.js';
@@ -251,19 +252,7 @@ function sobj_at(otyp, x, y) {
 
 // C ref: display.c canseemon(mon).
 function canseemon(mtmp) {
-    if (!mtmp) return false;
-    // C ref: vision.c:545 — swallowed, the viz_array is all zero ("you see
-    // nothing, nothing can see you"), so cansee() is false for every square and
-    // see_with_infrared() (which needs couldsee()) is false too.  Both go
-    // through the vision arrays below, so no special case is wanted here.
-    if (mtmp.minvis && !game.u?.see_invis) return false;
-    // C ref: display.h _mon_visible() — `(!minvis || See_invisible) && !mundetected`.
-    if (mtmp.mundetected) return false;
-    // C ref: display.h _canseemon() — `cansee(mx, my) || see_with_infrared(mon)`.
-    // The infravision half is what lets a non-human hero (dwarf/gnome/orc/elf)
-    // see a warm-blooded monster on an unlit square that is still in line of
-    // sight; omitting it silently suppressed those monsters' messages.
-    return !!cansee(mtmp.mx, mtmp.my) || see_with_infrared(mtmp);
+    return canseemon_shared(mtmp);
 }
 // C ref: display.c canspotmon(mon) == canseemon(mon) || sensemon(mon);
 // sensemon() is mon.js's (telepathy / warning / monster detection).
@@ -333,7 +322,7 @@ function nonliving(ptr) {
 // C ref: monst.h resists_ston(mon) — species bit only (see js/mon.js for why
 // the acquired sources are not modeled).
 function resists_ston(mon) {
-    return ((mon?.data?.mresists ?? 0) & MR_STONE_BIT) !== 0;
+    return md_resists_ston(mon);
 }
 // C ref: mondata.h poly_when_stoned(ptr) — a stoning victim that turns into a
 // stone golem instead of dying.  Only the flesh golem / clay+etc. golems do.
@@ -727,8 +716,8 @@ function m_sees_sleepy_soldier(mtmp) {
         for (let yy = y - 3; yy <= y + 3; yy++) {
             if (!isok(xx, yy) || (xx === x && yy === y)) continue;
             const mon = m_at(xx, yy);
-            if (mon && is_mercenary(mon.data) && mon.data?.name !== 'watchman'
-                && mon.data?.name !== 'guard' && helpless(mon))
+            if (mon && is_mercenary(mon.data) && mon.data?.name !== 'guard'
+                && helpless(mon))
                 return true;
         }
     return false;
@@ -1030,7 +1019,7 @@ function reveal_trap(t, seeit) {
 }
 
 async function mon_escape(mtmp, vismon) {
-    if (mon_has_special(mtmp) || (mtmp.iswiz && (game.no_of_wizards | 0) < 2))
+    if (mon_has_special(mtmp) || (mtmp.iswiz && (game.context?.no_of_wizards | 0) < 2))
         return 0;
     if (vismon) { set_msg_mon(mtmp); await update_topl(`${Monnam(mtmp)} escapes the dungeon!`); }
     await mongone(mtmp);
@@ -1108,6 +1097,9 @@ export async function use_defensive(mtmp) {
         let scroll = otmp;
         if ((scroll.quan || 1) > 1) scroll = splitobj(scroll, 1);
         await (await import('./worn.js')).extract_from_minvent(mtmp, scroll, false, false);
+        /* 'last_msg' will be changed to PLNMSG_UNKNOWN if any messages are
+           issued by mreadmsg(), 'if (vismon) pline()', or m_tele() */
+        game.last_msg = 9999; /* C: PLNMSG_enum sentinel */
         await mreadmsg(mtmp, scroll);
         if (obj_is_cursed || mtmp.mconf) {
             const { random_teleport_level, get_level } = await import('./do.js');
@@ -1130,7 +1122,7 @@ export async function use_defensive(mtmp) {
         } else {
             await m_tele(mtmp, vismon, oseen, OT().SCR_TELEPORTATION);
         }
-        if (scroll.dknown) await trycall(scroll);
+        if (scroll.dknown && game.last_msg !== 9999) await trycall(scroll);
         return 2;
     }
     case MUSE_WAN_DIGGING:
@@ -1140,6 +1132,7 @@ export async function use_defensive(mtmp) {
         if (oseen) makeknown(OT().WAN_DIGGING);
         if (IS_FURNITURE(levl_typ(mtmp.mx, mtmp.my))
             || IS_DRAWBRIDGE(levl_typ(mtmp.mx, mtmp.my))
+            || (await import('./dbridge.js')).is_drawbridge_wall(mtmp.mx, mtmp.my) >= 0
             || stairway_at(mtmp.mx, mtmp.my)) {
             await update_topl('The digging ray is ineffective.');
             return 2;
@@ -1158,10 +1151,13 @@ export async function use_defensive(mtmp) {
                 await update_topl(`${Monnam(mtmp)} has made a pit in the ${
                     surface(mtmp.mx, mtmp.my)}.`);
             }
+            await (await import('./trap.js')).fill_pit(mtmp.mx, mtmp.my);
+            (await import('./vision.js')).recalc_block_point(mtmp.mx, mtmp.my);
             return (await mon_mintrap(mtmp, FORCEBUNGLE)) === Trap_Killed_Mon ? 1 : 2;
         }
         t = await maketrap(mtmp.mx, mtmp.my, HOLE);
         if (!t) return 2;
+        (await import('./vision.js')).recalc_block_point(mtmp.mx, mtmp.my);
         seetrap(t);
         if (vis) {
             set_msg_mon(mtmp);
@@ -1174,6 +1170,7 @@ export async function use_defensive(mtmp) {
             await You_hear(`something crash through the ${
                 surface(mtmp.mx, mtmp.my)}.`);
         }
+        await (await import('./trap.js')).fill_pit(mtmp.mx, mtmp.my);
         await migrate_to_level(mtmp, ledger_no(game.u.uz) + 1, MIGR_RANDOM, null);
         return 2;
     case MUSE_WAN_UNDEAD_TURNING:
@@ -1470,7 +1467,7 @@ function linedup_callback(ax, ay, bx, by, check) {
     let cx = bx, cy = by;
     do {
         cx += dx; cy += dy;
-        if (!isok(cx, cy)) return false;
+        if (!isok(cx, cy) || blocking_terrain(cx, cy)) return false;
         if (check(cx, cy)) return true;
     } while (cx !== ax || cy !== ay);
     return false;
@@ -1528,7 +1525,8 @@ function mon_has_friends(mtmp) {
 
 function mon_likes_objpile_at(mtmp, x, y) {
     if (!isok(x, y)) return false;
-    const pile = objectsAt(x, y);
+    /* C's nexthere chain is newest-first; our flat array is oldest-first */
+    const pile = objectsAt(x, y).reverse();
     if (!pile.length) return false;
 
     /* monster likes any of the top 3 items in the pile? */
@@ -2690,8 +2688,15 @@ export async function mon_reflects(mon, str) {
         }
         return true;
     }
-    /* C also checks arti_reflects(MON_WEP(mon)); the port creates no reflecting
-       artifact weapon, so that branch can never fire. */
+    if (mon.mw) {
+        const { arti_reflects } = await import('./artifact.js');
+        if (arti_reflects(mon.mw)) {
+            /* due to wielded artifact weapon */
+            if (str)
+                await update_topl(reflect_msg(str, s_suffix(mon_nam(mon)), 'weapon'));
+            return true;
+        }
+    }
     if ((orefl = which_armor(mon, W_AMUL))
         && orefl.otyp === OT().AMULET_OF_REFLECTION) {
         if (str) {
@@ -2729,6 +2734,7 @@ function reflect_msg(fmt, who, what) {
 export async function munstone(mon, by_you) {
     if (resists_ston(mon)) return false;
     if (mon.meating || helpless(mon)) return false;
+    mon.mstrategy = (mon.mstrategy | 0) & ~STRAT_WAITFORU;
 
     const tinok = mcould_eat_tin(mon);
     for (const obj of (mon.minvent || [])) {
@@ -2800,7 +2806,7 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
     if (lizard && (mon.mconf || mon.mstun)) {
         mon.mconf = 0;
         mon.mstun = 0;
-        if (vis && mon.data?.name !== 'bat' && mon.data?.name !== 'giant bat'
+        if (vis && !['bat', 'giant bat', 'vampire bat'].includes(mon.data?.name)
             && mon.data?.name !== 'stalker') {
             set_msg_mon(mon);
             await update_topl(`${Monnam(mon)} seems steadier now.`);
@@ -2815,12 +2821,9 @@ async function mon_consume_unstone(mon, obj, by_you, stoning) {
     mon.movement = (mon.movement | 0) - NORMAL_SPEED;
     mon.mlstmv = game.moves;
 }
-// C ref: mondata.h resists_acid(mon).  monflag.h MR_ACID is 0x40; 0x20 (the old
-// value) is MR_POISON, so this answered with the wrong resistance bit.
-function resists_acid_mon(mon) {
-    const MR_ACID = 0x40;
-    return ((mon?.data?.mresists ?? 0) & MR_ACID) !== 0;
-}
+// C ref: mondata.h resists_acid(mon) — the shared reader (intrinsic bits plus
+// worn items/artifacts), not a local mresists test.
+function resists_acid_mon(mon) { return md_resists_acid(mon); }
 
 // C ref: muse.c cures_stoning(mon, obj, tinok).
 function cures_stoning(mon, obj, tinok) {
@@ -2912,9 +2915,10 @@ async function muse_unslime(mon, obj, trap, by_you) {
     let vis = canseemon(mon), res = true, dmg = 0;
 
     if (vis) {
+        const { hcolor } = await import('./do_name.js');
         set_msg_mon(mon);
         await update_topl(`${Monnam(mon)} starts turning ${
-            green_mon(mon) ? 'into ooze' : 'green'}.`);
+            green_mon(mon) ? 'into ooze' : hcolor('green')}.`);
     }
     await mon_adjust_speed(mon, -4, null);
 

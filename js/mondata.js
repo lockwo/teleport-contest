@@ -14,6 +14,10 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     from './monattk_data.js';
 import { game, hooks } from './gstate.js';
 import { rn2 } from './rng.js';
+import { M2_STALK } from './monflags_data.js';
+import { species } from './worn.js';
+import { objects } from './mkobj.js';
+import { W_ARMOR, W_ACCESSORY, W_WEP, W_ARMC } from './const.js';
 import { mflags1_of, msound_of, M1_NOHEAD, mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
@@ -36,21 +40,43 @@ import { register_monnam_hooks } from './do_name.js';
 // C ref: monflag.h MR_* resistance bits (permonst.mresists).
 const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40;
 
-// C ref: monst.h resists_*(mon) == Resists_Elem(mon, X) ==
-// (mresists | mextrinsics | mintrinsics) & X.  Monster extrinsics/intrinsics
-// (worn gear -> worn.js update_mon_extrinsics, eaten corpses -> mon_givit)
-// are tracked on the monster record in mextrinsics/mintrinsics.
-const resists_bit = (mon, bit) =>
-    ((((mon?.data?.mresists ?? 0) | (mon?.mextrinsics ?? 0)
-       | (mon?.mintrinsics ?? 0)) & bit) !== 0);
-export const resists_fire = (mon) => resists_bit(mon, MR_FIRE);
-export const resists_cold = (mon) => resists_bit(mon, MR_COLD);
-export const resists_elec = (mon) => resists_bit(mon, MR_ELEC);
-export const resists_acid = (mon) => resists_bit(mon, MR_ACID);
-export const resists_sleep = (mon) => resists_bit(mon, 0x04);
-export const resists_disint = (mon) => resists_bit(mon, 0x08);
-export const resists_poison = (mon) => resists_bit(mon, 0x20);
-export const resists_ston = (mon) => resists_bit(mon, 0x80);
+// C ref: mondata.c:129 Resists_Elem(mon, propindx), propindx FIRE_RES(1)..STONE_RES(8):
+// species/extrinsic/intrinsic bits, a wielded artifact that defends, a worn
+// item whose oc_oprop is the property (or a worn alchemy smock for
+// poison/acid), and an artifact carried that defends.  The hero arm
+// (u.uprops) is not served here: callers use the *_resistance readers.
+// `species` resolves a pet's abbreviated data to the full permonst row.
+function Resists_Elem(mon, propindx) {
+    const rsstmask = 1 << (propindx - 1), damgtype = propindx + 1;
+    const dat = species(mon);
+    if ((((dat?.mresists ?? 0) | (mon?.mextrinsics ?? 0) | (mon?.mintrinsics ?? 0))
+         & rsstmask) !== 0)
+        return true;
+    let o = MON_WEP(mon);
+    if (o && o.oartifact && defends(damgtype, o))
+        return true;
+    const slotmask = W_ARMOR | W_ACCESSORY | W_WEP;
+    for (o of (mon?.minvent || [])) {
+        if ((((o.owornmask | 0) & slotmask) !== 0
+             && (objects[o.otyp]?.oc_oprop | 0) === propindx)
+            || (((o.owornmask | 0) & W_ARMC) === W_ARMC
+                && objects[o.otyp]?.name === 'alchemy smock'
+                && (propindx === POISON_RES_P || propindx === ACID_RES_P))
+            || (o.oartifact && defends_when_carried(damgtype, o)))
+            return true;
+    }
+    return false;
+}
+const POISON_RES_P = 6, ACID_RES_P = 7;
+function resists_bit(mon, bit) { return Resists_Elem(mon, Math.log2(bit) + 1); }
+export function resists_fire(mon) { return resists_bit(mon, MR_FIRE); }
+export function resists_cold(mon) { return resists_bit(mon, MR_COLD); }
+export function resists_elec(mon) { return resists_bit(mon, MR_ELEC); }
+export function resists_acid(mon) { return resists_bit(mon, MR_ACID); }
+export function resists_sleep(mon) { return resists_bit(mon, 0x04); }
+export function resists_disint(mon) { return resists_bit(mon, 0x08); }
+export function resists_poison(mon) { return resists_bit(mon, 0x20); }
+export function resists_ston(mon) { return resists_bit(mon, 0x80); }
 
 // C ref: mondata.c:1660 get_atkdam_type(adtyp) — AD_RBRE ("random breath")
 // picks one of eight real damage types (ROLL_FROM == rn2(8) DRAW); every other
@@ -671,4 +697,23 @@ export function give_u_to_m_resistances(mtmp) {
         if (names.some((k) => p[k]))
             mtmp.mintrinsics = ((mtmp.mintrinsics | 0) | res_to_mr(intr));
     }
+}
+
+// C ref: shk.c is_fshk(mtmp) — a shopkeeper chasing the hero over an unpaid bill.
+function is_fshk(m) {
+    return !!(m?.isshk && m.eshk?.following);
+}
+
+// C ref: mondata.c levl_follower(mtmp) — does this monster accompany the hero
+// across a level change?
+export async function levl_follower(mtmp) {
+    const { mon_has_amulet } = await import('./monspecial.js');
+    if (mtmp === game.u?.usteed) return true;
+    /* Wizard with Amulet won't bother trying to follow across levels */
+    if (mtmp.iswiz && mon_has_amulet(mtmp)) return false;
+    /* some monsters will follow even while intending to flee from you */
+    if (mtmp.mtame || mtmp.iswiz || is_fshk(mtmp)) return true;
+    /* stalking types follow, but won't when fleeing unless you hold the Amulet */
+    return !!((mflags2_of(mtmp.data) & M2_STALK)
+        && (!mtmp.mflee || game.u?.uhave?.amulet));
 }

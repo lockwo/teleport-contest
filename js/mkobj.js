@@ -178,6 +178,7 @@ const F_CONTAINER = 8;
 const F_WEPTOOL = 16;
 const F_MERGE = 32;
 const F_UNIQUE = 64;
+const A_NONE = -128;   // const.js A_NONE (aligntyp "none")
 
 const NO_MATERIAL = 0;
 const LIQUID = 1;
@@ -1572,7 +1573,7 @@ export async function run_object_timers() {
     }
 }
 
-function rider_revival_time(body, retry = false) {
+export function rider_revival_time(body, retry = false) {
     const minturn = retry ? 3 : body.corpsenm === PM('Death') ? 6 : 12;
     for (let when = minturn; when < 67; when++) {
         if (!rn2(3))
@@ -2138,7 +2139,7 @@ function mksobj_init(otmp, artif) {
             blessorcurse(otmp, 10);
         }
         if (hasFlag(otmp, F_POISONABLE) && !rn2(100)) otmp.opoisoned = 1;
-        if (artif && !rn2(20 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp);
+        if (artif && !rn2(20 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp, A_NONE, 99, true);
         break;
     case FOOD_CLASS:
         otmp.oeaten = 0;
@@ -2341,7 +2342,7 @@ function mksobj_init(otmp, artif) {
         } else {
             blessorcurse(otmp, 10);
         }
-        if (artif && !rn2(40 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp);
+        if (artif && !rn2(40 + 10 * hooks.nartifact_exist())) hooks.mk_artifact(otmp, A_NONE, 99, true);
         // C ref: mkobj.c mksobj() — "simulate lacquered armor for samurai".
         // Consumes no RNG.  Role check uses the resolved player monster number
         // (PM_SAMURAI == 9); the splint mail only gets lacquered at game start
@@ -2563,12 +2564,14 @@ export function mkcorpstat(objtype, mtmp, pm, x, y, corpstatflags = 0) {
     // norevive set so a cancelled troll stays dead.
     if (mtmp) {
         save_mtraits(otmp, mtmp);
-        if (mtmp.mcan && !is_rider_pm(mtmp.data?.pmidx ?? mtmp.mnum))
+
+        if (pm == null)
+            pm = mtmp.data?.pmidx ?? mtmp.mnum ?? null;
+
+        /* don't give a revive timer to a cancelled troll's corpse */
+        if (mtmp.mcan && !is_rider_pm(typeof pm === 'number' ? pm : pm?.pmidx))
             otmp.norevive = true;
     }
-
-    if (mtmp && pm == null)
-        pm = mtmp.data?.pmidx ?? mtmp.mnum ?? null;
 
     if (pm != null) {
         const old_corpsenm = otmp.corpsenm;
@@ -2590,9 +2593,13 @@ export function mkcorpstat(objtype, mtmp, pm, x, y, corpstatflags = 0) {
 // gold object, so re-filling a square (e.g. a vault filled in mklev and again
 // in the fill loop) doesn't duplicate the pile or emit an extra next_ident.
 function g_at(x, y) {
-    for (const o of (game.level?.objects || []))
+    /* level.objects[x][y] chain is topmost-first; the flat array is deepest-first */
+    const arr = game.level?.objects || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+        const o = arr[i];
         if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y
             && o.oclass === COIN_CLASS) return o;
+    }
     return null;
 }
 
@@ -2792,6 +2799,7 @@ export function save_mtraits(obj, mtmp) {
         if ((m2.mhpmax | 0) <= baselevel) m2.mhpmax = baselevel + 1;
         if ((m2.mhp | 0) > m2.mhpmax) m2.mhp = m2.mhpmax;
         if ((m2.mhp | 0) < 1) m2.mhp = 0;
+        m2.mstate = (m2.mstate | 0) & ~0x02; /* ~MON_DETACH: mtmp is dead */
         obj.oextra.omonst = m2;
     }
     return obj;
@@ -3333,7 +3341,8 @@ export function obj_nexto(otmp) {
 export function obj_nexto_xy(obj, x, y, recurs) {
     if (!obj) return null;
     const otyp = obj.otyp;
-    for (const otmp of (game.level?.objects || []))
+    /* nexthere chain: topmost first */
+    for (const otmp of [...(game.level?.objects || [])].reverse())
         if (otmp !== obj && otmp.where === OBJ_FLOOR && otmp.ox === x && otmp.oy === y
             && otmp.otyp === otyp && mergable_glob(otmp, obj))
             return otmp;
@@ -3624,7 +3633,10 @@ export function where_name(obj) {
 // C ref: mkobj.c nomerge_exception(obj) — mines/Sokoban prize objects legally
 // carry the nomerge flag until the hero picks them up.
 export function nomerge_exception(obj) {
-    return !!(obj && (obj.mines_prize || obj.soko_prize));
+    const ach = game.context?.achieveo;
+    /* obj.h is_mines_prize/is_soko_prize: o_id recorded in context.achieveo */
+    return !!(obj && obj.o_id != null && ach
+              && (obj.o_id === ach.mines_prize_oid || obj.o_id === ach.soko_prize_oid));
 }
 
 // C ref: mkobj.c insane_object(obj, fmt, mesg, mon) — report a sanity failure

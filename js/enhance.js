@@ -334,6 +334,11 @@ hooks.p_skill_of = p_skill_of; /* engrave.js can_reach_floor() */
 export function p_max_skill_of(skill) {
     return build_skill_state().P_MAX[skill];
 }
+// C ref: skills.h P_ADVANCE(skill) — total training points, including the
+// amount "spent" reaching the starting level (skill_init's tail loop).
+export function p_advance_of(skill) {
+    return build_skill_state().P_ADV[skill];
+}
 hooks.p_max_skill_of = p_max_skill_of; /* artifact.js mk_artifact() */
 // C ref: weapon.c:1156 can_advance(skill, FALSE) — exported so weapon.c's
 // add_weapon_skill()/give_may_advance_msg() can count advanceable skills

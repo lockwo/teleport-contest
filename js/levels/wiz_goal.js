@@ -47,10 +47,10 @@ import {
 import { christen_monst } from '../do_name.js';
 import { dunlevs_in_dungeon } from '../dungeon.js';
 import { game } from '../gstate.js';
-import {
-    enexto_spawn, makemon, mm_mon_at, mongets_pub, monster_by_pmidx,
-    name_to_pmidx, set_malign,
+import { makemon, mm_mon_at, mongets_pub, monster_by_pmidx,
+    name_to_pmidx, set_malign
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { mk_mplayer } from '../mplayer.js';
 import { rn2 } from '../rng.js';
 import {
@@ -134,7 +134,7 @@ function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = n
     const { x: ax, y: ay } = vly_abs(mx, my);
     let x = ax, y = ay;
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, pm);
+        const cc = enexto_gpflags(x, y, pm, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const roleLo = name_to_pmidx('archeologist'), roleHi = name_to_pmidx('wizard');

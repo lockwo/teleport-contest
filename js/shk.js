@@ -27,14 +27,16 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
 import { arti_cost } from './artifact.js';
 import { get_obj_location as real_get_obj_location } from './light.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
-import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg, enexto_spawn } from './makemon.js';
+import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg } from './makemon.js';
+import { enexto_gpflags } from './teleport.js';
 import { rn2, rnd } from './rng.js';
-import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize } from './display.js';
+import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize, Hallucination_u } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag, is_vampire, is_elf_flag, is_human_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
-import { cansee } from './vision.js';
+import { cansee, Blind } from './vision.js';
 import { shtypes, VEGETARIAN_CLASS } from './shtypes.js';
+import { the, The, obj_typename } from './objnam.js';
 import { observe_object, discover_object, record_price_quote } from './o_init.js';
 // currency() is NOT re-implemented here: C's currency() rolls
 // ROLL_FROM(currencies) while hallucinating, so a local copy would silently
@@ -42,6 +44,7 @@ import { observe_object, discover_object, record_price_quote } from './o_init.js
 import { currency, objects_at, count_contents, obj_extract_self, obfree,
          xname, doname_invent, ansimpleoname, is_pick, carrying,
          update_inventory, xprname, body_part, tty_text_window, youmonst_data, poly_gender } from './invent.js';
+import { search_special } from './mkroom.js';
 import { A_CHA, A_WIS, HUNGRY, SHOPBASE, ROOMOFFSET, NO_ROOM,
          isok, IS_DOOR, IS_ROOM, IS_WALL, ZAP_POS, REPAIR_DELAY, BOLT_LIM,
          SVALL, D_CLOSED, D_BROKEN, PL_NSIZ, ANY_TYPE, ANY_SHOP, OROOM,
@@ -818,7 +821,7 @@ const plur = (n) => (n === 1 ? '' : 's');
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: you.h noit_mhe/noit_mhim/noit_mhis (js/do_name.js).
 import { noit_mhe, noit_mhim, noit_mhis } from './do_name.js';
-import { Blind_telepat, Detect_monsters_hero } from './youprop.js';
+import { Blind_telepat, Detect_monsters_hero, Passes_walls_hero } from './youprop.js';
 
 // C ref: hack.c money_cnt(otmp) — the quan of the FIRST coin stack on the
 // chain.  It stops there and does NOT descend into containers (that is
@@ -855,13 +858,7 @@ export function bp_to_obj(bp) {
     const id = bp?.bo_id;
     if (id == null) return null;
     if (bp.useup) return oid_scan(game.billobjs, id, 0);
-    let r = oid_scan(game.invent, id, 0);
-    if (r) return r;
-    for (const mon of (game.level?.monsters || [])) {
-        r = oid_scan(mon.minvent, id, 0);
-        if (r) return r;
-    }
-    return oid_scan(game.level?.objects, id, 0);
+    return find_oid(id);
 }
 
 // C ref: shk.c next_shkp(shkp, withbill):215 — the shopkeeper scan, INCLUDING
@@ -1094,7 +1091,7 @@ async function reject_purchase(shkp, obj, billed_quan) {
             simpleonames(obj)} before buying ${which}.`);
     } else {
         await update_topl(`${Shknam(shkp)} ${ANGRY(shkp) ? 'angrily ' : ''}${
-            'points out'} your bill for the other ${simpleonames(obj)} first.`);
+            nolimbs(shkp.data) ? 'motions to' : 'points out'} your bill for the other ${simpleonames(obj)} first.`);
     }
     obj.quan = intact_quan;
 }
@@ -1347,13 +1344,17 @@ const is_buried = (o) => o.where === OBJ_BURIED;
 // ── C chain / string / misc primitives ──────────────────────────────────────
 
 // C ref: decl.h fmon, monst.h nmon.  This port keeps the monster chain as an
-// ARRAY, so `for (m = fmon; m; m = m->nmon)` becomes a scan from an index.
-const fmon = () => (game.level?.monsters || []);
-function nmon(mon) {
+// ARRAY in creation order, but makemon() PREPENDS to fmon, so C visits newest
+// first (js/mon.js fmonOrder()); `for (m = fmon; m; m = m->nmon)` becomes a
+// scan of this reversed snapshot from an index.
+const fmon = () => (game.level?.monsters || []).slice().reverse();
+export function nmon(mon) {
     const list = fmon();
     const i = list.indexOf(mon);
     return (i >= 0 && i + 1 < list.length) ? list[i + 1] : null;
 }
+/* C passes the chain head `fmon` to next_shkp(); null on an empty level */
+export const fmon_head = () => fmon()[0] || null;
 
 // C ref: shk.c:56 IS_SHOP(x) — x is a rooms[] INDEX (roomno - ROOMOFFSET).
 const IS_SHOP = (i) => ((room_by_index(i)?.rtype ?? 0) >= SHOPBASE);
@@ -1367,20 +1368,7 @@ function on_shoplevel(eshkp) {
     return lv.dnum === uz.dnum && lv.dlevel === uz.dlevel;
 }
 
-// C ref: mkroom.c search_special(type) — ANY_SHOP means "rtype >= SHOPBASE",
-// NOT "rtype == ANY_SHOP" (js/trap.js's private copy tests plain equality).
-function search_special(type) {
-    for (const list of [game.level?.rooms, game.level?.subrooms])
-        for (const croom of (list || [])) {
-            if (!croom || (croom.hx ?? -1) < 0) break;
-            if ((type === ANY_TYPE && croom.rtype !== OROOM)
-                || (type === ANY_SHOP && croom.rtype >= SHOPBASE)
-                || croom.rtype === type) return croom;
-        }
-    return null;
-}
-
-const the = (s) => (/^[A-Z]/.test(s) ? s : `the ${s}`);
+// objnam.c the()/The() are imported above.
 const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const sgn = (x) => Math.sign(x || 0);
 const distu = (x, y) => {
@@ -1454,7 +1442,7 @@ export function setpaid(shkp) {
     clear_unpaid(shkp, game.level?.objects);
     if (game.level?.buriedobjlist) clear_unpaid(shkp, game.level.buriedobjlist);
     if (game.thrownobj) clear_unpaid_obj(shkp, game.thrownobj);
-    if (game.kickedobj) clear_unpaid_obj(shkp, game.kickedobj);
+    if (game.gk_kickedobj) clear_unpaid_obj(shkp, game.gk_kickedobj);
     for (const mtmp of fmon()) if (mtmp.minvent) clear_unpaid(shkp, mtmp.minvent);
     for (const mtmp of (game.migrating_mons || []))
         if (mtmp.minvent) clear_unpaid(shkp, mtmp.minvent);
@@ -1490,12 +1478,8 @@ export function hot_pursuit(shkp) {
 // module-private; this matches js/dogmove.js's local port (the infravision
 // half is omitted — a shopkeeper is always on a lit shop square).
 async function canseemon(mtmp) {
-    if (!mtmp) return false;
-    if (game.u?.uswallow) return true;
-    if (mtmp.minvis && !game.u?.see_invis) return false;
-    if (mtmp.mundetected) return false;
-    const { cansee } = await import('./vision.js');
-    return !!cansee(mtmp.mx, mtmp.my);
+    const { canseemon_shared } = await import('./display.js');
+    return canseemon_shared(mtmp);
 }
 
 // C ref: polyself.c mbodypart(mon, part).  js/polyself.js is not statically
@@ -1507,10 +1491,10 @@ async function mbodypart_(mon, part) {
 
 // C ref: shknam.c is_izchak(shkp, override_hallucination):908.
 async function is_izchak(shkp, override_hallucination) {
-    if ((game.u?.uprops?.Hallucination || 0) > 0 && !override_hallucination)
+    if (Hallucination_u() && !override_hallucination)
         return false;
     if (!shkp.isshk) return false;
-    const { in_town } = await import('./dig.js');
+    const { in_town } = await import('./mkroom.js');
     if (!in_town(shkp.mx, shkp.my)) return false;
     let shknm = shkp.eshk?.shknam || '';
     if (!/^[A-Za-z]/.test(shknm)) shknm = shknm.slice(1); /* skip "+" prefix */
@@ -1564,7 +1548,7 @@ export async function makekops(mm) {
         const ptr = monster_by_pmidx(k_mndx[k]);
         if (!ptr || mvitals_gone(k_mndx[k])) continue;
         while (cnt--) {
-            const spot = enexto_spawn(mm.x, mm.y, ptr);
+            const spot = enexto_gpflags(mm.x, mm.y, ptr, 0);
             if (!spot) continue;
             mm.x = spot.x;
             mm.y = spot.y;
@@ -1796,7 +1780,7 @@ export async function deserted_shop(enterstring) {
             }
         }
 
-    if ((game.u?.uprops?.Blind || 0) > 0
+    if (Blind()
         && !(Blind_telepat()
              || Detect_monsters_hero()))
         ++n; /* force feedback to be less specific */
@@ -2281,7 +2265,7 @@ export function alter_cost(obj, amt) {
 }
 
 // C ref: shk.c add_one_tobill(obj, dummy, shkp):3309.  No RNG.
-export function add_one_tobill(obj, dummy, shkp) {
+export async function add_one_tobill(obj, dummy, shkp) {
     const eshkp = shkp.eshk;
     let unbilled = false;
 
@@ -2291,7 +2275,7 @@ export function add_one_tobill(obj, dummy, shkp) {
     if (!owner) {
         unbilled = true; /* shk doesn't want it */
     } else if (eshkp.billct === BILLSZ) {
-        update_topl('You got that for free!');
+        await update_topl('You got that for free!');
         unbilled = true;
     }
     if (unbilled) {
@@ -2378,8 +2362,8 @@ export async function addtobill(obj, ininv, dummy, silent) {
     if (container) {
         const cltmp = contained_cost(obj, shkp, 0, false, false);
         const gltmp = contained_gold(obj, true);
-        if (ltmp) add_one_tobill(obj, dummy, shkp);
-        if (cltmp) bill_box_content(obj, ininv, dummy, shkp);
+        if (ltmp) await add_one_tobill(obj, dummy, shkp);
+        if (cltmp) await bill_box_content(obj, ininv, dummy, shkp);
         picked_container(obj);
         ltmp += cltmp;
         if (gltmp) {
@@ -2389,14 +2373,14 @@ export async function addtobill(obj, ininv, dummy, silent) {
         obj.no_charge = 0;
         contentscount = count_unpaid(obj.cobj);
     } else {
-        add_one_tobill(obj, dummy, shkp);
+        await add_one_tobill(obj, dummy, shkp);
     }
     if (silent) return;
     if (!Deaf() && !muteshk(shkp)) {
         if (!ltmp) {
-            await update_topl(`${Shknam(shkp)} has no interest in the ${xname(obj)}.`);
+            await update_topl(`${Shknam(shkp)} has no interest in ${the(xname(obj))}.`);
         } else if (!ininv) {
-            await update_topl(`The ${xname(obj)} will cost you ${ltmp} ${currency(ltmp)}${
+            await update_topl(`${The(xname(obj))} will cost you ${ltmp} ${currency(ltmp)}${
                 obj.quan > 1 ? ' each' : ''}.`);
         } else {
             const save_quan = obj.quan;
@@ -2440,14 +2424,14 @@ export function add_to_billobjs(obj) {
 // C ref: shk.c bill_box_content(obj, ininv, dummy, shkp):3387 — recursive
 // billing of a container's contents.  A Schroedinger's Box is skipped so its
 // contents are not collapsed into existence.
-export function bill_box_content(obj, ininv, dummy, shkp) {
+export async function bill_box_content(obj, ininv, dummy, shkp) {
     if (SchroedingersBox(obj)) return;
     for (const otmp of (obj.cobj || [])) {
         if (otmp.oclass === COIN_CLASS) continue;
 
         /* the "top" box is added in addtobill() */
-        if (!otmp.no_charge) add_one_tobill(otmp, dummy, shkp);
-        if (Has_contents(otmp)) bill_box_content(otmp, ininv, dummy, shkp);
+        if (!otmp.no_charge) await add_one_tobill(otmp, dummy, shkp);
+        if (Has_contents(otmp)) await bill_box_content(otmp, ininv, dummy, shkp);
     }
 }
 
@@ -3149,7 +3133,7 @@ export async function repairable_damage(dam, shkp) {
     /* is it a wall? don't fix if anyone is in the way */
     if (!IS_ROOM(dam.typ)) {
         const mtmp = m_at(x, y);
-        if ((u_at(x, y) && !((game.u?.uprops?.Passes_walls || 0) > 0))
+        if ((u_at(x, y) && !Passes_walls_hero())
             || (x === shkp.mx && y === shkp.my)
             || (mtmp && !passes_walls(mtmp.data)))
             return false;
@@ -4200,8 +4184,7 @@ export async function globby_bill_fixup(obj_absorber, obj_absorbed) {
     if (!bp_absorber && !bp && !obj_absorber.no_charge) {
         amount = get_pricing_units(obj_absorbed) * per_unit_cost;
         if (saleable(shkp, obj_absorbed)) {
-            /* C: obj_typename(otyp); no port in this tree, xname() stands in */
-            const tname = xname(obj_absorbed);
+            const tname = obj_typename(obj_absorbed.otyp);
             if ((eshkp.debit || 0) >= amount) {
                 if (eshkp.loan) { /* you carry shop's gold */
                     if (eshkp.loan >= amount) eshkp.loan -= amount;
@@ -4238,7 +4221,7 @@ export async function globby_bill_fixup(obj_absorber, obj_absorbed) {
                || (floor_absorber && !costly_spot(x, y)))) {
         amount = bp.price;
         await bill_dummy_object(obj_absorbed);
-        const tname = xname(obj_absorbed);
+        const tname = obj_typename(obj_absorbed.otyp);
         await verbalize(`You owe me ${amount} ${currency(amount)} for my ${tname
         } that you ${ANGRY(shkp) ? 'had the audacity to mix' : 'just mixed'
         } with your${ANGRY(shkp) ? ' stinking batch!' : 's.'}`);

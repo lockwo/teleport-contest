@@ -5,7 +5,7 @@
 // Contestants should add: search, kick, eat, drink, read, zap,
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
-import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft, Fumbling_hero } from './youprop.js';
 import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { nhgetch } from './input.js';
@@ -14,7 +14,7 @@ import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_to
 import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
-         glyph_is_invisible, stumble_onto_mimic } from './uhitm.js';
+         glyph_is_invisible, stumble_onto_mimic, seemimicLocal } from './uhitm.js';
 import { ddoinv, dismiss_invent_screen, dolook,
          dodiscovered, doattributes,
          attr_window_advance, disco_window_advance, dowieldquiver, dowield, doswapweapon, dothrow, dofire, dotravel, dotravel_target, dodrop, doddrop,
@@ -43,7 +43,7 @@ import { mfind0 } from './detect.js';
 import { do_gamelog } from './insight.js';
 import { skill_window_advance, uwep_skill_type, p_skill_of, use_skill } from './enhance.js';
 import { wiz_level_tele, dodown, doup, revive_nasty, random_teleport_level,
-         flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m } from './do.js';
+         flooreffects, boulder_hits_pool, set_uinwater, danger_uprops, u_on_rndspot, u_collide_m, u_rooted } from './do.js';
 import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trapname,
          TRAP_CLEARLY_IMMUNE, deltrap, fill_pit, blow_up_landmine, seetrap,
          launch_obj, Levitation_fu, Flying_fu, u_locomotion,
@@ -123,7 +123,7 @@ import { selection_new, selection_getbounds,
 import { carrying, objects_at, inventoryArray,
          cmdq_add_key, cmdq_pop, cmdq_clear, doperminv, useupf, ing_suffix } from './invent.js';
 import { num_spells } from './spell.js';
-import { Deaf_hero, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
+import { Deaf_hero, Hallucination_u, vobj_at, msghist, topl_more_ext, useDECgraphics, terrain_glyph } from './display.js';
 import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
 import { can_saddle } from './makemon.js';
@@ -534,8 +534,7 @@ async function swim_move_danger(x, y) {
 function Hallucination() {
     const u = game.u;
     if (!u) return false;
-    if ((u.HHalluc_resistance || 0) > 0) return false;
-    return !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
+    return Hallucination_u();
 }
 
 // C ref: hack.c doorless_door() — a doorway that lacks its door (NODOOR or
@@ -829,6 +828,13 @@ async function get_count(inkey) {
                 disp.setCursor(Math.min(game._pending_message.length, 79), 0);
         }
         key = await nhgetch();
+        // C ref: cmd.c readchar_core() ALTMETA arm — get_count() restores
+        // input_state = commandInp before each readchar(), so with `altmeta`
+        // on a bare ESC combines with the NEXT key into one M-<c> keystroke.
+        if (key === 27 && game.iflags?.altmeta) {
+            const next = await nhgetch();
+            key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+        }
     }
     // C parse(): clear the count echo from the top line once a command key
     // arrives, then hand the count to the move loop via gm.multi.
@@ -970,6 +976,24 @@ export async function rhack(key) {
             // arm the search occupation for a plain 's').
             game.command_count = 0;
             game.multi = 0;
+        }
+        // C ref: cmd.c parse() — remember this command's count; ESC cancels it,
+        // and ^A/^P/# (which never enter the do-again buffer) reuse the previous
+        // command's count instead of the one typed.
+        if (!replay) {
+            game.last_command_count = game.command_count | 0;
+            if (key === 27) {
+                game.command_count = 0;
+                game.last_command_count = 0;
+            } else if (!game.in_doagain && key) {
+                const bnd = cmdbind_get(key & 0xff);
+                const fn = bnd?.cmd?.ef_funct;
+                if (fn === 'do_repeat' || fn === 'doprev_message' || fn === 'doextcmd') {
+                    game.command_count = game.last_command_count | 0;
+                    game.multi = game.command_count;
+                    if (game.multi) game.multi -= 1;
+                }
+            }
         }
         // C ref: cmd.c parse() `gc.cmd_key = foo;` — the command key AFTER the
         // count, kept so moveloop_core's `gm.multi > 0` arm can repeat this
@@ -1819,7 +1843,7 @@ export async function rhack(key) {
         // cancels it ("Double m prefix, canceled.").  The following command is
         // read on the next rhack iteration.
         if (game.iflags?.menu_requested) {
-            await pline(`Double m prefix, canceled.`);
+            await Norep_topl(`Double m prefix, canceled.`);
             game.iflags.menu_requested = false;
         } else {
             game.iflags = game.iflags || {};
@@ -2294,7 +2318,7 @@ export function monster_nearby() {
             if (!mtmp) continue;
             if (M_AP_TYPE(mtmp) === M_AP_FURNITURE || M_AP_TYPE(mtmp) === M_AP_OBJECT) continue;
             if (!(hallu || (!mtmp.mpeaceful && !noattacks(mtmp.data)))) continue;
-            if (mtmp.mundetected && hides_under_flag(mtmp.data)) continue;
+            if (mtmp.mundetected && is_hider_flag(mtmp.data)) continue;
             if (mtmp.msleeping || !mtmp.mcanmove) continue;
             if (onscary(u.ux, u.uy, mtmp)) continue;
             if (canspotmon(mtmp)) return true;
@@ -3248,6 +3272,17 @@ export async function pick_lock(pick) {
         case D_BROKEN: await pline('This door is broken.'); return PICKLOCK_LEARNED_SOMETHING;
         default: break;
         }
+        // C ref: lock.c:605 — AUTOUNLOCK_UNTRAP applies to #apply on a door too:
+        // offer to check it for a trap first ('y' ends the attempt, 'q' abandons).
+        if (((game.flags?.autounlock ?? 2) & 1) && await could_untrap(false, false)) {
+            game._yn_need_more = (game._toplin === 1);
+            const t = await y_n('Check this door for a trap?', 'ynq\x1b', 'q');
+            if (t !== 'n') {
+                if (t === 'q') return PICKLOCK_DID_NOTHING;
+                await untrap_at(cx, cy, false, true);
+                return PICKLOCK_DID_SOMETHING; /* even if no trap found */
+            }
+        }
         if (picktyp === CREDIT_CARD && !(door.doormask & D_LOCKED)) {
             await pline("You can't lock a door with a credit card.");
             return PICKLOCK_LEARNED_SOMETHING;
@@ -3562,8 +3597,11 @@ async function domove_core(dx, dy, attemptTracked) {
         const held = u.ustuck;
         // C: `if (!is_safemon(mtmp) || context.forcefight) nomul(0);` then
         // domove_bump_mon() (no-op for a hostile) then domove_attackmon_at().
-        if (!is_safemon(held)) game.multi = 0;
+        if (!is_safemon(held)) nomul(0);
         game.context.move = 1;
+        // C ref: hack.c:2794 domove_bump_mon() -- an 'm'-prefixed or travel step
+        // (nopick set, travel cleared by the nomul above) bumps instead of attacking.
+        if (await domove_bump_mon(held, held.mx, held.my)) return;
         await do_attack(held);
         return;
     }
@@ -3587,7 +3625,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // bump/attack block) — attacking an engulfer from inside needs uhitm's
     // swallowed path, which this port does not model.
     const redirected = impaired_movement(u.ux + dx, u.uy + dy);
-    if (!redirected) return; // 50 tries found no valid square; turn wasted
+    if (!redirected) { nomul(0); return; } // C: impaired_movement() tries > 50 -> nomul(0); return TRUE
     let newx = redirected.x, newy = redirected.y;
 
     // C ref: hack.c:2751 `if (water_turbulence(&x, &y)) return;` — "turbulence
@@ -3596,7 +3634,7 @@ async function domove_core(dx, dy, attemptTracked) {
     if (u.uinwater) {
         const wtmod = u.uprops?.Swimming ? MOD_ENCUMBER : SLT_ENCUMBER;
         await water_friction();
-        if (!u.dx && !u.dy) { game.multi = 0; return; }
+        if (!u.dx && !u.dy) { nomul(0); return; }
         newx = u.ux + u.dx;
         newy = u.uy + u.dy;
         /* are we trying to move out of water while carrying too much? */
@@ -3605,7 +3643,7 @@ async function domove_core(dx, dy, attemptTracked) {
             const { near_capacity } = await import('./invent.js');
             if (near_capacity() > wtmod) {
                 await update_topl('You are carrying too much to climb out of the water.');
-                game.multi = 0;
+                nomul(0);
                 return;
             }
         }
@@ -3626,7 +3664,7 @@ async function domove_core(dx, dy, attemptTracked) {
             }
             await pline(`You have already gone as far ${directionname(xytodir_cmd(ddx, ddy))} as possible.`);
         }
-        game.multi = 0;
+        nomul(0);
         game.context.move = 0;
         return;
     }
@@ -3721,6 +3759,13 @@ async function domove_core(dx, dy, attemptTracked) {
         // domove_attackmon_at() lets a safe pet through and BEFORE test_move()
         // and domove_swap_with_pet(), so a pet standing on a known trap still
         // triggers "Really step into that pit?".
+        if (!displaceu && (u.dx || u.dy) && u.usteed
+            && await (await import('./steed.js')).stucksteed(false)) {
+            nomul(0);
+            game.context.move = 1;
+            return;
+        }
+        if (!displaceu && await u_rooted()) { game.context.move = 1; return; }
         if (!displaceu && await avoid_trap_andor_region(newx, newy)) return;
         // C ref: hack.c:2830 — a trapped hero reaches trapmove() even when the
         // target holds a pet (do_attack() returned FALSE); a still-stuck hero
@@ -3778,6 +3823,14 @@ async function domove_core(dx, dy, attemptTracked) {
             nomul(0);
             return;
         }
+        // C ref: hack.c:2861-2864 — "Move ball and chain" runs for a pet swap
+        // as for any other relocating step, before in_out_region().
+        let bcSwap = null;
+        if (u.uball && u.uchain) {
+            const { drag_ball } = await import('./ball.js');
+            bcSwap = await drag_ball(newx, newy, true);
+            if (!bcSwap) { game.context.move = 1; return; }
+        }
         const { in_out_region } = await import('./region.js');
         if (!in_out_region(newx, newy)) return;
         game.context.move = 1;
@@ -3785,6 +3838,12 @@ async function domove_core(dx, dy, attemptTracked) {
         // safe pet at the destination.
         u.ux = newx;
         u.uy = newy;
+        // C ref: hack.c:2877 — m_postmove_effect(&gy.youmonst) follows the
+        // tentative move on every relocating step, swap or not.
+        {
+            const { m_postmove_effect } = await import('./monmove.js');
+            await m_postmove_effect(u);
+        }
         // C ref: hack.c:2879-2884 -- the steed follows the tentative move before any pet swap or displacement, and trains riding skill.
         if (u.usteed) {
             u.usteed.mx = u.ux; u.usteed.my = u.uy;
@@ -3823,6 +3882,11 @@ async function domove_core(dx, dy, attemptTracked) {
             await invocation_message(); // hack.c:2974
             newsym(u.ux, u.uy);
         }
+        // C ref: hack.c:2976-2977 — put the ball and chain back before spoteffects().
+        if (bcSwap) {
+            const { move_bc } = await import('./ball.js');
+            await move_bc(0, bcSwap.bc_control, bcSwap.ballx, bcSwap.bally, bcSwap.chainx, bcSwap.chainy);
+        }
         // C ref: hack.c domove_core() — after swapping with a pet, C still
         // falls through to the SAME spoteffects(TRUE) tail every relocating
         // move runs (pooleffects/check_special_room/dosinkfall, pickup(1),
@@ -3849,6 +3913,12 @@ async function domove_core(dx, dy, attemptTracked) {
                 maybe_smudge_engr(u.ux0, u.uy0, u.ux, u.uy);
                 maybe_adjust_hero_bubble();
             }
+        }
+        // C ref: hack.c:2984-2988 — delay next move because of ball dragging.
+        if (bcSwap?.cause_delay) {
+            nomul(-2);
+            game.multi_reason = 'dragging an iron ball';
+            game.nomovemsg = '';
         }
         return;
     }
@@ -3997,6 +4067,8 @@ async function domove_core(dx, dy, attemptTracked) {
             return;
         }
     }
+    // C ref: hack.c:2820 `if (u_rooted()) return;` (turn stays spent).
+    if (await u_rooted()) { game.context.move = 1; return; }
 
     // ── paranoid_confirm:trap ──  C ref: hack.c:2823-2828 — `if (ParanoidTrap)
     // { if (avoid_trap_andor_region(x, y)) return; }`, between u_rooted() and
@@ -4079,8 +4151,8 @@ async function domove_core(dx, dy, attemptTracked) {
             // which is a different message and a different RNG path.
             const u = game.u;
             const _stunned = (u?.uprops?.Stun || 0) > 0 || !!u?.Stunned || !!u?.formprops?.Stunned;
-            const _confused = !!(u?.uconf || u?.HConfusion);
-            const _fumbling = !!(u?.HFumbling || u?.EFumbling);
+            const _confused = !!(u?.uconf || u?.HConfusion || (u?.uprops?.Confusion | 0) > 0);
+            const _fumbling = Fumbling_hero();
             if (game.flags?.autoopen !== false && !game.context?.run
                 && !_confused && !_stunned && !_fumbling) {
                 await doopen_indir(newx, newy);
@@ -4113,7 +4185,7 @@ async function domove_core(dx, dy, attemptTracked) {
             // nothing and just stops, matching neither sub-branch.
             if (newx === u.ux || newy === u.uy) {
                 const stunned = (u.uprops?.Stun || 0) > 0 || !!u.Stunned || !!u.formprops?.Stunned;
-                const fumbling = !!(u.HFumbling || u.EFumbling);
+                const fumbling = Fumbling_hero();
                 if (Blind() || stunned || ACURR(A_DEX) < 10 || fumbling) {
                     if (u.usteed) {
                         await pline(`You can't lead ${y_monnam(u.usteed)} through that closed door.`);
@@ -4192,6 +4264,7 @@ async function domove_core(dx, dy, attemptTracked) {
                 : why === 2 ? 'You are carrying too much to get through.'
                 : 'Your body is too large to fit through.');
             game.context.move = 0;
+            nomul(0); // C ref: hack.c:2844-2847 failed test_move() ends a run
             return;
         }
     } else if (u.dx && u.dy && !blocksMove(newx, newy)
@@ -5229,6 +5302,9 @@ async function moverock(otmp, sx, sy, dx, dy) {
         // C ref: hack.c:455 a monster occupying the destination blocks the
         // push (unless noncorporeal, or pinned in a pit/spiked pit).
         const mtmp = m_at(rx, ry);
+        if (mtmp && Blind() && mtmp.data?.mlet !== ' '
+            && (!mtmp.mtrapped || !(destTrap && is_pit_ttyp(destTrap.ttyp))))
+            feel_location(sx, sy);
         if (mtmp && mtmp.data?.mlet !== ' ' /* noncorporeal ghost/shade */
             && (!mtmp.mtrapped || !(destTrap && is_pit_ttyp(destTrap.ttyp)))) {
             let deliverPart1 = false;
@@ -5236,10 +5312,10 @@ async function moverock(otmp, sx, sy, dx, dy) {
                 await update_topl(`There's ${x_monnam(mtmp, 2, null, 0, false)} on the other side.`);
                 deliverPart1 = true;
             } else {
-                if (!Deaf_hero() && game.flags?.acoustics !== false) {
-                    await You_hear(`a monster behind ${the_pushable_name(otmp)}.`);
-                    deliverPart1 = true;
-                }
+                // C: You_hear() prints nothing when !flags.acoustics, but
+                // deliver_part1 only tracks Deaf.
+                await You_hear(`a monster behind ${the_pushable_name(otmp)}.`);
+                if (!Deaf_hero()) deliverPart1 = true;
                 map_invisible(rx, ry);
             }
             if (game.flags?.verbose !== false) {
@@ -5339,7 +5415,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
                     if (tox === destTrap.launch2.x && toy === destTrap.launch2.y) break;
                 }
                 await pline(`${Tobjnam_boulder(otmp, 'suddenly roll')} away from you!`);
-                seetrap(destTrap); // C feeltrap(trap) == seetrap() for a sighted hero
+                (await import('./trap.js')).feeltrap(destTrap);
                 await launch_obj(BOULDER, sx, sy, tox, toy, ROLL | LAUNCH_KNOWN);
                 return boulder_at(sx, sy) ? -1 : 0;
             }
@@ -5737,7 +5813,7 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // square so the display doesn't draw them at the destination before a
     // refusal below cancels the swap.
     mtmp.mundetected = 0;
-    if (mtmp.m_ap_type) { mtmp.m_ap_type = 0; mtmp.mappearance = 0; newsym(mtmp.mx, mtmp.my); }
+    if (mtmp.m_ap_type) seemimicLocal(mtmp);
 
     const trap = mtmp.mtrapped ? trap_at(mtmp.mx, mtmp.my) : null;
     if (!trap) mtmp.mtrapped = 0;
@@ -5752,7 +5828,7 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // NODIAG(mnum) is (mnum == PM_GRID_BUG).  (js/dog.js pets carry a non-makemon
     // pmidx, so this test is only meaningful for makemon-created monsters.)
     if (u.ux0 !== x && u.uy0 !== y && mtmp.data?.pmidx === PM_GRID_BUG) {
-        await pline(`You stop.  ${Monnam(mtmp)} can't move diagonally.`);
+        await pline(`You stop.  ${YMonnam(mtmp)} can't move diagonally.`);
         return false;
     }
     // C ref: hack.c:2105,2128 — u_with_boulder is sobj_at(BOULDER, u.ux, u.uy)
@@ -9035,7 +9111,7 @@ export async function there_cmd_menu(x, y, mod) {
             const dir = xytodir_cmd(dx, dy);
 
             cmdq_add_ec(CQ_CANNED, move_funcs[dir][MV_WALK]);
-        } else if (game.flags?.travelcmd) {
+        } else if (game.flags?.travelcmd !== false) {
             (game.iflags = game.iflags || {}).travelcc =
                 { x: (u.tx = x), y: (u.ty = y) };
             cmdq_add_ec(CQ_CANNED, 'dotravel_target');
@@ -9091,7 +9167,7 @@ export function domouseaction() {
     x = cc.x - u.ux;
     y = cc.y - u.uy;
 
-    if (game.flags?.travelcmd) {
+    if (game.flags?.travelcmd !== false) {
         if (Math.abs(x) <= 1 && Math.abs(y) <= 1) {
             x = cmd_sgn(x), y = cmd_sgn(y);
         } else {

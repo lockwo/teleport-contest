@@ -41,7 +41,7 @@ import {
     NO_COLOR, CLR_BLACK, CLR_GRAY, CLR_BROWN, CLR_WHITE, CLR_YELLOW,
     CLR_CYAN, CLR_BRIGHT_BLUE, CLR_BRIGHT_CYAN, CLR_BLUE, CLR_RED,
     CLR_ORANGE, CLR_GREEN, CLR_MAGENTA, CLR_BRIGHT_GREEN, CLR_BRIGHT_MAGENTA,
-    DEC_TO_UNICODE, ATR_INVERSE,
+    DEC_TO_UNICODE, ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE,
 } from './terminal.js';
 import { monster_by_pmidx, infravisible, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { recalc_telepat_range } from './worn.js';
@@ -436,6 +436,17 @@ export function obj_is_piletop(top) {
     return true;
 }
 
+// C ref: win/tty/wintty.c tty_print_glyph — `term_start_attr(iflags.wc2_petattr)`
+// for an MG_PET glyph under iflags.hilite_pet.  wc2_petattr holds wintype.h's
+// numbering (bold 1, dim 2, italic 3, uline 4, blink 5, inverse 7, default
+// ATR_INVERSE); the cell grid uses terminal.js's bits, and this tty has no
+// dim/italic/blink capability, so those draw plain.
+function pet_attr() {
+    const a = game.iflags?.wc2_petattr;
+    if (a === undefined) return ATR_INVERSE;
+    return a === 1 ? ATR_BOLD : a === 4 ? ATR_UNDERLINE : a === 7 ? ATR_INVERSE : 0;
+}
+
 // C ref: win/tty/wintty.c tty_print_glyph — a pile-top object glyph (MG_OBJPILE)
 // is drawn with ATR_INVERSE when iflags.hilite_pile && iflags.use_inverse.
 // use_inverse defaults On (only toggled via the Advanced options which the
@@ -701,9 +712,10 @@ export function tp_sensemon(mtmp) {
 // from.  mon_visible: (!minvis || See_invisible) && !mundetected.
 export function canseemon_shared(mtmp) {
     if (!mtmp) return false;
-    // No long worms in the covered sessions, so canseemon's worm_known() arm
-    // never applies.
-    if (!(cansee(mtmp.mx, mtmp.my) || see_with_infrared(mtmp))) return false;
+    // C ref: display.h _canseemon() — a long worm is seen if any segment is.
+    if (mtmp.wormno) {
+        if (!(hooks.worm_known?.(mtmp))) return false;
+    } else if (!(cansee(mtmp.mx, mtmp.my) || see_with_infrared(mtmp))) return false;
     return mon_visible(mtmp);
 }
 
@@ -1360,8 +1372,14 @@ export function terrain_glyph(loc, x, y) {
 // draw one blast-symbol cell (idx 0..8 == S_expl_tl..S_expl_br).
 export function show_expl_leftover(x, y, expltype, idx) {
     const chs = ['/', '-', '\\', '|', ' ', '|', '\\', '-', '/'];
-    show_glyph_cell(x, y, chs[idx],
-        game.iflags?.use_color === false ? NO_COLOR : explodecolors[expltype], false);
+    // dat/symbols DECgraphics: S_expl_tc \xef (meta-o), S_expl_ml/mr \xf8
+    // (meta-x), S_expl_bc \xf3 (meta-s).
+    let ch = chs[idx], dec = false;
+    if (idx === 1 && useDECgraphics('S_expl_tc')) { ch = 'o'; dec = true; }
+    else if ((idx === 3 || idx === 5) && useDECgraphics('S_expl_ml')) { ch = 'x'; dec = true; }
+    else if (idx === 7 && useDECgraphics('S_expl_bc')) { ch = 's'; dec = true; }
+    show_glyph_cell(x, y, ch,
+        game.iflags?.use_color === false ? NO_COLOR : explodecolors[expltype], dec);
 }
 
 // The physical screen was just cleared (cls()/docrt()): a later control-byte
@@ -1899,6 +1917,10 @@ function see_monsters_loop() {
     // restgamestate() sets it so docrt() during a restore does not paint
     // sensed/telepathic monsters before moveloop_preamble() releases it.
     if (game.defer_see_monsters) return -1;
+    /* steed and unseen engulfer/holder/holdee are recognized via touch even
+       if they aren't going to be rendered (display.c see_monsters()) */
+    if (game.u?.usteed) game.u.usteed.meverseen = 1;
+    if (game.u?.ustuck) game.u.ustuck.meverseen = 1;
     // C ref: makemon.c m_initweap-era `mtmp->nmon = fmon; fmon = mtmp` — fmon is
     // a PREPEND list, so C walks the level's monsters newest-first.  This port's
     // level.monsters[] is append-ordered, i.e. exactly the reverse.  The order
@@ -1933,6 +1955,15 @@ function see_monsters_loop() {
             new_warn_obj_cnt++;
     }
     return new_warn_obj_cnt;
+}
+
+// C ref: pline.c vpline():209-225 — a message longer than BUFSZ-1 (255) is
+// kept to its first 249 characters, "...", then its final three:
+// "___ extremely long text" -> "___ extremely l...ext".
+function vpline_clip(line) {
+    if (typeof line === 'string' && line.length > 256 - 1)
+        return line.slice(0, 256 - 1 - 6) + '...' + line.slice(line.length - 3);
+    return line;
 }
 
 export async function see_monsters() {
@@ -2391,6 +2422,11 @@ function display_sensed_monster(x, y, mon, see_it) {
     const u = game.u || {}, props = u.uprops || {};
     const detect_monsters = Detect_monsters_hero();
     const dark_worm_tail = x !== mon.mx || y !== mon.my;
+    // C ref: display.c display_monster() — sightflags is never PHYSICALLY_SEEN
+    // here, so a mimicking monster (e.g. the Wizard's double) is drawn only when
+    // `sensed` (Protection_from_shape_changers or sensemon); otherwise neither
+    // arm runs and the cell keeps what it showed.
+    if (M_AP_TYPE(mon) !== M_AP_NOTHING && !mimic_sensed(mon)) return;
     clear_invisible_memory(x, y);
     // C ref: display.c:1054 — this arm passes is_worm_tail(mon) too.
     const mg = (dark_worm_tail && !Hallucination_u())
@@ -2399,7 +2435,7 @@ function display_sensed_monster(x, y, mon, see_it) {
     // PHYSICALLY-seen-style 0; otherwise DETECTED -> MG_DETECT ->
     // ATR_INVERSE (wintty.c tty_print_glyph), pets excepted.
     const petAttr = (mon.mtame && !Hallucination_u() && M_AP_TYPE(mon) === M_AP_NOTHING)
-        ? (game.flags?.hilite_pet ? ATR_INVERSE : female_attr(mg.female))
+        ? (game.flags?.hilite_pet ? pet_attr() : female_attr(mg.female))
         : ((!see_it && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
             || female_attr(mg.female);
     show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
@@ -2645,7 +2681,7 @@ function newsym_core(x, y) {
             // seen) non-pet monster carries MG_DETECT, drawn ATR_INVERSE when
             // iflags.use_inverse; display_monster picks the pet glyph first.
             const petAttr = (mon.mtame && !Hallucination_u() && M_AP_TYPE(mon) === M_AP_NOTHING)
-                ? (game.flags?.hilite_pet ? ATR_INVERSE : female_attr(mg.female))
+                ? (game.flags?.hilite_pet ? pet_attr() : female_attr(mg.female))
                 : ((!see_it && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
                     || female_attr(mg.female);
             // C ref: display.c display_monster() — "We must do the mimic check
@@ -2749,7 +2785,9 @@ function newsym_core(x, y) {
             // The Rogue-level arm (display.c:1076) re-darkens a lit corridor
             // unconditionally and only blanks a remembered ROOM that was not lit.
             const rogue_lvl = Is_rogue_level(game.u?.uz);
-            if (loc.typ === CORR && (rogue_lvl || !loc.waslit || game.flags?.dark_room)
+            if (loc.typ === CORR
+                && (rogue_lvl || !loc.waslit
+                    || (game.flags?.dark_room && game.iflags?.use_color))
                 && loc.remembered_glyph.ch === '#'
                 && loc.remembered_glyph.color === CLR_WHITE) {
                 loc.remembered_glyph.color = NO_COLOR;
@@ -2849,6 +2887,9 @@ export function unmap_object(x, y) {
 // C ref: display.c docrt — recompute the live glyph for every cell so the
 // monster/object/terrain stack and hero are all redrawn from current state.
 export async function docrt() {
+    /* C ref: display.c docrt_flags() `if (!u.ux || program_state.in_docrt)
+       return;` -- display isn't ready yet, or a redraw is already running */
+    if (!game.u?.ux || game._inDocrt) return;
     // C ref: display.c docrt_flags() `program_state.in_docrt` -- show_glyph()'s
     // mention_map announcements are suppressed for the whole redraw.
     const was = game._inDocrt;
@@ -3321,11 +3362,11 @@ function _botFields(order, transient = null) {
     // acurr.a is stored in attribute order [STR, INT, WIS, DEX, CON, CHA]
     // (A_STR..A_CHA); the status line displays St Dx Co In Wi Ch.
     raw[BL_STR] = _strengthStr(status_held('str', acurr_eff(0)));
-    raw[BL_DX] = String(acurr_eff(3));
+    raw[BL_DX] = String(status_held('dex', acurr_eff(3)));
     raw[BL_CO] = String(status_held('con', acurr_eff(4)));
-    raw[BL_IN] = String(acurr_eff(1));
-    raw[BL_WI] = String(acurr_eff(2));
-    raw[BL_CH] = String(acurr_eff(5));
+    raw[BL_IN] = String(status_held('int', acurr_eff(1)));
+    raw[BL_WI] = String(status_held('wis', acurr_eff(2)));
+    raw[BL_CH] = String(status_held('cha', acurr_eff(5)));
     raw[BL_ALIGN] = u.ualign?.type === 0 ? 'Neutral'
                     : u.ualign?.type > 0 ? 'Lawful' : 'Chaotic';
     raw[BL_SCORE] = '0';
@@ -4830,6 +4871,7 @@ export async function verbalize(line) { await pline(`"${line}"`); }
 
 export async function pline(msg, opts = {}) {
     msg = await a11y_location_prefix(msg);
+    msg = vpline_clip(msg);
     const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
     // C ref: win/tty/topl.c update_topl() `skip`: once a --More-- was
@@ -4904,7 +4946,7 @@ export async function pline(msg, opts = {}) {
 // It is the SECOND line's arrival that turns whatever was already on the
 // topline into a --More--, which is the only part scored so far.
 export async function impossible(msg) {
-    await update_topl(msg);
+    await urgent_topl(msg); // pline.c impossible(): gp.pline_flags = URGENT_MESSAGE
     // C ref: pline.c:606 — `if (program_state.in_sanity_check) { ...; return; }`
     // skips the "Program in disorder!" + report-to-devteam lines when this
     // impossible() came from inside sanity_check() (the wizard-mode
@@ -5135,6 +5177,10 @@ function status_held(key, live) {
 }
 
 async function botl_flush(direct = false) {
+    // C has ONE disp.botl.  Several ported sites (set_ustuck, explode, music,
+    // steal, teleport, ...) record it on game.disp.botl while the rest write
+    // game.botl; fold the former in so bot() runs for either.
+    if (game.disp?.botl) game.botl = true;
     // C ref: display.c flush_screen():2236 `if (disp.botl || disp.botlx) bot();
     // else if (disp.time_botl) timebot();` — both publish the current `moves`.
     // goto_level postpones flush_screen() during drag_down; direct bot() still runs.
@@ -5177,6 +5223,7 @@ async function botl_flush(direct = false) {
         delete game._statusUpdateAll;
     }
     game.botl = game.botlx = false;
+    if (game.disp) game.disp.botl = false;
     if (game._statusClsBlank) game._statusDocrt = false; // status repaints AFTER the map
     delete game._statusClsBlank;
     game.time_botl = false;
@@ -5217,6 +5264,7 @@ export function set_msg_mon(mtmp) {
 
 export async function update_topl(bp) {
     bp = await a11y_location_prefix(bp);
+    bp = vpline_clip(bp);
     if (msgtype_suppressed(bp)) return;
     // C ref: pline.c vpline():129 `strncpy(gp.prevmsg, line, BUFSZ)` — the LAST
     // INDIVIDUAL message, which is what Norep()'s dedup compares against.  It is
@@ -6180,18 +6228,6 @@ export function map_background(x, y, show) {
         show_glyph(x, y, glyph);
 }
 
-// C ref: display.c:296 map_trap(trap, show).
-export function map_trap(trap, show) {
-    const x = trap.tx, y = trap.ty;
-    const glyph = trap_to_glyph(trap);
-    if (game.level?.flags?.hero_memory) {
-        const lev = game.level.at(x, y);
-        if (lev) lev.glyph = glyph;
-    }
-    if (show)
-        show_glyph(x, y, glyph);
-}
-
 // C ref: display.c:313 map_engraving(ep, show).
 export function map_engraving(ep, show) {
     const x = ep.engr_x ?? ep.x, y = ep.engr_y ?? ep.y;
@@ -6969,7 +7005,7 @@ export function show_glyph(x, y, glyph) {
         if ((glyph_is_nothing(oldglyph) || glyph_is_unexplored(oldglyph)
              || is_cmap_furniture(c))
             && !is_cmap_wall(c) && !is_cmap_room(c)) {
-            if ((game.a11y?.mon_notices && glyph_is_monster(glyph))
+            if ((game.flags?.spot_monsters && glyph_is_monster(glyph))
                 || (glyph_is_monster(oldglyph))
                 || (game.u?.ux === x && game.u?.uy === y)) {
                 /* nothing */

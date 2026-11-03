@@ -57,9 +57,11 @@ import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, make_sick } from './potion.js';
 import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender } from './invent.js';
 import { has_innate } from './exper.js';
-import { resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu, get_atkdam_type } from './mondata.js';
+import { resists_ston as md_resists_ston, resists_fire as md_resists_fire, resists_cold as md_resists_cold,
+    resists_elec as md_resists_elec, resists_acid as md_resists_acid, resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu, get_atkdam_type } from './mondata.js';
 import { Monnam, mon_nam, mhis, mhe, hliquid } from './do_name.js';
 import { Invis } from './monmove.js';
+import { is_art, ART_STORMBRINGER, ART_VORPAL_BLADE } from './artifact.js';
 import { Acid_resistance } from './explode.js';
 import { Cold_resistance, Shock_resistance, Fire_resistance } from './zap.js';
 import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION, REFLECTING } from './const.js';
@@ -392,23 +394,21 @@ export function getmattk(magr, mdef, indx, prev_result) {
 
     return attk;
 }
-// C: `weap && ((weap->otyp == CORPSE && touch_petrifies(...)) ||
-//     is_art(weap, ART_STORMBRINGER) || is_art(weap, ART_VORPAL_BLADE))`.
-// No monster in this port wields an artifact or a cockatrice corpse; the corpse
-// half is checked so a future m_initinv change is picked up automatically.
+// C: `weap && ((weap->otyp == CORPSE && touch_petrifies(&mons[weap->corpsenm]))
+//     || is_art(weap, ART_STORMBRINGER) || is_art(weap, ART_VORPAL_BLADE))`.
 const CORPSE_OTYP = 265;   // js/mkobj.js objects[] index
 function weapon_forces_phys(magr) {
     const weap = magr?.mw;
     if (!weap) return false;
     if (weap.otyp === CORPSE_OTYP) {
-        const nm = weap.corpsenm_name;
-        return nm === 'cockatrice' || nm === 'chickatrice';
+        const nm = monster_by_pmidx(weap.corpsenm)?.name;
+        if (nm === 'cockatrice' || nm === 'chickatrice') return true;
     }
-    return false;
+    return is_art(weap, ART_STORMBRINGER) || is_art(weap, ART_VORPAL_BLADE);
 }
 const MR_COLD = 0x02;
 function resists_cold_mon(mdef) {
-    return ((permonst(mdef)?.mresists | 0) & MR_COLD) !== 0;
+    return md_resists_cold(mdef);
 }
 
 // ═══ mhitu.c:448 calc_mattacku_vars ═════════════════════════════════════════
@@ -551,7 +551,7 @@ function Underwater() { return game.u?.uinwater ? 1 : 0; }
 // The engulfer lets the hero go.  No RNG of its own; mnexto() and spoteffects()
 // both do, which is why the call order matters.
 export async function expels(mtmp, mdat, message) {
-    game.disp_botl = true;
+    game.botl = true;
     if (message) {
         if (digests(mdat)) {
             await emitU('You get regurgitated!');
@@ -707,7 +707,7 @@ export async function gulpmu(mtmp, mattk) {
         {
             const ydat = youmonst_data();
             const tp = ydat?.name === 'cockatrice' || ydat?.name === 'chickatrice';
-            const resistston = ((mtmp?.data?.mresists | 0) & 0x80) !== 0;
+            const resistston = md_resists_ston(mtmp);
             if (tp && !resistston) {
                 const { minstapetrify } = await import('./trap.js');
                 // C moves the engulfer back first; its statue is made at the
@@ -752,8 +752,7 @@ export async function gulpmu(mtmp, mattk) {
         await disp.swallowed(1);
         // C ref mhitu.c:1397-1402 -- a non-flaming engulfer snuffs every lit
         // lamp/candle in the hero's pack ("Your oil lamp goes out!").
-        if (!['fire vortex', 'flaming sphere', 'fire elemental', 'salamander']
-                .includes(mtmp.data?.name)) {
+        if (!flaming(mtmp.data)) {
             const { snuff_lit } = await import('./apply.js');
             for (const otmp2 of [...(game.invent || [])])
                 await snuff_lit(otmp2);
@@ -788,10 +787,12 @@ export async function gulpmu(mtmp, mattk) {
                 || (mflags1_of(youmonst_data()) & M1_BREATHLESS) !== 0;
             const amphibious = !!(ep.Amphibious || ep.HAmphibious || ep.EAmphibious)
                 || (mflags1_of(youmonst_data()) & M1_AMPHIBIOUS) !== 0;
-            await emitU(`You are laden with moisture and ${breathless ? 'find it mildly uncomfortable.'
+            const youFlaming = flaming(youmonst_data());
+            await emitU(`You are laden with moisture and ${youFlaming ? 'are smoldering out!'
+                : breathless ? 'find it mildly uncomfortable.'
                 : amphibious ? 'feel comforted.' : 'can barely breathe!'}`);
             /* NB: Amphibious includes Breathless */
-            if (amphibious || breathless) tmp = 0;
+            if ((amphibious || breathless) && !youFlaming) tmp = 0;
         } else {
             await emitU(`You are ${enfolds(mtmp.data) ? 'being squashed'
                 : 'pummeled with debris'}!`);
@@ -917,7 +918,7 @@ export async function gulpmu(mtmp, mattk) {
     if (!u.uswallow) {
         /* life-saving has already expelled the hero */
     } else if ((ydat?.name === 'cockatrice' || ydat?.name === 'chickatrice')
-               && !((mtmp?.data?.mresists | 0) & 0x80)) {
+               && !md_resists_ston(mtmp)) {
         await emitU(`${Monnam(mtmp)} very hurriedly ${
             digests(mtmp.data) ? 'regurgitates'
                 : enfolds(mtmp.data) ? 'releases' : 'expels'} you!`);
@@ -932,6 +933,10 @@ export async function gulpmu(mtmp, mattk) {
     return M_ATTK_HIT;
 }
 const MZ_HUGE = 4;   // C ref: monflag.h:182 (MZ_GIGANTIC is 7, not 5)
+// C ref: mondata.h flaming(ptr).
+function flaming(ptr) {
+    return ['fire vortex', 'flaming sphere', 'fire elemental', 'salamander'].includes(ptr?.name);
+}
 
 // ═══ mhitu.c:1591 explmu ════════════════════════════════════════════════════
 // A yellow light / gas spore style attacker detonates next to the hero.
@@ -1169,6 +1174,8 @@ export async function gazemu(mtmp, mattk) {
                 await emitU(`${Monnam(mtmp)} attacks you with a fiery gaze!`, mtmp);
                 await (await import('./hack.js')).stop_occupation();
                 if (Fire_resistance()) {
+                    const { shieldeff } = await import('./display.js');
+                    await shieldeff(game.u.ux, game.u.uy);
                     await emitU("The fire doesn't feel hot!");
                     monstseesu(M_SEEN_FIRE);
                     const { ugolemeffects } = await import('./polyself.js');
@@ -1227,7 +1234,7 @@ export async function make_stunned_u(xtime, talk) {
     }
     u.uprops.Stun = xtime;
     u.Stunned = xtime > 0;
-    game.botl = true;
+    if ((!xtime && old) || (xtime && !old)) game.botl = true;
 }
 // C ref: mondata.c:1522 cvt_adtyp_to_mseenres — M_SEEN_NOTHING for every
 // damage type the hero has no matching resistance for.
@@ -1364,8 +1371,9 @@ export async function doseduce(mon) {
             }
             /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
+                const qbuf = `"That ${xname(ring)} looks pretty.  May I have it?"`;
                 inv.makeknown(RIN_ADORNMENT);
-                if (await y_n(`"That ${xname(ring)} looks pretty.  May I have it?"`) === 'n')
+                if (await y_n(qbuf) === 'n')
                     continue;
             } else {
                 await emitU(`${Who} decides she'd like ${inv.yname(ring)}, and takes it.`);
@@ -1387,8 +1395,9 @@ export async function doseduce(mon) {
             }
             /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
+                const qbuf = `"That ${xname(ring)} looks pretty.  Would you wear it for me?"`;
                 inv.makeknown(RIN_ADORNMENT);
-                if (await y_n(`"That ${xname(ring)} looks pretty.  Would you wear it for me?"`) === 'n')
+                if (await y_n(qbuf) === 'n')
                     continue;
             } else {
                 await emitU(`${Who} decides you'd look prettier wearing ${inv.yname(ring)},`);
@@ -1553,7 +1562,7 @@ export async function doseduce(mon) {
             u.uhp = u.uhpmax;
             if (Upolyd()) u.mh = u.mhmax;
             await exercise(A_STR, true);
-            game.disp_botl = true;
+            game.botl = true;
             break;
         }
     }
@@ -1681,7 +1690,9 @@ export async function passiveum(olduasmon, mtmp, mattk) {
     else tmp = 0;
 
     const { Monnam } = await import('./uhitm.js');
-    const mres = (bit) => ((permonst(mtmp)?.mresists | 0) & bit) !== 0;
+    const mres = (bit) => (bit === 0x01 ? md_resists_fire(mtmp) : bit === 0x02 ? md_resists_cold(mtmp)
+        : bit === 0x10 ? md_resists_elec(mtmp) : bit === 0x40 ? md_resists_acid(mtmp)
+        : md_resists_ston(mtmp));
     const MR_FIRE = 0x01, MR_COLD_L = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40,
         MR_STONE = 0x80;
 

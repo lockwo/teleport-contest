@@ -11,7 +11,8 @@ import {
     VIBRATING_SQUARE, VWALL, WATER, WEB, W_NONDIGGABLE, isok,
 } from '../const.js';
 import { game } from '../gstate.js';
-import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
+import { makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx  } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { create_maze, walkfrom } from '../mkmaze.js';
 import { BOULDER, des_object_defaults, mkobj_at, mksobj_at } from '../mkobj.js';
 import { stackobj } from '../invent.js';
@@ -25,7 +26,7 @@ import { maketrap } from '../trap.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_location_dry, bigrm_level_init_solidfill,
     bigrm_load_map, bigrm_wallification, flip_level, gx, gy, percent, reset_xystart_size,
-    selection_match, set_levltyp_lit, shuffle, splev_map_mark, splev_mkstairs_at,
+    selection_match, set_levltyp_lit, sel_set_ter, shuffle, splev_map_mark, splev_mkstairs_at,
     LOC_DRY, good_stair_loc, splev_get_location_rnd,
 } from '../sp_lev.js';
 
@@ -50,7 +51,7 @@ function bigrm_rect_sel(x1, y1, x2, y2, base = null) {
 // sel_set_ter).  set_levltyp_lit() carries sel_set_ter's door/HWALL/IRONBARS
 // `horizontal` fixups.  No RNG.
 function bigrm_terrain_sel(sel, typ) {
-    selection_iterate(sel, (x, y) => set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE));
+    selection_iterate(sel, (x, y) => sel_set_ter(x, y, { ter: typ, tlit: SET_LIT_NOCHANGE }));
 }
 
 // C ref: sp_lev.c lspo_replace_terrain().  `sel` selects the candidate cells;
@@ -339,7 +340,7 @@ function bigrm_monster() {
     // (none on the Big Room), so the goodpos filter is equivalent with null.
     let mx = c.x, my = c.y;
     if (mm_mon_at(mx, my)) {
-        const cc = enexto_spawn(mx, my, null);
+        const cc = enexto_gpflags(mx, my, null, 0);
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(null, mx, my, 0);
@@ -357,7 +358,7 @@ function bigrm_monster_at(mrx, mry) {
     rn2(3);                              // induced_align (dungeon.c:2012)
     let mx = bx(mrx), my = by(mry);
     if (mm_mon_at(mx, my)) {
-        const cc = enexto_spawn(mx, my, null);
+        const cc = enexto_gpflags(mx, my, null, 0);
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(null, mx, my, 0);
@@ -667,7 +668,7 @@ const BIGRM_VARIANTS = {
         // the horizontal pass is then re-run to catch the corners the first
         // two passes opened up.  Neither selection.match draws RNG.
         const wall_boulder = (sel) => selection_iterate_lua(sel, (x, y) => {
-            set_levltyp_lit(x, y, ROOM, SET_LIT_NOCHANGE);
+            sel_set_ter(x, y, { ter: ROOM, tlit: SET_LIT_NOCHANGE });
             mksobj_at(BOULDER, x, y, true, true);
         });
         wall_boulder(l_selection_or(selection_match('[.w.]'), selection_match('.\nw\n.')));

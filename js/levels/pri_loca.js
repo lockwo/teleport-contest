@@ -10,8 +10,9 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
-import { enexto_spawn, makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
-         MM_EMIN } from '../makemon.js';
+import { makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
+         MM_EMIN  } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
@@ -390,7 +391,7 @@ function pri_create_roamer(name, mx, my, peaceful) {
     if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     // MM_EMIN is load-bearing: makemon.c:1414 gives an aligned cleric created

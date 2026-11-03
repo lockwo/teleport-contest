@@ -49,8 +49,9 @@ import { dmgtype, AD_DISE, AD_PEST } from './monattk_data.js';
 import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { dipfountain, drinkfountain, drinksink, breaksink, wash_hands, sink_backs_up } from './fountain.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { name_to_pmidx, monster_by_pmidx, enexto_spawn, makemon,
-         pmname_of_pmidx, MGEND_NEUTRAL } from './makemon.js';
+import { name_to_pmidx, monster_by_pmidx, makemon,
+         pmname_of_pmidx, MGEND_NEUTRAL  } from './makemon.js';
+import { enexto_gpflags } from './teleport.js';
 import { object_detect } from './detect.js';
 import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
 import { hard_helmet, fingers_or_gloves } from './do_wear.js';
@@ -115,7 +116,7 @@ function set_hallucination(v) {
 function Hallucination() { return HHallucination() > 0 && !Halluc_resistance(); }
 function Halluc_resistance() { return !!game.u?.formprops?.Halluc_resistance || HProp('HHalluc_resistance', 'EHalluc_resistance') > 0; }
 function Upolyd() { return !!game.u?.Upolyd; }
-function Unaware() { return !!(game.u?.usleep || game.u?.Unaware) || Unaware_const(); }
+function Unaware() { return Unaware_const(); }
 // C ref: attrib.h Fixed_abil — blocks every adjattrib().  Single reader in attrib.js.
 // Poison_resistance lives in youprop.js (one reader for H/E/innate/form halves).
 export { Poison_resistance };
@@ -893,14 +894,7 @@ async function peffect_extra_healing(otmp) {
     await You_feel('much better.');
     await healup(16 + d(4 + 2 * bcsign(otmp), 8),
                  otmp.blessed ? 5 : otmp.cursed ? 0 : 2, !otmp.cursed, true);
-    // C: make_hallucinated(0L, TRUE, 0L): see_*() then the pline, which pages with
-    // --More-- when it no longer fits after "You feel much better.  You can hear again."
-    const wasHallucinating = Hallucination();
-    set_hallucination(0);
-    if (wasHallucinating) {
-        await redraw_after_hallucination_change();   // make_hallucinated(): see_*() before the pline
-        await update_topl(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
-    }
+    await make_hallucinated(0, true, 0);
     await exercise(A_CON, true);
     await exercise(A_STR, true);
     if (Wounded_legs() && otmp.blessed && !game.u?.usteed)
@@ -916,12 +910,7 @@ async function peffect_full_healing(otmp) {
         u.ulevelmax -= 1;
         await pluslvl(false, update_topl);   // newhp() rolls
     }
-    const wasHallucinating = Hallucination();
-    set_hallucination(0);
-    if (wasHallucinating) {
-        await redraw_after_hallucination_change();   // make_hallucinated(): see_*() before the pline
-        await update_topl(`Everything ${Blind() ? 'feels' : 'looks'} SO boring now.`);
-    }
+    await make_hallucinated(0, true, 0);
     await exercise(A_STR, true);
     await exercise(A_CON, true);
     if (Wounded_legs() && (otmp.blessed || (!otmp.cursed && !u?.usteed)))
@@ -1619,7 +1608,7 @@ async function ghost_from_bottle() {
     const u = game.u;
     const pmidx = name_to_pmidx('ghost');
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-    const spot = ptr ? enexto_spawn(u.ux, u.uy, ptr) : null;
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;
@@ -2514,7 +2503,7 @@ export async function potionhit(mon, obj, how) {
             if (mon.mcanmove) {
                 /* really should be rnd(5) for consistency with players
                    breathing potions, but... */
-                await p_paralyze_monst(mon, rnd(25));
+                (await import('./mhitm_ad.js')).paralyze_monst(mon, rnd(25));
             }
             break;
         case POT_SPEED:
@@ -2672,12 +2661,7 @@ function p_upstart(s) {
     const str = String(s || '');
     return str ? str[0].toUpperCase() + str.slice(1) : str;
 }
-// C ref: mhitm_ad.c paralyze_monst().
-async function p_paralyze_monst(mon, ntmp) {
-    if (!mon) return;
-    mon.mcanmove = 0;
-    mon.mfrozen = ntmp;
-}
+
 
 // C ref: potion.c:2243 hold_potion(potobj, drop_fmt, drop_arg, hold_msg) — put a
 // transformed potion back into inventory.  Its WEIGHT hasn't changed, but it may
@@ -3107,7 +3091,7 @@ function p_unpolyable(o) {
 }
 async function p_obj_unpolyable(obj) {
     const { obj_resists } = await import('./zap.js');
-    return p_unpolyable(obj) || obj === game.uball || obj === game.uskin
+    return p_unpolyable(obj) || obj === game.u?.uball || obj === game.uskin
         || obj_resists(obj, 5, 95);
 }
 
@@ -3209,7 +3193,7 @@ export async function djinni_from_bottle(obj) {
     /* makemon(ptr, u.ux, u.uy, MM_NOMSG): the hero's own square, so
        makemon.c's byyou && !in_mklev branch runs enexto_core() first (the same
        spawn sequence ghost_from_bottle() above drives) */
-    const spot = ptr ? enexto_spawn(u.ux, u.uy, ptr) : null;
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;

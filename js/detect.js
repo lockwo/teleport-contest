@@ -544,9 +544,10 @@ function d_distu(x, y) {
     const dx = x - (game.u?.ux ?? 0), dy = y - (game.u?.uy ?? 0);
     return dx * dx + dy * dy;
 }
-/* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
+import { attacktype_fordmg } from './monattk_data.js';
+/* mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST) */
 function d_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */ && a.adtyp === 26 /* AD_DGST */);
+    return attacktype_fordmg(ptr, 11 /* AT_ENGL */, 26 /* AD_DGST */);
 }
 /* hack.h Confusion — mirrors js/allmain.js:1414. */
 function d_Confusion() { return !!(game.u?.uconf || game.u?.HConfusion); }
@@ -1491,11 +1492,8 @@ export async function furniture_detect() {
                 ++found;
                 const mon = m_at(x, y);
                 if (mon && M_AP_TYPE(mon) === M_AP_FURNITURE) {
-                    // seemimic(mon) — js/apply.js:533 owns the async port; this
-                    // module has no seemimic of its own.
-                    mon.m_ap_type = 0;
-                    mon.mappearance = 0;
-                    newsym(x, y);
+                    const { seemimicLocal } = await import('./uhitm.js');
+                    seemimicLocal(mon);
                 }
                 if (!mon || !canspotmon(mon)) map_invisible(x, y);
             }
@@ -1551,7 +1549,8 @@ export async function do_vicinity_map(sobj) {
     const u = game.u;
     const props = (u.uprops = u.uprops || {});
     let refresh = false, mdetected = false, odetected = false;
-    const extended = !!(sobj && (sobj.blessed || u.Clairvoyant));
+    const { Clairvoyant } = await import('./allmain.js');
+    const extended = !!(sobj && (sobj.blessed || Clairvoyant()));
     const random_farsight = !sobj;
     const lo_y = (u.uy - 5 < 0) ? 0 : u.uy - 5;
     const hi_y = (u.uy + 6 >= ROWNO) ? ROWNO - 1 : u.uy + 6;
@@ -2140,7 +2139,7 @@ export async function use_crystal_ball(box) {
         case 2: {
             await pline(`${Tobjnam_ball(obj, 'confuse')} you!`);
             const { make_confused } = await import('./potion.js');
-            make_confused((u.uprops?.Confusion || 0) + impair, false);
+            await make_confused((u.uprops?.Confusion || 0) + impair, false);
             break;
         }
         case 3: {

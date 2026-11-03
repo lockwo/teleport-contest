@@ -146,6 +146,7 @@ export async function makemaz_kni_strt() {
         const excalibur = quest_create_named_weapon(54 /*LONG_SWORD*/, 4, arthur);
         if (excalibur) {
             excalibur.blessed = 1; excalibur.cursed = 0; setONAME(excalibur, 'Excalibur');
+            excalibur.oeroded = excalibur.oeroded2 = 0; excalibur.oerodeproof = 0;   // create_object() erosion reset after oname()
             // C ref: mkobj.c create_object() -> oname(otmp, "Excalibur", ONAME_LEVEL_DEF)
             // -> artifact_exists(): registers artiexist[ART_EXCALIBUR], which
             // mksobj_init's later `rn2(40 + 10*nartifact_exist())` artif rolls

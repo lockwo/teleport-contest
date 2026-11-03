@@ -793,6 +793,11 @@ export async function throw_gold(obj) {
     const u = game.u;
     if (!u.dx && !u.dy && !u.dz) {
         await update_topl('You cannot throw gold at yourself.');
+        /* If we tried to throw part of a stack, force it to merge back
+           together (same as in throw_obj).  Essential for gold. */
+        const osp = game.context?.objsplit;
+        if (osp && (obj.o_id === osp.parent_oid || obj.o_id === osp.child_oid))
+            I.unsplitobj(obj);
         return ECMD_CANCEL;
     }
     I.freeinv(obj);
@@ -811,7 +816,7 @@ export async function throw_gold(obj) {
 
     let bx = u.ux, by = u.uy;
     if (u.dz) {
-        if (u.dz < 0) {
+        if (u.dz < 0 && !Is_airlevel(u.uz) && !u.uinwater && !Is_waterlevel(u.uz)) {
             await update_topl(`The gold hits the ${ceiling(u.ux, u.uy)}, then falls back on top of your ${
                 I.body_part(HEAD)}.`);
             if (game.uarmh)
@@ -1301,7 +1306,7 @@ const Flying_hurtle = () => Flying_hero();
 const Wwalking_hurtle = () => Wwalking_hero();
 const Passes_walls_hurtle = () => Passes_walls_hero();
 // C ref: youprop.h Punished — the hero is chained to the heavy iron ball.
-const uball_of = () => (game.u?.uball ?? game.uball ?? null);
+const uball_of = () => (game.u?.uball ?? null);
 const Punished_hurtle = () => !!uball_of();
 // C ref: youprop.h Sokoban.
 const Sokoban_hurtle = () => game.u?.uz?.dnum === game.sokoban_dnum;

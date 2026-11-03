@@ -21,7 +21,6 @@ import {
 } from './vision.js';
 import { obj_extract_self, objects_at, stackobj } from './invent.js';
 import { place_object } from './mkobj.js';
-import { enexto_spawn } from './makemon.js';
 import { rndmonnum } from './mkobj.js';
 import { goodpos, rloc_to, RLOC_NOMSG } from './teleport.js';
 import { unplacebc_and_covet_placebc, lift_covet_and_placebc } from './ball.js';
@@ -782,7 +781,6 @@ import {
     Is_medusa_level, Is_stronghold, In_quest,
     COUNTING as MM_COUNTING, WRITING as MM_WRITING, FREEING as MM_FREEING, OBJ_FLOOR } from './const.js';
 import { depth as mm_depth, distmin as mm_distmin } from './hacklib.js';
-import { within_bounded_area as mm_within_bounded_area } from './rect.js';
 import { occupied as mm_occupied, somex as mm_somex, somey as mm_somey } from './mkroom.js';
 import { is_orc_flag as mm_is_orc } from './monflags_data.js';
 import { makemon as mm_makemon, set_malign as mm_set_malign,
@@ -841,23 +839,6 @@ export const gr = { ransacked: 0 };
 // out-of-bounds and every undug cell answer TRUE.
 export function is_solid(x, y) {
     return !isok(x, y) || IS_STWALL(game.level?.at(x, y)?.typ);
-}
-
-// C ref: mkmaze.c:317 is_exclusion_zone(type, x, y) — walks sve.exclusion_zones
-// (registered by nhlua.c's des.exclusion() / lspo_exclusion()).  An LR_TELE
-// zone blocks BOTH LR_UPTELE and LR_DOWNTELE queries; every other type matches
-// only itself.
-export function is_exclusion_zone(type, x, y) {
-    for (const ez of (game.exclusion_zones || [])) {
-        if (((type === LR_DOWNTELE
-              && (ez.zonetype === LR_DOWNTELE || ez.zonetype === LR_TELE))
-             || (type === LR_UPTELE
-                 && (ez.zonetype === LR_UPTELE || ez.zonetype === LR_TELE))
-             || type === ez.zonetype)
-            && mm_within_bounded_area(x, y, ez.lx, ez.ly, ez.hx, ez.hy))
-            return true;
-    }
-    return false;
 }
 
 // C ref: mkmaze.c:707 check_ransacked(s) — "this kludge only works as long as

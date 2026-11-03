@@ -10,14 +10,15 @@
 
 import { COLNO, ROWNO } from '../const.js';
 import { ARMOR_CLASS, GEM_CLASS, TOOL_CLASS, WEAPON_CLASS, mkobj_at } from '../mkobj.js';
-import { enexto_spawn, makemon, mkclass, mm_mon_at } from '../makemon.js';
+import { makemon, mkclass, mm_mon_at  } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { S_DOG } from '../symbols.js';
 import { game } from '../gstate.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, q_absx, q_absy,
     quest_create_monster, quest_place_stair, quest_region_light, quest_set_door,
-    shuffle, vly_non_diggable, quest_level_init_solidfill,
+    shuffle, vly_non_diggable, quest_level_init_solidfill, splev_finish_object,
 } from '../sp_lev.js';
 import { quest_monster } from './quest_home_common.js';
 import { quest_monster_named_rnd, quest_trap_random } from './quest_common.js';
@@ -49,7 +50,7 @@ const SAM_LOCA_MAP = [
 // class letter (GEM/ARMOR/WEAPON/TOOL) at an explicit coord.  No get_location
 // RNG at all; mkobj_at()'s own weighted pick within the class still draws.
 function loca_object_at(oclass, mx, my) {
-    mkobj_at(oclass, q_absx(mx), q_absy(my), true);
+    splev_finish_object(mkobj_at(oclass, q_absx(mx), q_absy(my), true));
 }
 
 // C ref: sp_lev.c create_monster() for the 3-arg des.monster(classChar, x, y)
@@ -62,7 +63,7 @@ function loca_monster_class_at(classNum, mx, my) {
     if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);

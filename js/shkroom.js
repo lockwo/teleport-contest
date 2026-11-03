@@ -19,7 +19,7 @@ import { get_cost, get_pricing_units, contained_cost, contained_gold,
          bill_box_content, costly_gold, picked_container, is_unpaid, inhishop,
          inside_shop, rile_shk, rouse_shk, hot_pursuit, rob_shop, call_kops,
          pacify_shk, muteshk, Deaf, Shknam, deserted_shop } from './shk.js';
-import { makemon, monster_by_pmidx, enexto_spawn, name_to_pmidx } from './makemon.js';
+import { makemon, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { builds_up, room_discovered } from './dungeon.js';
 import { record_price_quote } from './o_init.js';
 import { depth as depth_of_level, isok } from './hacklib.js';
@@ -374,7 +374,8 @@ async function u_entered_shop(enterstring) {
     } else {
         const here = (game.level?.objects || []).filter(
             (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy);
-        should_block = !!(u.Fast
+        const { youHaveFast, youHaveVeryFast } = await import('./allmain.js');
+        should_block = !!((youHaveFast() || youHaveVeryFast())
             && here.some((o) => o.otyp === PICK_AXE || o.otyp === DWARVISH_MATTOCK));
     }
     if (should_block) {
@@ -400,7 +401,7 @@ export async function check_special_room(newlev) {
     // variants cover the whole level and so are entered without entering any
     // room.  achieveo.minetn_reached makes it fire once.
     {
-        const { in_town } = await import('./dig.js');
+        const { in_town } = await import('./mkroom.js');
         const { In_mines } = await import('./const.js');
         game.context = game.context || {};
         game.context.achieveo = game.context.achieveo || {};
@@ -520,7 +521,7 @@ export async function check_special_room(newlev) {
             // make.
             if (rt === COURT || rt === SWAMP || rt === MORGUE || rt === ZOO) {
                 const { DEADMONSTER } = await import('./mon.js');
-                for (const mtmp of [...(game.level?.monsters || [])]) {
+                for (const mtmp of [...(game.level?.monsters || [])].reverse()) { /* fmon newest-first: rn2(3) per monster */
                     if (DEADMONSTER(mtmp)) continue;
                     if (!isok(mtmp.mx, mtmp.my)
                         || roomno !== (game.level.at(mtmp.mx, mtmp.my)?.roomno | 0))

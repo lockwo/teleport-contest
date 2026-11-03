@@ -11,7 +11,7 @@ import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night, getnow, yyyymmdd } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, PLNMSG_OK_DONT_DIE } from './const.js';
+import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, Is_astralevel, PLNMSG_OK_DONT_DIE } from './const.js';
 
 // C ref: end.c:1536 -- " on dungeon level N" is omitted in the endgame and in
 // single-level branches (Fort Ludios); the quest reports its own dunlev(), not
@@ -256,7 +256,7 @@ async function savelife(_how) {
     const con = (await import('./attrib.js')).acurr_eff(4); // ACURR(A_CON)
     const givehp = 50 + 10 * Math.trunc(con / 2);
     u.uhp = Math.min(u.uhpmax, givehp);
-    if (u.mh != null && u.mhmax != null) u.mh = Math.min(u.mhmax, givehp);
+    if (u.Upolyd) u.mh = Math.min(u.mhmax, givehp);
     // C end.c savelife():752 sets disp.botl after restoring HP.  Death froze
     // the last real status draw; the next pline must publish the recovered
     // HP, including any monster attacks which follow in that same turn.
@@ -266,6 +266,7 @@ async function savelife(_how) {
     // standard nutrition level, which also clears any hunger-derived temporary
     // strength penalty.  It is deterministic and does not consume RNG.
     if ((u.uhunger ?? 900) < 500 || _how === 1 /* CHOKING */) {
+        if (u.uhs !== 1 || (u.atemp?.a?.[0] || 0) < 0) game.botl = true;
         u.uhunger = 900;
         u.uhs = 1; // NOT_HUNGRY
         if ((u.atemp?.a?.[0] || 0) < 0) {
@@ -299,6 +300,14 @@ async function savelife(_how) {
     // C ref: end.c:741 — the arise-as-undead choice done_in_by() made for the
     // death that was just averted must not leak into a later death.
     u.ugrave_arise = NON_PM;
+    // C ref: end.c:742 HUnchanging = 0L
+    if (u.uprops) u.uprops.HUnchanging = 0;
+    u.HUnchanging = 0;
+    // C ref: end.c:744 — if (!svc.context.mon_moving) endmultishot(FALSE)
+    if (!game.context?.mon_moving) {
+        const { endmultishot } = await import('./dothrow.js');
+        await endmultishot(false);
+    }
     // C ref: end.c:743 curs_on_u() == flush_screen(1): publishes the restored
     // status line (bot()) at once, before any later same-turn damage.
     {
@@ -478,6 +487,36 @@ async function done_object_cleanup() {
     } catch { /* cleanup is best-effort; never break the death sequence */ }
 }
 
+// C ref: decl.h svk.killer {name, format}: rebuild it from the pre-formatted
+// "<killed_by_prefix[how]>[a/an ]<name>" text when a death path set only
+// game._killer_name.  A text without the prefix is NO_KILLER_PREFIX.
+async function sync_killer_from_text(how) {
+    const text = game._killer_name;
+    const killer = svk_killer();
+    const { killed_by_prefix, formatkiller } = await import('./topten.js');
+    if (!text) {
+        /* only svk.killer was filled (explode.c's gas spore blast) */
+        if (killer.name)
+            game._killer_name = formatkiller(256, how, false);
+        return;
+    }
+    if (killer.name && formatkiller(256, how, false) === text)
+        return;
+    const pfx = String(killed_by_prefix[how] ?? 'killed by ');
+    let rest = text, format = NO_KILLER_PREFIX;
+    if (pfx && text.startsWith(pfx)) {
+        rest = text.slice(pfx.length);
+        const m = /^an? (.*)$/.exec(rest);
+        if (m) { rest = m[1]; format = KILLED_BY_AN; } else format = KILLED_BY;
+    } else if (text.startsWith('killed by ')) {
+        rest = text.slice('killed by '.length);
+        const m = /^an? (.*)$/.exec(rest);
+        if (m) { rest = m[1]; format = KILLED_BY_AN; } else format = KILLED_BY;
+    }
+    killer.name = rest;
+    killer.format = format;
+}
+
 async function done(how) {
     const d = await deps();
     const u = game.u;
@@ -497,6 +536,12 @@ async function done(how) {
             return;
         }
     }
+
+    /* C: every caller of done() has filled svk.killer (name + format) first;
+       this port's callers fill the pre-formatted game._killer_name string, so
+       enlightenment / topten, which read svk.killer, must see the same state. */
+    if (how < PANICKED)
+        await sync_killer_from_text(how);
 
     // C ref: end.c:1071 — mortality counts every actual death attempt before
     // a life-saving amulet, debug fuzzer, or declined wizard "Die?" prompt can
@@ -855,6 +900,11 @@ export async function doquit() {
         game._pending_message = '';
         game._toplin = 0;
         if (d.flush_screen) await d.flush_screen(1);
+        if ((game.multi | 0) > 0) (await import('./hack.js')).nomul(0);
+        if ((game.multi | 0) === 0 && u) {
+            u.uinvulnerable = false; /* avoid ctrl-C bug -dlc */
+            u.usleep = 0;
+        }
         if (abandon_tutorial) {
             const { schedule_goto } = await import('./do.js');
             const { UTOTYPE_ATSTAIRS } = await import('./const.js');
@@ -1115,15 +1165,19 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
 
     const plname = game.plname || game.svp?.plname || 'wizard';
     const female = !!game.flags?.female;
-    const roleName = (female && game.urole?.name?.f)
-        ? game.urole.name.f
-        : (game.urole?.name?.m || 'Adventurer');
+    // C ref: end.c really_done() — an ascended hero is "the Demigod(dess)".
+    const roleName = (how === ASCENDED)
+        ? (female ? 'Demigoddess' : 'Demigod')
+        : (female && game.urole?.name?.f)
+            ? game.urole.name.f
+            : (game.urole?.name?.m || 'Adventurer');
     const inv = Array.isArray(game.invent) ? game.invent
         : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
     const umoney = money_toplevel(inv) + hidden_gold_inv(inv);
 
     const uz = u?.uz || { dnum: 0, dlevel: 1 };
-    const dungeonName = game.dungeons?.[uz.dnum]?.dname || 'The Dungeons of Doom';
+    const dungeonName = Is_astralevel(uz) ? 'The Astral Plane'
+        : (game.dungeons?.[uz.dnum]?.dname || 'The Dungeons of Doom');
     // deepest_lev_reached(FALSE) approximated by the current depth (matches
     // outrip_and_score's own simplification for these single-descent deaths).
     const depth = (game.dungeons?.[uz.dnum]?.depth_start ?? 1) + (uz.dlevel | 0) - 1;

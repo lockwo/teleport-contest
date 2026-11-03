@@ -13,7 +13,7 @@
 // preserving timeout bits beside any persistent-source flags.
 
 import { game, hooks } from './gstate.js';
-import { set_itimeout, incr_itimeout } from './youprop.js';
+import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero } from './youprop.js';
 import { panic as _panic } from './panic.js';
 import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
@@ -164,7 +164,8 @@ async function slip_or_trip() {
         }
         const { CORPSE } = await import('./mkobj.js');
         if (!game.uarmf && otmp.otyp === CORPSE
-            && touch_petrifies(otmp.corpsenm)) {
+            && touch_petrifies(otmp.corpsenm)
+            && !(await import('./youprop.js')).Stone_resistance_hero()) {
             const { instapetrify } = await import('./polyself.js');
             const { monster_by_pmidx } = await import('./makemon.js');
             const nm = `tripping over ${_an(monster_by_pmidx(otmp.corpsenm)?.name)} corpse`;
@@ -242,7 +243,7 @@ async function expire_fumbling() {
     const u = game.u;
     // C: `if (u.umoved && !(Levitation || Flying))` — an airborne hero skips
     // slip_or_trip() and so skips its rn2(4).
-    if (u.umoved && !(u.uprops?.Levitation || u.uprops?.Flying)) {
+    if (u.umoved && !(Levitation_hero() || Flying_hero())) {
         await slip_or_trip();
         await nomul(-2);
         game.multi_reason = 'fumbling';
@@ -254,7 +255,10 @@ async function expire_fumbling() {
         }
     }
     u.HFumbling &= ~FROMOUTSIDE;
-    if (u.HFumbling || u.EFumbling) u.HFumbling = (u.HFumbling || 0) + rnd(20);
+    if (Fumbling_hero()) u.HFumbling = (u.HFumbling || 0) + rnd(20);
+    /* 'mention_decor' was deferred for message sequencing reasons; catch up now */
+    if (game.iflags?.defer_decor)
+        await (await import('./pickup.js')).deferred_decor(false);
 }
 
 // C ref: timeout.c vomiting_dialogue() — the Vomiting countdown's staged
@@ -490,11 +494,12 @@ async function expire_warn_of_mon() {
 async function expire_invisibility() {
     const u = game.u;
     const { newsym } = await import('./display.js');
-    const { See_invisible_hero } = await import('./youprop.js');
+    const { See_invisible_hero, Invis_hero } = await import('./youprop.js');
     const { Blind } = await import('./vision.js');
     newsym(u.ux, u.uy);
-    if (!u.uprops?.HInvis && !u.uprops?.EInvis
-        && !u.uprops?.BInvis && !Blind()) {
+    const BInvis = (u.uprops?.BInvis | 0) || (u.BInvis | 0)
+        || ((u.uprops_blocked || {})[40 /* INVIS */] | 0);
+    if (!Invis_hero() && !BInvis && !Blind()) {
         await pline(!See_invisible_hero()
             ? 'You are no longer invisible.'
             : 'You can no longer see through yourself.');
@@ -685,7 +690,7 @@ const TIMED_PROPS = [
     timed_uprop('MAGICAL_BREATHING', 'HMagical_breathing',
         async () => {
             if (_Breathless() || !_region_danger()) return;
-            await pline(game.u?.uprops?.HPoison_resistance
+            await pline((await import('./youprop.js')).Poison_resistance()
                 ? 'You cough.' : 'You cough and spit blood!');
         }),
     timed_uprop('PASSES_WALLS', 'HPasses_walls',
@@ -1335,7 +1340,8 @@ export async function phaze_dialogue() {
 
     /* C: EPasses_walls || (HPasses_walls & ~TIMEOUT) — an extrinsic or a
        permanent intrinsic means there is nothing timing out to talk about. */
-    if (game.u?.EPasses_walls) return;
+    if (game.u?.EPasses_walls || ((game.u?.uprops_extrinsic || {})[53 /* PASSES_WALLS */] | 0)
+        || ((game.u?.uprops?.HPasses_walls | 0) & ~TIMEOUT)) return;
 
     if ((_prop('HPasses_walls') % 2) && i > 0 && i <= phaze_texts.length)
         await pline(phaze_texts[phaze_texts.length - i]);

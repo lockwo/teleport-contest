@@ -566,7 +566,7 @@ function impossible(msg) {
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
 function ordin(n) {
     const dd = n % 10;
-    return (dd === 0 || dd > 3 || (n % 100) / 10 === 1) ? 'th'
+    return (dd === 0 || dd > 3 || Math.trunc((n % 100) / 10) === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
 /* polyself.c body_part(HAND) for an unpolymorphed hero */

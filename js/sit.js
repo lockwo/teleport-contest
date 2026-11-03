@@ -2,7 +2,7 @@
 // C ref: sit.c dosit()/throne_sit_effect()/special_throne_effect()/take_gold()/
 // lay_an_egg().  Full port including the 13-entry throne effect table.
 
-import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft, Flying_hero, Deaf_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { update_topl, vobj_at, Hallucination_u, You_feel, map_background, newsym, y_n } from './display.js';
@@ -110,7 +110,7 @@ export async function dosit() {
             if (obj.otyp === CORPSE && amorphous_corpse(obj)) {
                 await update_topl("It's squishy...");
             } else if (isCreamPie(obj)) {
-                await update_topl('Squelch!');
+                if (!Deaf_hero()) await update_topl('Squelch!');
                 await useupf(obj, obj.quan);
             } else if (!(isBox(obj) || obj_is_cloth(obj))) {
                 await update_topl("It's not very comfortable...");
@@ -145,7 +145,7 @@ export async function dosit() {
                 u.utrap++;
             }
         } else {
-            await update_topl(`You ${u.uprops?.Flying ? 'land' : 'sit down'}.`);
+            await update_topl(`You ${Flying_hero() ? 'land' : 'sit down'}.`);
             await dotrap(trap, VIASITTING);
         }
     } else if ((u.uinwater || Is_waterlevel(u.uz))

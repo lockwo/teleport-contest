@@ -22,7 +22,7 @@
 // hero_seq differ on the first use, giving the free ECMD_OK.
 
 import { makeplural } from './plural.js';
-import { Levitation_hero, Fumbling_hero, Passes_walls_hero, Wounded_legs_hero, Deaf_hero, Stunned_hero, See_invisible_hero } from './youprop.js';
+import { Levitation_hero, Fumbling_hero, Passes_walls_hero, Wounded_legs_hero, Deaf_hero, Stunned_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
@@ -1178,12 +1178,12 @@ async function do_break_wand(obj) {
             if (mon) await A.zap.bhitm(mon, obj);
             if (affects_objects && A.invent.objects_at(x, y).length) {
                 await A.zap.bhitpile(obj, x, y);
-                game.disp_botl = true; /* potion effects */
+                game.botl = true; /* potion effects */
             }
         } else {
             if (affects_objects && A.invent.objects_at(x, y).length) {
                 await A.zap.bhitpile(obj, x, y);
-                game.disp_botl = true; /* potion effects */
+                game.botl = true; /* potion effects */
             }
             const damage = await A.zap.zapyourself(obj, false);
             if (damage) {
@@ -1192,7 +1192,7 @@ async function do_break_wand(obj) {
                     `killed ${him}self by breaking a wand`, NO_KILLER_PREFIX);
             }
             if (game.program_state?.gameover) return ECMD_TIME; /* losehp()->done() never returns */
-            game.disp_botl = true; /* blindness */
+            game.botl = true; /* blindness */
         }
     }
 
@@ -1627,7 +1627,7 @@ function valid_polearm_position(x, y, min_range, max_range) {
 // unless the hero is impaired.  No RNG.
 function find_poleable_mon(pos, min_range, max_range) {
     const u = game.u;
-    const impaired = !!(game.u?.uconf || game.u?.ustun || ap_Hallucination());
+    const impaired = !!(ap_Confusion() || ap_Stunned() || ap_Hallucination());
     const rt = Math.floor(Math.sqrt(max_range));
     const lo_x = Math.max(u.ux - rt, 1), hi_x = Math.min(u.ux + rt, 79);
     const lo_y = Math.max(u.uy - rt, 0), hi_y = Math.min(u.uy + rt, 20);
@@ -1745,7 +1745,7 @@ export async function use_pole(obj, autohit) {
         // redrawn cell, exactly as hack.js jump_hilite_first_cursor() models
         // for #jump.
         const { getpos, jump_hilite_first_cursor } = await import('./hack.js');
-        const TIP_GETPOS = 1 << 4;
+        const TIP_GETPOS = 1 << 3; /* 1 << const.js TIP_GETPOS */
         if (!game.flags?.tips || ((game.context?.tips || 0) & TIP_GETPOS)) {
             const hc = jump_hilite_first_cursor(
                 (x, y) => valid_polearm_position(x, y, min_range, max_range), 3, false);
@@ -2262,12 +2262,10 @@ async function ap_use_unpaid_trapobj(otmp, x, y) {
 function ap_Soundeffect(_se, _volume) {}
 function ap_Hero_playnotes(_instr, _notes, _volume) {}
 function ap_obj_to_instr(_obj) { return 0; }
-// C ref: trap.c feeltrap(trap) — js/trap.js's copy is private.
+// C ref: trap.c feeltrap(trap).
 async function ap_feeltrap(trap) {
-    const A = await ap_load();
-    if (!trap) return;
-    trap.tseen = true;
-    A.display.newsym(trap.tx, trap.ty);
+    const { feeltrap } = await import('./trap.js');
+    feeltrap(trap);
 }
 // C ref: mon.c mnexto(mtmp, rlocflags).
 async function ap_mnexto(mtmp, rlocflags) {
@@ -2655,10 +2653,15 @@ export async function magic_whistled(obj) {
                 mtmp.mundetected = 0;
                 A.display.newsym(mtmp.mx, mtmp.my);
             }
+            const PLNMSG_enum = 99; /* 'none of the above' */
+            game.last_msg = PLNMSG_enum; /* not a specific message */
             if (await ap_mintrap(mtmp, NO_TRAP_FLAGS_A)
                 === Trap_Killed_Mon)
                 change_luck(-1);
-            /* dying while seen would have issued a message and not get here */
+            if (game.last_msg !== PLNMSG_enum) {
+                ++trapped;
+                continue;
+            }
             const nseen = ap_DEADMONSTER(mtmp) ? false : A.uhitm.canspotmon(mtmp);
 
             if (nseen) {
@@ -3058,7 +3061,7 @@ export async function use_mirror(obj) {
                 }
                 game.nomovemsg = 0; /* default, "you can move again" */
             }
-        } else if (ap_Upolyd() && (ap_is_vampire(game.youmonst?.data)
+        } else if (ap_Upolyd() && (ap_is_vampire(A.invent.youmonst_data())
                                    || ap_is_vampshifter(game.youmonst))) {
             await A.display.pline("You don't have a reflection.");
         } else if (u.umonnum === PM_UMBER_HULK && ap_Upolyd()) {
@@ -3199,10 +3202,12 @@ export async function use_mirror(obj) {
     return ECMD_TIME;
 }
 
-// C ref: mhitm_ad.c paralyze_monst(mon, amt) — js/mhitm_ad.js's copy is private.
+// C ref: mhitm_ad.c paralyze_monst(mon, amt) — js/mhitm_ad.js exports the same body.
 function ap_paralyze_monst(mon, amt) {
     mon.mcanmove = 0;
-    mon.mfrozen = amt;
+    mon.mfrozen = Math.min(amt | 0, 127);
+    mon.meating = 0; /* terminate any meal-in-progress */
+    mon.mstrategy = (mon.mstrategy | 0) & ~0x20000000 /* STRAT_WAITFORU */;
 }
 // C ref: invent.c setnotworn(obj) — js/invent.js's copy is private.
 
@@ -3500,8 +3505,9 @@ export async function snuff_candle(otmp) {
         // monster's pack and its square is visible, or (any other `where`) when
         // the hero is not blind.  js/light.js's get_obj_location() is private,
         // so read the object's own ox/oy, which it keeps in sync.
+        const loc_ = A.lightsrc.get_obj_location(otmp, 0) || { x: 0, y: 0 };
         const visible = (otmp.where === OBJ_MINVENT)
-            ? A.vision.cansee(otmp.ox | 0, otmp.oy | 0) : !A.vision.Blind();
+            ? A.vision.cansee(loc_.x | 0, loc_.y | 0) : !A.vision.Blind();
         if (visible)
             await A.display.pline(`${await ap_Shk_Your(otmp)}${
                 candle ? '' : "candelabrum's "}candle${many ? "s'" : "'s"} flame${
@@ -3520,8 +3526,9 @@ export async function snuff_lit(obj) {
     if (obj.lamplit) {
         if (obj.otyp === OIL_LAMP || obj.otyp === MAGIC_LAMP
             || obj.otyp === BRASS_LANTERN || obj.otyp === POT_OIL) {
+            const loc_ = A.lightsrc.get_obj_location(obj, 0) || { x: 0, y: 0 };
             const visible = (obj.where === OBJ_MINVENT)
-                ? A.vision.cansee(obj.ox | 0, obj.oy | 0) : !A.vision.Blind();
+                ? A.vision.cansee(loc_.x | 0, loc_.y | 0) : !A.vision.Blind();
             if (visible)
                 await A.display.pline(`${await ap_Yname2(obj)} ${
                     A.invent.otense(obj, 'go')} out!`);
@@ -3702,7 +3709,7 @@ export async function light_cocktail(optr) {
         A.invent.obj_extract_self(obj); /* free from inv */
         obj.nomerge = 1;
         obj = await A.invent.hold_another_object(obj, 'You drop %s!',
-                                                 A.invent.xname(obj), null);
+                                                 A.invent.obj_doname(obj), null);
         if (obj)
             obj.nomerge = 0;
     }
@@ -3771,10 +3778,10 @@ export async function use_tinning_kit(obj) {
     }
     const mptr = A.makemon.monster_by_pmidx(corpse.corpsenm);
     if (A.invent.touch_petrifies(corpse.corpsenm)
-        && !ap_prop('Stone_resistance') && !game.uarmg) {
+        && !Stone_resistance_hero() && !game.uarmg) {
         const corpse_name = ap_an(A.invent.xname(corpse));
         let kbuf = '';
-        if (ap_poly_when_stoned(game.youmonst?.data)) {
+        if (ap_poly_when_stoned(A.invent.youmonst_data())) {
             await A.display.pline(`You tin ${corpse_name} without wearing gloves.`);
         } else {
             await A.display.pline(`Tinning ${corpse_name} without wearing gloves is a fatal mistake...`);
@@ -3815,7 +3822,7 @@ export async function use_tinning_kit(obj) {
             await A.invent.useupf(corpse, 1);
         }
         await A.invent.hold_another_object(
-            can, 'You make, but cannot pick up, %s.', A.invent.xname(can), null);
+            can, 'You make, but cannot pick up, %s.', A.invent.obj_doname(can), null);
     }
     void u;
 }
@@ -3896,7 +3903,8 @@ export async function use_unicorn_horn(optr) {
     /* collect property troubles */
     if (ap_prop('Sick')) prop_trouble(P_SICK);
     if ((game.u?.blinded | 0) > ap_ucreamed()
-        && !(game.u.uswallow && false /* AT_ENGL/AD_BLND engulfer */))
+        && !(game.u.uswallow
+             && A.monattk.attacktype_fordmg(game.u.ustuck.data, 11 /* AT_ENGL */, 11 /* AD_BLND */)))
         prop_trouble(P_BLINDED);
     if (ap_prop('Hallucination')) prop_trouble(P_HALLUC);
     if (ap_prop('Vomiting')) prop_trouble(P_VOMITING);
@@ -3936,7 +3944,6 @@ export async function use_unicorn_horn(optr) {
     }
 
     if (did_prop) {
-        game.disp_botl = true;
         game.botl = true;
     } else
         await A.display.pline(nothing_seems_to_happen);
@@ -3959,8 +3966,9 @@ export async function fig_transform(arg, timeout) {
     // C: okay_spot = get_obj_location(figurine, &cc.x, &cc.y, 0).  js/light.js's
     // get_obj_location() is private, so read the object's own ox/oy (which it
     // keeps in sync) and use isok() as the "found a location" test.
-    const cc = { x: figurine.ox | 0, y: figurine.oy | 0 };
-    let okay_spot = ap_isok(cc.x, cc.y);
+    const loc0 = A.lightsrc.get_obj_location(figurine, 0);
+    const cc = { x: (loc0?.x | 0), y: (loc0?.y | 0) };
+    let okay_spot = !!loc0;
     if (figurine.where === OBJ_INVENT || figurine.where === OBJ_MINVENT)
         okay_spot = await ap_enexto(cc, cc.x, cc.y,
                                     A.makemon.monster_by_pmidx(figurine.corpsenm));
@@ -4048,8 +4056,9 @@ export async function fig_transform(arg, timeout) {
 // C ref: apply.c:2510 figurine_location_checks(obj, cc, quietly) — RNG-free.
 // Sync (C's is too); the `quietly` messages route through pline lazily, so this
 // port drops them when the module cache is cold.
+let _fig_msg = '';
 export function figurine_location_checks(obj, cc, quietly) {
-    const say = (s) => { if (!quietly && _ap) void _ap.display.pline(s); };
+    const say = (s) => { _fig_msg = quietly ? '' : s; };
     const u = game.u;
 
     if (ap_carried(obj) && u.uswallow) {
@@ -4097,8 +4106,10 @@ export async function use_figurine(optr) {
 
     if (u.uswallow) {
         /* can't activate a figurine while swallowed */
-        if (!figurine_location_checks(obj, null, false))
+        if (!figurine_location_checks(obj, null, false)) {
+            await A.display.pline(_fig_msg);
             return ECMD_OK;
+        }
     }
     const dir = await A.cmd.getdir(null);
     if (!dir) {
@@ -4110,8 +4121,10 @@ export async function use_figurine(optr) {
     u.dx = dir.dx; u.dy = dir.dy; u.dz = dir.dz;
     const cc = { x: u.ux + u.dx, y: u.uy + u.dy };
     /* Passing FALSE arg here will result in messages displayed */
-    if (!figurine_location_checks(obj, cc, false))
+    if (!figurine_location_checks(obj, cc, false)) {
+        await A.display.pline(_fig_msg);
         return ECMD_TIME;
+    }
     await A.display.pline(`You ${
         (u.dx || u.dy) ? 'set the figurine beside you'
             : (ap_Is_airlevel() || ap_Is_waterlevel()
@@ -4184,7 +4197,7 @@ export async function use_grease(obj) {
         if (otmp !== A.invent.hands_obj) {
             await A.display.pline(`You cover ${A.invent.yname(otmp)} with a thick layer of grease.`);
             otmp.greased = 1;
-            if (obj.cursed && !ap_nohands(game.youmonst?.data)) {
+            if (obj.cursed && !ap_nohands(A.invent.youmonst_data())) {
                 await A.potion.make_glib(oldglib + rn1(6, 10)); /* + 10..15 */
                 await A.display.pline(`Some of the grease gets all over your ${
                     A.do_wear.fingers_or_gloves(true)}.`);
@@ -4225,12 +4238,13 @@ export async function use_trap(otmp) {
 
     game.trapinfo = game.trapinfo || {};
 
-    if (ap_nohands(game.youmonst?.data))
+    if (ap_nohands(A.invent.youmonst_data()))
         what = 'without hands';
     else if (ap_Stunned())
         what = 'while stunned';
     else if (u.uswallow)
-        what = 'while engulfed'; /* digests(u.ustuck->data) -> "while swallowed" */
+        what = A.monattk.attacktype_fordmg(u.ustuck?.data, 11 /* AT_ENGL */, 26 /* AD_DGST */)
+            ? 'while swallowed' : 'while engulfed';
     else if (ap_Underwater())
         what = 'underwater';
     else if (ap_Levitation())

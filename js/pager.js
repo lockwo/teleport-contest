@@ -12,13 +12,16 @@
 //
 // No dungeon RNG is consumed and no game time elapses (dohelp returns ECMD_OK).
 
-import { Detect_monsters_hero, See_invisible_hero } from './youprop.js';
+import { coord_desc as gp_coord_desc } from './getpos.js';
+import { Detect_monsters_hero, See_invisible_hero, Invis_hero } from './youprop.js';
+import { Unblind_telepat } from './worn.js';
 import { mimic_obj_corpsenm, has_mcorpsenm, MCORPSENM, MENU_FIRST_PAGE, MENU_LAST_PAGE, MENU_NEXT_PAGE, MENU_PREVIOUS_PAGE, MENU_SELECT_ALL, MENU_UNSELECT_ALL, MENU_INVERT_ALL, MENU_SELECT_PAGE, MENU_UNSELECT_PAGE, MENU_INVERT_PAGE, MENU_SEARCH } from './const.js';
-import { sticks } from './monattk_data.js';
+import { sticks, attacktype_fordmg } from './monattk_data.js';
 import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
+import { worm_known } from './worm.js';
 import { mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
@@ -336,9 +339,17 @@ export async function dowhatdoes() {
     if (reslt !== null) {
         // C ref: `if (q == '&' || q == '?') whatdoes_help();`
         if (q === 0x26 || q === 0x3f) await whatdoes_help();
-        // No embedded newline for a single key (the '\n' path is only for the
-        // 'm' reqmenu prefix, which isn't queried here).
-        await pline(reslt);
+        const nl = reslt.indexOf('\n');
+        if (nl < 0) {
+            /* normal usage; starts with key, indentation, explanation, '.' */
+            await pline(reslt);
+        } else {
+            /* 'm' prefix: two lines of output; add a comma to the first so
+               the combination is a complete sentence */
+            await pline(`${reslt.slice(0, nl)},`);
+            /* "%8.8s%s": the key portion padded/truncated to 8, then line 2 */
+            await pline(`${reslt.slice(0, 8).padEnd(8, ' ')}${reslt.slice(nl + 1)}`);
+        }
     } else {
         const uq = q & 0xff;
         await pline(`No such command '${visctrl(uq)}', char code ${uq} (0${uq.toString(8).padStart(3, '0')} or 0x${uq.toString(16).padStart(2, '0')}).`);
@@ -917,7 +928,7 @@ import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          is_cmap_engraving_at, engraving_glyph,
          canseemon_shared, see_with_infrared, tp_sensemon }
     from './display.js';
-import { cansee, couldsee, Blind } from './vision.js';
+import { cansee, couldsee, Blind, Infravision } from './vision.js';
 import { engr_at } from './engrave.js';
 import { altarmask_at } from './dungeon.js';
 import { is_drawbridge_wall } from './dbridge.js';
@@ -970,7 +981,7 @@ function pg_distu(x, y) {
 }
 function pg_next2u(x, y) { return pg_distu(x, y) <= 2; }
 import { an as pg_an } from './hacklib.js';
-import { mflags2_of, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON } from './monflags_data.js';
+import { mflags1_of, mflags2_of, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON, M1_CLING, is_hider_flag, hides_under_flag, is_flyer_flag } from './monflags_data.js';
 function pg_the(s) { return s ? `the ${s}` : s; }
 function pg_upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
@@ -1091,6 +1102,10 @@ export function pg_glyph_at(x, y) {
     if (loc.disp_hstatue && !m_at(x, y)) return { kind: 'monster', mon: null, sym, x, y };
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
+        return { kind: 'monster', mon, sym, x, y };
+    /* while hallucinating, the glyph drawn for a seen monster is a random one
+       whose symbol need not be the monster's own class letter */
+    if (mon && Hallucination_u() && canseemon_shared(mon))
         return { kind: 'monster', mon, sym, x, y };
     if (mon && mon.mappearance != null && pg_M_AP_TYPE(mon) === M_AP_OBJECT) {
         const { otyp, glyph: og } = mimic_object_glyph(mon);
@@ -1253,43 +1268,8 @@ function cmap_index_for(loc, x, y) {
     return S_room;
 }
 
-// C ref: getpos.c coord_desc(x, y, buf, cmode).
-function coord_desc(x, y, cmode) {
-    switch (cmode) {
-    case GPCOORDS_COMFULL:
-    case GPCOORDS_COMPASS: {
-        const dx = x - (game.u?.ux ?? 0), dy = y - (game.u?.uy ?? 0);
-        return `(${dxdy_to_dist_descr(dx, dy, cmode === GPCOORDS_COMFULL)})`;
-    }
-    case GPCOORDS_MAP:
-        /* upper left corner of the map is <1,0> */
-        return `<${x},${y}>`;
-    case GPCOORDS_SCREEN: {
-        /* map line 0 is screen row 2; map column 1 is screen column 1 */
-        const pad = (n) => String(n).padStart(2, '0');
-        return `[${pad(y + 2)},${pad(x)}]`;
-    }
-    default:
-        return '';
-    }
-}
-// C ref: getpos.c dxdy_to_dist_descr(dx, dy, fulldir) — "east", "3s", "2n,4w".
-function dxdy_to_dist_descr(dx, dy, fulldir) {
-    const NS = ['north', 'south'], EW = ['west', 'east'];
-    if (!dx && !dy) return 'here';
-    if (!dx || !dy || Math.abs(dx) === Math.abs(dy)) {
-        const ns = dy ? (dy < 0 ? NS[0] : NS[1]) : '';
-        const ew = dx ? (dx < 0 ? EW[0] : EW[1]) : '';
-        const dir = `${ns}${ew}`;
-        if (fulldir) return dir;
-        return `${Math.max(Math.abs(dx), Math.abs(dy))}${dir[0]}${ew && ns ? ew[0] : ''}`;
-    }
-    const nsp = dy ? `${Math.abs(dy)}${(dy < 0 ? 'n' : 's')}` : '';
-    const ewp = dx ? `${Math.abs(dx)}${(dx < 0 ? 'w' : 'e')}` : '';
-    return fulldir ? `${Math.abs(dy)} ${dy < 0 ? NS[0] : NS[1]},`
-                     + `${Math.abs(dx)} ${dx < 0 ? EW[0] : EW[1]}`
-                   : `${nsp}${nsp && ewp ? ',' : ''}${ewp}`;
-}
+// C ref: getpos.c coord_desc(x, y, buf, cmode) — js/getpos.js owns the port.
+function coord_desc(x, y, cmode) { return gp_coord_desc(x, y, null, cmode); }
 
 // C ref: pager.c ice_descr(x, y, outbuf) — canonical port lives in invent.js.
 const pg_ice_descr = (x, y) => ice_descr(x, y);
@@ -1507,9 +1487,12 @@ function pg_remembered_glyph(x, y) {
 }
 
 /* mondata.h hides_under/is_hider/ceiling_hider; dungeon.c surface() */
-function pg_hides_under(data) { return !!data?.mhides_under; }
-function pg_is_hider(data) { return !!data?.mhider; }
-function pg_ceiling_hider(data) { return !!data?.mceiling_hider; }
+function pg_hides_under(data) { return hides_under_flag(data); }
+function pg_is_hider(data) { return is_hider_flag(data); }
+function pg_ceiling_hider(data) {
+    return is_hider_flag(data) && (((mflags1_of(data) & M1_CLING) !== 0 && data.mcls !== 13 /* S_MIMIC */)
+                                   || is_flyer_flag(data));
+}
 function pg_surface(x, y) {
     const t = game.level?.at(x, y)?.typ;
     if (t === POOL || t === MOAT || t === WATER) return 'water';
@@ -1709,9 +1692,9 @@ function rndmonnam() {
     return rndmonnam_dn().name;
 }
 
-/* mondata.h digests(ptr) == attacktype(ptr, AT_ENGL) */
+/* mondata.h digests(ptr) == attacktype_fordmg(ptr, AT_ENGL, AD_DGST) */
 function pg_digests(ptr) {
-    return (ptr?.mattk || []).some((a) => a && a.aatyp === 11 /* AT_ENGL */ && a.adtyp === 26 /* AD_DGST */);
+    return attacktype_fordmg(ptr, 11 /* AT_ENGL */, 26 /* AD_DGST */);
 }
 /* trap.h is_pit(ttyp) */
 function pg_is_pit(tt) { return tt === PIT || tt === (PIT + 1) /* SPIKED_PIT */; }
@@ -1723,7 +1706,7 @@ export function howmonseen(mtmp) {
     const see_invis = See_invisible_hero();
     let how = 0;
     /* normal vision (mon_visible is implied by !minvis here) */
-    if (cansee(mtmp.mx, mtmp.my) && couldsee(mtmp.mx, mtmp.my)
+    if ((mtmp.wormno ? worm_known(mtmp) : (cansee(mtmp.mx, mtmp.my) && couldsee(mtmp.mx, mtmp.my)))
         && !mtmp.mundetected && !mtmp.minvis)
         how |= 1;                                              /* NORMAL */
     if (useemon && mtmp.minvis) how |= 2;                      /* SEEINVIS */
@@ -1763,12 +1746,12 @@ export function lookat(x, y) {
         if (game.urole?.mnum === 12 /* PM_WIZARD */ && !u.Upolyd
             && game.urace?.mnum === 3 /* PM_GNOME */)
             pm = monster_by_pmidx(12);
-        if ((u.uinvis || u.uundetected) && !Blind()
+        if (((Invis_hero() && !See_invisible_hero()) || u.uundetected) && !Blind()
             && !(u.uswallow || iflags.save_uswallow)) {
             let how = 0;
-            if (u.uinfravision) how |= 1;
-            if (u.utelepat && !Blind()) how |= 2;
-            if (u.udetect_monsters) how |= 4;
+            if (Infravision()) how |= 1;
+            if (Unblind_telepat()) how |= 2;
+            if (Detect_monsters_hero()) how |= 4;
             if (how)
                 buf += ` [seen: ${(how & 1) ? 'infravision' : ''}`
                      + `${((how & 3) > 2) ? ', ' : ''}`
@@ -1802,7 +1785,12 @@ export function lookat(x, y) {
     } else if (pg_glyph_is_nothing(glyph)) {
         buf = 'dark part of a room';
     } else if (pg_glyph_is_unexplored(glyph)) {
-        buf = 'unexplored area';
+        if (u.uinwater && !Is_waterlevel(game.u?.uz)) {
+            /* "unknown" == previously mapped but not visible when submerged */
+            buf = pg_next2u(x, y) ? 'land' : 'unknown';
+        } else {
+            buf = 'unexplored area';
+        }
     } else if (pg_glyph_is_cmap(glyph)) {
         const loc = game.level?.at(x, y);
         const symidx = pg_glyph_to_cmap(glyph);
@@ -1839,6 +1827,10 @@ export function lookat(x, y) {
             // defsyms[S_stone].explanation "stone"; the "dark part of a room"
             // string in that row is the TILE NAME, not the explanation.
             if (!loc?.seenv) { buf = 'unexplored'; break; }
+            if (u.uinwater && !Is_waterlevel(game.u?.uz)) {
+                buf = pg_next2u(x, y) ? 'land' : 'unknown';
+                break;
+            }
             if (loc.typ === STONE || loc.typ === SCORR) { buf = 'stone'; break; }
             /* FALLTHROUGH to defsyms[] */
             buf = defsyms[symidx]?.explanation || '';

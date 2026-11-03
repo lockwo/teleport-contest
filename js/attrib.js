@@ -7,7 +7,8 @@ import { rn2, rn1, rnd, d } from './rng.js';
 import { A_STR, A_INT, A_WIS, A_CON, A_CHA, A_MAX, POISONING, LUCKMIN, LUCKMAX, ONAME } from './const.js';
 import { adj_erinys, monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { has_innate, minuhpmax, setuhpmax } from './exper.js';
-import { Poison_resistance, Wounded_legs_hero } from './youprop.js';
+import { mflags1_of, M1_NOEYES } from './monflags_data.js';
+import { Poison_resistance, Wounded_legs_hero, Half_gas_damage_hero } from './youprop.js';
 const FIXED_ABIL_PROP = 67; // prop.h FIXED_ABIL (ring of sustain ability, etc.)
 
 const AVAL = 50; // C ref: attrib.c — tune value for exercise gains.
@@ -202,7 +203,6 @@ export async function adjattrib(ndx, incr, msgflg) {
         return false;
     }
     ensureAexe()[ndx] = 0;
-    game.disp_botl = true;
     game.botl = true;
     if (msgflg <= 0) {
         const { You_feel } = await import('./display.js');
@@ -252,6 +252,10 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         await update_topl(`${/^[A-Z]/.test(reason) ? '' : 'The '}${reason} ${plural ? 'were' : 'was'} poisoned!`);
     }
     if (Poison_resistance()) {
+        if (blast) {
+            const { shieldeff } = await import('./display.js');
+            await shieldeff(u.ux, u.uy);
+        }
         await update_topl("The poison doesn't seem to affect you.");
         return;
     }
@@ -277,7 +281,7 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         loss = 6 + d(4, 6);                                          // attrib.c:365
         if ((u.uhp | 0) <= loss) {
             u.uhp = -1;
-            game.disp_botl = true; game.botl = true;
+            game.botl = true;
             await update_topl('The poison was deadly...');
         } else {
             // survived, but with severe reaction
@@ -294,7 +298,10 @@ export async function poisoned(reason, typ, pkiller, fatal, thrown_weapon) {
         }
     } else if (i > 5) {
         // HP damage; more likely--but less severe--with missiles
+        const cloud = reason === 'gas cloud';
         loss = thrown_weapon ? rnd(6) : rn1(10, 6);                  // attrib.c:388
+        if ((blast || cloud) && Half_gas_damage_hero()) /* worn towel */
+            loss = (loss + 1) >> 1;
         const { losehp } = await import('./zap.js');
         await losehp(loss, pkiller, kprefix);                        // poison damage
     } else {
@@ -501,14 +508,13 @@ export async function restore_attrib() {
             u.atime.a[i] = atime - 1;
             if (!u.atime.a[i]) { /* countdown for change */
                 u.atemp.a[i] = atemp + ((atemp > 0) ? -1 : 1);
-                game.disp_botl = true;
                 game.botl = true;
                 if (u.atemp.a[i]) /* reset timer */
                     u.atime.a[i] = Math.trunc(100 / acurr_eff(A_CON));
             }
         }
     }
-    if (game.disp_botl) {
+    if (game.botl) {
         const { encumber_msg } = await import('./invent.js');
         await encumber_msg();
     }
@@ -646,8 +652,7 @@ function Very_fast_at() {
 function haseyes_at() {
     const ptr = game.u?.Upolyd ? game.u?.data : null;
     if (!ptr) return true;
-    const M1_NOEYES = 0x1000;
-    return ((ptr.mflags1 | 0) & M1_NOEYES) === 0;
+    return (mflags1_of(ptr) & M1_NOEYES) === 0;
 }
 
 // ─── attrib.c:1182 adjuhploss(loss, olduhp) ────────────────────────────────

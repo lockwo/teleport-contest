@@ -1529,6 +1529,8 @@ function set_boolean(name, value, result) {
     case 'debug_overwrite_stairs': result.iflags.debug_overwrite_stairs = value; break;
     case 'wizmgender': result.iflags.wizmgender = value; break;
     case 'wizweight': result.iflags.wizweight = value; break;
+    /* C: optlist.h travel -> &flags.travelcmd (default On) */
+    case 'travel': result.flags.travel = value; result.flags.travelcmd = value; break;
     case 'tutorial':
         result.flags.tutorial = value;
         // allmain.js gates the "Do you want a tutorial?" prompt on this, which
@@ -2539,6 +2541,19 @@ export async function handler_compound_getlin(name) {
         reset_duplicate_opt_detection();
         parseoptions(`${name}:${abuf}`, false, result);
     } finally { inGameErrors = null; }
+    /* C: each optfn_*() do_set arm writes straight into flags/iflags/the symbol
+       overrides; the port's parse result is applied here once the line parsed. */
+    Object.assign(game.flags = game.flags || {}, result.flags);
+    Object.assign(game.iflags = game.iflags || {}, result.iflags);
+    if (result.symoverride && result.symoverride.S_boulder !== undefined) {
+        game.symoverride = Object.assign(game.symoverride || {}, result.symoverride);
+        opt_need_redraw = true;
+    }
+    if (result.pl_fruit !== undefined) {
+        set_pl_fruit(result.pl_fruit);
+        if (!game.flags.give_opt_msg_off)
+            await pline(`Fruit is now "${game.svp.pl_fruit}".`);
+    }
     for (const message of errors) await OPT_MENU_DRIVER.error(message);
     return true;
 }
@@ -5648,6 +5663,8 @@ export async function handler_petattr() {
     if (tmp !== -1) {
         game.iflags.wc2_petattr = tmp;
         game.iflags.hilite_pet = (game.iflags.wc2_petattr !== ATR_NONE);
+        /* the port's readers (display.js, doset.js) use game.flags.hilite_pet */
+        (game.flags = game.flags || {}).hilite_pet = game.iflags.hilite_pet;
         if (!opt_initial) opt_need_redraw = true;
     }
     return OPTN_OK;

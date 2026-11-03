@@ -15,7 +15,7 @@ import { W_RANDOM } from '../selvar.js';
 import { maketrap, t_at } from '../trap.js';
 import {
     LOC_ANY, LOC_DRY, SET_LIT_NOCHANGE, bigrm_wallification, flip_level, gx, gy,
-    q_absx, q_absy, quest_flip_branch, remove_boundary_syms, set_levltyp_lit, shuffle,
+    q_absx, q_absy, quest_flip_branch, remove_boundary_syms, sel_set_ter, shuffle,
     splev_create_monster, splev_get_location_rnd, splev_traptype_rnd,
 } from '../sp_lev.js';
 
@@ -130,7 +130,7 @@ export function quest_wallify_map(x1, y1, x2, y2) {
 
 // C ref: sp_lev.c lspo_terrain() single-coordinate form des.terrain({x,y}, "c").
 export function quest_terrain_at(mx, my, typ) {
-    set_levltyp_lit(mx + gx.xstart, my + gy.ystart, typ, SET_LIT_NOCHANGE);
+    sel_set_ter(mx + gx.xstart, my + gy.ystart, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
 // C ref: sp_lev.c create_monster(), via the generic splev_create_monster().
@@ -287,7 +287,7 @@ export function quest_sel_grow(sel, dir = W_ANY) {
 export function quest_sel_terrain(sel, typ) {
     for (const k of sel) {
         const [x, y] = k.split(',').map(Number);
-        set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE);
+        sel_set_ter(x, y, { ter: typ, tlit: SET_LIT_NOCHANGE });
     }
 }
 

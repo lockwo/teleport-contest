@@ -13,6 +13,7 @@
 //   * artilist[].role/.race hold mons[] indices (PM_KNIGHT == 335), not the
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
+import { inside_shop } from './shk.js';
 import { game, hooks } from './gstate.js';
 import { livelog_printf, LL_ARTIFACT } from './livelog.js';
 import { update_topl, see_monsters_sync, flush_sting_effects, map_invisible, shieldeff, newsym, stairway_at, You_feel } from './display.js';
@@ -772,7 +773,7 @@ export function mk_artifact(otmp, alignment = A_NONE, max_giftvalue = 99,
         }
         otmp.oeroded = 0;                /* prevent erosion from generating */
         otmp.oeroded2 = 0;
-        setONAME(otmp, a.name);          /* oname(otmp, a->name, NO_FLAGS) */
+        oname_assign(otmp, a.name, 0);   /* oname(otmp, a->name, NO_FLAGS): name, oartifact, age = 0 */
         otmp.oartifact = m;
         artifact_origin(otmp, ONAME_RANDOM);
         if (adjust_spe) {
@@ -884,16 +885,6 @@ export function find_artifact(otmp) {
         else where = "";
         livelog_printf(LL_ARTIFACT, `found ${bare_artifactname(otmp)}${where}`);
     }
-}
-// C ref: shk.c inside_shop() — unlike costly_spot() this INCLUDES the free
-// spot in front of the door and ignores whether a shopkeeper is present.
-function inside_shop(x, y) {
-    for (const r of game.level?.rooms || []) {
-        if (!r || !r.rtype || r.rtype < SHOPBASE) continue;
-        if (x >= r.lx - 1 && x <= r.hx + 1 && y >= r.ly - 1 && y <= r.hy + 1)
-            return true;
-    }
-    return false;
 }
 // C ref: objnam.c:2502 bare_artifactname() — the artifact's own name, with a
 // leading "The " downcased to "the " so it reads inside a sentence ("because
@@ -2680,10 +2671,11 @@ function trap_at(x, y) {
     for (const t of game.level?.traps || []) if (t.tx === x && t.ty === y) return t;
     return null;
 }
+// C ref: rm.h m_at(x,y) — the level.monsters[x][y] grid (display.js m_at); a
+// dead/detached monster still listed in fmon is never returned.
+import { m_at as grid_m_at } from './display.js';
 function mon_at(x, y) {
-    for (const m of game.level?.monsters || [])
-        if (m.mx === x && m.my === y && (m.mhp === undefined || m.mhp > 0)) return m;
-    return null;
+    return grid_m_at(x, y) || null;
 }
 // C ref: obj.h Is_container(o) — otyp between LARGE_BOX and BAG_OF_TRICKS.
 function is_container(o) { return o.otyp >= LARGE_BOX && o.otyp <= BAG_OF_TRICKS; }

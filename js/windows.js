@@ -16,6 +16,7 @@ import { NO_COLOR, ATR_NONE, ATR_BOLD, ATR_UNDERLINE, ATR_INVERSE } from './term
 export const nul_glyphinfo = { glyph: 0, ttychar: ' ', gm: {} };
 
 const MENU_ITEMFLAGS_SELECTED = 0x1;
+const MENU_ITEMFLAGS_SKIPINVERT = 0x2;
 
 // options.c's menu-colour/attribute enum (ATR_BOLD 1, ATR_ULINE 4, ATR_INVERSE 7)
 // to terminal.js's render bits.
@@ -72,6 +73,7 @@ export async function select_menu(win, how, picks) {
                 sel: it.accel || undefined,
                 gsel: it.gacc || undefined,
                 selected: !!(it.itemflags & MENU_ITEMFLAGS_SELECTED),
+                skipinvert: !!(it.itemflags & MENU_ITEMFLAGS_SKIPINVERT),
                 count: -1,
             } : undefined,
         })),

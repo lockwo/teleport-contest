@@ -12,9 +12,9 @@
 import { game } from './gstate.js';
 import { rn1, rn2, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
-import { MAXULEV, LARGEST_INT } from './const.js';
+import { MAXULEV, LARGEST_INT, FROMOUTSIDE } from './const.js';
 import { races } from './roles.js';
-import { Goodbye } from './role.js';
+import { Goodbye, roles } from './role.js';
 import { acurr_eff } from './attrib.js';
 import { LL_MINORAC, livelog_printf } from './livelog.js';
 import { You_feel } from './display.js';
@@ -98,7 +98,8 @@ const RACE_ADVANCE = new Map([
 // Current role's advance data, keyed off the player-monster number wired into
 // game.urole.mnum at game start (allmain.js newgame_real / gameRoleMnum).
 function urole_adv() {
-    const mnum = game.urole?.mnum;
+    // u_init_misc() runs before game.urole is wired, so fall back to initrole.
+    const mnum = game.urole?.mnum ?? roles[game.initrole]?.mnum;
     return ROLE_ADVANCE.get(mnum) || ROLE_ADVANCE.get(PM_WIZARD);
 }
 // C ref: gu.urace — the selected race's role.c entry.  game.initrace is the
@@ -617,8 +618,13 @@ export async function adjabil(oldlevel, newlevel, emitMsg) {
     const race = RACE_ABIL.get(urace_mnum()) || [];
     // C: `if (!(*ability & INTRINSIC & ~mask))` — a gain/loss message is
     // suppressed when the OTHER table (role vs race) also confers the property.
+    // FROMOUTSIDE (eaten corpse, potion, or a level-1 gain, which C always
+    // stores with FROMOUTSIDE) also lives in INTRINSIC & ~mask.
     const alsoFrom = (other, prop, lvl) =>
-        other.some(([ulvl, , , p]) => p === prop && lvl >= ulvl);
+        other.some(([ulvl, , , p]) => p === prop && lvl >= ulvl)
+        || (!game.u?.lost_innate?.has(prop)
+            && ((((game.u?.uprops?.[prop] | 0) | (game.u?.[prop] | 0)) & FROMOUTSIDE) !== 0
+                || has_innate_fromoutside(prop)));
     for (const [tbl, other] of [[role, race], [race, role]]) {
         for (const [ulvl, gainstr, losestr, prop] of tbl) {
             let changed = false;

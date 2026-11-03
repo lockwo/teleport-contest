@@ -162,19 +162,6 @@ function rest_engravings_fixup(engravings) {
     }
 }
 
-// C ref: allmain.c welcome(FALSE) — "... the<race> <role>, welcome back to
-// NetHack!".  Alignment/gender words are shown only when they differ from the
-// original (they don't for a straightforward save/restore), so buf is just the
-// race adjective and role name.
-function welcome_back_message() {
-    const urole = game.urole || {};
-    const urace = game.urace || {};
-    const female = !!game.flags?.female;
-    const roleNm = (female && urole.name?.f) ? urole.name.f : urole.name?.m;
-    const buf = ` ${urace.adj || 'human'} ${roleNm || 'Adventurer'}`;
-    return `${Hello(urole.mnum)} ${game.plname || 'Hero'}, the${buf}, welcome back to NetHack!`;
-}
-
 // C ref: role.c role_init(), which restore.c restgamestate() calls to "Reset the
 // initial role, race, gender, and alignment".  Only two of its steps can reach
 // the PRNG, and on a restore exactly one of them can fire:
@@ -486,12 +473,7 @@ export async function dorestore() {
 
     // C ref: dorecover() tail -> welcome(FALSE), check_special_room(FALSE); then
     // unixmain's wizard/discover save-file question; then moveloop_preamble(TRUE).
-    if (Hallucination_u())
-        await pline('NetHack is filmed in front of an undead studio audience.');
-    await pline(welcome_back_message());
-    /* C ref: allmain.c welcome(FALSE) tail */
-    await (await import('./do.js')).hellish_smoke_mesg();
-    await (await import('./dungeon.js')).print_level_annotation();
+    await (await import('./allmain.js')).welcome(false);
     await check_special_room(false);
     await ask_about_keeping_savefile();
     await restore_preamble_messages();
@@ -505,7 +487,7 @@ export async function dorestore() {
  *
  * INERT: nothing above this line calls into this section, and this section
  * calls nothing above it except the four helpers it shares with dorestore()
- * (welcome_back_message / is_wizard / is_discover / delete_savefile).
+ * (is_wizard / is_discover / delete_savefile).
  * dorestore() is still the live restore path; the note at the very bottom of
  * this file says how the two differ.
  *
@@ -641,8 +623,8 @@ function age_is_relative(otmp) {
 // than a third copy pretending to be the general function.
 function setworn_rst(obj, mask) {
     if (obj) obj.owornmask = mask;
-    if (mask & W_BALL) game.uball = obj;
-    if (mask & W_CHAIN) game.uchain = obj;
+    if (mask & W_BALL) game.u.uball = obj;
+    if (mask & W_CHAIN) game.u.uchain = obj;
 }
 
 // C ref: mon.c newmextra()/newepri()/neweshk()/newemin()/newedog()/newebones().
@@ -1554,7 +1536,7 @@ export async function dorecover(nhfp) {
         max_rank_sz(); /* to recompute gm.mrank_sz (botl.c) */
     }
 
-    if ((game.uball && !game.uchain) || (game.uchain && !game.uball)) {
+    if ((game.u?.uball && !game.u?.uchain) || (game.u?.uchain && !game.u?.uball)) {
         await impossible('restgamestate: lost ball & chain');
         /* poor man's unpunish() */
         setworn_rst(null, W_CHAIN);
@@ -1596,11 +1578,8 @@ export async function dorecover(nhfp) {
     /* clear_nhwindow(WIN_MESSAGE) leaves gt.toplines alone */
 
     /* Success! */
-    /* welcome(FALSE) — allmain.c; welcome_back_message() above is this port's
-       copy of its restore branch. */
-    if (Hallucination_u())
-        await pline('NetHack is filmed in front of an undead studio audience.');
-    await pline(welcome_back_message());
+    /* welcome(FALSE) — allmain.c */
+    await (await import('./allmain.js')).welcome(false);
     await check_special_room(false);
     return 1;
 }

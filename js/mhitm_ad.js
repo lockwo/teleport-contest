@@ -42,7 +42,7 @@
 // last faithful step and says so, rather than inventing a roll: an explicit
 // screen divergence beats a silent PRNG desync.
 
-import { Half_physical_damage_hero } from './youprop.js';
+import { Half_physical_damage_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { makeplural } from './plural.js';
 import { hliquid } from './do_name.js';
 import { game } from './gstate.js';
@@ -70,7 +70,9 @@ import { has_innate } from './exper.js';
 import { dmgval, m_slips_free, stagger_verb } from './uhitm.js';
 import { sticks } from './monattk_data.js';
 import { monster_by_pmidx, add_to_minv, name_to_pmidx as name_to_pmidx_ma } from './makemon.js';
-import { on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
+import { resists_fire as md_resists_fire, resists_cold as md_resists_cold, resists_elec as md_resists_elec,
+    resists_acid as md_resists_acid, resists_ston as md_resists_ston, resists_poison as md_resists_poison,
+    resists_sleep as md_resists_sleep, on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
 import { defends, artifact_hit, permapoisoned, defended } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
@@ -142,14 +144,16 @@ const acidic = (ptr) => (mflags1_of(ptr) & M1_ACID) !== 0;
 const poisonous = (ptr) => (mflags1_of(ptr) & M1_POIS) !== 0;
 const is_undead = (ptr) => (mflags2_of(ptr) & M2_UNDEAD) !== 0;
 
+// The hero side answers from youmonst's species bits; monsters go through
+// mondata.js Resists_Elem (species | extrinsics | intrinsics | worn/carried items).
 const mres = (ops, mon, bit) => ((ops.permonst(mon)?.mresists ?? 0) & bit) !== 0;
-const resists_fire = (ops, m) => mres(ops, m, MR_FIRE);
-const resists_cold = (ops, m) => mres(ops, m, MR_COLD);
-const resists_elec = (ops, m) => mres(ops, m, MR_ELEC);
-const resists_acid = (ops, m) => mres(ops, m, MR_ACID);
-const resists_ston = (ops, m) => mres(ops, m, MR_STONE);
-const resists_poison = (ops, m) => mres(ops, m, MR_POISON);
-const resists_sleep = (ops, m) => mres(ops, m, MR_SLEEP);
+const resists_fire = (ops, m) => is_hero(m) ? mres(ops, m, MR_FIRE) : md_resists_fire(m);
+const resists_cold = (ops, m) => is_hero(m) ? mres(ops, m, MR_COLD) : md_resists_cold(m);
+const resists_elec = (ops, m) => is_hero(m) ? mres(ops, m, MR_ELEC) : md_resists_elec(m);
+const resists_acid = (ops, m) => is_hero(m) ? mres(ops, m, MR_ACID) : md_resists_acid(m);
+const resists_ston = (ops, m) => is_hero(m) ? mres(ops, m, MR_STONE) : md_resists_ston(m);
+const resists_poison = (ops, m) => is_hero(m) ? mres(ops, m, MR_POISON) : md_resists_poison(m);
+const resists_sleep = (ops, m) => is_hero(m) ? mres(ops, m, MR_SLEEP) : md_resists_sleep(m);
 
 // C ref: mondata.h resists_drli(mon) — undead, demons, the Wizard, and
 // anything with MR_DRAIN-equivalent species flags.  mons[].mresists has no
@@ -158,8 +162,11 @@ const resists_sleep = (ops, m) => mres(ops, m, MR_SLEEP);
 // undead/were half is what a vampire bat or a werejackal actually meets.
 function resists_drli(ops, mon) {
     const ptr = ops.permonst(mon);
-    return is_undead(ptr) || is_demon_flag(ptr) || is_were_flag(ptr)
-        || ptr?.name === 'Death' || is_vampshifter(mon);
+    if (is_undead(ptr) || is_demon_flag(ptr) || is_were_flag(ptr)
+        || ptr?.name === 'Death' || is_vampshifter(mon))
+        return true;
+    /* defended(mon, AD_DRLI): wielded artifact / black dragon scales (monsters only) */
+    return !is_hero(mon) && defended(mon, AD_DRLI);
 }
 
 // C ref: mondata.h completelyburns/completelyrusts/completelyrots — the golems
@@ -405,7 +412,12 @@ export async function mhitm_ad_rust(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (magr.mcan) return;
-        if (completelyrusts(pd)) return;        // rehumanize(): hero not poly'd
+        if (completelyrusts(pd)) {
+            await ops.emit('You rust!');
+            /* KMH -- this is okay with unchanging */
+            await ops.rehumanize();
+            return;
+        }
         await erode_armor(mdef, ERODE_RUST, ops);
     } else {
         if (magr.mcan) return;
@@ -461,7 +473,12 @@ export async function mhitm_ad_dcay(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         await ops.hitmsg(magr, mattk);
         if (magr.mcan) return;
-        if (completelyrots(pd)) return;         // rehumanize(): hero not poly'd
+        if (completelyrots(pd)) {
+            await ops.emit('You rot!');
+            /* KMH -- this is okay with unchanging */
+            await ops.rehumanize();
+            return;
+        }
         await erode_armor(mdef, ERODE_ROT, ops);
     } else {
         if (magr.mcan) return;
@@ -1108,7 +1125,7 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
             mhm.done = true;
             return;
         }
-        if (OBJECTS[game.uarmh?.otyp]?.sym !== 'DUNCE_CAP') {
+        if (!game.uarmh || game.uarmh.otyp !== 94 /* DUNCE_CAP */) {
             const { eat_brains } = await import('./eat.js');
             const oldmort = game.u.umortality | 0;
             const result = await eat_brains(magr, mdef, true, null);
@@ -1239,7 +1256,7 @@ export async function mhitm_ad_wrap(magr, mattk, mdef, mhm, ops) {
                     mhm.damage = 0;
                 } else {
                     u.ustuck = magr;            // set_ustuck before the message
-                    game.disp_botl = true;
+                    game.botl = true;
                     /* C ref: uhitm.c:3384 urgent_pline("%s %s itself around you!", Some_Monnam, ...) */
                     const { Some_Monnam } = await import('./do_name.js');
                     await (await import('./display.js')).urgent_topl(
@@ -2031,7 +2048,10 @@ export async function mhitm_ad_heal(magr, mattk, mdef, mhm, ops) {
         const u = game.u;
         /* a cancelled nurse is just an ordinary monster,
          * nurses don't heal those that cause petrification */
-        if (magr.mcan) { await ops.hitmsg(magr, mattk); return; }
+        if (magr.mcan || (u.Upolyd && touch_petrifies(ops.permonst(YOUMONST)))) {
+            await ops.hitmsg(magr, mattk);
+            return;
+        }
         // The nurse only heals a hero carrying no weapon and wearing no armor.
         if (ops.nurse_undressed && await ops.nurse_undressed()) {
             let goaway = false;
@@ -2062,7 +2082,7 @@ export async function mhitm_ad_heal(magr, mattk, mdef, mhm, ops) {
                 const { make_sick } = await import('./potion.js');
                 await make_sick(0, null, false, 0x03 /* SICK_ALL */);
             }
-            game.disp_botl = true;
+            game.botl = true;
             if (goaway) {
                 if (ops.mongone) await ops.mongone(magr);
                 mhm.done = true;
@@ -2111,19 +2131,20 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
     if (is_hero(mdef)) {
         const sideMask = rn2(2) ? RIGHT_SIDE : LEFT_SIDE;
         const side = sideMask === RIGHT_SIDE ? 'right' : 'left';
+        const leg = (await import('./polyself.js')).body_part(LEG);   // C: body_part(LEG)
         const u = game.u;
-        if ((u.usteed || u.Levitation || u.Flying)
+        if ((u.usteed || Levitation_hero() || Flying_hero())
             && !((mflags1_of(ops.permonst(magr)) & 0x1) !== 0)) {   // M1_FLY
-            await ops.emit(`${ops.Monnam(magr)} tries to reach your ${side} leg!`);
+            await ops.emit(`${ops.Monnam(magr)} tries to reach your ${side} ${leg}!`);
             mhm.damage = 0;
         } else if (magr.mcan) {
-            await ops.emit(`${ops.Monnam(magr)} nuzzles against your ${side} leg!`);
+            await ops.emit(`${ops.Monnam(magr)} nuzzles against your ${side} ${leg}!`);
             mhm.damage = 0;
         } else {
             const uarmf = (game.invent || []).find((o) => (o.owornmask || 0) & W_ARMF);
             if (uarmf) {
                 if (rn2(2) && (uarmf.otyp === LOW_BOOTS || uarmf.otyp === IRON_SHOES)) {
-                    await ops.emit(`${ops.Monnam(magr)} pricks the exposed part of your ${side} leg!`);
+                    await ops.emit(`${ops.Monnam(magr)} pricks the exposed part of your ${side} ${leg}!`);
                 } else if (!rn2(5)) {
                     await ops.emit(`${ops.Monnam(magr)} pricks through your ${side} boot!`);
                 } else {
@@ -2132,7 +2153,7 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
                     return;
                 }
             } else {
-                await ops.emit(`${ops.Monnam(magr)} pricks your ${side} leg!`);
+                await ops.emit(`${ops.Monnam(magr)} pricks your ${side} ${leg}!`);
             }
             if (ops.set_wounded_legs) {
                 await ops.set_wounded_legs(sideMask,
@@ -2142,7 +2163,7 @@ export async function mhitm_ad_legs(magr, mattk, mdef, mhm, ops) {
                 // accumulators have room, so omitting them desynchronizes the
                 // following attack even when the visible wound is correct.
                 await ops.exercise?.(A_STR, false);
-                ops.exercise?.(A_DEX, false);
+                await ops.exercise?.(A_DEX, false);
             }
         }
         return;
@@ -2183,7 +2204,7 @@ export async function mhitm_ad_dgst(magr, mattk, mdef, mhm, ops) {
 
     // C ref: uhitm.c:4542 `if (!corpse_chance(mdef, magr, TRUE) || DEADMONSTER(magr))
     // return;` draws the geno-frequency rn2 here, ahead of mhitm_knockback's.
-    if (ops.corpse_chance && (!(await ops.corpse_chance(mdef)) || DEADMONSTER(magr)))
+    if (ops.corpse_chance && (!(await ops.corpse_chance(mdef, magr, true)) || DEADMONSTER(magr)))
         return;
 
     /* Pets get nutrition from swallowing monster whole.

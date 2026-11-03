@@ -25,9 +25,10 @@ import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, ge
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE, is_pool_or_lava, is_pool } from './const.js';
+import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -35,7 +36,7 @@ import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
-import { Invis, m_everyturn_effect } from './monmove.js';
+import { Invis, m_everyturn_effect, can_ooze_hero } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
@@ -286,6 +287,7 @@ export async function stop_occupation(append = false) {
         // already holds this turn's messages ("It hits!  You stop waiting."),
         // and only update_topl appends instead of replacing.
         await update_topl(`You stop ${typeof txt === 'function' ? txt() : txt}.`);
+        game.botl = true; /* in case u.uhs changed */
         nomul(0);
         return;
     }
@@ -310,6 +312,7 @@ export async function stop_occupation(append = false) {
             if (append) await update_topl(msg);
             else await pline(msg);
         }
+        game.botl = true; /* in case u.uhs changed */
         nomul(0);
         return;
     }
@@ -739,7 +742,8 @@ function bad_rock(x, y) {
     // passes_walls(mdat) is the hero's FORM (M1_WALLWALK), not the Passes_walls
     // property, so a phasing hero in his own shape is still blocked here.
     // may_dig() is false for undiggable (W_NONDIGGABLE) walls.
-    if (hero_tunnels_unpicked() && !(loc && (loc.wall_info & 0x08 /* W_NONDIGGABLE */))) return false;
+    /* may_dig(): only STWALL/TREE can be undiggable */
+    if (hero_tunnels_unpicked() && !((IS_STWALL(typ) || typ === TREE) && loc && (loc.wall_info & 0x08 /* W_NONDIGGABLE */))) return false;
     const f1 = mflags1_of(youmonst_data());
     const may_passwall = !(IS_STWALL(typ) && ((loc?.wall_info | 0) & 0x10 /* W_NONPASSWALL */));
     return !((f1 & 0x8 /* M1_WALLWALK */) !== 0 && may_passwall);
@@ -870,7 +874,7 @@ function test_move_trav(ux, uy, dx, dy, mode) {
 function carrying_digging_tool() {
     for (const o of inventoryArray()) {
         if (is_pick(o)) return true;
-        if (o.otyp === WAN_DIGGING && !o.known) return true;
+        if (o.otyp === WAN_DIGGING && !objects[WAN_DIGGING]?.oc_name_known) return true;
     }
     return false;
 }
@@ -934,7 +938,7 @@ function findtravelpath(mode) {
                         if (!isok(nx, ny)
                             || (mode === TRAVP_GUESS && !couldsee(nx, ny)))
                             continue;
-                        if ((!Passes_walls() && closed_door(x, y))
+                        if ((!Passes_walls() && !can_ooze_hero(youmonst_data()) && closed_door(x, y))
                             || (boulder_at(x, y) && !could_move_onto_boulder(x, y))
                             || test_move_trav(x, y, nx - x, ny - y, TEST_TRAP)) {
                             // Closed doors and boulders usually cost a turn, so
@@ -1319,12 +1323,11 @@ function render_getpos_tip() {
 // exactly.  Returns TRUE if the tip was shown (caller forces the goal message).
 const MENU_RESP_CMDS = '^|><.-@,\\~:';
 async function getpos_tip() {
-    if (!game.flags?.tips) return false; // C handle_tip(): `if (!flags.tips) return FALSE`
-    const c = game.context;
-    c.tips = c.tips || 0;
-    const TIP_GETPOS = 1 << 4;
-    if (c.tips & TIP_GETPOS) return false;
-    c.tips |= TIP_GETPOS;
+    return await handle_tip(TIP_GETPOS);
+}
+
+// nhcore.lua show_getpos_tip(): the tip window itself (handle_tip() gates it).
+async function show_getpos_tip_window() {
 
     let counting = false, count = 0, reset_count = true, finished = false;
     while (!finished) {
@@ -2223,11 +2226,11 @@ async function jump_landing(nux, nuy) {
     game.multi_reason = 'jumping around';
     game.nomovemsg = '';
 
-    // morehungry(rnd(25)) — roll first (argument evaluation), then apply.
-    // newuhs() is RNG-inert while the hero stays NOT_HUNGRY/SATIATED (uhunger
-    // far above the WEAK/FAINTING thresholds), and prints no status message.
+    // morehungry(rnd(25)) — roll first (argument evaluation), then apply; its
+    // newuhs(TRUE) announces a hunger-state change ("You are beginning to feel
+    // hungry.") and can draw the FAINTING roll.
     const num = rnd(25);
-    u.uhunger = (u.uhunger ?? 900) - num;
+    await (await import('./eat.js')).morehungry(num);
 }
 
 // C ref: getpos.c IS_UNEXPLORED_LOC() — a never-drawn cell.  Same test
@@ -2245,6 +2248,10 @@ function gloc_glyph_covered(x, y, loc, mtmp) {
     if (mtmp && canspotmon(mtmp)) return true;
     if (loc.invisMon || loc.disp_warning) return true;
     if (look_at_object_here(x, y)) return true;
+    // a remembered object glyph (e.g. a boulder since moved or destroyed) is
+    // still what glyph_at() reports until the square is seen again
+    const rg = loc.remembered_glyph;
+    if ((rg?.objotyp || rg?.hallucotyp) && rg.ch === loc.disp_ch) return true;
     const trap = t_at(x, y);
     return !!(trap && trap.tseen && !covers_objects(loc));
 }
@@ -2691,7 +2698,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
     // "Please move...--More--" (step) then the tip (step).  When the tip was
     // already shown, the pending line is instead flushed by the following
     // update_topl("(For instructions...)") call.
-    const TIP_GETPOS_BIT = 1 << 4;
+    const TIP_GETPOS_BIT = 1 << TIP_GETPOS;
     const willShowTip = !!game.flags?.tips && !((game.context.tips || 0) & TIP_GETPOS_BIT);
     // The pending line is paged whether it came from the verbose "Please move
     // the cursor to ..." or the quick "Pick a monster, object or location."
@@ -3239,6 +3246,19 @@ export async function reveal_terrain(which_subset) {
                     }
                 }
             }
+            // C ref: detect.c:2225-2279 -- a stripped object glyph on a spot whose
+            // lastseentyp[][] differs from its current typ (the object was mapped
+            // without update_lastseentyp, e.g. a boulder seen from afar) becomes
+            // back_to_glyph() of the LAST SEEN terrain, STONE (blank) if never set.
+            if (!full && rg && rg.objotyp != null && !keep_objs && !isHero
+                && !loc.invisMon
+                && (game.lastseentyp?.[x]?.[y] ?? loc.typ) !== loc.typ) {
+                const dg = { kind: 'cmap', sym: ' ', cell: { ch: ' ', color: NO_COLOR, dec: false } };
+                const g = reveal_terrain_getglyph(x, y, u?.uswallow, dg, which_subset);
+                const gc = g.cell || dg.cell;
+                show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
+                continue;
+            }
             // C ref: detect.c reveal_terrain_getglyph() — the base is the
             // REMEMBERED glyph (levl[][].glyph); only monster/object/trap glyphs
             // are stripped back to bare terrain.  A revealed engraving is none of
@@ -3589,6 +3609,32 @@ function look_pick_description(x, y) {
     // the class explanation ("a cat or other feline"), then look_at_monster()
     // supplies the specific "(tame kitten)" parenthetical.  Missing this check
     // fell through to the bare terrain description for any farlooked monster.
+    // C ref: pager.c do_screen_description() restricted-vision arm: while
+    // swallowed only the 3x3 stomach is displayed, every other spot reads
+    // "unreconnoitered"; a stomach symbol is is_swallow_sym() ("the interior of
+    // a monster") plus whatever else is drawn with the same symbol, and
+    // lookat()'s u.uswallow arm supplies "(interior of <engulfer>)".
+    if (u.uswallow && !(x === u.ux && y === u.uy)) {
+        const swl = game.level?.at(x, y);
+        const dx = x - u.ux, dy = y - u.uy;
+        if (Math.abs(dx) > 1 || Math.abs(dy) > 1)
+            return { text: `${look_prefix_char(swl)}        unreconnoitered`,
+                     firstmatch: 'unreconnoitered', found: 1 };
+        const idx = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
+            .findIndex(([ddx, ddy]) => ddx === dx && ddy === dy);
+        const dec = !!swl?.disp_decgfx;
+        // other things shown with the stomach's symbol, in C's search order
+        // (objects, then defsyms[]): '/' wand; '\\' throne; '-' wall, open door;
+        // '|' wall, open door, grave; the DECgraphics edge cells only match
+        // S_vwall (ml/mr) or nothing (tc/bc).
+        const alts = (idx === 0 || idx === 7) ? ' or a wand'
+            : (idx === 2 || idx === 5) ? ' or an opulent throne'
+            : (idx === 1 || idx === 6) ? (dec ? '' : ' or a wall or an open door')
+            : (dec ? ' or a wall' : ' or a wall or an open door or a grave');
+        const look = lookat(x, y).buf;
+        return { text: `${look_prefix_char(swl)}        the interior of a monster${alts} (${look})`,
+                 firstmatch: look, found: 1 };
+    }
     const mtmp = m_at(x, y);
     const loc0 = game.level?.at(x, y);
     // C ref: pager.c lookat() `glyph_is_monster(glyph)` with no monster here and
@@ -3610,7 +3656,9 @@ function look_pick_description(x, y) {
     if (mtmp && canspotmon(mtmp)) {
         // A monster drawn with the blank symbol (ghost, shade) shares ' ' with
         // S_stone, S_darkroom, "unexplored" and more: the generic port counts them.
-        if (mtmp.data?.mlet === ' ' && loc0?.disp_ch === ' ') {
+        /* a hallucinating hero sees a random monster glyph, which is blank when
+           the random pick lands on a ghost/shade class */
+        if ((mtmp.data?.mlet === ' ' || game.u?.uhallu) && loc0?.disp_ch === ' ') {
             const text = { s: '' }, firstmatch = { s: '' };
             const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
             return { text: text.s, firstmatch: firstmatch.s, found };
@@ -4908,7 +4956,7 @@ export async function notice_all_mons(reset) {
     if (!(game.flags?.spot_monsters && !a11y.mon_notices_blocked))
         return;
 
-    const fmon = game.level?.monsters || [];
+    const fmon = (game.level?.monsters || []).slice().reverse(); /* fmon: newest first */
     let cnt = 0;
 
     for (const mtmp of fmon) {
@@ -4945,17 +4993,6 @@ export async function notice_all_mons(reset) {
 // C ref: hack.c:1852 handle_tip(tip) — show a tip once per game, tracked in
 // svc.context.tips as bit `1 << tip`.
 //
-// DIVERGENCE (not fixed here — the three call sites are in other owners' files
-// and in a function body above): the port's three existing per-tip inlines all
-// disagree with C and with each other about the bit.
-//   js/cmd.js:630            game._tips_shown, bit `1 << TIP_SWIM`   (correct form,
-//                            but a different field from everyone else)
-//   getpos_tip() above       game.context.tips, bit `1 << 4`         (should be 1 << 3)
-//   js/extcmd-handlers.js:889, js/invent.js:6753
-//                            game.context.tips & TIP_GETPOS          (missing the
-//                            `1 <<`: tests bits 0|1, i.e. value 3)
-// So the setter writes bit 16 and the two readers test bits 0|1 — the tip's
-// "already shown" state is invisible across the sites.
 export async function handle_tip(tip) {
     if (!game.flags?.tips)
         return false;
@@ -4977,7 +5014,7 @@ export async function handle_tip(tip) {
             await pline('(Tip: perhaps #untrap would help?)');
             break;
         case TIP_GETPOS:
-            l_nhcore_call(NHCORE_GETPOS_TIP);
+            await show_getpos_tip_window(); /* l_nhcore_call(NHCORE_GETPOS_TIP) */
             break;
         default:
             /* C: impossible("Unknown tip in handle_tip(%i)", tip) */
@@ -4988,76 +5025,11 @@ export async function handle_tip(tip) {
     return false;
 }
 
-// ── hack.c:2365-2509  movement-blocking checks ──────────────────────────────
-
-// C ref: hack.c:2365 water_turbulence(&x, &y) — a submerged hero's step is first
-// deflected by water_friction() (which draws rn2), and only then is the
-// destination re-derived from the possibly-rewritten u.dx/u.dy.  `pos` stands in
-// for C's two `coordxy *` out-params and is mutated in place.
-// RNG: water_friction() only — near_capacity() draws nothing.
-export async function water_turbulence(pos) {
-    const u = game.u;
-
-    if (u?.uinwater) {
-        const wtmod = u.uprops?.Swimming ? MOD_ENCUMBER : SLT_ENCUMBER;
-
-        await water_friction();
-        if (!u.dx && !u.dy) {
-            nomul(0);
-            return true;
-        }
-        pos.x = u.ux + u.dx;
-        pos.y = u.uy + u.dy;
-
-        /* are we trying to move out of water while carrying too much?
-           aquatic form (Swimming) may be stressed; otherwise only burdened */
-        if (isok(pos.x, pos.y) && !is_pool(pos.x, pos.y)
-            && !Is_waterlevel(u.uz) && near_capacity() > wtmod) {
-            await pline('You are carrying too much to climb out of the water.');
-            nomul(0);
-            return true;
-        }
-    }
-    return false;
-}
-
-// C ref: hack.c:2495 avoid_running_into_trap_or_liquid(x, y) — while
-// running/rushing, refuse to step onto a known trap (or, when blind, into
-// liquid).  Note the asymmetry: for run == 1 it still nomul(0)s but reports
-// FALSE, so the step happens and only the run ends; run >= 2 also zeroes
-// context.move so no turn elapses.
-// C passes `would_stop` as avoid_moving_on_{trap,liquid}()'s `msg` argument;
-// both local helpers above drop that parameter because their
-// flags.mention_walls line is emitted at the js/cmd.js call site (see :128-131).
-export function avoid_running_into_trap_or_liquid(x, y) {
-    const c = game.context;
-    const would_stop = (c?.run || 0) >= 2;
-
-    if (!c?.run)
-        return false;
-
-    if (avoid_moving_on_trap(x, y)
-        || (Blind() && avoid_moving_on_liquid(x, y))) {
-        nomul(0);
-        if (would_stop)
-            c.move = 0;
-        return would_stop;
-    }
-    return false;
-}
 
 // ── hack.c:2996  the per-step run delay ─────────────────────────────────────
 
 // C ref: options.c:217 runmodes[] — this port stores flags.runmode as its option
 // NAME rather than the RUN_* enum, so map back.
-//
-// DIVERGENCE (not fixed here — js/options.js is another owner's file):
-// js/options.js:6846 initialises `flags.runmode = 'teleport'` with the comment
-// "RUN_LEAP".  C's default is RUN_LEAP (options.c:7176), whose runmodes[] name
-// is "run", not "teleport" (that is RUN_TPORT, index 0).  js/doset.js:292
-// already displays "[run]", so the O-menu and the flag disagree.  The effect is
-// that runmode_delay_output() below short-circuits on every call and never
-// performs its `disp.time_botl = flags.time` write.
 const RUNMODES = ['teleport', 'run', 'walk', 'crawl'];
 function runmode_value() {
     const i = RUNMODES.indexOf(game.flags?.runmode);
@@ -5184,7 +5156,7 @@ export async function invocation_message() {
 // js/shkroom.js in_rooms() returns the room numbers as an array, already
 // ROOMOFFSET-based to match levl[][].roomno.
 export function monstinroom(mdat, roomno) {
-    for (const mtmp of game.level?.monsters || []) {
+    for (const mtmp of (game.level?.monsters || []).slice().reverse()) { /* fmon: newest first */
         if (DEADMONSTER(mtmp))
             continue;
         if (mtmp.data?.pmidx === mdat?.pmidx

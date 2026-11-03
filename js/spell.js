@@ -894,6 +894,7 @@ async function confused_book(spellbook) {
     if (!rn2(3) && spellbook.otyp !== SPE_BOOK_OF_THE_DEAD) {
         spellbook.in_use = true;             /* in case called from learn() */
         await pline('Being confused you have difficulties in controlling your actions.');
+        await (await import('./display.js')).display_nhwindow_message();
         await pline('You accidentally tear the spellbook to pieces.');
         await trycall(spellbook);
         useup(spellbook);
@@ -1392,13 +1393,13 @@ export async function deadbook(book2) {
         {
             const { mkundead } = await import('./mkroom.js');
             const { morguemon } = await import('./sp_lev.js');
-            const { enexto_spawn } = await import('./makemon.js');
+            const { enexto_gpflags } = await import('./teleport.js');
             const { level_difficulty } = await import('./dungeon.js');
             const { sobj_at } = await import('./invent.js');
             const { revive } = await import('./zap.js');
             await mkundead({ x: u.ux, y: u.uy }, true, NO_MINVENT, {
                 level_difficulty: level_difficulty,
-                morguemon, enexto: enexto_spawn, sobj_at, revive, makemon,
+                morguemon, enexto: (x, y, mdat) => enexto_gpflags(x, y, mdat, 0), sobj_at, revive, makemon,
             });
         }
     };
@@ -1892,6 +1893,7 @@ export async function throwspell() {
     // takes the validator and the painter as arguments instead of through the
     // two globals.
     const { getpos } = await import('./hack.js');
+    const { canspotmon } = await import('./uhitm.js');
     const pos = await getpos('the desired position', cc.x, cc.y,
                              (x, y) => can_center_spell_location(x, y),
                              /*force=*/true,
@@ -1914,7 +1916,7 @@ export async function throwspell() {
         u.dy = 0;
         return 1;
     } else if (((cc.x !== u.ux || cc.y !== u.uy) && !cansee(cc.x, cc.y)
-                && (!(mtmp = m_at(cc.x, cc.y)) || !canseemon_shared(mtmp)))
+                && (!(mtmp = m_at(cc.x, cc.y)) || !canspotmon(mtmp)))
                || IS_STWALL(game.level?.at(cc.x, cc.y)?.typ)) {
         await pline('Your mind fails to lock onto that location!');
         return 0;

@@ -31,7 +31,7 @@ import { attacktype, AT_WEAP } from './monattk_data.js';
 import { acurr_eff } from './attrib.js';
 // artifact.c spec_abon()/spec_dbon(): both were local `return 0` stubs, so a
 // wielded artifact's rnd(attk.damn) to-hit draw never happened.
-import { spec_abon, spec_dbon } from './artifact.js';
+import { spec_abon, spec_dbon, shade_glare } from './artifact.js';
 
 // C ref: objects.h oc_material enum (mkobj.js keeps the same numbering).
 const MAT_LEATHER = 7, MAT_SILVER = 14;
@@ -105,11 +105,6 @@ function bigmonst(ptr) { return (ptr?.msize ?? 2 /* MZ_MEDIUM */) >= MZ_LARGE; }
 // C ref: obj.h greatest_erosion(otmp).
 export function greatest_erosion(otmp) {
     return Math.max(otmp?.oeroded | 0, otmp?.oeroded2 | 0);
-}
-// C ref: artifact.c shade_glare(obj) — any silver object works; the artifact
-// arm needs artilist SPFX_DFLAG2/M2_UNDEAD, which no live path reaches.
-function shade_glare(obj) {
-    return objects[obj?.otyp]?.material === MAT_SILVER;
 }
 // artifact.c artifact_light(obj): the real predicate lives in light.js.
 import { artifact_light } from './light.js';
@@ -530,8 +525,13 @@ export async function drain_weapon_skill(n) {
         const newlvl = p_skill_of(skill);   /* already one lower: record shrank */
         const curradv = practice_needed_to_advance(newlvl);
         const prevadv = practice_needed_to_advance(newlvl - 1);
-        if ((u.skill_training[skill] || 0) >= curradv && curradv > prevadv)
-            u.skill_training[skill] = prevadv + rn2(curradv - prevadv);
+        /* u.skill_training holds only the points gained since skill_init, so
+           convert to and from C's total P_ADVANCE */
+        const { p_advance_of } = await import('./enhance.js');
+        const total = p_advance_of(skill);
+        const base = total - (u.skill_training[skill] || 0);
+        if (total >= curradv && curradv > prevadv)
+            u.skill_training[skill] = prevadv + rn2(curradv - prevadv) - base;
     }
     if (tmpskills.size) {
         const { P_NAME } = await import('./enhance.js');
@@ -580,12 +580,7 @@ async function count_can_advance() {
 
 // C ref: weapon.c:680 monmightthrowwep(obj) — would a monster ever throw this?
 export function monmightthrowwep(obj) {
-    if (!obj) return false;
-    const sk = objects[obj.otyp]?.oc_skill ?? 0;
-    // C walks rwep[]; every entry is a missile, an ammo type, a dagger-family
-    // blade, a rock/gem or a cream pie.
-    return RWEP_OTYPS.has(obj.otyp) || sk === -23 /* -P_DART */
-        || sk === -24 /* -P_SHURIKEN */ || sk === -25 /* -P_BOOMERANG */;
+    return !!obj && RWEP_OTYPS.has(obj.otyp);
 }
 // C ref: weapon.c rwep[] — mkobj.js otyp numbering.
 const RWEP_OTYPS = new Set([

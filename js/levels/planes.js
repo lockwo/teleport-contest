@@ -7,15 +7,15 @@
 // This file exports no makemaz_*; the five per-plane modules import it.
 
 import {
-    AIR, COLNO, CORR, LR_BRANCH, LR_PORTAL, IS_FURNITURE, IS_LAVA, MOAT, POOL, ROOM, ROWNO, WATER, isok,
+    AIR, COLNO, CORR, G_EXTINCT, G_GONE, G_UNIQ, LR_BRANCH, LR_PORTAL, IS_FURNITURE, IS_LAVA, MOAT, POOL, ROOM, ROWNO, WATER, isok,
     Is_airlevel, Is_waterlevel,
 } from '../const.js';
 import { setup_waterlevel, mkportal } from '../mkmaze.js';
 import { find_level } from '../dungeon.js';
 import { game } from '../gstate.js';
-import {
-    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
+import { makemon, mkclass, mm_mon_at, monster_by_pmidx
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { rn1, rn2 } from '../rng.js';
 import {
     LOC_DRY, splev_find_montype, flip_lregion_dest, gx, gy, pm_to_humidity, reset_xystart_size,
@@ -82,6 +82,12 @@ export function plane_monster(spec = {}) {
     }
     rn2(3);                                       // induced_align (dungeon.c:2012)
     if (cls != null) ptr = mkclass(cls, 0x0200 /* G_NOGEN */);
+    else if (ptr) {
+        // C ref: sp_lev.c create_monster():1947-1953 for an explicit id.
+        const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) | 0;
+        if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+        if (g_mvflags & G_GONE) ptr = null;
+    }
 
     let mx, my;
     if (x != null) {
@@ -98,7 +104,7 @@ export function plane_monster(spec = {}) {
         mx = p.x; my = p.y;
     }
     if (mm_mon_at(mx, my)) {
-        const cc = enexto_spawn(mx, my, ptr);
+        const cc = enexto_gpflags(mx, my, ptr, 0);
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(ptr, mx, my, 0 /* NO_MM_FLAGS */);

@@ -9,6 +9,7 @@ import { roles } from './role.js';
 import { COLNO, ROWNO, NON_PM, W_SADDLE, DISMOUNT_THROWN, DISMOUNT_GENERIC, DF_ALL, OBJ_FREE, OBJ_MINVENT, MON_STILL_ARRIVING, ONAME, has_oname, setMGIVENNAME, is_pool } from './const.js';
 import { mksobj, next_ident } from './mkobj.js';
 import { mon_has_amulet } from './monspecial.js';
+import { levl_follower } from './mondata.js';
 import { set_malign, monster_by_pmidx, propagate, name_to_pmidx, put_saddle_on_mon } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
@@ -381,9 +382,9 @@ function on_level(a, b) {
 }
 
 // C mon.c relmon: remove map effects before unlinking the live monster.
-async function relmon(mon, monst_list) {
+async function relmon(mon, monst_list, defer_newsym = false) {
     const { mon_leaving_level } = await import('./mon.js');
-    await mon_leaving_level(mon);
+    await mon_leaving_level(mon, defer_newsym);
     const fm = fmon_list();
     const ix = fm.indexOf(mon);
     if (ix >= 0) fm.splice(ix, 1);
@@ -1077,12 +1078,9 @@ export function keep_mon_accessible(mon) {
 
 // C ref: dog.c:788 keepdogs(pets_only) — called when the hero moves to another
 // level.  RNG: mintrap() for a trapped follower, and nothing else.
-// (do.js keepdogs_capture() is goto_level()'s copy: same walk order, stay_behind
-// messages, mon_leave() and keep_mon_accessible() arms, but no pets_only arm,
-// and it skips relmon()'s mon_leaving_level() because goto_level() must newsym
-// the vacated squares only after the departing screen is captured.  A wiring
-// pass must REPLACE it, not add a second caller.)
-export async function keepdogs(pets_only) {
+// goto_level() passes leftAt to defer the newsym() of each vacated square until
+// the departing screen is held.
+export async function keepdogs(pets_only, leftAt = null) {
     const u = game.u;
     const { DEADMONSTER } = await import('./mon.js');
     const { monnear } = await import('./dogmove.js');
@@ -1107,7 +1105,7 @@ export async function keepdogs(pets_only) {
             mtmp.mfrozen = 0;
             mtmp.mcanmove = 1;
         }
-        if (((monnear(mtmp, u.ux, u.uy) && levl_follower_shared(mtmp))
+        if (((monnear(mtmp, u.ux, u.uy) && await levl_follower(mtmp))
              /* the wiz will level t-port from anywhere to chase the amulet */
              || (u.uhave?.amulet && mtmp.iswiz))
             && (!helpless_mon(mtmp)
@@ -1161,7 +1159,8 @@ export async function keepdogs(pets_only) {
             /* prepare to take mtmp off the map */
             num_segs = await mon_leave(mtmp);
             /* take off map and move mtmp from fmon list to mydogs */
-            await relmon(mtmp, g.mydogs); /* mtmp->mx,my retain current value */
+            if (leftAt) leftAt.push([mtmp.mx, mtmp.my]);
+            await relmon(mtmp, g.mydogs, !!leftAt); /* mtmp->mx,my retain current value */
             mtmp.mx = mtmp.my = 0;  /* mx==0 implies migrating */
             mtmp.wormno = num_segs;
             mtmp.mlstmv = game.moves;
@@ -1182,11 +1181,6 @@ export async function keepdogs(pets_only) {
 // C ref: include/monst.h helpless(mon) = (mon->msleeping || !mon->mcanmove).
 function helpless_mon(mon) {
     return !!(mon.msleeping || !mon.mcanmove);
-}
-// C ref: mondata.c levl_follower(mtmp).  The faithful port is module-private at
-// js/do.js:382; export that one when wiring rather than duplicating it.
-function levl_follower_shared(mtmp) {
-    return !!(mtmp === game.u?.usteed || mtmp.mtame || mtmp.iswiz);
 }
 async function canseemon_shared(mtmp) {
     const D = await import('./display.js');
@@ -1344,7 +1338,7 @@ export async function wary_dog(mtmp, was_dead) {
                js/monmove.js:232, js/dokick.js:740, js/polyself.js:138). */
             const { mflags1_of, M1_NOEYES } = await import('./monflags_data.js');
             const haseyes = (p) => (mflags1_of(p) & M1_NOEYES) === 0;
-            if (haseyes(game.youmonst?.data)) {
+            if (haseyes((await import('./invent.js')).youmonst_data())) {
                 if (haseyes(mtmp.data)) {
                     const { body_part } = await import('./invent.js');
                     set_msg_mon(mtmp);

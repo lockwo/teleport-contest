@@ -2,6 +2,7 @@
 // C ref: dungeon.c - init_dungeons, init_dungeon_dungeons, place_level.
 
 import { panic } from './panic.js';
+import { within_bounded_area } from './rect.js';
 import { game } from './gstate.js';
 import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
@@ -23,7 +24,7 @@ import {
     D_ALIGN_NONE, D_ALIGN_CHAOTIC, D_ALIGN_NEUTRAL, D_ALIGN_LAWFUL,
     D_ALIGN_MASK,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, ICE, DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
-    SDOOR, isok,
+    SDOOR, isok, LR_TELE, LR_UPTELE, LR_DOWNTELE,
     IS_AIR, IS_ALTAR, IS_GRAVE, IS_FOUNTAIN, IS_WALL, IS_DOOR, IS_ROOM,
     IS_THRONE, IS_SINK, TREE, COLNO, ROWNO, NHW_MENU,
     Is_waterlevel, Is_earthlevel, Is_knox_level, Is_firelevel,
@@ -1644,6 +1645,9 @@ export async function build_overview_lines(final = 0, how = 0) {
         // C ref: dungeon.c:2886-2892 interest_mapseen() — in the tutorial list only
         // tutorial levels; outside it never list tutorial levels.
         if (!final && !onHere) {
+            /* C ref: interest_mapseen() — `mptr->flags.notreachable ||
+               mptr->flags.forgot` ends the question right after on_level() */
+            if (cms?.flags?.notreachable || cms?.flags?.forgot) continue;
             if (In_tutorial(game.u?.uz) ? !In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })
                 : In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })) continue;
         }
@@ -1752,7 +1756,7 @@ export async function build_overview_lines(final = 0, how = 0) {
             const br = ms.br;
             let bbuf = `${OVERVIEW_PREFIX}${br_string2(br)} to `
                      + `${M.dungeons[br.end2.dnum]?.dname ?? ''}`;
-            if (br.end1_up) bbuf += `, level ${depth(br.end2)}`;
+            if (br.end1_up && !In_endgame(br.end2)) bbuf += `, level ${depth(br.end2)}`;
             lines.push({ text: `${bbuf}.`, attr: 0 });
         }
 
@@ -2020,17 +2024,9 @@ function Race_if(pm) {
     return mnum != null && DG_RACE_PM[mnum] === pm;
 }
 
-// C ref: mon.c m_at(x, y) / display.c canseemon(mon).  display.js exports
-// m_at() but imports this file; muse.js:252 and uhitm.js:308 keep the same
-// private canseemon().  The infravision half of _canseemon() needs
-// see_with_infrared() (mondata.c), which is not reachable from here.
-function m_at(x, y) {
-    for (const mtmp of (game.level?.monsters || []))
-        if (mtmp && mtmp.mx === x && mtmp.my === y
-            && !(mtmp.mhp != null && mtmp.mhp <= 0))
-            return mtmp;
-    return null;
-}
+// C ref: mon.c m_at(x, y) — display.js m_at() (the grid lookup that skips
+// dead/detached monsters).
+import { m_at } from './display.js';
 // C ref: mextra.h:234 has_mcorpsenm(mon), pray.c:2490 altarmask_at(x, y).
 // dig.js:683's private copy drops the M_AP_FURNITURE arm; this one keeps it.
 export function altarmask_at(x, y) {
@@ -2537,6 +2533,23 @@ export async function print_level_annotation() {
 }
 
 /* ── dungeon.c:2582 exclusion zones ─────────────────────────────────────── */
+
+// C ref: mkmaze.c:317 is_exclusion_zone(type, x, y) — walks sve.exclusion_zones
+// (registered by nhlua.c's des.exclusion() / lspo_exclusion()).  An LR_TELE
+// zone blocks BOTH LR_UPTELE and LR_DOWNTELE queries; every other type matches
+// only itself.
+export function is_exclusion_zone(type, x, y) {
+    for (const ez of (game.exclusion_zones || [])) {
+        if (((type === LR_DOWNTELE
+              && (ez.zonetype === LR_DOWNTELE || ez.zonetype === LR_TELE))
+             || (type === LR_UPTELE
+                 && (ez.zonetype === LR_UPTELE || ez.zonetype === LR_TELE))
+             || type === ez.zonetype)
+            && within_bounded_area(x, y, ez.lx, ez.ly, ez.hx, ez.hy))
+            return true;
+    }
+    return false;
+}
 
 // C ref: dungeon.c:2582 free_exclusions().
 export function free_exclusions() {

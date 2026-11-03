@@ -8,8 +8,10 @@
 // find_mac() is a term of every to-hit roll, and which_armor() gates muse.c's
 // item choices.
 import { game, hooks } from './gstate.js';
+import { See_invisible_hero } from './youprop.js';
 import { has_mcorpsenm, set_mcorpsenm } from './const.js';
-import { newsym, set_msg_mon, canseemon_shared as canseemon_wn } from './display.js';
+import { newsym, pline, update_topl, set_msg_mon, canseemon_shared as canseemon_wn } from './display.js';
+import { s_suffix } from './hacklib.js';
 import { objects, is_flimsy, RING_CLASS, FOOD_CLASS, GEM_CLASS, BALL_CLASS, CHAIN_CLASS } from './mkobj.js';
 import {
     mflags1_of, humanoid,
@@ -24,7 +26,7 @@ import {
 // Cycle with makemon.js (which imports m_dowear from here) is safe: both sides
 // only touch the other's bindings from inside function bodies.
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
-import { vision_recalc } from './vision.js';
+import { vision_recalc, cansee } from './vision.js';
 import { mon_nam, Monnam as Monnam_u, hcolor as hcolor_wn } from './do_name.js';
 
 const ARMOR_CLASS = 3, AMULET_CLASS = 5, WEAPON_CLASS = 2, TOOL_CLASS = 6;
@@ -344,16 +346,34 @@ function MON_WEP(mon) { return mon?.mw || null; }
 
 // C ref: youprop.h See_invisible.  Spelled three ways across this port (see
 // hack.js mon_visible), so read all of them.
-function see_invisible_u() {
-    const u = game.u;
-    return !!(u?.see_invis || u?.See_invisible || u?.uprops?.See_invisible);
+function see_invisible_u() { return See_invisible_hero(); }
+
+// C ref: worn.c m_dowear_type(mon, flag, creation, racialexception) and
+// m_dowear(mon, creation) are written ONCE, as generators.  Creation-time
+// callers (makemon, mplayer, sp_lev, bones, trap) must finish synchronously, so
+// the generator yields a promise only on the !creation paths that print or
+// adjust speed; m_dowear() drives it synchronously for creation (no yield ever
+// happens) and asynchronously otherwise.
+function drive_sync(it) {
+    for (let r = it.next(); !r.done; r = it.next()) { /* creation never yields */ }
+}
+async function drive_async(it) {
+    for (let r = it.next(); !r.done; r = it.next(await r.value)) { /* await each yield */ }
 }
 
-// C ref: worn.c m_dowear_type(mon, flag, creation, racialexception).
-// The wear MESSAGES and the mfrozen delay are the !creation half; at creation
-// C charges no delay at all, which is why the creation-time call in makemon.c
-// and the movemon-driven one must always ship together.
-function m_dowear_type(mon, flag, creation, racialexception, pending) {
+// C ref: worn.c update_mon_extrinsics() `case FAST` (speed boots, the only
+// armour whose oc_oprop is FAST): mon_adjust_speed(mon, 0, obj) with
+// gi.in_mklev forced TRUE when `silently`.  The !creation path calls this
+// BEFORE update_mon_extrinsics() so a witnessed speed change prints its message
+// and draws learnwand()'s rolls; at creation update_mon_extrinsics() alone
+// re-derives mspeed, silently.
+async function wear_speed_arm(mon, obj) {
+    if (obj.otyp !== SPEED_BOOTS) return;
+    const { mon_adjust_speed } = await import('./muse.js');
+    await mon_adjust_speed(mon, 0, obj);
+}
+
+function* m_dowear_type(mon, flag, creation, racialexception) {
     if (mon.mfrozen) return; /* probably putting previous item on */
     const ptr = species(mon);
 
@@ -366,6 +386,8 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
     // sorting its armour advances that stream seven or eight times per turn
     // (seed0383 step 199).
     const nambuf = see_invisible_u() ? Monnam_u(mon) : mon_nam(mon);
+    const sawmon = !creation && canseemon_wn(mon);
+    const sawloc = !creation && cansee(mon.mx, mon.my);
 
     let old = which_armor(mon, flag);
     if (old && old.cursed) return;
@@ -397,7 +419,7 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
             if ((ptr?.msize ?? MZ_HUMAN) > MZ_HUMAN
                 && obj.otyp !== MUMMY_WRAPPING) continue;
             // an already-invisible monster won't hide itself behind a wrapping
-            if (mon.minvis && blocks_invis(obj) && !creation) continue;
+            if (mon.minvis && blocks_invis(obj) && !see_invisible_u() && !creation) continue;
             break;
         case W_ARMH:
             if (!is_helmet(obj)) continue;
@@ -445,16 +467,30 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
         old.owornmask = 0;   /* C clears it so doname() omits "(being worn)" */
     }
     if (!creation) {
-        // The "<Mon> [removes X and ]puts on Y." line needs invent.js's
-        // doname(), which is async here; queue a descriptor and let the caller
-        // flush it through print_m_dowear() before anything else prints.  Both
-        // objects' owornmask are 0 at this point, exactly as C arranges.
-        if (pending) pending.push({ mon, old, best, autocurse, nambuf });
+        if (sawmon) {
+            // C ref: worn.c:924-947 — "<Mon> [removes <old> and ]puts on <new>."
+            const { distant_doname, distant_far, simpleonames, otense }
+                = yield Promise.all([import('./invent.js'), import('./objnam.js')])
+                    .then(([i, o]) => ({ ...i, simpleonames: o.simpleonames }));
+            let newarm = distant_doname(best, distant_far(best, mon.mx, mon.my)), buf = '';
+            if (old) {
+                const oldarm = distant_doname(old, distant_far(old, mon.mx, mon.my));
+                buf = ` removes ${oldarm} and`;
+                // identical descriptions read "another <armour>", not "a <armour>"
+                if (newarm.toLowerCase() === oldarm.toLowerCase())
+                    newarm = newarm.replace(/^an? /i, 'another ');
+            }
+            yield update_topl(`${Monnam_u(mon)}${buf} puts on ${newarm}.`);
+            // C ref: worn.c:944 "%s %s %s %s for a moment."
+            if (autocurse)
+                yield pline(`${s_suffix(Monnam_u(mon))} ${simpleonames(best)} ${otense(best, 'glow')} ${hcolor_wn('black')} for a moment.`);
+        }
         m_delay += armor_delay(best.otyp);
         mon.mfrozen = m_delay;
         if (mon.mfrozen) mon.mcanmove = 0;
     }
     if (old) {
+        if (!creation) yield wear_speed_arm(mon, old);
         update_mon_extrinsics(mon, old, false, creation);
         /* owornmask was cleared above but artifact_light() expects it */
         old.owornmask = oldmask;
@@ -468,79 +504,69 @@ function m_dowear_type(mon, flag, creation, racialexception, pending) {
     if (hooks.artifactLight(best) && !best.lamplit) {
         hooks.artifactLightOn(best);
         vision_recalc(1);
+        if (!creation && best.lamplit && cansee(mon.mx, mon.my)) {
+            const { arti_light_description } = yield import('./light.js');
+            const { Yname2, otense } = yield import('./invent.js');
+            const adesc = arti_light_description(best);
+            if (sawmon) /* could already see monster */
+                yield pline(`${Yname2(best)} ${otense(best, 'begin')} to shine ${adesc}.`);
+            else if (canseemon_wn(mon)) /* didn't see it until new light */
+                yield pline(`${Yname2(best)} ${otense(best, 'are')} shining ${adesc}.`);
+            else if (sawloc) /* saw location but not invisible monster */
+                yield pline(`Something begins to shine ${adesc}.`);
+            else /* didn't see location until new light */
+                yield pline(`Something is shining ${adesc}.`);
+        }
     }
+    if (!creation) yield wear_speed_arm(mon, best);
     update_mon_extrinsics(mon, best, true, creation);
+    /* if couldn't see it but now can, or vice versa */
+    if (!creation && (sawmon !== canseemon_wn(mon))) {
+        if (mon.minvis && !see_invisible_u()) {
+            yield update_topl(`Suddenly you cannot see ${nambuf}.`);
+            (yield import('./invent.js')).makeknown(best.otyp);
+        }
+    }
 }
 
 // C ref: worn.c m_dowear(mon, creation) — wear the best object of each type.
-// Consumes no RNG.  Returns the queue of wear messages the caller must flush
-// with print_m_dowear(); it is always empty when `creation` is true.
-export function m_dowear(mon, creation) {
-    const pending = [];
+// Slot order is load-bearing: m_dowear_type() returns immediately once
+// mon->mfrozen is set, so only the FIRST slot that upgrades charges a delay.
+// creation: runs to completion synchronously and returns undefined.
+// !creation: returns a promise that resolves when the messages are out.
+function* m_dowear_steps(mon, creation) {
     const ptr = species(mon);
-    if (!ptr) return pending;
-    if (verysmall(ptr) || nohands(ptr) || is_animal(ptr)) return pending;
+    if (!ptr) return;
+    if (verysmall(ptr) || nohands(ptr) || is_animal(ptr)) return;
     /* give mummies a chance to wear their wrappings, and let skeletons wear
        their initial armor */
     if (mindless(ptr)
         && (!creation || (ptr.mcls !== S_MUMMY && ptr.name !== 'skeleton')))
-        return pending;
+        return;
 
-    m_dowear_type(mon, W_AMUL, creation, false, pending);
+    yield* m_dowear_type(mon, W_AMUL, creation, false);
     const can_wear_armor = !cantweararm(ptr);
     /* can't put on a shirt if already wearing a suit */
     if (can_wear_armor && !((mon.misc_worn_check | 0) & W_ARM))
-        m_dowear_type(mon, W_ARMU, creation, false, pending);
+        yield* m_dowear_type(mon, W_ARMU, creation, false);
     if (can_wear_armor || WrappingAllowed(ptr))
-        m_dowear_type(mon, W_ARMC, creation, false, pending);
-    m_dowear_type(mon, W_ARMH, creation, false, pending);
+        yield* m_dowear_type(mon, W_ARMC, creation, false);
+    yield* m_dowear_type(mon, W_ARMH, creation, false);
     if (!MON_WEP(mon) || !bimanual(MON_WEP(mon)))
-        m_dowear_type(mon, W_ARMS, creation, false, pending);
-    m_dowear_type(mon, W_ARMG, creation, false, pending);
+        yield* m_dowear_type(mon, W_ARMS, creation, false);
+    yield* m_dowear_type(mon, W_ARMG, creation, false);
     if (!slithy(ptr) && ptr.mcls !== S_CENTAUR)
-        m_dowear_type(mon, W_ARMF, creation, false, pending);
+        yield* m_dowear_type(mon, W_ARMF, creation, false);
     /* RACE_EXCEPTION is TRUE: a monster too small for suits may still wear
        elven armor if racial_exception() allows it */
-    m_dowear_type(mon, W_ARM, creation, !can_wear_armor, pending);
-    return pending;
+    yield* m_dowear_type(mon, W_ARM, creation, !can_wear_armor);
+}
+export function m_dowear(mon, creation) {
+    const it = m_dowear_steps(mon, creation);
+    if (creation) { drive_sync(it); return undefined; }
+    return drive_async(it);
 }
 
-// C ref: worn.c m_dowear_type()'s `if (!creation) { if (sawmon) { ... } }` block.
-// Split out because it needs doname()/pline(), both async in this port, while
-// m_dowear() itself must stay synchronous for makemon()'s creation-time call.
-// Nothing between the state change and this call draws RNG or moves anything,
-// so evaluating canseemon() here matches C's `sawmon` — a !creation m_dowear
-// can never change the monster's visibility (the mummy-wrapping arm that could
-// is gated on `!creation`).
-export async function print_m_dowear(pending) {
-    if (!pending || !pending.length) return;
-    const { pline, canseemon_shared } = await import('./display.js');
-    const { distant_doname, distant_far } = await import('./invent.js');
-    const { Monnam } = await import('./uhitm.js');
-    // C ref: hacklib.c s_suffix() — "Foo" -> "Foo's", "Kops" -> "Kops'".
-    const s_suffix = (s) => (/s$/.test(s) ? `${s}'` : `${s}'s`);
-    for (const { mon, old, best, autocurse } of pending) {
-        if (!canseemon_shared(mon)) continue;
-        let buf = '', oldarm = '';
-        // C ref: worn.c:931,936 distant_name(obj, doname) — <ox,oy> resolves to
-        // the wearer's spot for a minvent item.
-        if (old) {
-            oldarm = distant_doname(old, distant_far(old, mon.mx, mon.my));
-            buf = ` removes ${oldarm} and`;
-        }
-        let newarm = distant_doname(best, distant_far(best, mon.mx, mon.my));
-        // C: identical descriptions become "another <newarm>" so the line reads
-        // "removes a +0 helmet and puts on another helmet."
-        if (newarm.toLowerCase() === oldarm.toLowerCase()) {
-            if (/^a /i.test(newarm)) newarm = newarm.replace(/^a /i, 'another ');
-            else if (/^an /i.test(newarm)) newarm = newarm.replace(/^an /i, 'another ');
-        }
-        set_msg_mon(mon);
-        await pline(`${Monnam(mon)}${buf} puts on ${newarm}.`);
-        if (autocurse)
-            await pline(`${s_suffix(Monnam(mon))} ${objects[best.otyp]?.name} glows ${hcolor_wn('black')} for a moment.`);
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // worn.c completion — the nine routines coverage.mjs --file=worn.c listed as
@@ -896,7 +922,7 @@ export function clear_bypasses() {
         clear_bypass(mtmp.minvent);
     for (const mtmp of (game.mydogs || []))
         clear_bypass(mtmp.minvent);
-    const ub = game.u?.uball ?? game.uball, uc = game.u?.uchain ?? game.uchain;
+    const ub = game.u?.uball, uc = game.u?.uchain;
     if (ub) ub.bypass = 0;
     if (uc) uc.bypass = 0;
     if (game.context) game.context.bypasses = false;

@@ -255,6 +255,7 @@ export async function dosave() {
     if (ans === 'n') {
         game.context = game.context || {};
         game.context.move = 0;
+        if ((game.multi | 0) > 0) (await import('./hack.js')).nomul(0);
         return;
     }
     // 'y': pline("Saving...") is printed then immediately obliterated by the
@@ -547,8 +548,8 @@ export function save_bc(mode) {
 // uchain, and deliberately does nothing for any other bit rather than
 // pretending to be the general function.
 function setworn_bc(obj, mask) {
-    if (mask & W_BALL) game.uball = obj;
-    if (mask & W_CHAIN) game.uchain = obj;
+    if (mask & W_BALL) game.u.uball = obj;
+    if (mask & W_CHAIN) game.u.uchain = obj;
 }
 
 // C ref: save.c:726 saveobj() — one object.  Note C's own caveat: this is the
@@ -1027,8 +1028,8 @@ export async function savestateinlock() {
 
             /* if ball and/or chain aren't on floor or in invent, keep a copy of
                their pointers; not valid when on floor or in invent */
-            game.looseball = BALL_IN_MON_SV() ? game.uball : 0;
-            game.loosechain = CHAIN_IN_MON_SV() ? game.uchain : 0;
+            game.looseball = BALL_IN_MON_SV() ? game.u?.uball : 0;
+            game.loosechain = CHAIN_IN_MON_SV() ? game.u?.uchain : 0;
             nhfp.recs.gamestate = await savegamestate(nhfp.mode);
         }
         /* close_nhfile(nhfp) */
@@ -1058,8 +1059,8 @@ function create_levelfile_sv(_lev) { return null; }
 
 // C ref: ball.h BALL_IN_MON / CHAIN_IN_MON — the ball/chain are "in" the hero's
 // swallower, i.e. dangling free rather than on the floor or carried.
-function BALL_IN_MON_SV() { return !!(game.u?.uswallow && game.uball); }
-function CHAIN_IN_MON_SV() { return !!(game.u?.uswallow && game.uchain); }
+function BALL_IN_MON_SV() { return !!(game.u?.uswallow && game.u?.uball); }
+function CHAIN_IN_MON_SV() { return !!(game.u?.uswallow && game.u?.uchain); }
 
 // C ref: save.c:429 savelev() — the wrapper around savelev_core() whose only
 // job is gu.uz_save.  save_bubbles() needs to know which level this is even

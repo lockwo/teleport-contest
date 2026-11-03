@@ -4,7 +4,8 @@
 
 import { COLNO, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
-import { enexto_spawn, makemon, mkclass, mm_mon_at } from '../makemon.js';
+import { makemon, mkclass, mm_mon_at  } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { des_object_defaults, mkobj_at } from '../mkobj.js';
 import { stackobj } from '../invent.js';
 import { rn2 } from '../rng.js';
@@ -34,7 +35,7 @@ function quest_create_monster_class_randpos(classNum, peacefulOverride) {
     const c = bigrm_get_location_dry();
     let x = c.x, y = c.y;
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);

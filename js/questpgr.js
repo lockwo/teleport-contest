@@ -2829,7 +2829,12 @@ async function deliver_by_window(lines) {
     // over it.  tty_display_nhwindow(WIN_MESSAGE) is a no-op while an
     // ESC-dismissed --More-- left WIN_STOP set (WIN_STOP == WIN_CANCELLED).
     await display_nhwindow_message();
-    renderWindowScreen(lines.map(qt_convert_line),
+    // C ref: wintty.c tty_putstr() NHW_TEXT -- every putstr()'d line is
+    // compress_str()'d and, when longer than CO, broken at the last space.
+    const { tty_putstr_text } = await import('./pager.js');
+    const wrapped = [];
+    for (const l of lines) tty_putstr_text(wrapped, qt_convert_line(l));
+    renderWindowScreen(wrapped,
                        { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
     await flush_screen(1);
     g._modal_screen = 'topl';

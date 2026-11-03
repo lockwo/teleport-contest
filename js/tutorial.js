@@ -23,12 +23,13 @@ import {
     MAGIC_PORTAL, WEB, TRAPDOOR, SQKY_BOARD, SLP_GAS_TRAP, OBJ_FLOOR, STRAT_WAITFORU } from './const.js';
 import { GameMap } from './game.js';
 import { wallification, set_wall_state, mkstairs } from './mklev.js';
-import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND } from './mkobj.js';
+import { objects, mksobj, mksobj_at, next_ident, blessorcurse, curse, set_corpsenm, BOULDER, KELP_FROND, add_to_container, weight, CORPSE, STATUE, EGG, TIN, FIGURINE } from './mkobj.js';
 import { name_to_pmidx, monster_by_pmidx, makemon, set_malign } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { hole_destination, choose_trapnote } from './trap.js';
 import { cmd_from_ecname } from './cmd.js';
 import { init_mapseen } from './dungeon.js';
+import { set_wall_property, splev_find_montype } from './sp_lev.js';
 
 // ── tut-1.lua map (verbatim, dat/tut-1.lua des.map). Lua coord (cx,cy) maps to
 //    absolute map cell (xstart + cx, ystart + cy) with the empirically-pinned
@@ -134,14 +135,22 @@ function setTerrain(lvl, map = TUT_MAP) {
     }
 }
 
-// des.region(area, "lit"/"unlit") — set lit state for a rectangle of cells.
-// Lua coords inclusive.
+// C ref: sp_lev.c light_region() via lspo_region() for a plain rectangular
+// ordinary region: Lua coords are map-relative, inclusive.  A LIT region grows
+// by one cell on every side (walls), clamped to the level; lava is always lit.
 function regionLit(cx1, cy1, cx2, cy2, lit) {
-    for (let cy = cy1; cy <= cy2; cy++)
-        for (let cx = cx1; cx <= cx2; cx++) {
-            const { x, y } = A(cx, cy);
+    let lowx = cx1 + ORG_X, lowy = cy1 + ORG_Y;
+    let hix = cx2 + ORG_X, hiy = cy2 + ORG_Y;
+    if (lit) {
+        lowx = Math.max(lowx - 1, 1);
+        hix = Math.min(hix + 1, COLNO - 1);
+        lowy = Math.max(lowy - 1, 0);
+        hiy = Math.min(hiy + 1, ROWNO - 1);
+    }
+    for (let x = lowx; x <= hix; x++)
+        for (let y = lowy; y <= hiy; y++) {
             const loc = game.level.at(x, y);
-            if (loc) loc.lit = !!lit;
+            if (loc) loc.lit = (loc.typ === LAVAPOOL || loc.typ === LAVAWALL) ? true : !!lit;
         }
 }
 
@@ -242,7 +251,12 @@ function createTrap(cx, cy, typ, opts = {}) {
 function createObject(cx, cy, name, opts = {}) {
     const otyp = otypByName(name, opts.oclass ?? null);
     const otmp = mksobj(otyp, true, true);    // artif = !named = TRUE
+    // C ref: sp_lev.c lspo_object(): for statue/corpse/egg/tin/figurine the
+    // table's spe is replaced by lflags (0 here: no historic/male/female/
+    // laid_by_you key), overwriting the corpstat gender mksobj rolled.
     if (opts.spe != null) otmp.spe = opts.spe;
+    if (otyp === CORPSE || otyp === STATUE || otyp === EGG || otyp === TIN
+        || otyp === FIGURINE) otmp.spe = 0;
     switch (opts.buc) {
     case 'blessed': otmp.blessed = true; otmp.cursed = false; break;
     case 'uncursed': otmp.blessed = false; otmp.cursed = false; break;
@@ -250,6 +264,10 @@ function createObject(cx, cy, name, opts = {}) {
     case 'not-cursed': otmp.cursed = false; break;
     default: break;
     }
+    // C ref: sp_lev.c create_object(): with no `eroded` key the erosion and
+    // erodeproof bits mksobj rolled are cleared.
+    otmp.oeroded = otmp.oeroded2 = 0;
+    otmp.oerodeproof = 0;
     if (opts.montype != null) {
         const pm = name_to_pmidx(opts.montype);
         if (pm >= 0) set_corpsenm(otmp, pm);
@@ -280,8 +298,8 @@ function mrandom(lo, hi) { return lo + rn2(hi + 1 - lo); }
 // until it can see the hero or is hurt.  `peaceful = 0` (the wolf) overrides
 // makemon's peace_minded() result and re-runs set_malign (sp_lev.c:2126-2130).
 function createMonster(cx, cy, name, opts = {}) {
-    rn2(2);                 // find_montype(name) — random-gender roll
-    const pm = name_to_pmidx(name);
+    // find_montype(name): the random-gender roll lands in tmpmons.female.
+    const { pmidx: pm, female } = splev_find_montype(name);
     const data = monster_by_pmidx(pm);
     // sp_amask_to_amask(AM_SPLEV_RANDOM) -> induced_align(80): the dungeon-align
     // gate rolls rn2(100); only when that result is >= 80 (i.e. the dungeon
@@ -290,6 +308,7 @@ function createMonster(cx, cy, name, opts = {}) {
     const { x, y } = A(cx, cy);
     const mtmp = makemon(data, x, y, 0);
     if (!mtmp) return;
+    mtmp.female = female;                  // sp_lev.c:2125 create_monster
     if (opts.peaceful !== undefined) {
         mtmp.mpeaceful = opts.peaceful;
         set_malign(mtmp);
@@ -311,12 +330,8 @@ function runTutProgram() {
     // des.region(selection.area(1,1,73,16), "lit")
     regionLit(1, 1, 73, 16, true);
 
-    // des.non_diggable() — mark all cells nondiggable (no PRNG).
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 1; x < COLNO; x++) {
-            const loc = lvl.at(x, y);
-            if (loc) loc.wall_info |= W_NONDIGGABLE;
-        }
+    // des.non_diggable() — whole level; only walls/trees/bars take the bit.
+    set_wall_property(1, 0, COLNO - 1, ROWNO - 1, W_NONDIGGABLE);
 
     // des.teleport_region({ region={9,3,9,3} }) — dir defaults to "both"
     // (LR_TELE), which fixup_special() copies into BOTH svu.updest and
@@ -562,6 +577,8 @@ function createBoxWithScroll(cx, cy) {
     // [tknown rn2(100) only if trapped], mkbox_cnts(...).
     const box = mksobj(otypByName('large box'), true, true);
     box.obroken = 1; box.olocked = 0; box.otrapped = 0;
+    box.oeroded = box.oeroded2 = 0; box.oerodeproof = 0;
+    box.cobj = [];           // SP_OBJ_CONTAINER: delete_contents(otmp)
     const { x, y } = A(cx, cy);
     box.ox = x; box.oy = y; box.where = OBJ_FLOOR;
     if (!game.level.objects) game.level.objects = [];
@@ -573,7 +590,14 @@ function createBoxWithScroll(cx, cy) {
     // then mksobj(WAN_SECRET_DOOR_DETECTION).  The object becomes contained, but
     // get_location() must still reject non-DRY candidates before that happens.
     randomTutorialDryLocation();
-    mksobj(otypByName('secret door detection', 11), true, true); // WAND_CLASS; spe rn2(5) + blessorcurse rn2(17)
+    // WAND_CLASS; spe rn2(5) + blessorcurse rn2(17), then des.object's spe=30
+    // and the create_object() erosion reset, then add_to_container().
+    const wand = mksobj(otypByName('secret door detection', 11), true, true);
+    wand.spe = 30;
+    wand.oeroded = wand.oeroded2 = 0;
+    wand.oerodeproof = 0;
+    add_to_container(box, wand);
+    box.owt = weight(box);
 }
 
 // C ref: getbones() — rn2(3) unless discover/bones-off.  Mirrors mklev.js.
@@ -640,43 +664,6 @@ function buildTutorialLevel(lvl, viaGoto) {
     // as DEC box-drawing pieces (l/q/k/m/j/x) like C.
     wallification(1, 0, COLNO - 1, ROWNO - 1);
     set_wall_state();
-
-    lightBorderWalls(lvl);
-}
-
-// C ref: sp_lev.c lspo_region — des.region(selection, "lit") grows the lit
-// selection by 1 in all directions (selection_do_grow(W_ANY)) BEFORE
-// sel_set_lit, so the 1-cell ring bounding the lit area (including the
-// level's edge rows/cols) is lit too.  The JS vision (vision.js) only marks
-// a wall/door IN_SIGHT when the wall cell ITSELF is lit AND the adjacent
-// floor toward the hero is lit, so light every wall / door / secret-door
-// cell that borders a lit ROOM/CORR/DOOR cell — spanning the full map so the
-// bottom/right border walls (y=ROWNO-1, x=COLNO-1) light too.  No PRNG.
-function lightBorderWalls(lvl) {
-    for (let y = 1; y < ROWNO; y++) {
-        for (let x = 1; x < COLNO; x++) {
-            const loc = lvl.at(x, y);
-            if (!loc) continue;
-            const t = loc.typ;
-            // Any wall variant (VWALL..DBWALL = 1..12), door, secret door,
-            // iron bars, or stone bordering a lit room cell becomes lit so the
-            // renderer reveals it (corners included).
-            // STONE is excluded: tut-1.lua's des.region(selection.match(" "),
-            // "unlit") leaves every STONE cell dark (runTutProgram above).
-            const isWall = ((t >= VWALL && t <= DBWALL) || t === DOOR
-                            || t === SDOOR || t === IRONBARS);
-            if (!isWall || loc.lit) continue;
-            for (const [ddx, ddy] of [[1, 0], [-1, 0], [0, 1], [0, -1],
-                                      [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-                const n = lvl.at(x + ddx, y + ddy);
-                if (n && n.lit && (n.typ === ROOM || n.typ === CORR
-                                   || n.typ === DOOR)) {
-                    loc.lit = true;
-                    break;
-                }
-            }
-        }
-    }
 }
 
 // ── dat/tut-2.lua, the second (and last) tutorial level: a lit 12x6 room with
@@ -730,15 +717,10 @@ export function makemaz_tutorial2() {
     createTrap(11, 5, MAGIC_PORTAL, { seen: true });    // mktrap rnd(4)
 
     // des.non_diggable()
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 1; x < COLNO; x++) {
-            const loc = lvl.at(x, y);
-            if (loc) loc.wall_info |= W_NONDIGGABLE;
-        }
+    set_wall_property(1, 0, COLNO - 1, ROWNO - 1, W_NONDIGGABLE);
 
     wallification(1, 0, COLNO - 1, ROWNO - 1);
     set_wall_state();
-    lightBorderWalls(lvl);
 }
 
 // C ref: dat/tut-1.lua:30 des.level_flags("mazelevel", "noflip",

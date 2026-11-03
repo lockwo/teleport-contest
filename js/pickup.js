@@ -88,6 +88,7 @@ export const WORN_TYPES = 0x10;
 export const BILLED_TYPES = 0x40;
 export const CHOOSE_ALL = 0x80;
 import { BUCX_TYPES } from './const.js';
+import { is_pick } from './weapon.js';
 import { youmonst_data } from './invent.js';
 export { BUCX_TYPES };
 export const JUSTPICKED = 0x1000;
@@ -614,7 +615,7 @@ export function allow_category(obj) {
     return true;
 }
 function ParanoidAutoAll() {
-    return /autoall/i.test(String(flags().paranoid_confirmation || ''));
+    return (((game.flags?.paranoia_bits) | 0) & 0x1000 /* PARANOID_AUTOALL */) !== 0;
 }
 function Role_if_CLERIC() {
     const PM_CLERIC = 6;
@@ -852,10 +853,8 @@ export function menu_style() {
     default: return MENU_FULL;   /* optlist.h initial value */
     }
 }
-function unconscious() {
-    const u = ustate();
-    return !!(u.usleep || u.uprops?.Unconscious);
-}
+// C ref: trap.c unconscious() (const.js).
+import { unconscious } from './const.js';
 
 /* C ref: options.c optfn_pickup_types() — flags.pickup_types holds object
    CLASS CODES, not the symbols the user typed: each character goes through
@@ -1589,11 +1588,14 @@ export async function mbag_item_gone(held, item, silent) {
         else
             await pline(`You ${Blind() ? 'notice' : 'see'} ${doname(item)} disappear!`);
     }
-    if (game.u?.ushops) {
-        /* shk.c stolen_value() performs the shopkeeper/peaceful lookup itself. */
-        if ((held && item.unpaid) || (!held && costly_spot(game.u.ux, game.u.uy))) {
+    const ushop0 = (game.u?.ushops || [])[0];
+    if (ushop0) {
+        const { shop_keeper } = await import('./shkroom.js');
+        const shkp = shop_keeper(ushop0);
+        if (shkp
+            && ((held && item.unpaid) || (!held && costly_spot(game.u.ux, game.u.uy)))) {
             const { stolen_value } = await import('./shk.js');
-            loss = await stolen_value(item, game.u.ux, game.u.uy, true, true);
+            loss = await stolen_value(item, game.u.ux, game.u.uy, !!shkp.mpeaceful, true);
         }
     }
     obfree(item, null);
@@ -1854,9 +1856,20 @@ export async function in_container(obj) {
             const { addtobill } = await import('./shk.js');
             await addtobill(obj, false, false, true);
         }
-        if (obj.otyp === BAG_OF_HOLDING)
-            await do_boh_explosion(obj, !floor_container);
+        if (obj.otyp === BAG_OF_HOLDING) /* one bag of holding into another */
+            await do_boh_explosion(obj, obj.where === OBJ_FLOOR);
         obfree(obj, null); /* triggering item is always destroyed */
+        /* if carried, shop goods will be flagged 'unpaid' and obfree() will
+           handle bill issues, but if on floor, we need to put them on bill
+           before deleting them (non-shop items will be flagged 'no_charge') */
+        if (floor_container && costly_spot(cc.ox, cc.oy)) {
+            const { addtobill } = await import('./shk.js');
+            const save_no_charge = cc.no_charge;
+            await addtobill(cc, false, false, false);
+            /* addtobill() clears no charge; set it back so that useupf()
+               doesn't double bill */
+            cc.no_charge = save_no_charge;
+        }
         await do_boh_explosion(cc, floor_container);
         if (!floor_container) useup(cc);
         else if (obj_here(cc, u.ux, u.uy)) await useupf(cc, cc.quan);
@@ -1909,6 +1922,11 @@ export async function out_container(obj) {
         obj.ox = cc.ox; obj.oy = cc.oy;
         const { addtobill } = await import('./shk.js');
         await addtobill(obj, false, false, false);
+    }
+    /* pickup.c:2767 — shopkeeper feedback for a pick-axe/mattock taken out */
+    if (is_pick(obj)) {
+        const { pick_pick } = await import('./shk.js');
+        await pick_pick(obj);
     }
 
     const otmp = addinv(obj);

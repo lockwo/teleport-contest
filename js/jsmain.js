@@ -318,7 +318,7 @@ export class NethackGame {
         const opts = await parseNethackrc(this._nethackrc);
         g.plname = opts.name || '';
         // C ref: optlist.h NHOPTB(sparkle, ..., On, ...) — default On; options.c initoptions_init() flags.sortloot = 'l'.
-        g.flags = { verbose: true, invlet_constant: true, dark_room: true, tips: true, sparkle: true, sortloot: 'l', ...opts.flags };
+        g.flags = { verbose: true, invlet_constant: true, dark_room: true, tips: true, sparkle: true, sortloot: 'l', versinfo: 1, ...opts.flags };
         // C ref: options.c set_playmode() — when wizard (debug) mode is requested
         // (OPTIONS=playmode:debug) and authorize_wizard_mode() succeeds (the
         // contest sysconf carries WIZARDS=*, so it always does), the player name
@@ -329,7 +329,9 @@ export class NethackGame {
         if (g.flags.debug) g.plname = 'wizard';
         // C initializes cmdassist enabled; an explicit !cmdassist in the rc
         // is applied below through opts.iflags.
-        g.iflags = { cmdassist: true, use_color: true, ...opts.iflags };
+        // C ref: options.c initoptions_init() — iflags.wc2_petattr = ATR_INVERSE (wintype.h 7),
+        // iflags.prevmsg_window = 's' (tty), flags.versinfo = 1: the 'O' handlers preselect these.
+        g.iflags = { cmdassist: true, use_color: true, wc2_petattr: 7, prevmsg_window: 's', ...opts.iflags };
         if (opts.a11y) g.a11y = { ...g.a11y, ...opts.a11y };
         // C ref: cmd.c parsebindings()/reset_commands() — custom key bindings
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()

@@ -511,11 +511,14 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
             }
             }
             if (hitu && singleobj.opoisoned && deps.is_poisonable?.(singleobj)) {
-                await deps.poisoned?.(singleobj, /* A_STR */ 0,
-                                      /* if damage triggered life-saving,
-                                         poison is limited to attrib loss */
-                                      ((game.u?.umortality | 0) > oldumort)
-                                          ? 0 : 10, true);
+                const { xname, killer_xname } = await import('./invent.js');
+                const { poisoned } = await import('./attrib.js');
+                await poisoned(xname(singleobj), /* A_STR */ 0,
+                               killer_xname(singleobj),
+                               /* if damage triggered life-saving,
+                                  poison is limited to attrib loss */
+                               ((game.u?.umortality | 0) > oldumort)
+                                   ? 0 : 10, true);
             }
             if (hitu && deps.can_blnd?.(null, deps.YOUMONST,
                                         singleobj.otyp === BLINDING_VENOM

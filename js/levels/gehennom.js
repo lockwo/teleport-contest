@@ -23,7 +23,7 @@ import { occupied } from '../mkroom.js';
 import { rn1, rn2, rnd } from '../rng.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_level_extends, level_flip_extents, is_ok_location, percent,
-    selection_match, set_levltyp_lit, splev_map_at, splev_map_mark,
+    selection_match, set_levltyp_lit, sel_set_ter, splev_map_at, splev_map_mark,
     splev_map_origin, splev_mkstairs_at, splev_find_montype, LOC_DRY,
 } from '../sp_lev.js';
 import {
@@ -67,13 +67,13 @@ export function geh_sel_area(x1, y1, x2, y2) {
 
 // C ref: sp_lev.c lspo_terrain() — des.terrain(selection, "X").  No RNG.
 export function geh_terrain_sel(sel, typ, tolit = SET_LIT_NOCHANGE) {
-    selection_iterate(sel, (x, y) => set_levltyp_lit(x, y, typ, tolit));
+    selection_iterate(sel, (x, y) => sel_set_ter(x, y, { ter: typ, tlit: tolit }));
 }
 
 // C ref: sp_lev.c lspo_terrain() 3-argument form des.terrain(x, y, "X").
 export function geh_terrain_at(x, y, typ) {
     const c = geh_loc(x, y);
-    set_levltyp_lit(c.x, c.y, typ, SET_LIT_NOCHANGE);
+    sel_set_ter(c.x, c.y, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
 // C ref: sp_lev.c lvlfill_solid() — des.level_init({style="solidfill"}) with an

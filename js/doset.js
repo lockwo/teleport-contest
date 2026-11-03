@@ -24,7 +24,7 @@
 import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { vision_recalc } from './vision.js';
-import { update_topl, topl_more, render_map_to_grid, docrt, reglyph_darkroom, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
+import { update_topl, pline, topl_more, render_map_to_grid, docrt, reglyph_darkroom, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
 import { menu_ctx } from './windows.js';
@@ -899,7 +899,20 @@ async function pickupTypesMenu(blankStatus) {
         const c = await nhgetch();
         delete game._modal_screen;
         const ch = String.fromCharCode(c);
-        if (ch >= '0' && ch <= '9') {
+        // C ref: wintty.c process_menu_window() — xwaitforspace(resp) swallows
+        // any key outside resp (this page's selectors, group accelerators,
+        // " 0123456789\033\n\r", mapped and default menu commands), so an
+        // invalid key never reaches the switch and leaves a pending count alone.
+        const isGroupAccel = bySym.has(ch);
+        if (!(byAccel.has(ch) || ch === 'A' || isGroupAccel || ' \r\n\x1b'.includes(ch)
+              || (ch >= '0' && ch <= '9') || OPTS.default_menu_cmds.includes(ch)
+              || OPTS.mapped_menu_cmds().includes(ch))) {
+            resetCount = false;
+            continue;
+        }
+        // '0' is also the iron ball class: "if (!counting && strchr(gacc, morc))
+        // goto group_accel" ahead of the count digits.
+        if (ch >= '0' && ch <= '9' && !(!counting && isGroupAccel)) {
             count = count * 10 + (c - 48);
             if (count) counting = true;
             resetCount = false;
@@ -1047,7 +1060,7 @@ async function runFruitHandler() {
 // C ref: options.c do_handler runs after tty dismisses the parent menu.  The
 // handler's menus are windows.js select_menu() calls; menu_ctx tells them the
 // parent menu's docrt() left the status window blank.
-export async function runOptionsHandler(handler) {
+export async function runOptionsHandler(handler, { pageAtEnd = true } = {}) {
     const { dismiss_invent_screen } = await import('./invent.js');
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     // The status window stays blank only until the next bot(): the full menu's
@@ -1084,7 +1097,7 @@ export async function runOptionsHandler(handler) {
     };
     try {
         const res = await handler();
-        if (game._toplin) {
+        if (game._toplin && pageAtEnd) {
             menu_ctx.blankStatus = false; // the handler's pline republished the status
             // tty_display_nhwindow(WIN_MESSAGE) returns at once on WIN_CANCELLED
             // (== WIN_STOP, set by an ESC'd --More--): no further --More--.
@@ -1372,6 +1385,9 @@ async function dosetSimpleLoop() {
         } else if (it.name === 'statuslines') {
             await runStatuslinesHandler();
         }
+        // C ref: options.c doset_simple(): reset_needed_visuals() after every pick,
+        // for the redraw flags the handlers in options.js set (opt_need_redraw).
+        await OPTS.reset_needed_visuals();
         // Rebuild the parent menu with the updated option values.
     }
 }
@@ -1600,7 +1616,7 @@ async function dosetPass(skiphelp) {
                 const prev = game.flags.vanq_sortmode | 0;
                 await set_vanq_order(true);
                 const cur = game.flags.vanq_sortmode | 0;
-                await update_topl(`'sortvanquished' ${cur === prev ? 'not changed, still'
+                await pline(`'sortvanquished' ${cur === prev ? 'not changed, still'
                     : 'changed to'} "${vanqorders[cur][0]}: ${vanqorders[cur][1]}".`);
             });
         } else if (FULL_MENU_HANDLERS[e.name]) {
@@ -1611,7 +1627,8 @@ async function dosetPass(skiphelp) {
         } else if (e.kind === 'compound') {
             // C ref: options.c doset(): a compound without has_handler prompts
             // "Set %s to what?" and passes the answer to parseoptions().
-            await runOptionsHandler(() => OPTS.handler_compound_getlin(e.name));
+            await runOptionsHandler(() => OPTS.handler_compound_getlin(e.name),
+                                    { pageAtEnd: false });
         }
     }
     if (picks.length === 1 && gavehelp) return 'rerun';
@@ -1621,6 +1638,8 @@ async function dosetPass(skiphelp) {
         await docrt();
     }
     game._optNeedRedraw = false;
+    // C ref: options.c doset(): reset_needed_visuals() before returning.
+    await OPTS.reset_needed_visuals();
     game._optStatusPainted = false;
     return 0;
 }

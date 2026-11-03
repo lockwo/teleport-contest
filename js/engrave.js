@@ -24,7 +24,7 @@ import { mflags1_of, M1_ANIMAL, M1_HIDE, M1_CLING, M1_FLY, is_whirly } from './m
 import { attacktype, AT_HUGS, sticks } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS, P_RIDING, P_BASIC } from './const.js';
+import { A_WIS, P_RIDING, P_BASIC, Unaware as Unaware_hero } from './const.js';
 import { Levitation_hero, Flying_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { Blind as isBlind } from './vision.js';
 import { You_see } from './display.js';
@@ -1528,8 +1528,7 @@ async function maybe_newsym(de) {
 // Sunsword-style artifact; those two need mondata/artifact state this file
 // cannot reach, so only the (Blind || Unaware) clause is modelled.
 function resists_blnd() {
-    const u = game.u;
-    return !!(isBlind() || u?.uprops?.Unaware || u?.usleep);
+    return !!(isBlind() || Unaware_hero());
 }
 
 // C ref: objnam.c The(str) — "the " prefixed and capitalised; a name that
@@ -1879,7 +1878,7 @@ export async function doengrave_ctx_init(de) {
     // C ref: mondata.h is_demon(ptr) (M2_DEMON) / is_vampire(ptr) — C's
     // `ptr->mlet == S_VAMPIRE` is the numeric class index, which in this port is
     // .mcls (makemon.js:621 puts the display CHARACTER in .mlet).
-    const ydata = game.youmonst?.data;
+    const ydata = (await import('./invent.js')).youmonst_data();
     if (ydata && (is_demon_flag(ydata) || ydata.mcls === S_VAMPIRE_CLS))
         de.type = ENGR_BLOOD;
 

@@ -25,7 +25,7 @@ import { known_spell, spelleffects } from './spell.js';
 import { morehungry } from './eat.js';
 import { hero_liquid_goodpos, vault_tele, level_tele_trap, u_locomotion } from './trap.js';
 import { set_utrap } from './polyself.js';
-import { In_hell, u_on_newpos } from './dungeon.js';
+import { In_hell, u_on_newpos, is_exclusion_zone } from './dungeon.js';
 import { noit_mon_nam } from './do_name.js';
 import { In_endgame, is_pool, is_lava } from './const.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
@@ -34,7 +34,7 @@ import { canseemon_shared as canseemon_tele } from './display.js';
 import {
     COLNO, ROWNO, DOOR, POOL, DRAWBRIDGE_UP, LAVAPOOL, LAVAWALL,
     D_CLOSED, D_LOCKED, STRAT_APPEARMSG, BOLT_LIM, TEMPLE, engulfing_u,
-    MM_IGNOREWATER, MM_IGNORELAVA, IS_WATERWALL, Is_waterlevel, A_INT, A_CHA,
+    MM_IGNOREWATER, MM_IGNORELAVA, IS_WATERWALL, Is_waterlevel, A_INT, A_CHA, LR_MONGEN,
 } from './const.js';
 import { BOULDER, place_object } from './mkobj.js';
 import {
@@ -42,6 +42,7 @@ import {
     control_teleport_flag,
 } from './monflags_data.js';
 import { inhishop, costly_spot, find_objowner, onshopbill, stolen_value, make_angry_shk } from './shk.js';
+import { search_special, somexyspace } from './mkroom.js';
 import { inhistemple } from './priest.js';
 
 // C ref: include/hack.h — rloc() flags.  (js/const.js carries an older copy of
@@ -163,10 +164,13 @@ export function goodpos(x, y, mtmp, gpflags) {
         && !(is_lava(x, y) && ignorelava)) return false;
     if (sobj_at_boulder(x, y) && (!mdat || !throws_rocks_flag(mdat)))
         return false;
-    // is_exclusion_zone(LR_MONGEN, ...) only applies with GP_AVOID_MONPOS
-    // (monster creation), which no caller in this file passes.
+    if (avoid_monpos && is_exclusion_zone(LR_MONGEN, x, y)) return false;
     return true;
 }
+
+// makemon.js reaches these through hooks (a static import would close a
+// module-init cycle).
+hooks.goodpos = goodpos;
 
 // C ref: teleport.c rloc_pos_ok() — migrating monsters use mx==0 and my's
 // direction/tower flags; resident monsters retain their current region.
@@ -531,7 +535,7 @@ import {
     A_STR, A_WIS, EXT_ENCUMBER,
     is_pit, is_hole, IS_ALTAR, ZAP_POS, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { CORPSE, SCR_SCARE_MONSTER } from './mkobj.js';
-import { M1_NOEYES, M2_LORD, M2_PRINCE, M1_TPORT } from './monflags_data.js';
+import { M1_NOEYES, M2_LORD, M2_PRINCE, M2_DEMON, M1_TPORT, mflags1_of, mflags2_of } from './monflags_data.js';
 import { within_bounded_area } from './rect.js';
 import { in_out_region } from './region.js';
 import { see_monsters, see_nearby_objects } from './display.js';
@@ -693,6 +697,8 @@ export function enexto_gpflags(xx, yy, mdat, entflags) {
     return enexto_core(xx, yy, mdat, GP_CHECKSCARY | entflags)
         || enexto_core(xx, yy, mdat, entflags);
 }
+hooks.enexto_core = enexto_core;
+hooks.enexto_gpflags = enexto_gpflags;
 
 // C ref: teleport.c:385 tele_jump_ok(x1, y1, x2, y2) — the special-level
 // teleport regions (svd.dndest / svu.updest).  No RNG.  Both halves of each
@@ -930,7 +936,8 @@ export async function tele_to_rnd_pet() {
         return;
     }
 
-    for (const mtmp of (game.level?.monsters || [])) {
+    /* C walks fmon newest-first; rn2(cnt) reservoir pick is order-dependent */
+    for (const mtmp of [...(game.level?.monsters || [])].reverse()) {
         if (!mtmp) continue;
         if ((mtmp.mhp | 0) >= 1 && mtmp.mtame && !mon_offmap_(mtmp)) {
             cnt++;
@@ -1240,10 +1247,10 @@ export async function control_mon_tele(mon, cc_p, rlocflags, via_rloc) {
 // C ref: teleport.c:1936 mvault_tele(mtmp).  somexyspace() is RNG-BEARING and
 // runs BEFORE goodpos(); when either fails the fallback is a full rloc().
 export async function mvault_tele(mtmp) {
-    const croom = search_special_(VAULT);
+    const croom = search_special(VAULT);
     const c = { x: 0, y: 0 };
 
-    if (croom && await somexyspace_(croom, c) && goodpos(c.x, c.y, mtmp, 0)) {
+    if (croom && somexyspace(croom, c) && goodpos(c.x, c.y, mtmp, 0)) {
         await rloc_to(mtmp, c.x, c.y);
         return;
     }
@@ -1412,8 +1419,8 @@ export async function rloco(obj) {
 
 // C ref: mondata.h is_dlord/is_dprince — ports are js/artifact.js:586/587
 // (private).  Demon lords/princes are M2_LORD / M2_PRINCE demons.
-function is_dlord_(ptr) { return !!ptr?.demon && ((mflags2_of_(ptr) & M2_LORD) !== 0); }
-function is_dprince_(ptr) { return !!ptr?.demon && ((mflags2_of_(ptr) & M2_PRINCE) !== 0); }
+function is_dlord_(ptr) { return !!ptr && ((mflags2_of_(ptr) & M2_DEMON) !== 0) && ((mflags2_of_(ptr) & M2_LORD) !== 0); }
+function is_dprince_(ptr) { return !!ptr && ((mflags2_of_(ptr) & M2_DEMON) !== 0) && ((mflags2_of_(ptr) & M2_PRINCE) !== 0); }
 // C ref: mondata.h is_rider(ptr) / unique_corpstat(ptr) / haseyes(ptr) — ports
 // are js/monmove.js:1392 / :1499 / :232, all private.  The Rider pmidx values
 // are js/eat.js:137-139's (311/312/313), not the pm.h line numbers.
@@ -1428,8 +1435,8 @@ function unique_corpstat_(ptr) { return !!ptr && (((ptr.geno | 0) & G_UNIQ_TP) !
 function haseyes_(ptr) { return (mflags1_of_(ptr) & M1_NOEYES) === 0; }
 // monflags_data.js keeps the per-species flag words on the mons[] row; the two
 // accessors below mirror js/monmove.js's private mflags1_of/mflags2_of.
-function mflags1_of_(ptr) { return (ptr?.mflags1 ?? ptr?.mflags?.[0] ?? 0) | 0; }
-function mflags2_of_(ptr) { return (ptr?.mflags2 ?? ptr?.mflags?.[1] ?? 0) | 0; }
+function mflags1_of_(ptr) { return ptr ? (mflags1_of(ptr) | 0) : 0; }
+function mflags2_of_(ptr) { return ptr ? (mflags2_of(ptr) | 0) : 0; }
 // C ref: mkobj.c sobj_at(otyp, x, y) — port is js/muse.js:240, private.
 function sobj_at_(otyp, x, y) {
     for (const o of (game.level?.objects || []))
@@ -1481,7 +1488,7 @@ function t_at_(x, y) {
 function in_out_region_(x, y) { return in_out_region(x, y); }
 // C ref: hack.h youmonst / mons[u.umonster].
 function youmonst_() { return game.youmonst || game.u; }
-function youmonster_data() { return game.youmonst?.data || game.u?.data; }
+function youmonster_data() { return youmonst_data(); }
 // C ref: mons[u.umonster] — enexto_core()'s null-mdat default.  The hero's
 // own permonst (game.u.data is only set while polymorphed).
 function youmonster_data_() { return youmonst_data() || youmonster_data(); }
@@ -1536,11 +1543,6 @@ function notice_mon_on_() {
 async function switch_terrain_() {
     await (await import('./trap.js')).switch_terrain();
 }
-// C ref: mkroom.c search_special(type) / somexyspace(croom, c).  somexyspace is
-// RNG-BEARING (somexy's rn2 pick); js/mkroom.js:145 exports it, and this shim
-// exists only to avoid a new static import here.
-function search_special_(_type) { return null; }
-async function somexyspace_(_croom, _c) { return false; }
 // C ref: mon.c mon_offmap(mon) / m_next2u(mtmp) — js/mon.js:1721 (private) and
 // js/monmove.js:4303 (exported).
 function mon_offmap_(mon) { return (mon?.mstate | 0) !== 0; }

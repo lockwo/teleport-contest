@@ -24,7 +24,7 @@ import {
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
-    AD_PEST,
+    AD_PEST, AD_RBRE,
     sticks,
 } from './monattk_data.js';
 import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u, You_hear } from './display.js';
@@ -420,14 +420,15 @@ export async function explode(x, y, type, dam, olet, expltype) {
                             await update_topl(`${Monnam(mtmp)} is ${
                                 xkflg ? 'burned completely'
                                       : nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
-                        await killed(mtmp, { nomsg: true, nocorpse: xkflg });
+                        await killed(mtmp, { nomsg: true, noconduct: true, nocorpse: xkflg });
                     } else {
-                        if (cansee(mtmp.mx, mtmp.my))
-                            await update_topl(`${Monnam(mtmp)} is ${nonliving(mdata(mtmp)) ? 'destroyed' : 'killed'}!`);
-                        else if (mtmp.mtame)
-                            await update_topl('You have a sad feeling for a moment, then it passes.');
-                        const { mon_kill_leaving } = await import('./monmove.js');
-                        await mon_kill_leaving(mtmp, xkflg);
+                        // C ref: explode.c:578-580 — `if (xkflg) adtyp = AD_RBRE;
+                        // monkilled(mtmp, "", adtyp)`.  AD_RBRE is NOT -AD_RBRE, so
+                        // monkilled() does not treat it as disintegration: mondied()
+                        // runs and a corpse may be left.
+                        const { monkilled_mm } = await import('./mhitm.js');
+                        if (xkflg) adtyp = AD_RBRE; /* C: sticks for the rest of the blast */
+                        await monkilled_mm(mtmp, adtyp, '');
                     }
                 } else if (!game.context?.mon_moving) {
                     await setmangry(mtmp, true);

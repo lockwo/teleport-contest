@@ -3,6 +3,7 @@
 
 import { game } from './gstate.js';
 import { ROLE_PM_BASE } from './const.js';
+import { ARM_BONUS } from './worn.js';
 import { skill_init_snapshot } from './enhance.js';
 import { rn2, rnd, rne, rn1 } from './rng.js';
 import { addinv as invent_addinv, bimanual, near_capacity,
@@ -438,131 +439,9 @@ const ROLE_INVENTORY = new Map([
     // Barbarian picks Barbarian_0/Barbarian_1 via rn2 in u_init_role.
 ]);
 
-// C ref: role.c — hpadv/enadv advance structs {infix,inrnd,lofix,lornd,hifix,hirnd}.
-// Only the level-0 (initial) fields infix/inrnd are used here.
-// role.c hpadv/enadv {infix,inrnd,...}; only level-0 infix/inrnd are used.
-const ROLE_ADV = new Map([
-    [PM_ARCHEOLOGIST, { hpadv: { infix: 11, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_BARBARIAN, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_CAVE_DWELLER, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_HEALER, { hpadv: { infix: 11, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
-    [PM_KNIGHT, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 4 } }],
-    [PM_MONK, { hpadv: { infix: 12, inrnd: 0 }, enadv: { infix: 2, inrnd: 2 } }],
-    // role.c Priest: hp {12,0,...}, en {4,3,0,2,0,2} -> inrnd=3.
-    [PM_CLERIC, { hpadv: { infix: 12, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
-    [PM_RANGER, { hpadv: { infix: 13, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    // role.c Rogue: hp {10,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
-    [PM_ROGUE, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    // role.c Samurai: hp {13,0,...}, en {1,0,0,1,0,1} -> inrnd=0.
-    [PM_SAMURAI, { hpadv: { infix: 13, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_TOURIST, { hpadv: { infix: 8, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_VALKYRIE, { hpadv: { infix: 14, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_WIZARD, { hpadv: { infix: 10, inrnd: 0 }, enadv: { infix: 4, inrnd: 3 } }],
-]);
-// Race advancement (role.c races[]).  Only the level-0 infix/inrnd fields are
-// used at chargen.  C ref: role.c races[] hpadv/enadv {infix,inrnd,...}.
-//   human  HP {2,0,...} EN {1,0,...}
-//   elf    HP {1,0,...} EN {2,0,...}
-//   dwarf  HP {4,0,...} EN {0,0,...}
-//   gnome  HP {1,0,...} EN {2,0,...}
-//   orc    HP {1,0,...} EN {1,0,...}
-const RACE_ADV = new Map([
-    [PM_HUMAN, { hpadv: { infix: 2, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-    [PM_ELF, { hpadv: { infix: 1, inrnd: 0 }, enadv: { infix: 2, inrnd: 0 } }],
-    [PM_DWARF, { hpadv: { infix: 4, inrnd: 0 }, enadv: { infix: 0, inrnd: 0 } }],
-    [PM_GNOME, { hpadv: { infix: 1, inrnd: 0 }, enadv: { infix: 2, inrnd: 0 } }],
-    [PM_ORC, { hpadv: { infix: 1, inrnd: 0 }, enadv: { infix: 1, inrnd: 0 } }],
-]);
-// Human race advance (default when race lookup misses).
-const RACE_ADV_HUMAN = RACE_ADV.get(PM_HUMAN);
-function current_race_adv() {
-    return RACE_ADV.get(current_race_mnum()) || RACE_ADV_HUMAN;
-}
-
 // Player-monster base armor class (mons[].ac).  C ref: include/monsters.h
 // — every player-monster (all 13 roles) has base AC 10.
 const PLAYER_BASE_AC_DEFAULT = 10;
-
-// a_ac (objects[].a_ac = 10 - macro ac arg) for the starting armor pieces.
-// C ref: include/objects.h ARMOR()/HELM()/SHIELD()/GLOVES()/CLOAK().
-const ARMOR_A_AC = new Map([
-    [RING_MAIL, 3],
-    [HELMET, 1],
-    [SMALL_SHIELD, 1],
-    [LEATHER_GLOVES, 1],
-    [CLOAK_OF_MAGIC_RESISTANCE, 1],
-    [LEATHER_JACKET, 1],
-    [FEDORA, 0],
-    [LEATHER_ARMOR, 2],
-    [ROBE, 2],
-    [SPLINT_MAIL, 6],
-    [CLOAK_OF_DISPLACEMENT, 1],
-    [HAWAIIAN_SHIRT, 0],
-    // Racial armor variants (ini_inv_obj_substitution).  a_ac = 10 - macro ac
-    // arg.  C ref: include/objects.h CLOAK/HELM/SHIELD/ARMOR entries.
-    [139, 1],   // ELVEN_CLOAK        (ac 9)
-    [140, 0],   // ORCISH_CLOAK       (ac 10)
-    [141, 0],   // DWARVISH_CLOAK     (ac 10)
-    [89, 1],    // ELVEN_LEATHER_HELM (ac 9)
-    [90, 1],    // ORCISH_HELM        (ac 9)
-    [91, 2],    // DWARVISH_IRON_HELM (ac 8)
-    [155, 1],   // ORCISH_SHIELD      (ac 9)
-    [129, 4],   // ORCISH_CHAIN_MAIL  (ac 6)
-    [133, 2],   // ORCISH_RING_MAIL   (ac 8)
-    // C ref: include/objects.h "other suits" ARMOR() block (otyp 121..131,
-    // excluding orcish chain/ring mail and leather armor already listed above):
-    // a_ac = 10 - macro ac arg, same derivation as the racial variants above.
-    [121, 7],   // PLATE_MAIL            (ac 3)
-    [122, 7],   // CRYSTAL_PLATE_MAIL    (ac 3)
-    [123, 6],   // BRONZE_PLATE_MAIL     (ac 4)
-    [125, 6],   // BANDED_MAIL           (ac 4)
-    [126, 6],   // DWARVISH_MITHRIL_COAT (ac 4)
-    [127, 5],   // ELVEN_MITHRIL_COAT    (ac 5)
-    [128, 5],   // CHAIN_MAIL            (ac 5)
-    [130, 4],   // SCALE_MAIL            (ac 6)
-    [131, 3],   // STUDDED_LEATHER_ARMOR (ac 7)
-]);
-// C ref: include/objects.h DRGN_ARMR — dragon scale mail (otyp 101..110) has
-// macro ac arg 1 so a_ac = 10 - 1 = 9; dragon scales (111..120) have ac 7 so
-// a_ac = 3.  (a_ac = 10 - macro ac arg.)
-for (let otyp = 101; otyp <= 110; otyp++) ARMOR_A_AC.set(otyp, 9);
-for (let otyp = 111; otyp <= 120; otyp++) ARMOR_A_AC.set(otyp, 3);
-// C ref: include/objects.h BOOTS(...) — footwear a_ac = 10 - macro ac arg.
-// Most boots have ac 9 (a_ac 1); iron shoes/high boots have ac 8 (a_ac 2).
-// Donning speed boots improves the hero's AC by 1 (seed0360 step-136 AC:7->6).
-for (let otyp = 163; otyp <= 172; otyp++) ARMOR_A_AC.set(otyp, 1);
-ARMOR_A_AC.set(164, 2); // iron shoes (ac 8)
-ARMOR_A_AC.set(165, 2); // high boots (ac 8)
-// The rest of include/objects.h's HELM/CLOAK/SHIELD/GLOVES entries (a_ac =
-// 10 - macro ac arg).  Until these landed the map covered only the armor the
-// covered heroes START with, so buying and wearing a shield of reflection left
-// the status line's AC untouched (seed0002 step 363: AC:3 for C's AC:1).
-// Every ARMOR_CLASS otyp now has an entry; ARM_BONUS()'s `|| 0` fallback no
-// longer silently prices a whole armor family at zero.
-ARMOR_A_AC.set(93, 0);   // cornuthaum                (ac 10)
-ARMOR_A_AC.set(94, 0);   // dunce cap                 (ac 10)
-ARMOR_A_AC.set(95, 1);   // dented pot                (ac 9)
-ARMOR_A_AC.set(96, 1);   // helm of brilliance        (ac 9)
-ARMOR_A_AC.set(98, 1);   // helm of caution           (ac 9)
-ARMOR_A_AC.set(99, 1);   // helm of opposite alignment(ac 9)
-ARMOR_A_AC.set(100, 1);  // helm of telepathy         (ac 9)
-ARMOR_A_AC.set(137, 0);  // T-shirt                   (ac 10)
-ARMOR_A_AC.set(138, 0);  // mummy wrapping            (ac 10)
-ARMOR_A_AC.set(142, 1);  // oilskin cloak             (ac 9)
-ARMOR_A_AC.set(144, 1);  // alchemy smock             (ac 9)
-ARMOR_A_AC.set(145, 1);  // leather cloak             (ac 9)
-ARMOR_A_AC.set(146, 3);  // cloak of protection       (ac 7)
-ARMOR_A_AC.set(147, 1);  // cloak of invisibility     (ac 9)
-ARMOR_A_AC.set(151, 1);  // shield of drain resistance(ac 9)
-ARMOR_A_AC.set(152, 1);  // shield of shock resistance(ac 9)
-ARMOR_A_AC.set(153, 2);  // elven shield              (ac 8)
-ARMOR_A_AC.set(154, 1);  // Uruk-hai shield           (ac 9)
-ARMOR_A_AC.set(156, 2);  // large shield              (ac 8)
-ARMOR_A_AC.set(157, 2);  // dwarvish roundshield      (ac 8)
-ARMOR_A_AC.set(158, 2);  // shield of reflection      (ac 8)
-ARMOR_A_AC.set(160, 1);  // gauntlets of fumbling     (ac 9)
-ARMOR_A_AC.set(161, 1);  // gauntlets of power        (ac 9)
-ARMOR_A_AC.set(162, 1);  // gauntlets of dexterity    (ac 9)
 
 // Worn-armor slot masks (subset of do_wear.c W_ARM*).
 const W_ARM = 0x01;
@@ -667,13 +546,6 @@ function ini_is_ammo(obj) {
     return obj.oclass === WEAPON_CLASS && sk >= -25 && sk <= -23;
 }
 
-// C ref: hack.h ARM_BONUS(obj) — a_ac + spe - min(greatest_erosion(obj), a_ac).
-function greatest_erosion(obj) { return Math.max(obj?.oeroded || 0, obj?.oeroded2 || 0); }
-function ARM_BONUS(obj) {
-    const a_ac = ARMOR_A_AC.get(obj.otyp) || 0;
-    return a_ac + (obj.spe || 0) - Math.min(greatest_erosion(obj), a_ac);
-}
-
 // C ref: do_wear.c find_ac — current armor class from worn gear.  C: `int uac
 // = mons[u.umonnum].ac;` — the current FORM's base AC, not always the human
 // default; only observable while Upolyd (mons[urole/urace].ac == 10 for every
@@ -708,39 +580,6 @@ export function find_ac() {
     if (game.u.uac !== uac) game.botl = true;
     game.u.uac = uac;
     return uac;
-}
-
-// C ref: attrib.c newhp() / exper.c newpw() — level-0 HP and Pw.
-// The single rnd() each role's enadv contributes is emitted here at the
-// same RNG position as C u_init_misc().
-export function newhp() {
-    const adv = ROLE_ADV.get(current_role_mnum());
-    if (!adv) return 0;
-    const radv = current_race_adv();
-    let hp = adv.hpadv.infix + radv.hpadv.infix;
-    if (adv.hpadv.inrnd > 0) hp += rnd(adv.hpadv.inrnd);
-    if (radv.hpadv.inrnd > 0) hp += rnd(radv.hpadv.inrnd);
-    // C ref: attrib.c newhp():1116 — `u.uhpinc[u.ulevel] = (xint16) hp`.
-    // newman() subtracts these per-level increments back out of uhpmax.
-    game.u = game.u || {};
-    if (!game.u.uhpinc) game.u.uhpinc = [];
-    game.u.uhpinc[game.u.ulevel || 0] = hp;
-    return hp;
-}
-
-export function newpw() {
-    const adv = ROLE_ADV.get(current_role_mnum());
-    if (!adv) return 0;
-    const radv = current_race_adv();
-    let en = adv.enadv.infix + radv.enadv.infix;
-    if (adv.enadv.inrnd > 0) en += rnd(adv.enadv.inrnd);
-    if (radv.enadv.inrnd > 0) en += rnd(radv.enadv.inrnd);
-    if (en <= 0) en = 1;
-    // C ref: exper.c newpw() — `u.ueninc[u.ulevel] = (xint16) en`.
-    game.u = game.u || {};
-    if (!game.u.ueninc) game.u.ueninc = [];
-    game.u.ueninc[game.u.ulevel || 0] = en;
-    return en;
 }
 
 const A_MAX = 6;
@@ -1288,12 +1127,25 @@ export function init_attr(np = 75) {
 // return value is what terminates u_init_carry_attr_boost's loop.
 function adjattrib(ndx, incr) {
     const prev = game.u.acurr.a[ndx] ?? 0;
-    const next = prev + incr;
-    const clamped = Math.max(race_attrmin()[ndx], Math.min(race_attrmax()[ndx], next));
-    game.u.acurr.a[ndx] = clamped;
-    if (game.u.amax.a[ndx] < clamped)
-        game.u.amax.a[ndx] = clamped;
-    return clamped !== prev;
+    const amin = race_attrmin()[ndx], amaxlim = race_attrmax()[ndx];
+    let next = prev + incr;
+    /* attrib.c adjattrib(): already at ATTRMIN, nothing changes and no rn2() */
+    if (incr < 0 && prev <= amin) return false;
+    if (incr > 0) {
+        if (next > game.u.amax.a[ndx]) {
+            game.u.amax.a[ndx] = next;
+            if (game.u.amax.a[ndx] > amaxlim)
+                next = game.u.amax.a[ndx] = amaxlim;
+        }
+    } else if (incr < 0 && next < amin) {
+        /* attrib.c adjattrib(): excess below ATTRMIN takes some off AMAX */
+        const decr = rn2(amin - next + 1);
+        next = amin;
+        game.u.amax.a[ndx] -= decr;
+        if (game.u.amax.a[ndx] < amin) game.u.amax.a[ndx] = amin;
+    }
+    game.u.acurr.a[ndx] = next;
+    return next !== prev;
 }
 
 export function vary_init_attr() {

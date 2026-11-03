@@ -5,9 +5,9 @@
 import { COLNO, ROWNO } from '../const.js';
 import { christen_monst } from '../do_name.js';
 import { game } from '../gstate.js';
-import {
-    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx, newcham_vamp,
+import { makemon, mkclass, mm_mon_at, monster_by_pmidx, newcham_vamp
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { CHEST, TALLOW_CANDLE, WAX_CANDLE, mksobj, mksobj_at, add_to_container, container_weight } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
@@ -55,7 +55,7 @@ function tower_create_V(mx, my) {
     if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
@@ -76,7 +76,7 @@ function tower_create_vampire_lady(name, mx, my) {
     if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);

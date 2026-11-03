@@ -22,7 +22,7 @@ import { DART, mksobj, mkobj, next_ident, mkobj_at, weight, curse, bless,
          DILITHIUM_CRYSTAL, DILITHIUM_CRYSTAL as DILITHIUM_CRYSTAL_OTYP,
          LUCKSTONE, LUCKSTONE as LUCKSTONE_OTYP,
          SCR_SCARE_MONSTER, clear_object_timer, unknow_object, FIGURINE,
-         attach_fig_transform_timeout } from './mkobj.js';
+         attach_fig_transform_timeout, rndmonnum } from './mkobj.js';
 import { get_shop_item, FODDERSHOP, VEGETARIAN_CLASS } from './shtypes.js';
 import { within_bounded_area } from './rect.js';
 import { get_wormno, initworm, count_wsegs, worm_seg_at, wormgone,
@@ -45,7 +45,7 @@ import {
     SDOOR, SCORR, D_CLOSED, D_LOCKED,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_APPEARMSG, W_SADDLE,
     IS_ALTAR, HEADSTONE, LR_MONGEN, MM_APPARXY_BYYOU,
-    NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, M_AP_NOTHING, M_AP_MONSTER,
+    NO_MINVENT, MM_NOMSG, MM_NOEXCLAM, MM_NOTAIL, MM_IGNOREWATER, M_AP_NOTHING, M_AP_MONSTER,
     M_AP_FURNITURE, M_AP_OBJECT, M_AP_TYPMASK,
     MHID_ARTICLE, MHID_ALTMON, BOLT_LIM, DF_NONE, NO_NC_FLAGS, NC_SHOW_MSG,
     NC_VIA_WAND_OR_SPELL, OBJ_FREE, OBJ_FLOOR, OBJ_MINVENT,
@@ -54,7 +54,7 @@ import {
 // makemon.js in the import graph except vision.js, which imports two function
 // declarations from here — a cycle that resolves cleanly because both sides are
 // hoisted `function` declarations used only at call time, never at module init.
-import { inside_room, t_at as t_at_local } from './mkroom.js';
+import { t_at as t_at_local, in_town } from './mkroom.js';
 import { does_block, block_point, unblock_point, is_lightblocker_mappear } from './vision.js';
 import { ARM_BONUS, m_dowear, which_armor } from './worn.js';
 import {
@@ -76,8 +76,11 @@ import {
     mflags1_of, M1_NOEYES,
 } from './monflags_data.js';
 import { AT_EXPL, attacktype, is_armed, MATTK,
-         AT_WEAP, AT_MAGC, AT_ENGL, AD_DRST, AD_SPEL, sticks } from './monattk_data.js';
-import { M_AP_TYPE, is_pool_or_lava } from './const.js';
+         AT_WEAP, AT_MAGC, AT_ENGL, AD_DRST, AD_SPEL, AD_DGST, mattk_of, sticks } from './monattk_data.js';
+import { M_AP_TYPE, is_pool_or_lava, is_pool, is_lava, GP_CHECKSCARY, GP_AVOID_MONPOS } from './const.js';
+// teleport.js's goodpos()/enexto_core()/enexto_gpflags() are reached through
+// hooks: a static import closes a cycle whose module-init order breaks the
+// top-level name_to_pmidx() consts of mkmaze.js and friends.
 import { mon_learns_traps } from './montraps.js';
 // Species delivery uses the hooks registry to avoid a dokick import cycle.
 const MM_NOWAIT = 0x00000002; // C ref: makemon.h MM_NOWAIT — suppress STRAT_WAITFORU/STRAT_CLOSE
@@ -1220,12 +1223,15 @@ function is_placeholder(mndx) {
         || mndx === PM_ELF || mndx === PM_HUMAN;
 }
 
-// C ref: mk_gen_ok() (makemon.c:1733).
+// C ref: mk_gen_ok() (makemon.c:1736).
+const PM_MAIL_DAEMON = name_to_pmidx('mail daemon');
 function mk_gen_ok(mndx, mvflagsmask, genomask) {
     if (mvflags(mndx) & mvflagsmask) return false;
     if (MONS[mndx].geno & genomask) return false;
     if (is_placeholder(mndx)) return false;
-    // MAIL_DAEMON exclusion is gated by MAIL_STRUCTURES, not defined here.
+    // MAIL_STRUCTURES is defined unconditionally (global.h): special levels
+    // asking for a random demon type must never get the mail daemon.
+    if (mndx === PM_MAIL_DAEMON) return false;
     return true;
 }
 
@@ -1397,13 +1403,13 @@ function is_mplayer_pm(ptr) {
     return !!ptr && ptr.pmidx >= PM_ARCHEOLOGIST_MON
         && ptr.pmidx <= PM_WIZARD_MON;
 }
-// C ref: objclass.h is_sword(obj) = oclass == WEAPON_CLASS
-// && oc_skill in P_DAGGER..P_SABER (skills.h: 1..9).
-const P_DAGGER = 1, P_SABER = 9, P_POLEARMS = 16;
+// C ref: obj.h is_sword(otmp) = oclass == WEAPON_CLASS
+// && oc_skill in P_SHORT_SWORD..P_SABER (skills.h: 5..9).
+const P_SHORT_SWORD = 5, P_SABER = 9, P_POLEARMS = 16;
 function is_sword_obj(o) {
     const oc = objects[o?.otyp];
     return !!oc && oc.oclass === WEAPON_CLASS_MM
-        && oc.oc_skill >= P_DAGGER && oc.oc_skill <= P_SABER;
+        && oc.oc_skill >= P_SHORT_SWORD && oc.oc_skill <= P_SABER;
 }
 const WEAPON_CLASS_MM = 2, ARMOR_CLASS_MM = 3;
 
@@ -2306,7 +2312,7 @@ function m_initinv_full(mtmp) {
             const catcorpse = mksobj(265 /*CORPSE*/, true, false);
             if (box && catcorpse) {
                 box.spe = 1;            /* flag for special SchroedingersBox */
-                set_corpsenm(catcorpse, 16 /*PM_HOUSECAT*/);
+                set_corpsenm(catcorpse, 33 /*PM_HOUSECAT*/);
                 // The unobserved cat does not rot inside Schroedinger's box.
                 clear_object_timer(catcorpse);
                 add_to_container(box, catcorpse);
@@ -2403,34 +2409,6 @@ const PM_ARCHEOLOGIST_MON = 331, PM_WIZARD_MON = 343;
 // leading truthiness test is what excludes solid stone from the door/wall arm.
 function IS_WALL_TYP(typ) { return typ > 0 && typ <= DBWALL; }
 
-// C ref: hack.c in_town() — the Gnomish Mines town.  A room WITH subrooms is
-// the town; if the level has no subroomed rooms at all, the whole level counts.
-// Only ever consulted alongside In_mines(), so it costs nothing off the mines
-// branch, but it is the real predicate rather than a constant `false`: a mimic
-// generated inside Mine Town must NOT take the maze-statue branch.
-function in_town_js(x, y) {
-    const lvl = game.level;
-    // C ref: hack.c:3569 is `if (!svl.level.flags.has_town) return FALSE;` — a
-    // PER-LEVEL flag, set at mkmaze.c:698-699 inside fixup_special(), i.e. AFTER
-    // the level script has run.  We stand in the S_LEVEL `town` flag because
-    // nothing in this port writes has_town yet; that answers the same for shop
-    // mimics (created later, in fill_special_room) but is TRUE during the script
-    // where C is still FALSE.  Porting fixup_special's has_town is the real fix
-    // and needs measuring on its own — it flips this predicate on all seven
-    // minetn variants, six of which still run the unported generator.
-    const slev = Is_special(game.u?.uz);
-    if (!slev || !slev.flags?.town) return false;
-    let has_subrooms = false;
-    for (let i = 0; i < (lvl.nroom ?? 0); i++) {
-        const sroom = lvl.rooms[i];
-        if (!sroom || (sroom.hx ?? 0) <= 0) break;
-        if ((sroom.nsubrooms ?? 0) > 0) {
-            has_subrooms = true;
-            if (inside_room(sroom, x, y)) return true;
-        }
-    }
-    return !has_subrooms;
-}
 // C ref: makemon.c syms[] — class/furniture symbols selected for a mimic
 // appearance.  Index 0/1 are MAXOCLASSES (furniture), tail two are S_MIMIC_DEF.
 const SMS_SYMS = [
@@ -2525,7 +2503,7 @@ export function set_mimic_sym(mtmp) {
                           : (rogue ? SMS_S_VWALL : SMS_S_VCDOOR);
         resolved = true;
     } else if (lflags.is_maze_lev
-               && !(In_mines(game.u?.uz) && in_town_js(game.u?.ux, game.u?.uy))
+               && !(In_mines(game.u?.uz) && in_town(game.u?.ux, game.u?.uy))
                && !In_sokoban(game.u?.uz) && rn2(2)) {
         // C ref: on a maze level (all of Gehennom, the big mazes below Medusa,
         // Vlad's, the planes) a mimic is a STATUE half the time.  The rn2(2) is
@@ -2652,9 +2630,10 @@ export function set_mimic_sym(mtmp) {
         block_point(mx, my);
 }
 
-// C ref: makemon.c rndmonnum() — rndmonst() species index, RNG-faithful.
+// C ref: makemon.c set_mimic_sym() calls rndmonnum(): plan A rndmonst(), plan B
+// any common monster via the rn1 re-roll loop (mkobj.js owns it).
 function rndmonnum_local() {
-    return rndmonst()?.pmidx ?? 0;
+    return rndmonnum();
 }
 
 // C ref: makemon.c peace_minded() — full Big Room version, including the
@@ -3151,7 +3130,7 @@ function newcham_worm(mtmp, mdat) {
         mtmp.wormno = get_wormno();
         if (mtmp.wormno) {
             initworm(mtmp, rn2(5));
-            place_worm_tail_randomly(mtmp, mtmp.mx, mtmp.my, worm_goodpos);
+            place_worm_tail_randomly(mtmp, mtmp.mx, mtmp.my, worm_tail_goodpos);
         }
     }
 }
@@ -3283,9 +3262,12 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
                 || ptr.pmidx === PM_AIR_ELEMENTAL;
             if (mdat.mcls !== S_GHOST_CLS && !whirly(mdat)
                 && !amorphous_flag(mdat) && mdat.mcls !== S_LIGHT_CLS) {
+                /* C ref: mon.c:5448-5456 — digests(mdat) is
+                   dmgtype_fromattack(ptr, AD_DGST, AT_ENGL) */
                 const trail = is_vampshifter_mon(mtmp)
                     ? ` which was a shapeshifted ${names.noname_monnam(mtmp, names.ARTICLE_NONE)}`
-                    : '';
+                    : mattk_of(mdat).some(a => a.adtyp === AD_DGST && a.aatyp === AT_ENGL)
+                        ? "'s stomach" : '';
                 const { update_topl } = await import('./display.js');
                 await update_topl(`You ${amorphous_flag(olddata) || whirly(olddata)
                     ? 'emerge from' : 'break out of'} ${l_oldname}${trail}!`);
@@ -3393,42 +3375,26 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
 // shapechanger, vampires included.
 export function newcham_vamp(mtmp, mdat) { return newcham(mtmp, mdat); }
 
-// C ref: teleport.c goodpos(x, y, worm, 0) as worm.c's
-// place_worm_tail_randomly() calls it.  A long worm is not a swimmer, not
-// airborne, does not pass walls and is not amorphous, and gpflags is 0 (so
-// neither GP_AVOID_MONPOS nor GP_CHECKSCARY applies), which reduces the
-// predicate to: in bounds, not the hero's square, no other monster there,
-// not water/lava, accessible terrain, no boulder.  (Defined here rather than
-// reusing teleport.js's goodpos() to avoid a makemon <-> teleport cycle.)
-function worm_goodpos(x, y, worm) {
-    if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false;  // !isok
-    if (game.u?.ux === x && game.u?.uy === y) return false;
-    const mtmp2 = mm_mon_at(x, y);
-    // C ref: teleport.c goodpos() — "Actually we overdo the check a little
-    // bit--a worm can't be placed in its own location, period."  Every segment
-    // of a long worm answers the same m_at(), so mtmp2 === worm is NOT proof
-    // that <x,y> is a free square, and C rejects it outright for any worm.
-    // Without the wormno half, place_worm_tail_randomly() laid a segment onto
-    // the worm's own head square where C walks on to the next shuffled
-    // direction, so the tail came out one square short of C's.
-    if (mtmp2 && (mtmp2 !== worm || worm.wormno)) return false;
-    // C's place_monster() has already written the worm into
-    // svl.level.monsters[][] by the time makemon.c:1405 lays the tail, so the
-    // clause above catches the head square for it.  This port links the new
-    // monster into level.monsters only at the END of makemon(), i.e. AFTER
-    // place_worm_tail_randomly() runs, so mm_mon_at() still answers "empty"
-    // there and the head square has to be tested directly.
+// C ref: worm.c place_worm_tail_randomly()'s goodposfn is teleport.c
+// goodpos(x, y, worm, 0).  This port links the new monster into
+// level.monsters only at the END of makemon(), i.e. AFTER the tail is laid, so
+// m_at() still answers "empty" on the head square and C's "a worm can't be
+// placed in its own location, period" clause has to be tested directly.
+function worm_tail_goodpos(x, y, worm) {
     if (worm.wormno && x === worm.mx && y === worm.my) return false;
-    if (mm_is_pool(x, y) || mm_is_lava(x, y)) return false;
-    const typ = game.level?.at(x, y)?.typ;
-    if (typ == null || typ < DOOR) return false;   // !accessible
-    // C ref: monmove.c accessible() = ACCESSIBLE(typ) && !closed_door(x, y).
-    // A tail segment can't be laid across a shut door (soko1's zoo doors are
-    // closed/locked: the first-shuffled direction is often one).
-    if (mm_closed_door(x, y)) return false;
-    // teleport.c:178 `sobj_at(BOULDER, x, y) && (!mdat || !throws_rocks(mdat))`.
-    if (mm_boulder_at(x, y)) return false;
-    return true;
+    return hooks.goodpos(x, y, worm, 0);
+}
+
+// C ref: makemon.c makemon() `fakemon = cg.zeromonst; fakemon.data = ptr`: a
+// zeroed monst (m_id 0, so goodpos() uses goodpos_onscary()) carrying only the
+// chosen permonst.
+function makemon_fakemon(ptr) { return { data: ptr, m_id: 0 }; }
+
+// C ref: makemon.c makemon() `byyou && !in_mklev` arm: enexto_core with the
+// scare filter first, then again without it.
+function byyou_enexto(x, y, ptr, gpflags) {
+    return hooks.enexto_core(x, y, ptr, gpflags)
+        || hooks.enexto_core(x, y, ptr, gpflags & ~GP_CHECKSCARY);
 }
 
 // C ref: makemon.c:1303-1346 `switch (ptr->mlet)` — runs right after
@@ -3461,7 +3427,7 @@ function makemon_mlet_switch(mtmp, ptr, x, y) {
         if (rn2(5) && !game.u?.uhave?.amulet) mtmp.msleeping = true;
         break;
     case 15: // S_ORC
-        if (game.urace?.adj === 'elf') mtmp.mpeaceful = false;
+        if (game.urace?.mnum === 1 /* races[1] = elf: Race_if(PM_ELF) */) mtmp.mpeaceful = false;
         break;
     case 21: // S_UNICORN
         if (ptr.name && ptr.name.endsWith('unicorn')
@@ -3531,9 +3497,10 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // position (mk_trap_statue's `makemon(&mons[...], 0, 0, ...)`) reaches
     // here with x == y == 0 and needs the position search, which draws
     // rn1(COLNO-3,2)/rn2(ROWNO) per attempt.
+    const gpflags = (mmflags & MM_IGNOREWATER) | GP_CHECKSCARY | GP_AVOID_MONPOS;
     let effMmflags = mmflags;
     if (x === 0 && y === 0) {
-        const pos = makemon_rnd_goodpos(ptr);
+        const pos = makemon_rnd_goodpos(ptr, gpflags);
         if (!pos) return null;
         x = pos.x; y = pos.y;
     } else if (game.u?.ux === x && game.u?.uy === y && !game.in_mklev) {
@@ -3546,14 +3513,14 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         // Recording MM_APPARXY_BYYOU here (mirroring the flag callers that
         // pre-resolve their own enexto_spawn already pass in) makes the
         // newsym/set_apparxy tail below still run for this path too.
-        const cc = enexto_spawn(game.u.ux, game.u.uy, ptr);
+        const cc = byyou_enexto(game.u.ux, game.u.uy, ptr, gpflags);
         if (!cc) return null;
         x = cc.x; y = cc.y;
         effMmflags |= MM_APPARXY_BYYOU;
     }
     if (x > 0 && mm_mon_at(x, y)) {
         if (!(mmflags & MM_ADJACENTOK)) return null;
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = hooks.enexto_core(x, y, ptr, gpflags);
         if (!cc) return null;
         x = cc.x; y = cc.y;
     }
@@ -3582,7 +3549,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
             if (++tryct > 50) break;
             const balks = (tryct === 1 && throws_rocks_flag(ptr)
                            && In_sokoban(game.u?.uz))
-                || !goodpos_spawn(x, y, ptr);
+                || !hooks.goodpos(x, y, makemon_fakemon(ptr), gpflags);
             if (!balks) break;
         }
     }
@@ -3741,7 +3708,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
         // rationale was the S_EEL swamp case below, already fixed separately
         // and unconditionally (line ~3587); it did not need to cover this arm.
         if (mm_hides_under_pm(ptr) && canHideUnder && !nonPitTrap
-            && !mm_is_pool(x, y) && !mm_is_lava(x, y)) {
+            && !is_pool(x, y) && !is_lava(x, y)) {
             mtmp.mundetected = 1;
         }
     }
@@ -3865,9 +3832,9 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     if (ptr.name === 'long worm') {
         mtmp.wormno = get_wormno();
         if (mtmp.wormno) {
-            initworm(mtmp, rn2(5));
+            initworm(mtmp, (mmflags & MM_NOTAIL) ? 0 : rn2(5));
             if (count_wsegs(mtmp))
-                place_worm_tail_randomly(mtmp, x, y, worm_goodpos);
+                place_worm_tail_randomly(mtmp, x, y, worm_tail_goodpos);
         }
     }
 
@@ -3985,7 +3952,7 @@ export function makemon(mdat = null, x = 0, y = 0, mmflags = 0) {
     // hideunder tail — kept failing mon.c:1297's `!mundetected` gate and drew
     // an rn2(4) every turn that C never draws (seed4500 Dlvl 24 swamp).
     if (x > 0 && game.in_mklev && ptr.mcls === S_EEL_CLS
-        && mm_is_pool(x, y) && !Is_waterlevel(game.u?.uz))
+        && is_pool(x, y) && !Is_waterlevel(game.u?.uz))
         mtmp.mundetected = 1;
     // C ref: makemon.c:1473 `if (!gi.in_mklev) newsym(mtmp->mx, mtmp->my);`
     // — "make sure the mon shows up".  Distinct from the byyou-only newsym at
@@ -4040,19 +4007,13 @@ function mm_hides_under_pm(ptr) {
     return ptr != null && MM_M1_CONCEAL_PMIDX.has(ptr.pmidx);
 }
 
-// C ref: rm.h is_pool / is_lava — terrain type tests used by goodpos().
-function mm_is_pool(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === POOL || t === MOAT || t === WATER;
-}
-function mm_is_lava(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    return typ === LAVAPOOL || typ === LAVAWALL;
-}
-
+import { MON_DETACH } from './const.js';
 // C ref: mon.h MON_AT — a (live) monster occupies <x,y>.
 export function mm_mon_at(x, y) {
+    // C ref: m_at() is the level.monsters[x][y] grid: a steed (mridden), a
+    // monster off the grid and a dead one still linked in fmon are not in it.
     for (const m of game.level?.monsters || []) {
+        if (m.mridden || m.mgridoff || ((m.mstate | 0) & MON_DETACH)) continue;
         if (m.mx === x && m.my === y && (m.mhp == null || m.mhp > 0)) return m;
     }
     // C ref: worm.c place_worm_seg() writes the worm into svl.level.monsters[][]
@@ -4063,150 +4024,12 @@ export function mm_mon_at(x, y) {
     return worm_seg_at(x, y);
 }
 
-// C ref: teleport.c goodpos(x, y, mtmp, gpflags) for a to-be-created monster
-// (fakemon carries the chosen permonst; GP_AVOID_MONPOS|GP_CHECKSCARY set).
-//
-// teleport.js exports the general goodpos(), but importing it here forms a
-// cycle through mkobj.js that dies with a top-level TDZ, so the makemon-side
-// predicate lives here.  It is the same C function with the flags makemon
-// actually passes folded in, and — unlike the old version — it keeps the
-// branches that DRAW: an eel offered a dry square costs rn2(13) whether or not
-// it takes it, and the species retry loop calls this once per candidate.
-function goodpos_spawn(x, y, ptr) {
-    if (x < 1 || x >= COLNO || y < 0 || y >= ROWNO) return false; // !isok
-    if (game.u?.ux === x && game.u?.uy === y) return false;       // u_at
-    if (mm_mon_at(x, y)) return false;                            // GP_AVOID_MONPOS
-    if (ptr) {
-        if (mm_is_pool(x, y)) {
-            // C ref: teleport.c goodpos() — `is_swimmer(mdat) || (!Is_waterlevel
-            // && !is_waterwall(x, y) && m_in_air(mtmp))`.  The stand-in monster
-            // has no mundetected, so m_in_air is is_flyer || is_floater.  A WATER
-            // square (rm.h IS_WATERWALL) is never standable from the air.
-            return is_swimmer_flag(ptr)
-                || (!Is_waterlevel(game.u?.uz) && !IS_WATERWALL(game.level?.at(x, y)?.typ)
-                    && mm_in_air_ptr(ptr));
-        } else if (ptr.mcls === S_EEL_CLS && rn2(13)) {
-            // C: an eel out of water usually refuses — and this rn2(13) fires
-            // whenever an eel is offered a square, so it must not be skipped.
-            return false;
-        } else if (mm_is_lava(x, y)) {
-            // C: a floating eye avoids lava even though it floats.
-            if (ptr.name === 'floating eye') return false;
-            return mm_in_air_ptr(ptr) || mm_likes_lava(ptr);
-        }
-        if (passes_walls_flag(ptr) && mm_may_passwall(x, y)) return true;
-        if (amorphous_flag(ptr) && mm_closed_door(x, y)) return true;
-        // C ref: teleport.c:170 `if (checkscary && ... goodpos_onscary(...)) return
-        // FALSE;`.  makemon()'s gpflags sets GP_CHECKSCARY unconditionally, so this
-        // runs on every spawn attempt, not just during level generation — an
-        // Elbereth-guarded square (or a scroll of scare monster on the floor)
-        // rejects nearly every random species and is what drives C's species retry
-        // loop to run its full ~50 tries instead of accepting the first roll.
-        if (mm_goodpos_onscary(x, y, ptr)) return false;
-    }
-    const typ = game.level?.at(x, y)?.typ;
-    if (typ == null) return false;
-    // C ref: monmove.c:2193 accessible() = ACCESSIBLE(SURFACE_AT(x,y))
-    // && !closed_door(x, y).  The closed-door term was missing, so a spawn could
-    // land inside a shut door (seed4500 medusa-3 raven on the (28,14) door) and
-    // mfndpos then offered it a different square set than C's.
-    if (typ < DOOR) return false;                                 // !ACCESSIBLE
-    if (mm_closed_door(x, y)) return false;
-    // C ref: `if (sobj_at(BOULDER, x, y) && !throws_rocks(mdat)) return FALSE;`
-    if (!(ptr && throws_rocks_flag(ptr)) && mm_boulder_at(x, y)) return false;
-    // C ref: teleport.c:191 `if (avoid_monpos && is_exclusion_zone(LR_MONGEN, x, y))
-    // return FALSE;` — makemon() always passes GP_AVOID_MONPOS.
-    if (mm_is_mongen_exclusion(x, y)) return false;
-    return true;
-}
-
-// C ref: teleport.c:52 goodpos_onscary(x, y, mptr) — the mptr-only approximation
-// of onscary() used for monster CREATION: goodpos() takes this branch whenever
-// the candidate monst has no m_id yet, i.e. every makemon() spawn attempt (the
-// fake monst here never has one).  Returns true when mptr should be scared off
-// <x,y> (goodpos_spawn then rejects the square for that species).
-function mm_goodpos_onscary(x, y, ptr) {
-    if (ptr.mcls === S_HUMAN || ptr.mcls === S_ANGEL || is_rider(ptr)
-        || mm_unique_corpstat(ptr)) return false;
-    if (IS_ALTAR(game.level?.at(x, y)?.typ) && ptr.mcls === S_VAMPIRE) return true;
-    if (mm_scaremon_at(x, y)) return true;
-    if (In_hell(game.u?.uz) || In_endgame(game.u?.uz)) return false;
-    if (ptr.pmidx === PM_MINOTAUR_ONSCARY || !mm_haseyes(ptr)) return false;
-    return mm_engr_elbereth_at(x, y);
-}
-const PM_MINOTAUR_ONSCARY = name_to_pmidx('minotaur');
-// C ref: monflag.h:194 G_UNIQ — reuses the already-defined constant above.
-function mm_unique_corpstat(ptr) { return !!ptr && ((ptr.geno | 0) & G_UNIQ) !== 0; }
-function mm_haseyes(ptr) { return (mflags1_of(ptr) & M1_NOEYES) === 0; }
-// C ref: `sobj_at(SCR_SCARE_MONSTER, x, y)`.
-function mm_scaremon_at(x, y) {
-    const objs = game.level?.objects;
-    if (!objs) return false;
-    for (const o of objs)
-        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SCR_SCARE_MONSTER)
-            return true;
-    return false;
-}
-// C ref: engrave.c:251 sengr_at("Elbereth", x, y, TRUE) — strict, case-
-// insensitive, ignores headstones and an engraving not yet finished.
-function mm_engr_elbereth_at(x, y) {
-    const ep = (game.level?.engravings ?? []).find((e) => e.engr_x === x && e.engr_y === y);
-    if (!ep || ep.engr_type === HEADSTONE || (ep.engr_time | 0) > (game.moves | 0))
-        return false;
-    return (ep.actualText || '').toLowerCase() === 'elbereth';
-}
-// C ref: mkmaze.c:317 is_exclusion_zone(LR_MONGEN, x, y) — duplicated locally
-// (not imported from mkmaze.js) because mkmaze.js already imports makemon.js's
-// enexto_spawn, and the reverse import would cycle.
-function mm_is_mongen_exclusion(x, y) {
-    for (const ez of (game.exclusion_zones || []))
-        if (ez.zonetype === LR_MONGEN && within_bounded_area(x, y, ez.lx, ez.ly, ez.hx, ez.hy))
-            return true;
-    return false;
-}
-
-// C ref: mondata.h likes_lava(ptr) — the fire elemental and the salamander,
-// which C spells out as two mons[] pointer comparisons rather than a flag.
-// C ref: mon.c m_in_air(mtmp) for a stand-in monster (never mundetected):
-// is_flyer || is_floater (mlet S_EYE or S_LIGHT).
-function mm_in_air_ptr(ptr) {
-    return is_flyer_flag(ptr) || ptr.mcls === S_EYE_CLS || ptr.mcls === S_LIGHT_CLS;
-}
-function mm_likes_lava(ptr) {
-    return ptr?.name === 'fire elemental' || ptr?.name === 'salamander';
-}
-
-// C ref: hack.c may_passwall(x,y) = !(IS_STWALL(typ) && (wall_info & W_NONPASSWALL)).
-// Every non-wall square (a plain room floor included) is passable, so a xorn
-// offered an occupied-by-scare-monster ROOM square is accepted by goodpos()
-// before the onscary test runs.
-function mm_may_passwall(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    return !(loc.typ <= DBWALL && ((loc.wall_info || 0) & 0x10 /* W_NONPASSWALL */));
-}
-// C ref: rm.h closed_door(x,y) — a DOOR whose doormask has D_CLOSED|D_LOCKED.
-function mm_closed_door(x, y) {
-    const loc = game.level?.at(x, y);
-    // const.js: D_ISOPEN 0x02, D_CLOSED 0x04, D_LOCKED 0x08.  This used to test
-    // 2|4, i.e. answered TRUE for an OPEN door and never saw D_LOCKED.
-    return !!loc && loc.typ === DOOR && ((loc.doormask ?? 0) & (D_CLOSED | D_LOCKED)) !== 0;
-}
-// C ref: sobj_at(BOULDER, x, y).
-function mm_boulder_at(x, y) {
-    const objs = game.level?.objects;
-    if (!objs) return false;
-    for (const o of objs)
-        if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === SMS_BOULDER)
-            return true;
-    return false;
-}
-
 // C ref: makemon.c makemon_rnd_goodpos() — find a random good position for a
 // freshly spawned monster.  Primary loop: up to 50 tries of rn1(COLNO-3,2) /
 // rn2(ROWNO), rejecting any square the hero can currently see; fall back to a
 // full-map scan (RNG-free except the stairway rn2(2) tie-break) otherwise.
-function makemon_rnd_goodpos(ptr) {
+function makemon_rnd_goodpos(ptr, gpflags) {
+    const fakemon = ptr ? makemon_fakemon(ptr) : null;
     let nx = 0, ny = 0, good = false, tryct = 0;
     do {
         nx = rn2(COLNO - 3) + 2;   // rn1(COLNO-3, 2)
@@ -4215,7 +4038,7 @@ function makemon_rnd_goodpos(ptr) {
         // — during level generation the in-sight rejection does NOT apply, so a
         // statue-trap monster placed inside mklev() accepts visible squares.
         good = (!game.in_mklev && mm_cansee(nx, ny))
-            ? false : goodpos_spawn(nx, ny, ptr);
+            ? false : hooks.goodpos(nx, ny, fakemon, gpflags);
     } while ((++tryct < 50) && !good);
 
     if (!good) {
@@ -4232,7 +4055,7 @@ function makemon_rnd_goodpos(ptr) {
                     nx = ((dx + xofs) % (COLNO - 1)) + 1;
                     ny = ((dy + yofs) % (ROWNO - 1)) + 1;
                     if (bl === 0 && mm_cansee(nx, ny)) continue;
-                    if (goodpos_spawn(nx, ny, ptr)) good = true;
+                    if (hooks.goodpos(nx, ny, fakemon, gpflags)) good = true;
                 }
             }
             // C ref: makemon.c:1113-1128 — when the first (skip-visible) pass
@@ -4250,7 +4073,7 @@ function makemon_rnd_goodpos(ptr) {
                         break;
                     }
                 }
-                if (goodpos_spawn(cx, cy, ptr)) { nx = cx; ny = cy; good = true; }
+                if (hooks.goodpos(cx, cy, fakemon, gpflags)) { nx = cx; ny = cy; good = true; }
             }
         }
         if (!good) return null;
@@ -4268,63 +4091,6 @@ const MM_IMMOBILE_NAMES = new Set([
 ]);
 function mon_mmove(ptr) {
     return ptr ? !MM_IMMOBILE_NAMES.has(ptr.name) : true;
-}
-
-// C ref: teleport.c collect_coords(candy, cx, cy, maxradius, CC_NO_FLAGS):
-// gather candidate squares in expanding rings, each ring (or radius pair —
-// here ring_pairs is OFF, so per-ring) shuffled in place via Fisher-Yates,
-// consuming rn2(n) exactly as the C engine does.  No skip filters.
-function collect_coords_spawn(cx, cy, maxradius) {
-    const out = [];
-    const rowrange = (cy < ROWNO / 2) ? (ROWNO - 1 - cy) : cy;
-    const colrange = (cx < COLNO / 2) ? (COLNO - 1 - cx) : cx;
-    const k = Math.max(rowrange, colrange);
-    maxradius = maxradius ? Math.min(maxradius, k) : k;
-
-    for (let radius = 1; radius <= maxradius; radius++) {
-        const ringStart = out.length;
-        const lox = cx - radius, hix = cx + radius;
-        const loy = cy - radius, hiy = cy + radius;
-        for (let y = Math.max(loy, 0); y <= hiy; y++) {
-            if (y > ROWNO - 1) break;
-            for (let x = Math.max(lox, 1); x <= hix; x++) {
-                if (x > COLNO - 1) break;
-                if (x !== lox && x !== hix && y !== loy && y !== hiy) continue;
-                out.push({ x, y });
-            }
-        }
-        // Shuffle this ring (scramble && passend, ring_pairs off).
-        let n = out.length - ringStart;
-        let base = ringStart;
-        while (n > 1) {
-            const kk = rn2(n);
-            if (kk) {
-                const tmp = out[base];
-                out[base] = out[base + kk];
-                out[base + kk] = tmp;
-            }
-            base++;
-            n--;
-        }
-    }
-    return out;
-}
-
-// C ref: teleport.c enexto_core(cc, xx, yy, mdat, entflags) — nearest-3-rings
-// (CC_NO_FLAGS) candidates first, then the whole map; first goodpos wins.
-// enexto_gpflags(GP_CHECKSCARY|flags) then (flags) — but goodpos_spawn ignores
-// scary (none on these levels) so the two passes are equivalent; one pass'
-// near+full scan reproduces the RNG (collect_coords draws are what matter).
-export function enexto_spawn(xx, yy, ptr) {
-    const near = collect_coords_spawn(xx, yy, 3);
-    for (const c of near) {
-        if (goodpos_spawn(c.x, c.y, ptr)) return { x: c.x, y: c.y };
-    }
-    const all = collect_coords_spawn(xx, yy, 0);
-    for (let i = near.length; i < all.length; i++) {
-        if (goodpos_spawn(all[i].x, all[i].y, ptr)) return { x: all[i].x, y: all[i].y };
-    }
-    return null;
 }
 
 // C ref: makemon.c m_initgrp(mtmp, x, y, n, mmflags) — make a group like mtmp.
@@ -4352,7 +4118,7 @@ function m_initgrp(mtmp, x, y, n, mmflags) {
             // C ref: makemon.c:125 — peace_minded(mtmp->data) per member; if
             // peaceful, skip (no enexto/makemon).  One C function, one port.
             if (peace_minded_bigrm(mtmp.data)) continue;
-            const spot = enexto_spawn(mx, my, mtmp.data);  // enexto_gpflags
+            const spot = hooks.enexto_gpflags(mx, my, mtmp.data, mmflags & MM_IGNOREWATER);
             if (spot) {
                 mx = spot.x; my = spot.y;
                 // C: the member's makemon.c:1473 newsym comes BEFORE its own arrival
@@ -4458,7 +4224,7 @@ export async function create_critters(cnt, mptr, neverask) {
            then specifying another wet location */
         if (!mptr && u.uinwater) {
             const { enexto_gpflags } = await import('./teleport.js');
-            const c = enexto_gpflags(x, y, monster_by_pmidx(name_to_pmidx('giant eel')), 0);
+            const c = hooks.enexto_gpflags(x, y, monster_by_pmidx(name_to_pmidx('giant eel')), 0);
             if (c) { x = c.x; y = c.y; }
         }
         const mon = makemon(mptr, x, y, 0);
@@ -4750,7 +4516,7 @@ export async function clone_mon(mon, x, y) {
         return null;
     }
     if (mm_mon_at(mpos.x, mpos.y)) { /* (always True for the x==0 case) */
-        const cc = enexto_spawn(mpos.x, mpos.y, mon.data);
+        const cc = hooks.enexto_gpflags(mpos.x, mpos.y, mon.data, 0);
         if (!cc) return null;
         mpos.x = cc.x; mpos.y = cc.y;
         if (mm_mon_at(mpos.x, mpos.y)) return null;

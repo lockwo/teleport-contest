@@ -9,9 +9,9 @@ import { game, hooks } from './gstate.js';
 import { setONAME } from './const.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { pline, update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
-import { hliquid, builds_up, dunlevs_in_dungeon, Is_special, level_difficulty } from './dungeon.js';
+import { hliquid, builds_up, dunlevs_in_dungeon, level_difficulty } from './dungeon.js';
 import { water_damage, t_at, delfloortrap } from './trap.js';
-import { curse, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
+import { curse, uncurse, bless, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
 import { fruitname } from './objnam.js';
@@ -25,13 +25,14 @@ import { fingers_or_gloves } from './do_wear.js';
 import { makeplural } from './plural.js';
 import { hcolor, rndmonnam, mhe, mhis } from './do_name.js';
 import { more_experienced, newexplevel, has_innate } from './exper.js';
-import { Poison_resistance, Levitation_hero } from './youprop.js';
+import { Poison_resistance, Levitation_hero, Invis_hero, See_invisible_hero } from './youprop.js';
 import { newuhs, morehungry, vomit } from './eat.js';
 import { Blind, cansee, couldsee } from './vision.js';
 import { depth, distmin } from './hacklib.js';
 import { clear_area_cells } from './vision.js';
-import { nexttodoor, inside_room } from './mkroom.js';
-import { makemon, name_to_pmidx, monster_by_pmidx, enexto_spawn } from './makemon.js';
+import { nexttodoor, in_town } from './mkroom.js';
+import { makemon, name_to_pmidx, monster_by_pmidx } from './makemon.js';
+import { enexto_gpflags } from './teleport.js';
 import { x_monnam, canspotmon } from './uhitm.js';
 import { somegold } from './steal.js';
 import { create_gas_cloud } from './region.js';
@@ -61,26 +62,6 @@ function is_watch(ptr) {
         _watch_pmidx = [name_to_pmidx('watchman'), name_to_pmidx('watch captain')];
     const i = ptr?.pmidx;
     return i != null && (i === _watch_pmidx[0] || i === _watch_pmidx[1]);
-}
-
-// C ref: hack.c in_town(x, y) — a room WITH subrooms is the town; with no
-// subroomed rooms at all the whole level counts.  Mirrors js/makemon.js's
-// in_town_js(), including its `svl.level.flags.has_town` stand-in (nothing in
-// this port writes has_town, so the S_LEVEL `town` flag answers for it).
-function in_town(x, y) {
-    const lvl = game.level;
-    const slev = Is_special(game.u?.uz);
-    if (!slev || !slev.flags?.town) return false;
-    let has_subrooms = false;
-    for (let i = 0; i < (lvl?.nroom ?? 0); i++) {
-        const sroom = lvl.rooms[i];
-        if (!sroom || (sroom.hx ?? 0) <= 0) break;
-        if ((sroom.nsubrooms ?? 0) > 0) {
-            has_subrooms = true;
-            if (inside_room(sroom, x, y)) return true;
-        }
-    }
-    return !has_subrooms;
 }
 
 // C ref: mon.c angry_guards(silent), delegated to the shared faithful port.
@@ -180,7 +161,7 @@ export async function dipfountain(obj) {
             // ART_EXCALIBUR).
             obj.oartifact = 1;
             setONAME(obj, 'Excalibur');
-            obj.blessed = true; obj.cursed = false;
+            bless(obj);
             obj.oeroded = 0; obj.oeroded2 = 0; obj.oerodeproof = true;
             exercise(A_WIS, true);
         }
@@ -218,7 +199,7 @@ export async function dipfountain(obj) {
         if (!is_hands && obj.cursed) {
             if (!Blind())
                 await update_topl(`The ${hliquid('water')} glows for a moment.`);
-            obj.cursed = false;
+            uncurse(obj);
         } else {
             await update_topl('A feeling of loss comes over you.');
         }
@@ -325,7 +306,7 @@ export async function drinkfountain() {
         for (let ii = 0; ii < A_MAX; ii++) {
             if (u.acurr.a[ii] < u.amax.a[ii]) {
                 u.acurr.a[ii] = u.amax.a[ii];
-                game.disp_botl = true;
+                game.botl = true;
             }
         }
         let i = rn2(A_MAX);
@@ -408,7 +389,7 @@ export async function drinkfountain() {
             // RNG-free but it decides whether later invisible monsters are
             // drawn at all, so dropping it silently changes the map.
             if (Blind()) {
-                if (game.u?.uprops?.Invisible) {
+                if (Invis_hero() && !See_invisible_hero()) {
                     await update_topl('You feel transparent.');
                 } else {
                     await update_topl('You feel very self-conscious.');
@@ -420,9 +401,7 @@ export async function drinkfountain() {
             }
             if (u) {
                 u.uprops = u.uprops || {};
-                u.uprops.See_invisible = (u.uprops.See_invisible || 0) | FROMOUTSIDE;
                 u.uprops.HSee_invisible = (u.uprops.HSee_invisible || 0) | FROMOUTSIDE;
-                u.See_invisible = true;
             }
             newsym(u.ux, u.uy);
             exercise(A_WIS, true);
@@ -489,7 +468,7 @@ async function dowaterdemon() {
     }
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return;
-    const spot = enexto_spawn(u.ux, u.uy, ptr);
+    const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
     if (!spot) return;
     const was_full = game._full_mon_gen;
     game._full_mon_gen = true;
@@ -531,7 +510,7 @@ async function dowaternymph() {
     const pmidx = name_to_pmidx('water nymph');
     const gone = (game.mvitals?.[pmidx]?.mvflags ?? 0) & G_GONE;
     const ptr = (!gone && pmidx >= 0) ? monster_by_pmidx(pmidx) : null;
-    const spot = ptr ? enexto_spawn(u.ux, u.uy, ptr) : null;
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;
@@ -588,7 +567,7 @@ async function dowatersnakes() {
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return;
     while (num-- > 0) {
-        const spot = enexto_spawn(u.ux, u.uy, ptr);
+        const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
         if (!spot) continue;
         const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
         if (!mtmp) continue;
@@ -712,7 +691,7 @@ export async function dryup(x, y, isyou) {
         loc.looted = (loc.looted || 0) | F_WARNED; // SET_FOUNTAIN_WARNED
         let found = false;
         for (const mtmp of fmonOrder()) {
-            if (!mtmp || mtmp.mhp <= 0) continue;
+            if (!mtmp || mtmp.mhp <= 0 || (mtmp.mstate | 0) !== 0) continue; /* DEADMONSTER || mon_offmap */
             if (await watchman_warn_fountain(mtmp)) { found = true; break; }
         }
         if (!found) await update_topl('The flow reduces to a trickle.');
@@ -788,7 +767,7 @@ async function spawnAtHeroSquare(pmidx) {
     const u = game.u;
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    const spot = enexto_spawn(u.ux, u.uy, ptr);
+    const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
     if (!spot) return null;
     const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
     return mtmp;

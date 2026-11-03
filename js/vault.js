@@ -21,7 +21,7 @@
 // INTEGRATION: nothing imports this module yet; the call sites C has (and the
 // file that owns each) are listed at the bottom.
 
-import { Deaf_hero } from './youprop.js';
+import { Deaf_hero, See_invisible_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { rn2, rn1 } from './rng.js';
 import {
@@ -39,8 +39,8 @@ import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind
 import { Monnam, mon_nam, canspotmon, setmangry } from './uhitm.js';
 import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
 import { m_carrying, m_canseeu, mon_wield_item } from './monmove.js';
-import { rloc, rloc_to, RLOC_MSG, RLOC_ERR, RLOC_NOMSG } from './teleport.js';
-import { makemon, set_malign, monster_by_pmidx, pmname_of_pmidx, enexto_spawn, add_to_minv } from './makemon.js';
+import { rloc, rloc_to, RLOC_MSG, RLOC_ERR, RLOC_NOMSG, enexto_gpflags } from './teleport.js';
+import { makemon, set_malign, monster_by_pmidx, pmname_of_pmidx, add_to_minv  } from './makemon.js';
 import { place_object, remove_object, objects, weight, COIN_CLASS, GEM_CLASS, BOULDER, ROCK } from './mkobj.js';
 import { stackobj, xname, currency, freeinv, youmonst_data, obj_extract_self, obfree } from './invent.js';
 import { makeplural } from './plural.js';
@@ -112,7 +112,7 @@ const IS_POOL_TYP = (typ) => typ >= POOL && typ <= DRAWBRIDGE_UP;
 // C ref: mon.h MON_WEP(mon).
 const MON_WEP = (mon) => (mon?.mw || null);
 // C ref: display.h mon_visible(mon).
-const mon_visible = (mon) => !mon?.minvis || !!game.u?.uprops?.See_invisible;
+const mon_visible = (mon) => (!mon?.minvis || See_invisible_hero()) && !mon?.mundetected;
 // C ref: eat.c is_fainted() — u.uhs == FAINTED.
 const is_fainted = () => (game.u?.uhs ?? 0) === FAINTED;
 
@@ -129,7 +129,8 @@ const is_silent_hero = () => {
 function floorObjsAt(x, y) {
     const objs = game.level?.objects;
     if (!Array.isArray(objs)) return [];
-    return objs.filter((o) => o && o.where === OBJ_FLOOR && o.ox === x && o.oy === y);
+    /* nexthere chain order: topmost first (the flat array is deepest-first) */
+    return objs.filter((o) => o && o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
 }
 // C ref: mkobj.c g_at(x,y) — the gold pile at <x,y>.
 function g_at(x, y) {
@@ -322,13 +323,14 @@ export async function unmul_form_note(nmsg) {
 export async function unmul(msg) {
     game.botl = true; // C ref: hack.c unmul() `disp.botl = TRUE`
     game.multi = 0;
-    if (game.context) game.context.travel = game.context.travel1 = game.context.mv = 0;
     // C ref: hack.c unmul(): `if (msg_override) nomovemsg = msg_override; else if
     // (!nomovemsg) nomovemsg = You_can_move_again; if (*nomovemsg) pline(...)`.
     // A NULL nomovemsg (null/undefined/0) takes the default; "" means silence.
     let nmsg = msg;
-    if (!nmsg) nmsg = (game.nomovemsg == null || game.nomovemsg === 0
-                       || game.nomovemsg === false) ? 'You can move again.' : game.nomovemsg;
+    // C: `if (msg_override)` tests the POINTER, so unmul("") (non-NULL) installs an
+    // empty nomovemsg and stays silent; only NULL falls back to nomovemsg/default.
+    if (msg == null) nmsg = (game.nomovemsg == null || game.nomovemsg === 0
+                             || game.nomovemsg === false) ? 'You can move again.' : game.nomovemsg;
     game.nomovemsg = null;
     if (nmsg) {
         await pline(nmsg);   // C pline(): flush_screen() runs bot() before the line is drawn
@@ -399,7 +401,7 @@ export async function clear_fcorr(grd, forceshow) {
         const uball = u.uball;
         if ((u_at(fcx, fcy) && !DEADMONSTER(grd))
             || (!forceshow && couldsee(fcx, fcy))
-            || ((u.uprops?.Punished || 0) > 0 && uball && uball.where !== OBJ_INVENT
+            || (uball && uball.where !== OBJ_INVENT
                 && uball.ox === fcx && uball.oy === fcy))
             return false;
 
@@ -978,7 +980,7 @@ export async function gd_pick_corridor_gold(grd, goldx, goldy) {
             do {
                 // Pick an available spot nearest the hero, and among those the
                 // one nearest the guard's current location.
-                const newcc = enexto_spawn(goldx, goldy, grd.data);
+                const newcc = enexto_gpflags(goldx, goldy, grd.data, 0);
                 if (newcc) {
                     const newdelta = distu(newcc.x, newcc.y);
                     if (newdelta < bestdelta

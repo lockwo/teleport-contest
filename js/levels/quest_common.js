@@ -13,10 +13,10 @@ import {
 import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
 import { artilist } from '../artifact.js';
-import {
-    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    mongets_pub, name_to_pmidx, set_malign,
+import { makemon, mkclass, mm_mon_at, monster_by_pmidx,
+    mongets_pub, name_to_pmidx, set_malign
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { mk_mplayer } from '../mplayer.js';
 import { bless, curse, des_object_defaults, mkobj_at, mksobj_at, unbless, uncurse } from '../mkobj.js';
 import { stackobj } from '../invent.js';
@@ -72,7 +72,7 @@ export function quest_place_monster(ptr) {
     }
     let x = c.x, y = c.y;
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     // C ref: sp_lev.c:1985 `PM_ARCHEOLOGIST <= m->id && m->id <= PM_WIZARD` ->
@@ -202,7 +202,7 @@ export function quest_engraving_random(text, etyp = ENGRAVE) {
 // consumes no RNG — it only marks the object as the named artifact.
 export function quest_named_object_at(otyp, mx, my, { spe = null, buc = null, name = null } = {}) {
     const x = q_absx(mx), y = q_absy(my);
-    const otmp = mksobj_at(otyp, x, y, true, false);   // mksobj_at(id, x, y, TRUE, !named)
+    const otmp = des_object_defaults(mksobj_at(otyp, x, y, true, false));   // mksobj_at(id, x, y, TRUE, !named)
     if (!otmp) return null;
     if (spe != null) otmp.spe = spe;
     switch (buc) {
@@ -227,6 +227,9 @@ export function quest_named_object_at(otyp, mx, my, { spe = null, buc = null, na
             }
         }
     }
+    // C ref: sp_lev.c create_object() tail: stackobj() merges identical objects dropped
+    // on one square (Tou-loca's two blank scrolls at (71,12) are ONE stack of 2).
+    stackobj(otmp);
     return otmp;
 }
 

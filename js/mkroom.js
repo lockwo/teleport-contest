@@ -7,7 +7,7 @@ import {
     ROOM, CORR, ICE, SDOOR, ROOMOFFSET,
     IS_DOOR, IS_FURNITURE, IS_POOL, IS_WALL,
     isok, LAVAPOOL, LAVAWALL, POOL, MOAT, WATER,
-    is_pool, is_lava
+    is_pool, is_lava, ANY_TYPE, ANY_SHOP, SHOPBASE, OROOM
 } from './const.js';
 
 // C ref: trap.c:6502 t_at — return the trap at (x,y), or null.
@@ -54,14 +54,33 @@ export function somey(croom) {
 export function inside_room(croom, x, y) {
     if (!croom) return false;
     if (croom.irregular) {
-        const idx = game.level?.rooms?.indexOf(croom) ?? -1;
-        const roomno = idx + ROOMOFFSET;
+        // C: `(croom - svr.rooms) + ROOMOFFSET`; a subroom lives at
+        // svr.rooms[MAXNROFROOMS+1+n], so indexOf() over level.rooms is -1 for it.
+        const roomno = (croom.roomnoidx ?? (game.level?.rooms?.indexOf(croom) ?? -1)) + ROOMOFFSET;
         const loc = game.level?.at(x, y);
         return !!(loc && !loc.edge && loc.roomno === roomno);
     }
 
     return x >= croom.lx - 1 && x <= croom.hx + 1
         && y >= croom.ly - 1 && y <= croom.hy + 1;
+}
+
+// C ref: hack.c in_town(x, y) — in Mine Town (level.flags.has_town, set by
+// fixup_special()): a room WITH subrooms is the town; with no subroomed rooms
+// at all the whole level counts.
+export function in_town(x, y) {
+    const lvl = game.level;
+    if (!lvl?.flags?.has_town) return false;
+    let has_subrooms = false;
+    for (let i = 0; i < (lvl?.nroom ?? 0); i++) {
+        const sroom = lvl.rooms[i];
+        if (!sroom || (sroom.hx ?? 0) <= 0) break;
+        if ((sroom.nsubrooms ?? 0) > 0) {
+            has_subrooms = true;
+            if (inside_room(sroom, x, y)) return true;
+        }
+    }
+    return !has_subrooms;
 }
 
 export function somexy(croom, c) {
@@ -138,6 +157,19 @@ export function somexyspace(croom, c) {
         }
     } while (trycnt++ < 100 && !okay);
     return okay;
+}
+
+// C ref: mkroom.c search_special(type) — first room (then subroom) whose rtype
+// matches; ANY_TYPE means any non-ordinary room, ANY_SHOP any shop.
+export function search_special(type) {
+    for (const list of [game.level?.rooms, game.level?.subrooms])
+        for (const croom of (list || [])) {
+            if (!croom || (croom.hx ?? -1) < 0) break;
+            if ((type === ANY_TYPE && croom.rtype !== OROOM)
+                || (type === ANY_SHOP && croom.rtype >= SHOPBASE)
+                || croom.rtype === type) return croom;
+        }
+    return null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

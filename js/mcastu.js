@@ -24,7 +24,7 @@ import {
 import { healmon } from './mon.js';
 import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
 import { Mgender, mhe as mhe_ } from './do_name.js';
-import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag } from './monflags_data.js';
+import { mflags2_of, M2_PNAME, is_undead_flag, is_demon_flag, perceives_flag } from './monflags_data.js';
 import { an, the_unique_pm } from './objnam.js';
 import { Fire_resistance, Cold_resistance, Shock_resistance, Antimagic, mon_spell_hits_spot } from './zap.js';
 import { monstseesu, monstunseesu } from './mondata.js';
@@ -431,7 +431,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
 function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.BlindedFromForm | 0) > 0; }
 // C ref: youprop.h Invis/Displaced — monmove.js owns them (worn-item extrinsics included).
 import { Deaf_hero as Deaf } from './display.js';
-function perceives(mdat) { return !!(mdat && mdat.perceives); }
+function perceives(mdat) { return !!mdat && perceives_flag(mdat); }
 
 // C ref: monst.h m_seenres(mon, bit).
 function m_seenres(mon, bit) { return bit !== 0 && ((mon?.seen_resistance | 0) & bit) !== 0; }
@@ -1105,7 +1105,8 @@ function Half_spell_damage() { return Half_spell_damage_hero(); }
 function Half_physical_damage() { return Half_physical_damage_hero(); }
 function Shock_resistance_() { return Shock_resistance(); }
 function Detect_monsters_() { return Detect_monsters_hero(); }
-function Unaware_() { return !!(game.u?.usleep || game.u?.Unaware); }
+import { Unaware as Unaware_hero } from './const.js';
+function Unaware_() { return Unaware_hero(); }
 function HProp_(name) { return (game.u?.uprops?.[name] | 0); }
 function ACURR_(i) { return acurr_eff(i); }
 function youmonst_data() { return youmonst_data_pub(); }

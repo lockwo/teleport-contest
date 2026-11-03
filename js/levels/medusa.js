@@ -26,14 +26,14 @@ import {
 import { Is_special } from '../dungeon.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
-import {
-    enexto_spawn, makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    name_to_pmidx, propagate, rndmonst,
+import { makemon, mkclass, mm_mon_at, monster_by_pmidx,
+    name_to_pmidx, propagate, rndmonst
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { mongone, resists_ston } from '../mon.js';
 import {
     BOULDER, CRYSTAL_BALL, EGG, LEVITATION_BOOTS, SACK, SCR_BLANK_PAPER, STATUE, WAND_CLASS,
-    add_to_container, des_object_defaults, mk_tt_object, mkobj_at, mksobj_at, set_corpsenm, weight,
+    add_to_container, des_object_defaults, mk_tt_object, mkcorpstat, mkobj_at, mksobj_at, set_corpsenm, weight,
 } from '../mkobj.js';
 import { stackobj } from '../invent.js';
 import { somex, somey } from '../mkroom.js';
@@ -217,7 +217,7 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
         x = r.x; y = r.y;
     }
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
@@ -296,6 +296,9 @@ async function med_object(o, contained = false) {
     else otmp = mkobj_at(0 /* RANDOM_CLASS */, x, y, !named);
     if (!otmp) return null;
     des_object_defaults(otmp);   // sp_lev.c:2280 no `eroded` key: wipe mksobj's erosion
+    // sp_lev.c lspo_object: a STATUE/CORPSE table always gets tmpobj.spe = lflags (0 unless
+    // historic/male/female was given), which overrides mksobj_init's CORPSTAT gender.
+    if (o.otyp === STATUE && o.spe == null) otmp.spe = 0;
     if (o.spe != null) otmp.spe = o.spe;
     switch (o.buc) {
     case 'blessed': otmp.blessed = true; otmp.cursed = false; break;
@@ -547,7 +550,7 @@ function med_fixup_statues() {
         // mksobj() does.  This was passing init=TRUE, which ran mksobj_init()
         // anyway (an extra rn2() draw plus, at ~50% odds, an actual book).
         const x = somex(croom), y = somey(croom);
-        otmp = mksobj_at(STATUE, x, y, false, false);
+        otmp = mkcorpstat(STATUE, null, null, x, y, 0 /* CORPSTAT_NONE */);   // spe = CORPSTAT_NONE & SPE_VAL = 0
     }
     let tryct = 0;
     while (++tryct < 100 && otmp && med_statue_is_stony(otmp))

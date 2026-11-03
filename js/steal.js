@@ -19,7 +19,7 @@ import { dist2, s_suffix } from './hacklib.js';
 import { monnear } from './dogmove.js';
 import { can_carry, DEADMONSTER } from './mon.js';
 import { objects, BOULDER, CORPSE, COIN_CLASS, ARMOR_CLASS, RING_CLASS,
-    AMULET_CLASS, TOOL_CLASS, FOOD_CLASS } from './mkobj.js';
+    AMULET_CLASS, TOOL_CLASS, FOOD_CLASS, LEASH } from './mkobj.js';
 import { PLNMSG_MON_TAKES_OFF_ITEM, Unaware, TT_BURIEDBALL, W_WEAPONS } from './const.js';
 // C's urgent_pline() (steal.c:532/540/603) is display.js urgent_topl(): still
 // shown after ESC dismissed the preceding "<Mon> disarms ..." --More--.
@@ -105,9 +105,11 @@ export async function steal(mtmp, objnambuf) {
     let Monnambuf = Some_Monnam(mtmp);
 
     // go.occupation -> maybe_finished_meal(FALSE): removes a just-finished
-    // meal from inventory so it can't be stolen.  Nothing is being eaten on
-    // the turns a thief strikes in the covered sessions.
-
+    // meal from inventory so it can't be stolen.
+    if (game._eat_occupation) {
+        const { maybe_finished_meal } = await import('./eat.js');
+        await maybe_finished_meal(false);
+    }
     const nothing_to_steal = async () => {
         /* nymphs might target uchain if invent is empty; monkeys won't;
            hero becomes unpunished but nymph ends up empty handed */
@@ -132,7 +134,7 @@ export async function steal(mtmp, objnambuf) {
     };
 
     const icnt = inv_cnt(false); /* don't include gold */
-    if (!icnt) return await nothing_to_steal();
+    if (!icnt || (icnt === 1 && game.uskin)) return await nothing_to_steal();
 
     // "Skip ring special cases" for an animal or a gloved hero; otherwise a
     // worn ring of adornment is grabbed first, with no random selection.
@@ -161,13 +163,13 @@ export async function steal(mtmp, objnambuf) {
     while (!gotobj) {
         let tmp = 0;
         for (const o of invent)
-            if ((!game.uarm || o !== game.uarmc) && o.oclass !== COIN_CLASS)
+            if ((!game.uarm || o !== game.uarmc) && o !== game.uskin && o.oclass !== COIN_CLASS)
                 tmp += ((o.owornmask || 0) & (W_ARMOR_WORN | W_ACCESSORY_WORN)) ? 5 : 1;
         if (!tmp) return await nothing_to_steal();
         tmp = rn2(tmp);
         otmp = null;
         for (const o of invent) {
-            if ((!game.uarm || o !== game.uarmc) && o.oclass !== COIN_CLASS) {
+            if ((!game.uarm || o !== game.uarmc) && o !== game.uskin && o.oclass !== COIN_CLASS) {
                 tmp -= ((o.owornmask || 0) & (W_ARMOR_WORN | W_ACCESSORY_WORN)) ? 5 : 1;
                 if (tmp < 0) { otmp = o; break; }
             }
@@ -208,7 +210,11 @@ export async function steal(mtmp, objnambuf) {
         if (ostuck || !can_carry(mtmp, otmp)) return await cant_take();
     }
 
-    // A leashed leash is unleashed first; no leash is ever in use here.
+    if (otmp.otyp === LEASH && otmp.leashmon) {
+        if (monkey_business && otmp.cursed) return await cant_take();
+        const { o_unleash } = await import('./apply.js');
+        await o_unleash(otmp);
+    }
 
     const was_doffing = doffing(otmp);
     /* stop donning/doffing now so that afternmv won't be clobbered below */
@@ -294,7 +300,7 @@ export async function steal(mtmp, objnambuf) {
     /* do this before removing it from inventory */
     if (objnambuf) objnambuf.value = yname(otmp);
     /* set mavenge so knights don't suffer an alignment penalty in retaliation */
-    if (!(was_punished && !u.uball)) mtmp.mavenge = 1;    /* !Conflict: never in these sessions */
+    if (!(await import('./monmove.js')).Conflict() && !(was_punished && !u.uball)) mtmp.mavenge = 1;
 
     if (otmp.unpaid) await subfrombill_st(otmp);
     freeinv(otmp);
@@ -375,8 +381,7 @@ function money_cnt_st(list) {
 // C ref: hack.h distu(x, y) == dist2(x, y, u.ux, u.uy).
 function distu_st(x, y) { return dist2(x, y, game.u.ux, game.u.uy); }
 // C ref: you.h Levitation / Flying.
-function Levitation_st() { return !!game.u?.uprops?.Levitation; }
-function Flying_st() { return !!game.u?.uprops?.Flying; }
+import { Levitation_hero as Levitation_st, Flying_hero as Flying_st } from './youprop.js';
 // C ref: hacklib.c upstart(s) — capitalize the first letter in place.
 function upstart_st(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 const FOOT_ST = 5, HAND_ST = 6;
@@ -656,7 +661,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
     const { obj_resists } = await import('./zap.js');
     const { touch_artifact } = await import('./artifact.js');
 
-    if (obj === game.uball || obj === game.uchain || obj.oclass === ROCK_CLASS
+    if (obj === game.u?.uball || obj === game.u?.uchain || obj.oclass === ROCK_CLASS
         || obj_resists(obj, 100 - ochance, 100 - achance)
         || !(await touch_artifact(obj, mon)))
         return;

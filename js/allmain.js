@@ -4,7 +4,7 @@
 // Game start-up (newgame) and the per-turn driver.
 // Real mklev.js handles level generation for screen parity.
 
-import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero } from './youprop.js';
+import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero } from './youprop.js';
 import { ROLE_PM_BASE } from './const.js';
 import { NetHackPanic } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
@@ -31,7 +31,8 @@ import { age_spells } from './spell.js';
 import { newuhs } from './eat.js';
 import { adj_erinys } from './makemon.js';
 import { find_ac, u_init_skills_discoveries, moveloop_preamble_startup,
-         race_attrmin, race_attrmax, u_init_inventory_attrs, newhp, newpw } from './u_init.js';
+         race_attrmin, race_attrmax, u_init_inventory_attrs } from './u_init.js';
+import { newhp, newpw } from './exper.js';
 import { com_pager_legacy } from './questpgr.js';
 import { roles, races, aligns, genders, Hello, rankName, ROLE_PRIEST, randrole, quest_monster_fixups_for_role, align_str, plname_is_generic, plnamesuffix } from './role.js';
 import { Unaware,
@@ -91,6 +92,9 @@ function u_init_misc() {
     g.u.uen = g.u.uenmax = g.u.uenpeak = newpw();
     // u.uhandedness = rn2(10) ? RIGHT_HANDED : LEFT_HANDED.
     g.u.uleft_handed = (rn2(10) === 0);
+    // C ref: u_init.c u_init_misc() `u.uhunger = 900; u.uhs = NOT_HUNGRY;`
+    g.u.uhunger = 900;
+    g.u.uhs = 1 /* NOT_HUNGRY */;
     g.u.uhandedness = g.u.uleft_handed ? 1 /* LEFT_HANDED */ : 0 /* RIGHT_HANDED */;
 }
 
@@ -275,6 +279,9 @@ async function newgame_real() {
 
     // Wire up urole/urace/ualign and level for the status line.
     g.urole = { name: { m: role?.name?.m, f: role?.name?.f },
+                // C ref: role.c roles[].allow (gender/race/alignment mask),
+                // read by insight.c background_enlightenment().
+                allow: role?.allow,
                 rank: { m: rankName(game.initrole, !!g.flags?.female) },
                 mnum,
                 // C ref: role.c roles[] spell-statistics block; drives
@@ -1116,6 +1123,7 @@ export async function moveloop_turn() {
             // m_calcdistress -> minliquid -> xkilled) is still linked in fmon
             // and still takes its mcalcmove() rn2(NORMAL_SPEED) draw.  Snapshot
             // the live monsters first so those victims keep their slot.
+            g.were_changes = 0;
             const preDistress = fmonOrder().filter((m) => !(m.mhp != null && m.mhp <= 0));
             const preSet = new Set(preDistress);
             await mcalcdistress();
@@ -1282,6 +1290,11 @@ export async function moveloop_turn() {
                 const { warnreveal } = await import('./detect.js');
                 await warnreveal();
             }
+            if (g.were_changes) {
+                /* update innate intrinsics (mainly Drain_resistance) */
+                const { set_uasmon } = await import('./polyself.js');
+                set_uasmon(!!g.u.Upolyd);
+            }
 
             // once-per-turn things: ambient sounds + hunger + spell aging +
             // periodic exercise.  (nh_timeout consumes no RNG for the starter
@@ -1307,6 +1320,8 @@ export async function moveloop_turn() {
                 g.multi_reason = 'fainted from lack of food';
                 g.nomovemsg = 'You regain consciousness.';
                 g.afternmv = unfaint;
+                if (!Levitation_hero())
+                    await (await import('./polyself.js')).selftouch('Falling, you');
             }
             for (const m of hungerMsgs) {
                 if (m === null) await (await import('./hack.js')).stop_occupation(true);
@@ -1394,6 +1409,11 @@ export async function moveloop_turn() {
                     // top line fires its --More-- first), u.usleep = 0, then the
                     // after-no-move callback ga.afternmv (e.g. prayer_done()).
                     await (await import('./vault.js')).unmul(null);
+                    /* if unmul caused a level change, take it now */
+                    if (g.u.utotype) {
+                        const { deferred_goto } = await import('./do.js');
+                        await deferred_goto();
+                    }
                 }
             }
         }
@@ -1439,7 +1459,11 @@ export async function moveloop_turn() {
     if (g.u?.uinwater) {
         const { under_water } = await import('./display.js');
         await under_water(0);
+    } else if (g.u?.uburied) {
+        const { under_ground } = await import('./display.js');
+        await under_ground(0);
     }
+    await (await import('./mon.js')).see_nearby_monsters();
 }
 
 // C ref: objects.h ring/amulet otyps read by gethungry()'s accessory cases.
@@ -1563,11 +1587,8 @@ async function interrupt_multi(msg) {
     // stale_run the run == 2/3 left by a g/G prefix whose next key was unbound.
     if ((g.multi ?? 0) > 0 && !g.context?.travel && !g.context?.run
         && !g.context?.run_leftover8 && !g.context?.stale_run) {
-        // nomul(0), inlined: hack.js imports this module, so importing back
-        // would be a cycle.  multi > 0 above already satisfies C's
-        // `if (gm.multi < nval) return` guard.
-        g.multi = 0;
-        if (g.context) g.context.travel = g.context.travel1 = g.context.mv = 0;
+        const { nomul } = await import('./hack.js');
+        nomul(0);
         if (g.flags?.verbose !== false && msg && g._prevmsg !== msg)
             await update_topl(msg);
     }
@@ -1772,7 +1793,7 @@ function HClairvoyant() { return !!((game.u?.uprops?.HClairvoyant | 0) & (INTRIN
 function BClairvoyant() {
     return game.uarmh?.otyp === 93 /* CORNUTHAUM */ && gameRoleMnum() !== PM_WIZARD;
 }
-function Clairvoyant() {
+export function Clairvoyant() {
     return (!!((game.u?.uprops?.HClairvoyant | 0) || worn_extrinsic(35 /*CLAIRVOYANT*/)))
         && !BClairvoyant();
 }
@@ -2033,8 +2054,8 @@ export async function moveloop_core() {
 
     await moveloop_input_redraw();
 
-    // Vision + display
-    if (g.vision_full_recalc) {
+    // Vision + display (C: inside `if (!svc.context.mv || Blind)`)
+    if (g.vision_full_recalc && (!g.context?.mv || Blind())) {
         vision_recalc(0);
         g.vision_full_recalc = 0;
     }

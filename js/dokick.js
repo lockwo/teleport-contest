@@ -40,7 +40,7 @@ import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
          place_object, add_to_migration,
          mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight, base_oc_cost } from './mkobj.js';
-import { makemon, makemon_appears_msg, monster_by_pmidx, name_to_pmidx, enexto_spawn, mpickobj } from './makemon.js';
+import { makemon, makemon_appears_msg, monster_by_pmidx, name_to_pmidx, mpickobj  } from './makemon.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
 import { water_damage, set_wounded_legs, t_at, chest_trap, Levitation_fu, fall_through } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, objects_at, obj_extract_self, stackobj, splitobj, xname, otense,
@@ -48,8 +48,8 @@ import { near_capacity, sobj_at, useup, body_part, inv_weight, objects_at, obj_e
          obj_doname, thitmonst } from './invent.js';
 import { makeplural } from './plural.js';
 import { obj_resists } from './zap.js';
-import { surface, hliquid, dunlevs_in_dungeon, Is_special } from './dungeon.js';
-import { inside_room } from './mkroom.js';
+import { surface, hliquid, dunlevs_in_dungeon } from './dungeon.js';
+import { in_town } from './mkroom.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
 import { nolimbs, nohands, mflags1_of, M1_SLITHY, humanoid,
          M1_THICK_HIDE, M1_NOEYES, M1_FLY, M1_TPORT,
@@ -62,7 +62,7 @@ import { canspotmon, Monnam, mon_nam, setmangry, killed,
 import { DEADMONSTER, fmonOrder, wake_nearto } from './mon.js';
 import { map_invisible } from './display.js';
 import { special_dmgval } from './weapon.js';
-import { goodpos, rloc_to } from './teleport.js';
+import { goodpos, rloc_to, enexto_gpflags } from './teleport.js';
 import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
@@ -157,25 +157,6 @@ async function mon_yells(mtmp, msg) {
     await (await import('./monmove.js')).mon_yells(mtmp, msg);
 }
 
-// C ref: dungeon.c in_town(x, y).  Same shape as dig.js/makemon.js/fountain.js
-// keep (each file-private): the S_LEVEL `town` flag stands in for
-// svl.level.flags.has_town, which nothing in this port writes.
-function in_town(x, y) {
-    const lvl = game.level;
-    const slev = Is_special(game.u?.uz);
-    if (!slev || !slev.flags?.town) return false;
-    let has_subrooms = false;
-    for (let i = 0; i < (lvl?.nroom ?? 0); i++) {
-        const sroom = lvl.rooms[i];
-        if (!sroom || (sroom.hx ?? 0) <= 0) break;
-        if ((sroom.nsubrooms ?? 0) > 0) {
-            has_subrooms = true;
-            if (inside_room(sroom, x, y)) return true;
-        }
-    }
-    return !has_subrooms;
-}
-
 // C ref: mklev.c cvt_sdoor_to_door(lev) — an exposed secret door becomes an
 // ordinary (closed) door.  WM_MASK (rm.h) is the low wall-mode bits stored in
 // doormask for an SDOOR; strip them, then mark the door closed unless locked.
@@ -255,14 +236,14 @@ function unmap_invisible(x, y) {
 // applying the predicate; both dokick.c call sites ignore the result.
 async function get_iter_mons(fn) {
     for (const mtmp of fmonOrder()) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+        if ((mtmp.mhp != null && mtmp.mhp <= 0) || (mtmp.mstate | 0) !== 0) continue; /* DEADMONSTER || mon_offmap */
         if (await fn(mtmp)) return mtmp;
     }
     return null;
 }
 async function get_iter_mons_xy(fn, x, y) {
     for (const mtmp of fmonOrder()) {
-        if (mtmp.mhp != null && mtmp.mhp <= 0) continue;
+        if ((mtmp.mhp != null && mtmp.mhp <= 0) || (mtmp.mstate | 0) !== 0) continue; /* DEADMONSTER || mon_offmap */
         if (await fn(mtmp, x, y)) return mtmp;
     }
     return null;
@@ -659,7 +640,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
             let mm = { x, y };
             const ptr = monster_by_pmidx(name_to_pmidx('killer bee'));
             while (cnt--) {
-                const spot = enexto_spawn(mm.x, mm.y, ptr);
+                const spot = enexto_gpflags(mm.x, mm.y, ptr, 0);
                 if (spot) {
                     mm = spot;
                     if (makemon(ptr, mm.x, mm.y, MM_ANGRY | MM_NOMSG)) made++;
@@ -753,7 +734,7 @@ async function maybe_mnexto(mtmp) {
     const ptr = mtmp.data;
     const diagok = ptr?.name !== 'grid bug';
     for (let tryct = 20; tryct > 0; tryct--) {
-        const mm = enexto_spawn(game.u.ux, game.u.uy, ptr);
+        const mm = enexto_gpflags(game.u.ux, game.u.uy, ptr, 0);
         if (!mm) return;
         if (couldsee(mm.x, mm.y)
             && (diagok || mm.x === mtmp.mx || mm.y === mtmp.my)) {
@@ -1071,7 +1052,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             const objp = { obj };
             const hit = await hits_bars(objp, bx - ddx, by - ddy, bx, by,
                                         point_blank ? 0 : !rn2(5), 1);
-            obj = gk_kickedobj = objp.obj;      /* obj might now be null */
+            obj = gk_kickedobj = game.gk_kickedobj = objp.obj;      /* obj might now be null */
             if (hit) { bx -= ddx; by -= ddy; break; }
         }
 
@@ -1131,7 +1112,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
 async function kick_object(x, y, kickobjnam) {
     kickobjnam.name = '';
     /* if a pile, the "top" object gets kicked */
-    gk_kickedobj = objects_at(x, y)[0] || null;
+    gk_kickedobj = game.gk_kickedobj = objects_at(x, y)[0] || null;
     let res = 0;
     if (gk_kickedobj) {
         kickobjnam.name = killer_xname(gk_kickedobj);
@@ -1635,7 +1616,7 @@ export async function dokick() {
             /* C: youmonst.data->cwt + (weight_cap() + inv_weight()); inv_weight()
                stashes weight_cap() in game._wc */
             const iw = inv_weight();
-            let range = (game.youmonst?.data?.cwt ?? WT_HUMAN) + ((game._wc | 0) + iw);
+            let range = (youmonst_data()?.cwt ?? WT_HUMAN) + ((game._wc | 0) + iw);
             if (range < 1) range = 1; /* divide by zero avoidance */
             range = Math.trunc((3 * (mon_cwt(mtmp.data?.pmidx) ?? 0)) / range);
             if (range < 1) range = 1;

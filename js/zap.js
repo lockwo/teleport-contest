@@ -2,7 +2,7 @@
 // C ref: zap.c.  Only the routines whose RNG side-effects are exercised by
 // the gameplay sessions are ported here.
 
-import { Half_physical_damage_hero, Half_spell_damage_hero, Stunned_hero, Drain_resistance_hero, Antimagic_hero, Unchanging_hero } from './youprop.js';
+import { Half_physical_damage_hero, Half_spell_damage_hero, Stunned_hero, Drain_resistance_hero, Antimagic_hero, Unchanging_hero, Levitation_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { ok_to_quest } from './questok.js';
@@ -92,7 +92,7 @@ import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
          restore_cham, unstuck, mongone } from './mon.js';
 import { MON_WEP, is_vampshifter, monflee, Invis as Invis_hero_mm } from './monmove.js';
 import { killed, canspotmon, mon_nam, Monnam, x_monnam,
-         mon_pmname, disguised_as_mon, disguised_as_non_mon } from './uhitm.js';
+         mon_pmname, disguised_as_mon, disguised_as_non_mon, seemimicLocal } from './uhitm.js';
 import { find_mac, which_armor } from './worn.js';
 import { rnd_hallublast } from './mthrowu.js';
 import { Teleport_control_fu } from './trap.js';
@@ -420,7 +420,7 @@ function unpolyable(obj) {
 // C ref: zap.c obj_unpolyable — TRUE if the object resists polymorphing.
 // (uball/uskin are never on the polymorph pile in the covered sessions.)
 function obj_unpolyable(obj) {
-    return unpolyable(obj) || obj_resists(obj, 5, 95);
+    return unpolyable(obj) || obj === game.u?.uball || obj_resists(obj, 5, 95);
 }
 
 // C ref: zap.c obj_shudders — chance an object metamorphoses (system shock)
@@ -464,7 +464,7 @@ async function do_osshock(obj) {
         // splitobj(obj, rnd(quan - 1)): the rnd() plus nextoid()'s trailing
         // next_ident() (an rnd(2) in this port) are both drawn here, and only
         // the split-off part is destroyed — the remainder survives on the floor.
-        target = splitobj_z(obj, rnd(quan - 1));
+        target = splitobj(obj, rnd(quan - 1));
     }
     /* appropriately add damage to bill */
     const shk = await import('./shk.js');
@@ -476,27 +476,6 @@ async function do_osshock(obj) {
     }
     /* zap the object */
     delobj(target); /* obj_resists(obj,0,0) rn2(100) + newsym() */
-}
-
-// C ref: mkobj.c splitobj(obj, num) — peel `num` off a stack into a new object
-// inserted immediately after it in the same chain.  o_id comes from nextoid(),
-// whose trailing next_ident() is this port's only RNG in the function.
-function splitobj_z(obj, num) {
-    const otmp = { ...obj };
-    otmp.o_id = nextoid(obj, otmp);
-    otmp.timed = 0;
-    otmp.lamplit = 0;
-    otmp.owornmask = 0;
-    obj.quan = (obj.quan || 1) - num;
-    obj.owt = weight(obj);
-    otmp.quan = num;
-    otmp.owt = weight(otmp);
-    const arr = game.level?.objects;
-    if (arr && obj.where === OBJ_FLOOR) {
-        const i = arr.indexOf(obj);
-        if (i >= 0) arr.splice(i + 1, 0, otmp); else arr.push(otmp);
-    }
-    return otmp;
 }
 
 // C ref: zap.c poly_obj(obj, id) — replace `obj` with a new object.  If `id` is
@@ -858,9 +837,9 @@ export async function bhito(obj, otmp) {
     if (!(obj.where === OBJ_FLOOR || otmp.otyp === SPE_STONE_TO_FLESH))
         await impossible('bhito: obj is not floor or Stone To Flesh spell');
 
-    if (obj === game.uball) {
+    if (obj === game.u?.uball) {
         res = 0;
-    } else if (obj === game.uchain) {
+    } else if (obj === game.u?.uchain) {
         if (otmp.otyp === WAN_OPENING || otmp.otyp === SPE_KNOCK) {
             learn_it = true;
             const { unpunish } = await import('./read.js');
@@ -885,9 +864,16 @@ export async function bhito(obj, otmp) {
                 await boxlock_pline(obj, otmp);
 
             if (obj_shudders(obj)) {
+                const cover = (pile_at(game.u.ux, game.u.uy)[0] === obj)
+                    && game.u.uundetected
+                    && hides_under_flag(await youmonst_data_z());
+
                 if (cansee(obj.ox, obj.oy))
                     learn_it = true;
                 await do_osshock(obj);
+                /* eek - your cover might have been blown */
+                if (cover)
+                    await (await import('./monmove.js')).hideunder(game.u);
                 break;
             }
             obj = await poly_obj(obj);
@@ -1333,7 +1319,7 @@ async function polyuse(pile, mat, minwt) {
     for (const otmp of pile) {
         if (minwt <= 0) break;
         if (game.context?.bypasses && otmp.bypass) continue;
-        if (otmp === game.uball || otmp === game.uchain) continue;
+        if (otmp === game.u?.uball || otmp === game.u?.uchain) continue;
         if (otmp.where !== OBJ_FLOOR) continue;
         if (obj_resists(otmp, 0, 0)) continue; /* preserve unique objects */
         if (((objects[otmp.otyp]?.material | 0) === mat) === (rn2(minwt + 1) !== 0)) {
@@ -2061,10 +2047,7 @@ function Is_qstart_z() {
     const uz = game.u?.uz, q = game.qstart_level;
     return !!(uz && q && uz.dnum === q.dnum && uz.dlevel === q.dlevel);
 }
-function Levitation_z() {
-    const p = game.u?.uprops;
-    return !!(p?.Levitation || p?.HLevitation || p?.ELevitation);
-}
+function Levitation_z() { return Levitation_hero(); }
 async function zap_updown(obj) {
     const u = game.u;
     let striking = false, disclose = false;
@@ -4594,7 +4577,7 @@ export async function zapyourself(obj, ordinary) {
             await release_hold();
             learn_it = true;
         }
-        if (game.uball) { /* Punished */
+        if (game.u?.uball) { /* Punished */
             learn_it = true;
             const { unpunish } = await import('./read.js');
             unpunish();
@@ -5117,10 +5100,7 @@ function MON_AT_z(x, y) {
 // C ref: mon.c seemimic(mtmp) — stop mimicking; display only, no RNG.
 // js/apply.js:533 keeps a private async copy.
 function seemimic_z(mtmp) {
-    if (!mtmp) return;
-    mtmp.m_ap_type = 0;
-    mtmp.mappearance = 0;
-    newsym(mtmp.mx, mtmp.my);
+    if (mtmp) seemimicLocal(mtmp);
 }
 // C ref: mon.c minliquid(mtmp) is owned by mon.js.
 // C ref: vision.h couldsee(x, y).
@@ -5701,7 +5681,7 @@ export async function revive(corpse, by_hero) {
     else if (cgend === CORPSTAT_FEMALE)
         mmflags |= MM_FEMALE;
 
-    const { makemon, makemon_appears_msg, newcham } = await import('./makemon.js');
+    const { makemon, makemon_appears_msg, newcham_wizard_aware } = await import('./makemon.js');
     const mt = { mtype: montype };
     if (await cant_revive_z(mt, true, corpse)) {
         /* make a zombie or doppelganger instead; note: montype has changed,
@@ -5716,10 +5696,7 @@ export async function revive(corpse, by_hero) {
             if (has_omonst(corpse))
                 free_omonst(corpse);
             if (mtmp.cham === (await PM_('doppelganger'))) {
-                /* change shape to match the corpse.  C: newcham(mtmp, mptr,
-                   NO_NC_FLAGS) — makemon.js's newcham takes no ncflags. */
-                void NO_NC_FLAGS;
-                newcham(mtmp, mptr);
+                await newcham_wizard_aware(mtmp, mptr);
             } else if (mtmp.data?.mcls === S_ZOMBIE_Z) {
                 mtmp.mhp = mtmp.mhpmax = 100;
                 const { mon_adjust_speed } = await import('./muse.js');

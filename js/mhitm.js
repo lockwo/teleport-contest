@@ -39,10 +39,10 @@ import {
     MGIVENNAME, has_mgivenname,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
-    level_specific_nocorpse, vamprises, mon_hates_silver } from './mon.js';
+    level_specific_nocorpse, vamprises, mon_hates_silver, corpse_chance } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared, You_feel } from './display.js';
 import { cansee } from './vision.js';
-import { update_topl, Deaf_hero, Hallucination_u, You_hear } from './display.js';
+import { update_topl, Deaf_hero, Hallucination_u, You_hear, flush_screen } from './display.js';
 import { make_corpse, dmgval, mhitm_knockback, seemimicLocal, shade_miss as shade_miss_mm, canspotmon as mm_can_spot_mon } from './uhitm.js';
 import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
@@ -52,7 +52,9 @@ import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
          M1_THICK_HIDE, M1_WALLWALK, M1_TPORT, is_neuter_flag,
 } from './monflags_data.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag } from './monflags_data.js';
-import { set_mon_data, poly_when_stoned, troll_baned, slimeproof, resists_ston, dmgtype_fromattack } from './mondata.js';
+import { set_mon_data, poly_when_stoned, troll_baned, slimeproof, resists_ston, dmgtype_fromattack,
+    resists_fire as md_resists_fire, resists_cold as md_resists_cold,
+    resists_elec as md_resists_elec, resists_acid as md_resists_acid } from './mondata.js';
 import { G_GENOD, OBJ_FREE, Trap_Killed_Mon } from './const.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { xname, youmonst_data_pub, worn_extrinsic } from './invent.js';
@@ -213,10 +215,11 @@ const AD_PHYS = 0, AD_FIRE = 2, AD_COLD = 3, AD_ELEC = 6, AD_ACID = 8,
 // species instead of silently "resists nothing".
 const MR_FIRE = 0x01, MR_COLD = 0x02, MR_ELEC = 0x10, MR_ACID = 0x40;
 const mm_resists = (mon, bit) => ((permonst(mon)?.mresists ?? 0) & bit) !== 0;
-const mm_resists_fire = (mon) => mm_resists(mon, MR_FIRE);
-const mm_resists_cold = (mon) => mm_resists(mon, MR_COLD);
-const mm_resists_elec = (mon) => mm_resists(mon, MR_ELEC);
-const mm_resists_acid = (mon) => mm_resists(mon, MR_ACID);
+// the hero answers from youmonst's data; monsters via Resists_Elem (worn/carried sources)
+const mm_resists_fire = (mon) => is_youmonst_mm(mon) ? mm_resists(mon, MR_FIRE) : md_resists_fire(mon);
+const mm_resists_cold = (mon) => is_youmonst_mm(mon) ? mm_resists(mon, MR_COLD) : md_resists_cold(mon);
+const mm_resists_elec = (mon) => is_youmonst_mm(mon) ? mm_resists(mon, MR_ELEC) : md_resists_elec(mon);
+const mm_resists_acid = (mon) => is_youmonst_mm(mon) ? mm_resists(mon, MR_ACID) : md_resists_acid(mon);
 
 // C ref: mon->data. Species indices distinguish the human and animal
 // lycanthrope forms, which share a name.
@@ -519,9 +522,13 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
                 await mon_to_stone(magr);
                 return M_ATTK_HIT;              /* no damage during the polymorph */
             }
-            if (gv_vis && mm_can_see_mon(magr))
+            if (gv_vis && mm_can_spot_mon(magr))
                 await emitMMmsg(`${Monnam(magr)} turns to stone!`, magr);
             await monstone_mm(magr);
+            if (!DEADMONSTER(magr))
+                return M_ATTK_HIT;              /* lifesaved */
+            else if (magr.mtame && !gv_vis)
+                await emitMMmsg('You have a peculiarly sad feeling for a moment, then it passes.');
             return M_ATTK_AGR_DIED;
         }
     }
@@ -599,7 +606,8 @@ export async function monkilled_mm(mdef, adtyp, cause = '') {
     let be_sad = false;
     // C: `fltxt != NULL && cansee` prints the death line; a NULL fltxt (the
     // disintegration path) is silent and defers the pet sad feeling.
-    if (cause !== null && cansee(mdef.mx, mdef.my))
+    if (cause !== null && (mdef.wormno ? (await import('./worm.js')).worm_known(mdef)
+                           : cansee(mdef.mx, mdef.my)))
         await emitMMmsg(`${Monnam(mdef)} is ${nonliving(mdef) ? 'destroyed' : 'killed'}${cause ? ` by the ${cause}` : ''}!`, mdef);
     else
         be_sad = !!mdef.mtame;
@@ -609,7 +617,7 @@ export async function monkilled_mm(mdef, adtyp, cause = '') {
     const { completelyburns, completelyrusts, completelyrots } = await import('./mondata.js');
     const disintegested = adtyp === AD_DGST || adtyp === -AD_RBRE
         || (adtyp === AD_FIRE && completelyburns(mdef.data));
-    await killMonster(mdef, !disintegested, be_sad);
+    await killMonster(mdef, !disintegested, be_sad, disintegested);
 
     if (!DEADMONSTER(mdef)) return;          /* life-saved */
     /* extra message if pet golem is completely destroyed; if not visible,
@@ -649,8 +657,15 @@ async function explmm(magr, mdef, mattk) {
     }
 
     if (!(result & M_ATTK_AGR_DIED)) {
+        const was_leashed = !!magr.mleashed;
         await killMonster(magr, false);                /* mondead(magr) */
+        if (!DEADMONSTER(magr))
+            return result; /* life saved */
         result |= M_ATTK_AGR_DIED;
+        /* mondead() -> m_detach() -> m_unleash() always suppresses the
+           m_unleash() slack message, so deliver it here instead */
+        if (was_leashed)
+            await emitMMmsg('Your leash falls slack.');
     }
     if (magr.mtame) await emitMMmsg('You have a melancholy feeling for a moment, then it passes.');
     return result;
@@ -764,73 +779,6 @@ export function attk_protection_mm(aatyp) {
     }
 }
 
-// C ref: mon.c:3181 corpse_chance(mon, magr, was_swallowed).  The rn2(tmp) tail
-// is load-bearing AND its TRUE result triggers make_corpse(), which itself
-// consumes RNG (next_ident + rndmonnum reservoir + corpse timeout) — see
-// killMonster() below.  The guards in front of it decide whether that rn2 is
-// drawn AT ALL, so leaving them out (as this did) picks the wrong modulus for
-// every big/golem/lich/gas-spore victim.
-async function corpse_chance(mdef) {
-    const mdat = permonst(mdef);
-
-    // Vlad and the liches crumble to dust: no corpse, NO rn2.
-    if (mdat?.name === 'Vlad the Impaler' || mdat?.mcls === S_LICH) {
-        const swallowed = !!(game.mswallower && attacktype_at(game.mswallower, AT_ENGL));
-        if (cansee(mdef.mx, mdef.my) && !swallowed)
-            await emitMMmsg(`${s_suffix(Monnam(mdef))} body crumbles into dust.`, mdef);
-        return false;
-    }
-
-    // Gas spores always explode on death.
-    for (const a of mattk_list(mdef)) {
-        if (a[0] !== AT_BOOM) continue;
-        let tmp;
-        if (a[2]) tmp = d(a[2], a[3]);
-        else if (a[3]) tmp = d((mdat?.mlevel ?? 0) + 1, a[3]);
-        else tmp = 0;
-
-        // C ref: mon.c:3189 `if (!magr && gm.mswallower && attacktype(...))
-        // magr = gm.mswallower, was_swallowed = TRUE`.  The port's mswallower
-        // is only ever set by this file's own gulpmm() around an AT_ENGL
-        // mdamagem() call, so magr here is always a monster engulfer, never
-        // the hero (the hero-swallows-a-gas-spore case lives in uhitm.js's
-        // own corpse_chance copy and never touches this global).
-        const swallower = game.mswallower;
-        if (swallower && attacktype_at(swallower, AT_ENGL)) {
-            // mon.c:3209 — a gas spore that dies digested inside an engulfer
-            // contains its own blast instead of detonating: it damages the
-            // swallower directly and draws no further RNG (mon_explodes()
-            // rolls its own independent d(); this branch never calls it).
-            await You_hear('an explosion.');
-            swallower.mhp = (swallower.mhp | 0) - tmp;
-            if (DEADMONSTER(swallower)) await killMonster(swallower);
-            if (DEADMONSTER(swallower)) {
-                if (mm_can_see_mon(swallower))
-                    await emitMMmsg(`${Monnam(swallower)} rips open!`, swallower);
-            } else if (mm_can_see_mon(swallower)) {
-                await emitMMmsg(`${Monnam(swallower)} seems to have indigestion.`, swallower);
-            }
-            return false;
-        }
-
-        const { mon_explodes } = await import('./explode.js');
-        await mon_explodes(mdef, a);
-        return false;
-    }
-
-    if (level_specific_nocorpse(mdat)) return false;
-
-    // bigmonst/lizard/golem/mplayer/rider/shopkeeper always leave one: no rn2.
-    if (((bigmonst(mdat) || mdat?.name === 'lizard') && !mdef.mcloned)
-        || mdat?.mcls === S_GOLEM || is_mplayer(mdat) || is_rider(mdat)
-        || mdef.isshk)
-        return true;
-
-    const tmp = 2 + (((mdat?.geno ?? 0) & G_FREQ) < 2 ? 1 : 0)
-        + (verysmall(mdat) ? 1 : 0);
-    return !rn2(tmp);                         // mon.c:3248
-}
-export { corpse_chance as corpse_chance_mm };
 
 // C ref: monmove.c accessible(x,y) — ACCESSIBLE(typ)==typ>=DOOR && !closed_door.
 function accessible(x, y) {
@@ -846,92 +794,32 @@ function accessible(x, y) {
 // mondead(): no corpse_chance() roll and no corpse.
 export async function mondied_mm(mdef) { return await killMonster(mdef); }
 export async function mondead_mm(mdef) { return await killMonster(mdef, false); }
-async function killMonster(mdef, withCorpse = true, be_sad = false) {
+async function killMonster(mdef, withCorpse = true, be_sad = false, disintegested = false) {
+    /* the deferred pet message is set by minliquid() or monkilled() and is
+       consumed (and printed after lifesaving) by mondead() itself */
+    game.iflags = game.iflags || {};
+    if (be_sad) game.iflags.sad_feeling = true;
     mdef.mhp = 0;
-    // C ref: mon.c:3092-3098 mondead() — life-saving first, then a shapeshifted
-    // vampire reverts to vampire form instead of dying.
-    await lifesaved_monster(mdef);
-    if (!DEADMONSTER(mdef)) return;
-    if (is_vampshifter_mm(mdef)) {
-        game.disintegested = !withCorpse;
-        const rose = await vamprises(mdef);
+    /* C leaves mx,my alone in remove_monster(); worm.js's local copy zeroes
+       them for a long worm's head, so read them before mondead() */
+    const mx0 = mdef.mx, my0 = mdef.my;
+    /* C ref: mon.c:3100 vamprises() reads gd.disintegested (set by monkilled) */
+    game.disintegested = disintegested;
+    const { mondead } = await import('./mon.js');
+    try {
+        await mondead(mdef);
+    } finally {
         game.disintegested = false;
-        if (rose) return;
     }
-    await mvitals_died(mdef);                // mondead restores the true form first
-    // C ref: mon.c:2739 m_detach() — `if (mtmp->mleashed) m_unleash(mtmp, FALSE)`
-    // is its first step: the leash object forgets the dead monster.
-    if (mdef.mleashed) {
-        const { m_unleash } = await import('./apply.js');
-        await m_unleash(mdef, false);
-    }
-    // C ref: mon.c:2744 m_detach() — a light-emitting monster stops being a
-    // light source (delete_ls() sets vision_full_recalc).
-    {
-        const { emits_light, del_light_source, LS_MONSTER } = await import('./light.js');
-        if (mdef.mx > 0 && emits_light(mdef.data)) del_light_source(LS_MONSTER, mdef);
-    }
-    // C ref: mon.c:3100 mondead() — the deferred pet-death message prints
-    // right after the lifesaving check, BEFORE m_detach() and mondied()'s
-    // corpse_chance() rolls (so any --More-- it forces lands ahead of them).
-    if (be_sad) await emitMMmsg('You have a sad feeling for a moment, then it passes.');
-    if (mdef.data?.pmidx === 110 /* PM_STEAM_VORTEX */) {
-        const { create_gas_cloud } = await import('./region.js');
-        await create_gas_cloud(mdef.mx, mdef.my, rn2(10) + 5, 0); /* harmless */
-    }
-    await resurrect_kop(mdef);
-    // C ref: mon.c mondead() — "if (glyph_is_invisible(...)) unmap_object(...)"
-    // runs before m_detach.  A defender killed this same attack may have just
-    // had pre_mm_attack() mark its square with the 'I' remembered-unseen-
-    // monster glyph (attacker spotted, defender not); clear that stale marker
-    // before the corpse/newsym below so the square reverts to its real
-    // remembered contents instead of keeping the 'I'.
-    const loc0 = game.level?.at(mdef.mx, mdef.my);
-    if (loc0?.invisMon) unmap_object(mdef.mx, mdef.my);
-    // C ref: mon.c mondead() -> m_detach() -> mon_leaving_level() -> unstuck()
-    // (mon.c:2703), whose re-grab rnd(2) precedes mondied()'s corpse_chance().
-    await unstuck(mdef);
-    const mx = mdef.mx, my = mdef.my;
-    // Detach from the level so the renderer (m_at / MON_AT) stops drawing it.
-    // The dead monster's coordinates are intentionally left intact: mattackm
-    // still consults them for the post-attack passivemm adjacency guard (which
-    // returns early for a dead defender anyway, so no extra RNG is drawn), and
-    // make_corpse() places the cadaver at those same coordinates.
-    // C ref: mon.c mon_leaving_level() — a long worm's tail squares leave the
-    // map grid together with its head (remove_worm), and m_detach() later
-    // wormgone()s the rest.
-    if (mdef.wormno) (await import('./worm.js')).remove_worm(mdef);
-    const list = game.level?.monsters;
-    if (list) {
-        const idx = list.indexOf(mdef);
-        if (idx >= 0) list.splice(idx, 1);
-    }
-    // C ref: mon.c mon_leaving_level() ends with newsym(mx, my), before relobj().
-    if (mx > 0) newsym(mx, my);
-    // C ref: mon.c m_detach() — "death handling for the Wizard needs to take
-    // place even if he is leaving the dungeon alive": wizdeadorgone() rolls
-    // u.udg_cnt = rn1(250, 50) the first time.
-    if (mdef.iswiz) (await import('./wizard.js')).wizdeadorgone();
-    // C ref: mon.c m_detach(due_to_death) -> relobj(mtmp, 1, FALSE) — the dead
-    // monster's inventory hits the floor BEFORE the corpse, so it sits under it.
-    { const { relobj } = await import('./dogmove.js'); await relobj(mdef, 1, false); }
-    await (await import('./mon.js')).thiefdead_shkgone(mdef);
-    if (mdef.wormno) (await import('./worm.js')).wormgone(mdef);
-    /* C ref: mon.c m_detach() tail — the hero is thrown from a steed that dies */
-    if (mdef === game.u?.usteed) {
-        const { dismount_steed } = await import('./steed.js');
-        const { DISMOUNT_GENERIC } = await import('./const.js');
-        await dismount_steed(DISMOUNT_GENERIC);
-    }
+    if (!DEADMONSTER(mdef)) return;          /* life-saved or revived */
     // C ref: mon.c:3181 mondied() — corpse_chance() runs AFTER mondead()'s
-    // m_detach() has already dropped the inventory (relobj above).
-    const dropCorpse = withCorpse && await corpse_chance(mdef); // mon.c:3181
-    // C ref: mon.c mondied — make_corpse only when corpse_chance passed AND the
-    // square can hold a corpse (accessible terrain or a pool).
-    // C ref: mon.c:935 make_corpse() ends with newsym(x, y) itself.  With no
-    // corpse nothing more is drawn: mon_leaving_level() and relobj() already
-    // issued their newsym()s (a further one burns display-RNG draws on a
-    // hallucinated object square).
+    // m_detach() has already dropped the inventory.  The dead monster's
+    // coordinates are intentionally left intact (a parked vault guard has
+    // mx == 0, which fails the accessible test below).
+    /* a parked vault guard is the one case where mondead() sets mx to 0 */
+    const mx = mdef.isgd ? mdef.mx : mx0, my = mdef.isgd ? mdef.my : my0;
+    const dropCorpse = withCorpse && await corpse_chance(mdef, null, false); // mon.c:3181
+    // make_corpse() ends with newsym(x, y) itself.
     if (dropCorpse && mx > 0 && my >= 0 && (accessible(mx, my) || is_pool(mx, my)))
         await make_corpse(mdef, mx, my);
 }
@@ -1238,7 +1126,7 @@ export async function mdisplacem(magr, mdef, quietly) {
     mdef.mstrategy = (mdef.mstrategy || 0) & ~STRAT_WAITMASK;
     if (mdef.meating) mdef.meating = 0;
 
-    const vis = mm_can_see_mon(magr) && mm_can_see_mon(mdef);
+    const vis = gv_vis = (mm_can_spot_mon(magr) && mm_can_spot_mon(mdef));
 
     // C ref: mhitm.c:224 — displacing a cockatrice bare-handed petrifies magr.
     const pd = permonst(mdef);
@@ -1250,7 +1138,7 @@ export async function mdisplacem(magr, mdef, quietly) {
                 await mon_to_stone(magr);
                 return M_ATTK_HIT; /* no damage during the polymorph */
             }
-            if (!quietly && mm_can_see_mon(magr)) {
+            if (!quietly && mm_can_spot_mon(magr)) {
                 if (vis)
                     await emitMMmsg(`${Monnam(magr)} tries to move ${mon_nam(mdef)} out of ${is_rider(pa) ? 'the' : mhis(magr)} way.`);
                 await emitMMmsg(`${Monnam(magr)} turns to stone!`, magr);
@@ -1290,6 +1178,7 @@ export async function mdisplacem(magr, mdef, quietly) {
     }
     newsym(fx, fy);
     newsym(tx, ty);
+    await flush_screen(0); /* make sure it shows up */
     return M_ATTK_HIT;
 }
 
@@ -1765,14 +1654,14 @@ export async function gazemm(magr, mdef, mattk) {
         const { Adjmonnam } = await import('./do_name.js');
         buf = `${altmesg ? Adjmonnam(magr, 'blinded') : Monnam(magr)} gazes ${
             altmesg ? 'toward' : 'at'}`;
-        await emitMMmsg(`${buf} ${mm_can_see_mon(mdef) ? mon_nam(mdef)
-                                                       : 'something'}...`);
+        await emitMMmsg(`${buf} ${mm_can_spot_mon(mdef) ? mon_nam(mdef)
+                                                        : 'something'}...`);
     }
 
     if (magr.mcan || !mdef.mcansee
         || (archon ? resists_blnd_mm(mdef) : !magr.mcansee)
         || (magr.minvis && !perceives_flag(permonst(mdef))) || mdef.msleeping) {
-        if (gv_vis && mm_can_see_mon(mdef))
+        if (gv_vis && mm_can_spot_mon(mdef))
             await emitMMmsg('but nothing happens.');
         return M_ATTK_MISS;
     }
@@ -1891,13 +1780,13 @@ export async function gulpmm(magr, mdef, mattk) {
     }
 
     if (is_vampshifter_mm(mdef)
-        && newcham(mdef, monster_by_pmidx(mdef.cham))) {
+        && await newcham_wizard_aware(mdef, monster_by_pmidx(mdef.cham))) {
         if (gv_vis) {
             /* 'it' -- previous form is no longer available and
                using that would be excessively verbose */
             await emitMMmsg(`${Monnam(magr)} expels ${
-                mm_can_see_mon(mdef) ? 'it' : 'something'}.`);
-            if (mm_can_see_mon(mdef)) {
+                mm_can_spot_mon(mdef) ? 'it' : 'something'}.`);
+            if (mm_can_spot_mon(mdef)) {
                 const { x_monnam } = await import('./uhitm.js');
                 await emitMMmsg(`It turns into ${
                     x_monnam(mdef, /*ARTICLE_A*/ 2, null,

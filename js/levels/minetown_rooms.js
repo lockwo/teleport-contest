@@ -78,7 +78,7 @@ function mt_subroom(A, parent, x, y, w, h, typeName, lit, chance = 100) {
     // lspo_room's `filled` defaults to 1 outside themerooms; fill_special_room
     // ignores OROOM anyway, and FILL_NONE keeps our fill_ordinary_room loop
     // (which C's des finalize does not run) off the plain rooms.
-    sub.needfill = (rtype === OROOM) ? FILL_NONE : FILL_NORMAL;
+    sub.needfill = FILL_NORMAL;      // lspo_room: filled defaults to 1
     sub.needjoining = true;
     return sub;
 }
@@ -139,7 +139,7 @@ async function mt_room(A, contents) {
     const croom = game.level.rooms[game.level.nroom - 1];
     if (!croom) return;
     A.topologize(croom);
-    croom.needfill = FILL_NONE;
+    croom.needfill = FILL_NORMAL;   // lspo_room: filled defaults to 1
     if (contents) await contents(croom);
     add_doors_to_room(croom);
 }
@@ -203,7 +203,7 @@ async function mt_build(mainW, body) {
         const town = okmain ? g.level.rooms[g.level.nroom - 1] : null;
         if (town) {
             A.topologize(town);
-            town.needfill = FILL_NONE;
+            town.needfill = FILL_NORMAL;
             await body(A, town, align);
             add_doors_to_room(town);
         }

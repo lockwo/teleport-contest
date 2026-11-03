@@ -36,7 +36,7 @@ import {
 } from '../selvar.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_level_extends, level_flip_extents, selection_match,
-    set_levltyp_lit, splev_map_at, splev_map_mark, splev_map_origin,
+    sel_set_ter, splev_map_at, splev_stairway_site, splev_map_origin,
     splev_map_reset,
 } from '../sp_lev.js';
 import { maketrap, t_at } from '../trap.js';
@@ -337,7 +337,7 @@ export function wiz_hell_tweaks(protected_area) {
         l_selection_iterate(bwalls, splev_map_origin(), (x, y) => pts.push({ x, y }));
         for (const p of pts) {
             const c = wiz_loc(p.x, p.y);
-            set_levltyp_lit(c.x, c.y, ROOM, SET_LIT_NOCHANGE);
+            sel_set_ter(c.x, c.y, { ter: ROOM, tlit: SET_LIT_NOCHANGE });
             mksobj_at(BOULDER, c.x, c.y, true, true);
         }
     }
@@ -357,7 +357,7 @@ export function wiz_hell_tweaks(protected_area) {
 
 // C ref: sp_lev.c lspo_terrain() over a selection — des.terrain(sel, "X").
 function wiz_terrain_sel(sel, typ) {
-    selection_iterate(sel, (x, y) => set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE));
+    selection_iterate(sel, (x, y) => sel_set_ter(x, y, { ter: typ, tlit: SET_LIT_NOCHANGE }));
 }
 
 // C ref: nhlsel.c l_selection_setpoint() called as sel:set() — a random
@@ -551,6 +551,7 @@ export function wiz_ladder(up, mx, my) {
     const c = wiz_loc(mx, my);
     const g = game;
     if ((g.u?.uz?.dlevel ?? 1) === (up ? 1 : dunlevs_in_dungeon(g.u?.uz))) return;
+    splev_stairway_site(c.x, c.y);
     const loc = g.level?.at(c.x, c.y);
     if (loc) { loc.typ = LADDER; loc.ladder = up ? LA_UP : LA_DOWN; }
     wiz_stairway_add(c.x, c.y, up, true, {
@@ -559,7 +560,6 @@ export function wiz_ladder(up, mx, my) {
     });
     if (up) { if (g.level) g.level.upstair = { x: c.x, y: c.y }; }
     else if (g.level) g.level.dnstair = { x: c.x, y: c.y };
-    splev_map_mark(c.x, c.y);
 }
 
 // ── wall properties ─────────────────────────────────────────────────────

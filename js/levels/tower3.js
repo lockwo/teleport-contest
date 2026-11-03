@@ -9,8 +9,9 @@ import {
 } from '../const.js';
 import { In_hell, level_difficulty } from '../dungeon.js';
 import { game } from '../gstate.js';
-import { enexto_spawn, makemon, mm_mon_at,
-         monster_by_pmidx, name_to_pmidx } from '../makemon.js';
+import { makemon, mm_mon_at,
+         monster_by_pmidx, name_to_pmidx  } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { rn2, rnd } from '../rng.js';
 import { Can_fall_thru, maketrap } from '../trap.js';
 import {
@@ -55,7 +56,7 @@ function tower_create_monster_random(mx, my) {
     if (mx != null) { x = q_absx(mx); y = q_absy(my); }
     else { const c = bigrm_get_location_dry(); x = c.x; y = c.y; }
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, null);
+        const cc = enexto_gpflags(x, y, null, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(null, x, y, 0);

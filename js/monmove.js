@@ -9,7 +9,7 @@
 // to richer monster behavior without per-seed special cases.
 
 import { PLNMSG_HIDE_UNDER, FACE } from "./const.js";
-import { Fumbling_hero, Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, Invis_hero } from './youprop.js';
+import { Fumbling_hero, Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, Invis_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -63,7 +63,7 @@ import {
     NOGARLIC, IS_ALTAR, In_endgame, HEADSTONE, u_at,
     STAIRS, LADDER, IRONBARS, SINK, WEB, LAVAWALL, IS_WATERWALL,
     Is_airlevel, Is_waterlevel, Is_earthlevel, Is_firelevel, ALLOW_ALL, W_NONDIGGABLE,
-    POOL, MOAT, WATER, DRAWBRIDGE_UP, LAVAPOOL, DB_UNDER, DB_MOAT, DB_LAVA,
+    POOL, MOAT, WATER, DRAWBRIDGE_UP, LAVAPOOL, DB_UNDER, DB_MOAT, DB_LAVA, db_under_typ,
     STRAT_CLOSE, STRAT_WAITFORU, STRAT_WAITMASK, STRAT_APPEARMSG,
     TELEP_TRAP, LEVEL_TELEP, MAGIC_PORTAL, ANTI_MAGIC, POLY_TRAP, ACCESSIBLE,
     ALLOW_MDISP, ALLOW_TM, NORMAL_SPEED, TEMPLE, ROOMOFFSET,
@@ -82,12 +82,12 @@ import { COIN_CLASS, ROCK, ROCK_CLASS, GOLD_PIECE, GEM_CLASS, CORPSE, EGG, ARROW
     GLOB_OF_GREEN_SLIME, SCR_SCARE_MONSTER, AMULET_OF_STRANGULATION, mksobj_at,
     clear_dknown, remove_object, disturb_buried_zombies } from './mkobj.js';
 import { t_at, t_missile, Can_fall_thru, maketrap, clamp_hole_destination, trapname, seetrap, fill_pit, deltrap } from './trap.js';
-import { gettrack } from './track.js';
+import { gettrack, hastrack } from './track.js';
 import { find_mac as worn_find_mac, which_armor } from './worn.js';
 import { mvitals_died, DEADMONSTER, healmon, base_mmove, curr_mon_load,
     max_mon_load, can_carry as mon_can_carry, can_touch_safely,
     Protection_from_shape_changers, new_were_pub, were_summon, sensemon, unstuck,
-    wake_nearto_core } from './mon.js';
+    wake_nearto_core, corpse_chance, mon_hates_silver as mon_hates_silver_mon } from './mon.js';
 import { has_innate } from './exper.js';
 import { regenerates_flag as regenerates_raw, mflags1_of as mflags1_raw,
     mflags2_of as mflags2_raw, mflags3_of as mflags3_raw, msound_of as msound_raw,
@@ -130,10 +130,11 @@ import { level_difficulty } from './dungeon.js';
 // polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
 const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
 import { set_msg_mon, flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel, verbalize } from './display.js';
-import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs } from './worm.js';
-import { mdig_tunnel, may_dig, in_town, holetime, is_digging, watch_dig } from './dig.js';
+import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs, worm_known } from './worm.js';
+import { in_town } from './mkroom.js';
+import { mdig_tunnel, may_dig, holetime, is_digging, watch_dig } from './dig.js';
 import { picking_lock } from './lock.js';
-import { hits_bars, breathwep_name } from './mthrowu.js';
+import { hits_bars, breathwep_name, ucatchgem } from './mthrowu.js';
 import { place_object, next_ident, nextoid, BLINDING_VENOM, ACID_VENOM, VENOM_CLASS, objects as OBJECTS,
     weight, base_oc_weight, BOULDER, HEAVY_IRON_BALL, WEAPON_CLASS, ARMOR_CLASS, FOOD_CLASS,
     AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS, RING_CLASS,
@@ -142,7 +143,7 @@ import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
     calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname,
     carrying as carrying_mm, worn_extrinsic as worn_extrinsic_mm, Aggravate_monster,
     worn_blocked as worn_blocked_mm, splitobj, omon_adj, Tobjnam } from './invent.js';
-import { is_art, touch_artifact_monster, permapoisoned, ART_EXCALIBUR, spec_abon } from './artifact.js';
+import { is_art, touch_artifact_monster, permapoisoned, ART_EXCALIBUR, ART_STORMBRINGER, ART_VORPAL_BLADE, ART_SNICKERSNEE, spec_abon } from './artifact.js';
 import { artifact_light } from './light.js';
 const ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16, LOADSTONE = 471;
 import { obj_resists, sleep_monst, resist, resists_magm } from './zap.js';
@@ -150,7 +151,7 @@ import { obj_resists, sleep_monst, resist, resists_magm } from './zap.js';
 import { resists_fire, resists_acid, resists_sleep, monstseesu, monstunseesu, slimeproof, resists_poison, resists_ston, poly_when_stoned, get_atkdam_type } from './mondata.js';
 import { mon_knows_traps, mon_learns_traps } from './montraps.js';
 import { clear_path, couldsee, cansee, vision_recalc, recalc_block_point, Blind } from './vision.js';
-import { mattackm, mdisplacem, corpse_chance_mm } from './mhitm.js';
+import { mattackm, mdisplacem } from './mhitm.js';
 import { hitval, ARWEP, autoreturn_weapon, setmnotwielded, is_wet_towel } from './weapon.js';
 import * as objnam_mod from './objnam.js';
 import { makeplural, vtense } from './plural.js';
@@ -542,7 +543,7 @@ export async function monflee(mtmp, fleetime, first, fleemsg) {
             if (!mtmp.mcanmove || !base_mmove(mtmp)) {
                 await emitU(`${Adjmonnam(mtmp, 'immobile')} seems to flinch.`, mtmp);
             } else if (flees_light(mtmp)) {
-                if (game.u?.Unaware) {
+                if (Unaware()) {
                     await emitU(`${Monnam(mtmp)} is frightened.`, mtmp);
                 } else if (rn2(10) || Deaf_hero()) {
                     /* via flees_light(): uwep (Sunsword) or uarm (gold DS) */
@@ -644,7 +645,8 @@ function onlineu(x, y) {
 // rn1(20,10) (a rider is exempt, but riders never reach move_special here).
 async function m_break_boulder(mtmp, x, y) {
     if (!m_can_break_boulder(mtmp)) return;
-    const otmp = objectsAt(x, y).find((o) => o.otyp === ROCK_BOULDER);
+    /* sobj_at(): the topmost boulder of the pile */
+    const otmp = objectsAt(x, y).reverse().find((o) => o.otyp === ROCK_BOULDER);
     if (!otmp) return;
     if (!is_rider(mtmp.data)) {
         const Deaf = Deaf_hero();
@@ -940,9 +942,9 @@ export function set_apparxy(mtmp) {
                      // for a monster that can ooze or fog its way under it, and
                      // dropping that arm made every vampshifter reject a door
                      // square C accepted (one extra rn2(2*displ+1) pair).
-                     && !(ACCESSIBLE(terrainTyp(mx, my)) && !closed_door_at(mx, my))
-                     && !(closed_door_at(mx, my)
-                          && (can_ooze(mtmp) || can_fog(mtmp))))
+                     && !(accessible(mx, my)
+                          || (closed_door_at(mx, my)
+                              && (can_ooze(mtmp) || can_fog(mtmp)))))
                  || !couldsee(mx, my));
     } else {
         mx = u.ux; my = u.uy;
@@ -1270,7 +1272,7 @@ export function mfndpos(mon, flag) {
             // ...) can't step onto it. Required for the cnt that feeds
             // m_move's rn2(4*(cnt-j)) at monmove.c:1963.
             if (sobj_at_boulder(nx, ny)) {
-                if (!mon_allows_rock(mon)) continue;
+                if (!(flag & ALLOW_ROCK)) continue;
                 info |= ALLOW_ROCK;
             }
             // C ref: mon.c:2339-2344 — a square in direct line with where the
@@ -1297,9 +1299,11 @@ export function mfndpos(mon, flag) {
             // anyway" chance.  Harmless traps are neither avoided nor flagged.
             const ttmp = t_at(nx, ny);
             if (ttmp && ttmp.ttyp > 0 && ttmp.ttyp < TRAPNUM) {
-                // fixed_tele_trap()+hastrack (a hero-used fixed teleport trap) is
-                // not reachable at the contest's diverging points; treat as absent.
-                if (!m_harmless_trap(mon, ttmp)) {
+                // C ref: mon.c:2361 — a fixed-destination teleport trap the hero
+                // has walked over is always acceptable.
+                if (fixed_tele_trap(ttmp) && hastrack(nx, ny)) {
+                    info |= ALLOW_TRAPS;
+                } else if (!m_harmless_trap(mon, ttmp)) {
                     if (!(flag & ALLOW_TRAPS) && mon_knows_traps(mon, ttmp.ttyp))
                         continue;
                     info |= ALLOW_TRAPS;
@@ -1342,6 +1346,11 @@ export function m_avoid_kicked_loc(mtmp, nx, ny) {
 // iron golem) look harmful, so a monster that had learned rust traps dropped
 // three squares from its own mfndpos candidate list and m_move's
 // rn2(4*(cnt-j)) rolled mod 20 where C rolls mod 32.
+// C ref: trap.h fixed_tele_trap(t).
+function fixed_tele_trap(t) {
+    return t.ttyp === TELEP_TRAP && !!t.teledest
+        && isok(t.teledest.x, t.teledest.y);
+}
 function m_harmless_trap(mtmp, ttmp) {
     const ttyp = ttmp.ttyp;
     const mdat = mtmp.data;
@@ -1611,8 +1620,10 @@ function mm_aggression(magr, mdef) {
 // (corpse placement), which deliberately omits the closed-door exclusion.
 // SURFACE_AT's closed-drawbridge case is not modeled.
 export function accessible(x, y) {
-    const typ = terrainTyp(x, y);
+    let typ = terrainTyp(x, y);
     if (typ == null) return false;
+    /* use underlying terrain in front of closed drawbridge (SURFACE_AT) */
+    if (typ === DRAWBRIDGE_UP) typ = db_under_typ(game.level?.at(x, y)?.drawbridgemask ?? 0);
     return typ >= DOOR && !closed_door_at(x, y);
 }
 // C ref: monmove.c cursed_object_at(x, y).
@@ -1632,7 +1643,7 @@ function undesirable_disp(mtmp, x, y) {
         return true;
     }
     if (!accessible(x, y)
-        && !(IS_POOL(terrainTyp(x, y)) && IS_POOL(terrainTyp(mtmp.mx, mtmp.my))))
+        && !(is_pool_at(x, y) && is_pool_at(mtmp.mx, mtmp.my)))
         return true;
     return false;
 }
@@ -1687,6 +1698,8 @@ async function pri_move(priest) {
     let avoid = true;
     if (!priest.mpeaceful || (Conflict() && !resist_conflict(priest))) {
         if (monnear(priest, u.ux, u.uy)) {
+            if (Displaced())
+                await emitU(`Your displaced image doesn't fool ${mon_nam(priest)}!`);
             if (await mattacku(priest, priest.data)) { /* hero died */ }
             return 0;
         } else if ((u.urooms || []).includes(temple)) {  // strchr(u.urooms, temple)
@@ -2186,7 +2199,8 @@ export async function mon_mintrap(mtmp, mintrapflags = 0) {
     // regardless of the escape/step-over checks below.  fixed_tele_trap(trap)
     // would also force it, but that needs trap->teledest, which the JS trap
     // record does not carry, so only the explicit-flag path sets it.
-    const forcetrap = (mintrapflags & FORCETRAP) !== 0;
+    const forcetrap = (mintrapflags & FORCETRAP) !== 0
+        || fixed_tele_trap(trap);
     const forcebungle = (mintrapflags & FORCEBUNGLE) !== 0;
     // C ref: trap.c:3805-3807 — inside Sokoban a level-generated pit/hole/
     // trapdoor is inescapable: C skips BOTH the floor_trigger early return and
@@ -2430,67 +2444,24 @@ async function mon_missile_name(obj) {
 // corpse_chance()'s rn2 and make_corpse()'s next_ident + rndmonnum + corpse
 // timeout are the only draws, matching C's trace.
 export async function mon_kill_leaving(mon, nocorpse) {
+    /* mondead() (mon.js) consumes game.iflags.sad_feeling; nocorpse is
+       C's plain mondead(), otherwise mondied(). */
     mon.mhp = 0;
-    // C ref: mon.c:3092 mondead() -> lifesaved_monster(): a worn amulet of life
-    // saving restores the monster instead of killing it.
-    {
-        const { lifesaved_monster } = await import('./mon.js');
-        await lifesaved_monster(mon);
-        if (mon.mhp > 0) return;
-        // C ref: mon.c:3098 mondead() — a vampire in bat/fog/wolf form reverts
-        // to vampire form instead of dying.
-        const { vamprises } = await import('./mon.js');
-        if (is_vampshifter(mon)) {
-            game.disintegested = !!nocorpse;
-            const rose = await vamprises(mon);
-            game.disintegested = false;
-            if (rose) return;
-        }
+    /* worm.js's local remove_monster() zeroes mx,my (C leaves them alone) */
+    const mx0 = mon.mx, my0 = mon.my;
+    const { mondead } = await import('./mon.js');
+    game.disintegested = !!nocorpse;
+    try {
+        await mondead(mon);
+    } finally {
+        game.disintegested = false;
     }
-    // mondead(): detach the monster so the renderer stops drawing it.  Coords
-    // are left intact for make_corpse() to place the cadaver.
-    const mx = mon.mx, my = mon.my;
-    await mvitals_died(mon);                 // mon.c:3135
-    // C ref: mon.c:3170 mondead() — a remembered 'I' on the square goes first.
-    if (game.level?.at(mx, my)?.invisMon) unmap_object(mx, my);
-    // C ref: mon.c:2739 m_detach() — `if (mtmp->mleashed) m_unleash(mtmp, FALSE)`
-    // comes first: the leash object forgets the dead monster.
-    if (mon.mleashed) {
-        const { m_unleash } = await import('./apply.js');
-        await m_unleash(mon, false);
-    }
-    // m_detach(): a light-emitting monster stops being a light source (which
-    // sets vision_full_recalc, so pline()'s vision flush redraws the dark).
-    {
-        const { emits_light, del_light_source, LS_MONSTER } = await import('./light.js');
-        if (mx > 0 && emits_light(mon.data)) del_light_source(LS_MONSTER, mon);
-    }
-    // C ref: mon.c:2756 m_detach() -> mon_leaving_level(): unstuck(), take the
-    // monster off the map and newsym() its square BEFORE relobj() drops the
-    // inventory (a flooreffects() message in there can --More-- over a screen
-    // that must already show the monster gone).
-    {
-        const { mon_leaving_level } = await import('./mon.js');
-        await mon_leaving_level(mon);
-    }
-    const list = game.level?.monsters;
-    if (list) {
-        const idx = list.indexOf(mon);
-        if (idx >= 0) list.splice(idx, 1);
-    }
-    // C: m_detach() releases inventory before creating the corpse.
-    await relobj(mon, 1, false);
-    // C ref: mon.c:2782-2785 m_detach() — `if (mtmp->m_id == gs.stealmid)
-    // thiefdead()` (the hero's pending afternmv stealarm becomes unstolenarm)
-    // and `if (mtmp->isshk) shkgone(mtmp)`.
-    await (await import('./mon.js')).thiefdead_shkgone(mon);
-    // mondied(): corpse_chance() rolls its rn2; on success (and accessible
-    // terrain) make_corpse() builds the cadaver.  nocorpse (disintegration)
-    // suppresses the cadaver entirely with no corpse_chance roll.
+    if (!DEADMONSTER(mon)) return;                 /* lifesaved or revived */
     if (nocorpse) return;
-    // C ref: mon.c:3181 corpse_chance() — also the Vlad/lich crumble and the
-    // gas-spore AT_BOOM detonation (d(), then mon_explodes()), before the rn2.
-    const dropCorpse = await corpse_chance_mm(mon);         // mon.c:3248 rn2(tmp)
+    const mx = mon.isgd ? mon.mx : mx0, my = mon.isgd ? mon.my : my0;
+    // C ref: mon.c:3181 mondied() — corpse_chance() (also the Vlad/lich crumble
+    // and the gas-spore AT_BOOM detonation, before the rn2) then make_corpse().
+    const dropCorpse = await corpse_chance(mon, null, false);         // mon.c:3248 rn2(tmp)
     if (dropCorpse && mx > 0 && my >= 0 && mon_accessible(mx, my))
         await make_corpse(mon, mx, my);
 }
@@ -2499,7 +2470,7 @@ export async function mon_kill_leaving(mon, nocorpse) {
 // corpse placement; pools also hold corpses but a rock trap is on dry floor.
 function mon_accessible(x, y) {
     const typ = game.level?.at(x, y)?.typ;
-    return typ != null && typ >= DOOR;
+    return (typ != null && typ >= DOOR && !closed_door_at(x, y)) || is_pool_at(x, y);
 }
 
 // C ref: pline_mon(mon,...) -> vpline -> update_topl (topl.c).  A monster-
@@ -2683,7 +2654,10 @@ async function mon_trapeffect_fire_trap(mtmp, trap) {
         if (!DEADMONSTER(mtmp)) {
             mtmp.mhp -= extra_damage;
             if (DEADMONSTER(mtmp)) {
-                await mon_kill_leaving(mtmp, false);
+                const xx = mtmp.mx, yy = mtmp.my;
+                const { monkilled_mm } = await import('./mhitm.js');
+                await monkilled_mm(mtmp, AD_FIRE, '');
+                if (DEADMONSTER(mtmp)) newsym(xx, yy);
                 trapkilled = true;
             }
         }
@@ -2943,7 +2917,8 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             if (in_sight)
                 await pline_mon(mtmp, `${Monnam(mtmp)} falls to pieces!`);
             const xx = mtmp.mx, yy = mtmp.my;
-            await mon_kill_leaving(mtmp, false);
+            const { monkilled_mm } = await import('./mhitm.js');
+            await monkilled_mm(mtmp, AD_RUST, null);   /* monkilled(mtmp, NULL, AD_RUST) */
             if (DEADMONSTER(mtmp)) { newsym(xx, yy); return Trap_Killed_Mon; }
         } else if (mtmp.data?.name === 'gremlin' && rn2(3)) {
             const { split_mon } = await import('./potion.js');
@@ -2957,11 +2932,13 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         // C ref: trap.c:2660 trapeffect_rolling_boulder_trap(), monster branch.
         // Falling into `default:` left the boulder in place AND skipped the
         // launch, so the map and every later vobj_at() disagreed with C.
+        if (m_in_air(mtmp))
+            return Trap_Effect_Finished;
         const in_sight = (mtmp === game.u?.usteed)
             || (cansee(mtmp.mx, mtmp.my) && canseemon_mm(mtmp));
         newsym(mtmp.mx, mtmp.my);
         if (in_sight)
-            await pline_mon(mtmp, `Click!  ${Monnam(mtmp)} triggers `
+            await pline_mon(mtmp, `${!Deaf_hero() ? 'Click!  ' : ''}${Monnam(mtmp)} triggers `
                 + `${trap.tseen ? 'a rolling boulder trap' : 'something'}.`);
         const { launch_obj } = await import('./trap.js');
         const r = await launch_obj(BOULDER, trap.launch.x, trap.launch.y,
@@ -3492,7 +3469,7 @@ function m_easy_escape_pit(mtmp) {
 // skipping this call shifts every later draw on the level.
 export async function mb_trapped(mtmp, canseeit) {
     if (game.flags?.verbose !== false) {
-        if (canseeit && !game.u?.Unaware) {
+        if (canseeit && !Unaware()) {
             await emitU('KABOOM!!  You see a door explode.', mtmp);
         } else if (!Deaf_hero()) {
             await You_hear(`a ${mdistu(mtmp) > 7 * 7 ? 'distant' : 'nearby'} explosion.`);
@@ -3516,7 +3493,12 @@ async function m_move_door(mtmp, ptr, can_open, can_unlock, can_tunnel) {
     // C: IS_DOOR(...) && !passes_walls(ptr) && !can_tunnel  (tunnellers dig
     // through below instead of opening).
     if (!here || !IS_DOOR(here.typ) || passes_walls(ptr) || can_tunnel) return false;
-    const btrapped = (here.doormask & D_TRAPPED) !== 0;
+    let btrapped = (here.doormask & D_TRAPPED) !== 0;
+    /* if mon has MKoT, disarm door trap; no message given */
+    if (btrapped && (await import('./artifact.js')).has_magic_key(mtmp)) {
+        here.doormask &= ~D_TRAPPED;
+        btrapped = false;
+    }
     const verbose = game.flags?.verbose !== false;
     const Deaf = Deaf_hero();
     // canseeit: is the door square visible to the hero?  didseeit caches the
@@ -3787,7 +3769,7 @@ export async function m_move(mtmp) {
 
     // C ref: monmove.c:1776-1800 — a covetous monster attacks whatever monster
     // stands on (or carries) its goal when that is adjacent (dist2 <= 2).
-    if (is_covetous(ptr)) {
+    if (!mtmp.wormno && is_covetous(ptr)) {
         const tx = mtmp.mgoal?.x | 0, ty = mtmp.mgoal?.y | 0;
         const intruder = isok(tx, ty) ? m_at(tx, ty) : null;
         if (intruder && intruder !== mtmp
@@ -3808,7 +3790,7 @@ export async function m_move(mtmp) {
     // lined up with him — the common case in the recorded sessions.  Other
     // returns (-1 "leave to m_move", or a moving result) fall through to the
     // generic path so the existing behaviour is preserved.
-    if (mtmp.isshk || mtmp.isgd || mtmp.ispriest) {
+    if (!mtmp.wormno && (mtmp.isshk || mtmp.isgd || mtmp.ispriest)) {
         const xm = mtmp.isshk ? await shk_move(mtmp)
             : mtmp.isgd ? await (await import('./vault.js')).gd_move(mtmp)
                 : await pri_move(mtmp);
@@ -3823,7 +3805,7 @@ export async function m_move(mtmp) {
         // loot with "Culdaff picks up a food ration."  Guards and priests keep
         // the inline arm below (a vault guard parked at <0,0> must not reach
         // postmov's offmap test).
-        if (mtmp.isshk && (xm === 0 || xm === 1))
+        if ((mtmp.isshk || mtmp.ispriest) && (xm === 0 || xm === 1))
             return await postmov(mtmp, ptr, omx, omy,
                                  xm === 1 ? MMOVE_MOVED : MMOVE_NOTHING,
                                  seenflgs0, can_tunnel, can_unlock, can_open);
@@ -3858,7 +3840,7 @@ export async function m_move(mtmp) {
     // a regular m_move() has nothing to deliver: it announces itself and
     // leaves the game.  mongone() runs mdrop_special_objs(), whose
     // obj_resists() rolls rn2(100) per carried item.
-    if (monsndx_of(ptr) === PM_MAIL_DAEMON) {
+    if (!mtmp.wormno && monsndx_of(ptr) === PM_MAIL_DAEMON) {
         if (!Deaf_hero() && canseemon_mm(mtmp))
             await emitU('"I\'m late!"');
         const { mongone } = await import('./mon.js');
@@ -3870,7 +3852,7 @@ export async function m_move(mtmp) {
     // rn2(5) sits FIRST in C's &&-chain, so a tengu draws it on every m_move
     // whether or not it ends up teleporting; omitting the block dropped one
     // call per tengu turn (seed0360 fakewiz1 step 384, call 14).
-    if (monsndx_of(ptr) === PM_TENGU && !rn2(5) && !mtmp.mcan
+    if (!mtmp.wormno && monsndx_of(ptr) === PM_TENGU && !rn2(5) && !mtmp.mcan
         && !(await (await import('./teleport.js')).tele_restrict(mtmp))) {
         const { rloc, RLOC_MSG } = await import('./teleport.js');
         if (mtmp.mhp < 7 || mtmp.mpeaceful || rn2(2))
@@ -4192,8 +4174,6 @@ export async function m_move(mtmp) {
         // behind, rolling that cloud's rn1(3,4) lifespan) and must therefore come
         // before the position commit below.
         await m_postmove_effect(mtmp);
-        // record track history (most-recent first, length MTSZ)
-        mtmp.mtrack = [{ x: omx, y: omy }, ...mtrack].slice(0, MTSZ);
         mtmp.mx = nix; mtmp.my = niy;
         // C ref: monmove.c:2053 — msg_mon_movement() right after place_monster().
         await msg_mon_movement(mtmp, omx, omy);
@@ -4206,166 +4186,10 @@ export async function m_move(mtmp) {
         // mundetected from the monster's OLD (hiding) square is cleared before
         // postmov's re-hide gate below re-evaluates it on the NEW square.
         await maybe_unhide_at(mtmp.mx, mtmp.my);
-        // C ref: monmove.c postmov() first statement `notice_mon(mtmp)` (this
-        // inline move path stands in for postmov): announce a monster that just
-        // stepped into view.
-        if (game.flags?.spot_monsters)
-            await (await import('./hack.js')).notice_mon(mtmp);
-        // C ref: monmove.c:1485-1506 postmov() — sequencing quirk: the monster
-        // is already committed onto the door square (above) before the door is
-        // dealt with, so a vampshifter currently in wolf/bat form that is about
-        // to squeeze under a closed/locked door needs to become a fog cloud
-        // HERE first (m_move_door()'s own amorphous() check only recognizes a
-        // monster that is ALREADY amorphous, e.g. a real ooze — it never turns
-        // a solid-form vampshifter to fog).  Move back to the old square so the
-        // shape-change message lands there, shift, then move forward again.
-        // Missing this drops newcham()'s newmonhp() draw (makemon.c:1042)
-        // entirely, desyncing the RNG stream from this point on.
-        {
-            const hereDoor = game.level?.at(nix, niy);
-            if (is_vampshifter(mtmp) && !amorphous(mtmp.data)
-                && hereDoor && IS_DOOR(hereDoor.typ)
-                && ((hereDoor.doormask & (D_LOCKED | D_CLOSED)) !== 0)
-                && can_fog(mtmp)) {
-                if (seenflgs0) {
-                    mtmp.mx = omx; mtmp.my = omy;
-                    newsym(nix, niy); newsym(omx, omy);
-                }
-                if (await vamp_shift(mtmp, monster_by_pmidx(MV_PM_FOG_CLOUD), (seenflgs0 & 1) !== 0))
-                    ptr = mtmp.data;
-                if (seenflgs0) {
-                    mtmp.mx = nix; mtmp.my = niy;
-                    newsym(omx, omy); newsym(nix, niy);
-                }
-            }
-        }
-        // Redraw vacated + occupied squares (C: remove/place_monster + newsym).
-        newsym(omx, omy);
-        // C ref: monmove.c postmov() — after a monster moves, mintrap() fires
-        // the trap (if any) at its new square.  This must run BEFORE the new
-        // position is finalized for display so the trap's RNG lands in the
-        // right place in the stream.
-        const trapret = await mon_mintrap(mtmp);
-        // C ref: monmove.c:1510 — `if (trapret == Trap_Killed_Mon || trapret ==
-        // Trap_Moved_Mon) { ...; return MMOVE_DIED; }`.  BOTH outcomes end the
-        // monster's postmov: a monster that fell through a trapdoor is no longer
-        // on this level, so the door-opening / digging / meatmetal / re-hide
-        // (rn2(5)) tail must NOT run for it.  Only checking Trap_Killed_Mon left
-        // a migrated monster drawing one extra hideunder rn2(5) per departure.
-        if (trapret === Trap_Killed_Mon || trapret === Trap_Moved_Mon) {
-            // C ref: monmove.c:1511 — `if (mtmp->mx) newsym(mtmp->mx, mtmp->my)`;
-            // after an rloc the monster is no longer at (nix,niy).
-            if (mtmp.mx) newsym(mtmp.mx, mtmp.my);
-            return MMOVE_DIED;
-        }
-        ptr = mtmp.data; /* C monmove.c:1514 `ptr = mtmp->data; in case mintrap() caused polymorph` */
-        // C ref: monmove.c postmov() — "open a door, or crash through it, if
-        // 'mtmp' can".  The monster has already been stepped onto (nix,niy);
-        // if that square is a door it can open/unlock/smash, do so now and
-        // announce it (pline when spotted, "You see"/"You hear" otherwise).
-        if (await m_move_door(mtmp, ptr, can_open, can_unlock, can_tunnel)) {
-            if (mtmp.mx) newsym(mtmp.mx, mtmp.my);
-            return MMOVE_DIED;
-        }
-        // C handles bars in the same postmov branch as doors.  This feedback is
-        // gameplay-significant: when another message is already pending it
-        // creates the --More-- prompt that keeps the next recorded key from
-        // becoming a command.
-        if (await m_move_bars(mtmp, ptr)) return MMOVE_DONE;
-        // C ref: monmove.c:1644 — possibly dig.  The tunneller has already been
-        // stepped onto its (rock) destination; carve it now.  mdig_tunnel draws
-        // rnd(12) (+rn2(5) for a wall) and may drop a boulder/rock; propagate a
-        // rare trapped-door death as MMOVE_DIED.
-        if (can_tunnel && may_dig(mtmp.mx, mtmp.my)) {
-            const died = await mdig_tunnel(mtmp);
-            if (died) { newsym(mtmp.mx, mtmp.my); return MMOVE_DIED; }
-        }
-        // C ref: monmove.c:1656 — draw the monster at its new square BEFORE the
-        // hideunder block, so a concealing monster that then hides is still shown
-        // on the frame captured by hideunder()'s "You see ... slither under ..."
-        // --More-- (its own newsym runs afterwards and removes it).
-        if (engulfing_u(mtmp) && (mtmp.mx !== omx || mtmp.my !== omy)) {
-            const { u_on_newpos } = await import('./dungeon.js');
-            game.u.ux0 = game.u.ux;
-            game.u.uy0 = game.u.uy;
-            await u_on_newpos(mtmp.mx, mtmp.my);
-            await swallowed(0);
-        } else {
-            newsym(nix, niy);
-        }
-        // C ref: monmove.c postmov():1660-1681 — after the move (mmoved==MOVED),
-        // if a grabbable object lies on the new square the monster picks it up
-        // via mpickstuff().  This is THE turn a gnome/dwarf loots the gem it
-        // stepped onto (goal was redirected there by m_search_items); without it
-        // the item lingers and the monster re-detects it underfoot every future
-        // turn, sitting still forever instead of moving on (seed0030 step-49).
-        // mpickstuff draws no rng here, and it must run BEFORE the hideunder
-        // rn2(5) below to preserve C's postmov ordering.  meatmetal/meatobj
-        // (mon.c:1462/1533) run first, exactly as in C's postmov(): a
-        // metallivorous hostile (rock mole/rust monster/xorn) or gelatinous
-        // cube that just stepped onto an object pile eats/engulfs from it
-        // here, before the mpickstuff loot check.  This is the RNG-relevant
-        // piece — the obj_resists(zap.c:1469) rn2(100) cluster per pile item
-        // (seed0002 step-232: ~20 draws per pass) was previously never
-        // emitted, shifting every subsequent monster-move roll this turn.
-        let pickedUp = false;
-        if (OBJ_AT(mtmp.mx, mtmp.my) && mtmp.mcanmove) {
-            if (metallivorous(ptr)) {
-                if (await meatmetal(mtmp) === 2) { newsym(mtmp.mx, mtmp.my); return MMOVE_DIED; }
-            }
-            if (is_gelatinous_cube(ptr)) {
-                await meatobj(mtmp);
-            }
-            // C ref: monmove.c postmov():1675 — the THIRD eater arm: a purple
-            // worm / ghoul / piranha devours a corpse underfoot.  Missing here,
-            // it left the corpse on the floor forever: m_search_items kept
-            // re-targeting it, and C's "You hear a masticating sound." plus the
-            // delobj obj_resists rn2(100) never fired (bl040 step 1443).
-            if (corpse_eater(ptr)) {
-                const etmp = await meatcorpse(mtmp);
-                if (etmp >= 2) { newsym(mtmp.mx, mtmp.my); return etmp; }
-            }
-            // C ref: monmove.c:1680 — `if (mpickstuff(mtmp)) mmoved = MMOVE_DONE;`
-            // sits in the SAME `OBJ_AT && mcanmove` block as the eater arms above, with
-            // no second OBJ_AT test: a gelatinous cube whose meatobj() just swallowed
-            // the whole pile still reaches mpickstuff(), whose in-shop rn2(25) gate
-            // draws before it finds nothing to take.
-            // Picking an object up SPENDS the monster's turn, so dochug's PHASE FOUR
-            // gate (monmove.c:966) skips mattacku().  Discarding the result let the
-            // same monster loot AND attack in one turn (a phantom "wields" line over
-            // C's "picks up" line).
-            pickedUp = await mpickstuff(mtmp);
-            // C ref: monmove.c:1683 — an invisible monster that just walked
-            // onto an object square is redrawn (a hallucinating hero pays the
-            // random-object display draw again).
-            if (mtmp.minvis) {
-                newsym(mtmp.mx, mtmp.my);
-                if (mtmp.wormno) {
-                    const { see_wsegs } = await import('./worm.js');
-                    see_wsegs(mtmp);
-                }
-            }
-        }
-        // C ref: monmove.c postmov():1690 — maybe_spin_web sits between the
-        // pickup block and the re-hide block, for MMOVE_MOVED and MMOVE_DONE
-        // alike.  Its rn2(1000) fires on every completed spider move.
-        await maybe_spin_web(mtmp);
-        // C ref: monmove.c postmov():1696 — a concealing (M1_CONCEAL) monster or
-        // an eel that just moved re-hides: `if (mtmp->mundetected || (!helpless
-        // && rn2(5))) hideunder(mtmp);`.  The rn2(5) fires whenever the monster
-        // is revealed and not helpless (sleeping/frozen/can't-move).  Reproduce
-        // the roll so the stream stays aligned (the seed4500 step-250 cobras).
-        if (hides_under_pm(ptr) || ptr?.mcls === S_EEL) {
-            // C ref: monmove.c:1696 — `if (mtmp->mundetected || (!helpless(mtmp)
-            // && rn2(5))) hideunder(mtmp);`.  rn2(5) is rolled only when the
-            // monster isn't already hidden and isn't helpless (short-circuit).
-            let doHide = false;
-            if (mtmp.mundetected) doHide = true;
-            else if (!mon_helpless(mtmp) && rn2(5)) doHide = true;
-            if (doHide) await hideunder(mtmp);
-            newsym(nix, niy); // C ref: monmove.c:1698
-        }
-        return pickedUp ? MMOVE_DONE : MMOVE_MOVED;   // C: monmove.c:1680
+        mon_track_add(mtmp, omx, omy);
+        // C ref: monmove.c:2073 — everything after the position commit is postmov().
+        return await postmov(mtmp, ptr, omx, omy, mmoved,
+                             seenflgs0, can_tunnel, can_unlock, can_open);
     }
     // C ref: monmove.c:2064 — a unicorn unable to move may teleport instead.
     if (is_unicorn(ptr) && rn2(2)) {
@@ -4823,6 +4647,8 @@ export async function dochug(mtmp) {
         // then it "break"s out to PHASE FOUR and may still attack.  For the
         // NOMOVES/NOTHING/DONE cases control always falls through to PHASE FOUR.
         if (status === MMOVE_MOVED) {
+            // C ref: monmove.c:936-937 — a confused grabber that wandered off lets go.
+            if (mtmp === game.u?.ustuck && !m_next2u(mtmp)) await unstuck(mtmp);
             // C ref: monmove.c:938 — a grounded monster's tread may wake zombies.
             if (grounded(mdat)) disturb_buried_zombies(mtmp.mx, mtmp.my);
             // C ref: monmove.c:955-957 — a monster that stepped onto a sleeping
@@ -4838,6 +4664,8 @@ export async function dochug(mtmp) {
                 return 0;
             }
         } else {
+            // C ref: monmove.c:926-927 — a vault guard that vanished behaves as dead.
+            if (mtmp.isgd && (DEADMONSTER(mtmp) || mtmp.mx === 0)) return 1;
             // C ref: monmove.c:944-947 — the MMOVE_NOMOVES/NOTHING/DONE arm:
             // "During hallucination, monster appearance should still change -
             // even if it doesn't move."  One random_monster() draw per monster
@@ -4864,7 +4692,7 @@ async function phase_four(mtmp, mdat, status, inrange, nearby, scared, panicattk
     // C ref monmove.c:967 — Standard Attacks.  status != MMOVE_DONE (we never
     // reach that for the modeled monsters) and the monster is hostile.
     if (status !== MMOVE_DONE && (!mtmp.mpeaceful || (Conflict() && !resist_conflict(mtmp)))) {
-        const uhp = u?.uhp ?? 1;
+        const uhp = (u?.Upolyd ? u?.mh : u?.uhp) ?? 1;
         if (((inrange && !scared) || panicattk) && !noattacks(mdat) && uhp > 0) {
             if (await mattacku(mtmp, mdat)) return 1; /* monster died (rare) */
         }
@@ -5456,11 +5284,11 @@ export async function m_consume_obj(mtmp, otmp) {
         healmon(mtmp, otmp.otyp === CORPSE ? 0 : base_oc_weight(otmp), 0);
     if ((otmp.cobj?.length | 0) > 0)
         await meatbox(mtmp, otmp);
-    if (otmp === game.uball) {
+    if (otmp === game.u?.uball) {
         const { unpunish } = await import('./read.js');
         unpunish();
         await delobj_local(otmp);
-    } else if (otmp === game.uchain) {
+    } else if (otmp === game.u?.uchain) {
         const { unpunish } = await import('./read.js');
         unpunish(); /* frees uchain */
     } else {
@@ -5539,7 +5367,7 @@ async function meatmetal(mtmp) {
             continue;
         if (is_metallic(otmp) && !obj_resists(otmp, 5, 95)
             && touch_artifact_monster(otmp, mtmp)) {
-            const vis = canspotmon(mtmp); // canseemon approximation (see uhitm.js)
+            const vis = canseemon_mm(mtmp);
             if (isRustMon && otmp.oerodeproof) {
                 if (vis && verbose) {
                     const { floor_object_name } = await import('./invent.js');
@@ -5606,7 +5434,10 @@ async function meatobj(mtmp) {
         if (otmp.otyp === CORPSE && corpse_touch_petrifies(otmp.corpsenm)
                 && !resists_ston_mon(mtmp)) {
             continue;
-        } else if (otmp.oclass === ROCK_CLASS || otmp.otyp === SCR_SCARE_MONSTER) {
+        } else if (otmp.oclass === ROCK_CLASS
+                   || otmp === game.u?.uball
+                   || otmp === game.u?.uchain
+                   || otmp.otyp === SCR_SCARE_MONSTER) {
             continue;
         } else if (!is_organic(otmp) || obj_resists(otmp, 5, 95)
                    || !touch_artifact_monster(otmp, mtmp)
@@ -6452,7 +6283,8 @@ export async function mattacku(mtmp, mdat) {
             // C ref mhitu.c:803 — a weapon-wielding monster balks at punching a
             // petrifying hero; !touch_petrifies(hero) is TRUE for every role the
             // contest plays, so the guard passes.
-            if (!range2) {
+            if (!range2 && (!MON_WEP(mtmp) || mtmp.mconf || Conflict()
+                            || !['cockatrice', 'chickatrice'].includes(youmonst_data_mm()?.name))) {
                 if (foundyou) {
                     j = mhitu_dieroll = rnd(20 + i); // mhitu.c:806
                     if (tmp > j) {
@@ -6513,7 +6345,8 @@ export async function mattacku(mtmp, mdat) {
                     tmp += hittmp;
                     // mhitu.c:903 — bash: a polearm used at too-close range
                     // (no ART_SNICKERSNEE reachable here).
-                    const bash = is_pole(mwep) && m_next2u(mtmp);
+                    const bash = is_pole(mwep) && !is_art(mwep, ART_SNICKERSNEE)
+                        && m_next2u(mtmp);
                     await mswings_mm(mtmp, mwep, bash);
                 }
                 j = mhitu_dieroll = rnd(20 + i); // mhitu.c:912
@@ -6679,7 +6512,12 @@ function getmattk(magr, indx, prev_result) {
         }
     } else if (indx === 0 && attk.aatyp === AT_WEAP && attk.adtyp !== AD_PHYS
                && !(list[1]?.aatyp === AT_WEAP && list[1]?.adtyp === AD_PHYS)
-               && magr.mcan) {
+               && (magr.mcan
+                   || (MON_WEP(magr)
+                       && ((MON_WEP(magr).otyp === CORPSE
+                            && corpse_touch_petrifies(MON_WEP(magr).corpsenm))
+                           || is_art(MON_WEP(magr), ART_STORMBRINGER)
+                           || is_art(MON_WEP(magr), ART_VORPAL_BLADE))))) {
         attk.adtyp = AD_PHYS;
         substituted = true;
     } else if (indx === 0 && attk.aatyp === AT_TUCH && attk.adtyp === AD_COLD
@@ -6883,7 +6721,8 @@ const HWEP_PRIORITY = [
 // C ref: objects.h WEAPON()'s `bi` field for the hwep[] entries (the same set
 // js/invent.js keeps for the hero, which it does not export).
 const BIMANUAL_HWEP = new Set([57 /*TSURUGI*/, 71 /*DWARVISH_MATTOCK*/,
-    55 /*TWO_HANDED_SWORD*/, 45 /*BATTLE_AXE*/, 79 /*QUARTERSTAFF*/]);
+    55 /*TWO_HANDED_SWORD*/, 45 /*BATTLE_AXE*/, 79 /*QUARTERSTAFF*/,
+    261 /*UNICORN_HORN: WEPTOOL bi == 1*/]);
 
 // C ref: weapon.c m_carrying(mon, otyp) — the monster's first minvent obj of
 // that type, else null.  Our minvent array is newest-first (mkobj.c:2648
@@ -6908,7 +6747,7 @@ export function select_hwep(mtmp) {
     // C ref: weapon.c:712 — an artifact beats every hwep[] entry.
     for (const o of ((mtmp?.minvent) || [])) {
         if (o.oclass === WEAPON_CLASS && o.oartifact && can_touch_safely(mtmp, o)
-            && ((strong && !wearing_shield) || !BIMANUAL_HWEP.has(o.otyp)))
+            && ((strong && !wearing_shield) || !bimanual_iv(o)))
             return o;
     }
     // C ref: weapon.c:720 — giants love clubs; a balrog reaches for its whip.
@@ -7228,7 +7067,24 @@ export async function thitu(tlev, dam, otmp) {
         monstseesu(M_SEEN_ACID);
         return 1;
     }
-    // C ref: mthrowu.c:146-148 — `if (is_acid) pline("It burns!")` precedes the
+    // C ref: mthrowu.c:128-136 — a stone missile cannot hurt a wall-phasing hero.
+    const { youmonst_data_pub, Hate_silver } = await import('./invent.js');
+    if (otmp && stone_missile(otmp) && passes_rocks(youmonst_data_pub())) {
+        await update_topl('It doesn\'t harm you.');
+        return 1;
+    }
+    // C ref: mthrowu.c:137-142 — a scattered potion shatters on the hero.
+    if (otmp && otmp.oclass === POTION_CLASS) {
+        const { potionhit } = await import('./potion.js');
+        await potionhit(game.youmonst, otmp, 3 /* POTHIT_OTHER_THROW */);
+        return 1;
+    }
+    // C ref: mthrowu.c:144-148 — silver sears a silver-hating hero.
+    if (otmp && OBJECTS[otmp.otyp]?.material === MAT_SILVER && Hate_silver()) {
+        await update_topl('The silver sears your flesh!');
+        exercise(4 /* A_CON */, false);
+    }
+    // C ref: mthrowu.c:149-152 — `if (is_acid) pline("It burns!")` precedes the
     // losehp() of the venom's damage.
     if (is_acid) {
         await update_topl('It burns!');
@@ -7674,6 +7530,11 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         } else if (bx === u.ux && by === u.uy) {
             // hero square: catch attempt, then the hit resolution.
             if (game.multi) (await import('./hack.js')).nomul(0);
+            /* hero might be poly'd into a unicorn */
+            if (singleobj.oclass === GEM_CLASS && await ucatchgem(singleobj, mon)) {
+                await flash_at(bx, by);
+                await flash_end(); game.thrownobj = null; return;  // mthrowu.c:842
+            }
             if (!tethered_weapon && await u_catch_thrown_obj(singleobj)) {
                 await flash_at(bx, by);
                 await flash_end(); game.thrownobj = null; return;  // mthrowu.c:842
@@ -7871,14 +7732,15 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
             if (!dmg) {
                 if (canseemon_mm(magr)) {
                     await pline(`${Tobjnam(otmp, 'return')} back to ${mon_nam(magr)}, landing at ${mhis(magr)} ${makeplural(mbodypart(magr, FOOT))}.`);
-                } else if (!game.u?.Deaf) {
+                } else if (!Deaf_hero()) {
                     await You_hear(`Something land near ${mon_nam(magr)}.`);
                 }
             } else {
                 dmg += rnd(3);
                 if (canseemon_mm(magr)) {
-                    await pline(`${Tobjnam(otmp, 'fly')} back toward ${mon_nam(magr)}, hitting ${mhis(magr)} arm!`);
-                } else if (!game.u?.Deaf) {
+                    const { body_part } = await import('./polyself.js');
+                    await pline(`${Tobjnam(otmp, 'fly')} back toward ${mon_nam(magr)}, hitting ${mhis(magr)} ${body_part(0 /* ARM */)}!`);
+                } else if (!Deaf_hero()) {
                     await You_hear(`something hit ${mon_nam(magr)} with a thud!`);
                 }
                 hits_thrower = true;
@@ -7888,7 +7750,7 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
     } else {
         /* it didn't make it back to thrower's location */
         if (tethered_weapon) await tf?.end(false);
-        if (!game.u?.Deaf) await You_hear('a loud snap!');
+        if (!Deaf_hero()) await You_hear('a loud snap!');
         notcaught = true;
     }
     if (otmp) {
@@ -7960,7 +7822,8 @@ function m_throw_single(mon, otmp) {
     // monster's own later death-drop), collapsing two floor piles the C
     // engine keeps separate.
     const singleobj = { ...otmp, quan: 1, owornmask: 0, o_id: newid,
-                         where: OBJ_FREE, _split_from: otmp };
+                         where: OBJ_FREE, ocarry: null, ocontainer: null,
+                         _split_from: otmp };
     singleobj.owt = weight(singleobj);
     // C ref: mthrowu.c:615-616 — see the twin comment in the quan<=1 branch
     // above; splitobj() copies dknown from the parent stack, so without this
@@ -8109,7 +7972,7 @@ const BIMANUAL_RWEP = new Set([63, 64, 61, 68, 65, 60, 67, 62, 69, 70, 66, 59]);
 
 // C ref: weapon.c:471 oselect(mtmp, x) — the first minvent object of type x the
 // monster may use: a CORPSE/EGG only if it petrifies on touch, and never an
-// artifact it cannot handle (no monster in reach carries one).
+// object it cannot touch safely (silver for a silver-hater, artifacts, ...).
 // Our minvent array is newest-first (mkobj.c:2648 add_to_minv prepends,
 // matched by every producer), so "first" is simply index order.
 function oselect_mm(mtmp, otyp) {
@@ -8120,21 +7983,13 @@ function oselect_mm(mtmp, otyp) {
             && !(o.corpsenm != null && o.corpsenm >= 0
                  && corpse_touch_petrifies(o.corpsenm)))
             continue;
-        if (o.oartifact) continue;
+        if (!can_touch_safely(mtmp, o)) continue;
         return o;
     }
     return null;
 }
-// C ref: mondata.h hates_silver(ptr) / mondata.c mon_hates_silver(mon).  The
-// mon_hates_material() half needs the per-monster material aversion table.
-function mon_hates_silver(mon) {
-    const ptr = permonst_of(mon?.data);
-    if (!ptr) return false;
-    const mcls = ptr.mcls;
-    return is_were_flag(ptr) || mcls === S_VAMPIRE || is_demon(ptr)
-        || monsndx_of(ptr) === PM_SHADE
-        || (mcls === S_IMP && monsndx_of(ptr) !== PM_TENGU);
-}
+// C ref: mondata.c mon_hates_silver(mon) — mon.js owns it (vampshifters too).
+function mon_hates_silver(mon) { return mon_hates_silver_mon(mon); }
 
 // C ref: weapon.c:568 select_rwep(mtmp) — pick a ranged weapon/ammo to loose and
 // set gp.propellor (mirrored here as _propellor) to the launcher that fires it
@@ -8269,7 +8124,7 @@ export function m_lined_up(mtmp) {
     // declines to block; the draw, not the return value, is what desyncs.
     if (u?.Upolyd) {
         const conceal = rn2(25);
-        const ap = M_AP_TYPE(game.youmonst);      // M_AP_NOTHING == 0
+        const ap = hero_ap_type();                // U_AP_TYPE; M_AP_NOTHING == 0
         if (conceal && (u.uundetected
                         || (ap !== M_AP_NOTHING && ap !== M_AP_MONSTER)))
             return false;
@@ -8545,13 +8400,15 @@ export function canseemon_mm(mtmp) {
     if (!mtmp) return false;
     // C ref: display.h canseemon() / vision.c:545 -- while swallowed the hero
     // sees nothing (viz_array is all zero), the engulfer included.
-    if (mtmp.minvis && !game.u?.see_invis) return false;
+    if (mtmp.minvis && !See_invisible_hero()) return false;
     // C ref: display.h _mon_visible() — `(!minvis || See_invisible) && !mundetected`.
     if (mtmp.mundetected) return false;
     // C ref: display.h _canseemon() — `cansee(mx, my) || see_with_infrared(mon)`.
     // The infravision half is what lets a non-human hero (dwarf/gnome/orc/elf)
     // see a warm-blooded monster on an unlit square that is still in line of
     // sight; omitting it silently suppressed those monsters' messages.
+    // C ref: display.h canseemon() — a long worm is seen if any segment is.
+    if (mtmp.wormno) return !!worm_known(mtmp);
     return !!cansee(mtmp.mx, mtmp.my) || see_with_infrared(mtmp);
 }
 
@@ -8627,7 +8484,11 @@ async function hitmu(mtmp, mdat, mattk) {
 
     if (mhm.done) return mhm.hitflags;    // mhitu.c:1196
 
-    // already-dead short-circuit (uhp<1) not reachable: damage is applied below.
+    // C ref: mhitu.c:1199 — already dead (hp < 1)? mdamageu() rehumanizes or ends the game.
+    if ((game.u.Upolyd ? game.u.mh : game.u.uhp) < 1) {
+        await mdamageu(mtmp, 1);
+        mhm.damage = 0;
+    }
 
     // Negative-AC damage reduction (mhitu.c:1208): the starter heroes here have
     // uac >= 0, so no rnd(-uac) roll.  Guarded to stay faithful if uac<0.
@@ -8639,7 +8500,11 @@ async function hitmu(mtmp, mdat, mattk) {
 
     if (mhm.damage > 0) {
         /* [Half_physical_damage isn't applied to mhm.permdmg] */
-        if (mv_Half_physical_damage())
+        if (mv_Half_physical_damage()
+            /* Mitre of Holiness, even if not currently blessed */
+            || (game.urole?.mnum === 6 /* Role_if(PM_CLERIC) */ && game.uarmh
+                && (await import('./questpgr.js')).is_quest_artifact(game.uarmh)
+                && (await import('./weapon.js')).mon_hates_blessings(mtmp)))
             mhm.damage = Math.trunc((mhm.damage + 1) / 2);
         if (mhm.permdmg) { /* Death's life force drain */
             // C ref: mhitu.c:1222-1252 — apply some of the damage to permanent
@@ -8750,7 +8615,7 @@ export async function dochugw(mtmp, chug = true) {
     const LIM = (BOLT_LIM + 1) * (BOLT_LIM + 1);   /* hack.h BOLT_LIM 8 -> 81 */
     const u = game.u || {};
     if (H.occupation_active() && !rd
-        && (Hallucination_dcw() || (!mtmp.mpeaceful && !noattacks(mtmp.data)))
+        && (Hallucination_u() || (!mtmp.mpeaceful && !noattacks(mtmp.data)))
         && mdistu(mtmp) <= LIM
         && (!already_saw_mon || !couldsee(x, y)
             || dist2(x, y, u.ux ?? 0, u.uy ?? 0) > LIM)
@@ -8758,15 +8623,6 @@ export async function dochugw(mtmp, chug = true) {
         && mtmp.mcanmove && !onscary(u.ux, u.uy, mtmp))
         await stop_occupation();
     return rd;
-}
-
-// C ref: youprop.h Hallucination — this port writes the flag under three names
-// (cf. cmd.js:252); read all of them.
-function Hallucination_dcw() {
-    const u = game.u;
-    if (!u) return false;
-    if (u.HHalluc_resistance) return false;
-    return !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -9024,12 +8880,12 @@ export async function mind_blast(mtmp) {
         if (m2 === mtmp) continue;
         if ((telepathic(m2.data) && (rn2(2) || m2.mblinded)) || !rn2(10)) {
             /* wake it up first, to bring hidden monster out of hiding */
-            mv_wakeup(m2, false);
+            await (await import('./uhitm.js')).wakeupAttack(m2, false);
             if (cansee(m2.mx, m2.my))
                 await emitU(`It locks on to ${mon_nam(m2)}.`);
             m2.mhp = (m2.mhp | 0) - rnd(15);
             if (DEADMONSTER(m2))
-                await mon_kill_leaving(m2, false);   /* monkilled(m2,"",AD_DRIN) */
+                await (await import('./mhitm.js')).monkilled_mm(m2, AD_DRIN, '');
         }
     }
 }
@@ -9059,15 +8915,7 @@ function hero_ap_clear() {
 function yd_mm() { return youmonst_data_mm(); }
 function mv_U_AP_TYPE() { return hero_ap_type(); }
 
-// C ref: mon.c wakeup(mtmp, via_attack) reduced to the wake half — this file
-// already has wake_nearto()/setmangry() for the rest; the psychic-blast caller
-// only needs "stop sleeping and stop hiding".
-function mv_wakeup(mtmp, via_attack) {
-    void via_attack;
-    mtmp.msleeping = 0;
-    if (mtmp.m_ap_type !== M_AP_TYPE?.M_AP_NOTHING) { /* no-op for our records */ }
-    if (mtmp.mundetected) { mtmp.mundetected = 0; newsym(mtmp.mx, mtmp.my); }
-}
+
 
 // C ref: monmove.c:1053 itsstuck(mtmp) — the hero is a sticky monster (poly'd
 // into an eel &c) and is holding mtmp, so mtmp cannot move at all.  Note the
@@ -9109,9 +8957,13 @@ const ROOM_TYP = ROOM;
 // C ref: invent.c g_at(x, y) — js/invent.js:3123 exports it, but this file's
 // invent.js import list is an existing line and is left alone.
 function g_at_mv(x, y) {
-    for (const o of (game.level?.objects || []))
+    /* level.objects[x][y] chain is topmost-first; the flat array is deepest-first */
+    const arr = game.level?.objects || [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+        const o = arr[i];
         if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y
             && o.oclass === COIN_CLASS) return o;
+    }
     return null;
 }
 
@@ -9351,8 +9203,8 @@ export async function postmov(mtmp, ptr, omx, omy, mmoved, seenflgs,
         if (trapret === Trap_Killed_Mon || trapret === Trap_Moved_Mon) {
             if (mtmp.mx) newsym(mtmp.mx, mtmp.my);
             return MMOVE_DIED; /* it died */
-        } else if (!mtmp.mx) {
-            return MMOVE_DONE;   /* C: mon_offmap(mtmp) */
+        } else if (mon_offmap(mtmp)) {
+            return MMOVE_DONE;
         }
         ptr = mtmp.data; /* in case mintrap() caused polymorph */
 

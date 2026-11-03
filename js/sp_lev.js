@@ -24,7 +24,7 @@ import {
     SPACE_POS, MATCH_WALL,
     TLCORNER, TRCORNER, BLCORNER, BRCORNER, CROSSWALL,
     TUWALL, TDWALL, TLWALL, TRWALL, DBWALL, IS_ROOM, IS_WALL,
-    TELEP_TRAP, D_SECRET, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_NODOOR,
+    TELEP_TRAP, ICED_POOL, ICED_MOAT, D_SECRET, D_CLOSED, D_ISOPEN, D_LOCKED, D_TRAPPED, D_NODOOR,
     W_ANY, W_RANDOM, IS_OBSTRUCTED, A_NONE, In_endgame,
     AM_SHRINE, AM_SANCTUM, A_LAWFUL,
     IS_STWALL, IS_TREE, IS_LAVA, IS_FURNITURE, W_NONDIGGABLE, W_NONPASSWALL,
@@ -71,10 +71,11 @@ import { mkgold, mksobj, mksobj_at, set_corpsenm, obj_resists_rng,
          GEM_CLASS, COIN_CLASS, stop_object_timer,
          start_object_timer, start_level_timer, stamp_fobj } from './mkobj.js';
 import { monster_by_pmidx, name_to_pmidx, makemon,
-         mkclass, mkclass_aligned, mm_mon_at, enexto_spawn, mongets_pub,
+         mkclass, mkclass_aligned, mm_mon_at, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
          set_mimic_sym, propagate, mpickobj, set_malign,
-         newcham } from './makemon.js';
+         newcham  } from './makemon.js';
+import { enexto_gpflags } from './teleport.js';
 import { level_difficulty } from './dungeon.js';
 import { somexy, inside_room, occupied } from './mkroom.js';
 import { create_gas_cloud_selection, create_gas_cloud } from './region.js';
@@ -92,7 +93,7 @@ import { In_hell, Is_mineend_level, Is_sokoend_level } from './dungeon.js';
 // but kept: removing it would shift detect.js's spot in module eval order.
 // Delete only in a separately-gated change.
 import { premap_detect } from './detect.js';
-import { make_engr_at, make_grave, engr_at, del_engr } from './engrave.js';
+import { make_engr_at, make_grave, engr_at, del_engr, del_engr_at } from './engrave.js';
 import { priestini } from './priest.js';
 import { races } from './roles.js';
 import { match_maptyps,
@@ -324,6 +325,12 @@ export function set_levltyp_lit(x, y, typ, lit) {
     const loc = game.level?.at(x, y);
     if (!loc || typ === INVALID_TYPE || typ >= MAX_TYPE) return false;
     const oldtyp = loc.typ;
+    /* C ref: mkmaze.c set_levltyp() — hack for secret doors in garden theme
+       rooms: typ stays SDOOR, the door just looks like a tree. */
+    if (oldtyp === SDOOR && typ === AIR) {
+        loc.arboreal_sdoor = 1;
+        return true;
+    }
     /* C ref: mkmaze.c set_levltyp() — CAN_OVERWRITE_TERRAIN() refuses to replace a
        staircase or ladder (iflags.debug_overwrite_stairs is off). */
     if (oldtyp === STAIRS || oldtyp === LADDER) return false;
@@ -340,13 +347,6 @@ export function set_levltyp_lit(x, y, typ, lit) {
         else if (lit === SET_LIT_RANDOM) lit = rn2(2);
         loc.lit = !!lit;
     }
-    if (typ === SDOOR) loc.doormask = 0x04;
-    if (typ === HWALL || typ === IRONBARS) loc.horizontal = true;
-    else if (typ === VWALL) loc.horizontal = false;
-    else if (IS_DOOR(typ) && x && game.level?.at(x - 1, y)) {
-        const left = game.level.at(x - 1, y);
-        loc.horizontal = !!(left.horizontal || left.typ === HWALL || left.typ === VWALL);
-    }
     return true;
 }
 
@@ -358,8 +358,24 @@ function selection_setpoint(x, y, sel, value) {
     if (value) sel.push({ x, y });
 }
 
-function sel_set_ter(x, y, terr) {
-    set_levltyp_lit(x, y, terr.ter, terr.tlit);
+// C ref: sp_lev.c:4608 sel_set_ter() — set_levltyp_lit() plus the door /
+// horizontal / icedpool / cloud tail that set_levltyp() itself does not do.
+export function sel_set_ter(x, y, terr) {
+    if (!set_levltyp_lit(x, y, terr.ter, terr.tlit)) return;
+    const loc = game.level.at(x, y);
+    if (loc.typ === SDOOR || IS_DOOR(loc.typ)) {
+        if (loc.typ === SDOOR) loc.doormask = D_CLOSED;
+        if (x) {
+            const left = game.level.at(x - 1, y);
+            if (IS_WALL(left.typ) || left.horizontal) loc.horizontal = true;
+        }
+    } else if (loc.typ === HWALL || loc.typ === IRONBARS) {
+        loc.horizontal = true;
+    } else if (spl.splev_init_present && loc.typ === ICE) {
+        loc.icedpool = spl.icedpools ? ICED_POOL : ICED_MOAT;
+    } else if (loc.typ === CLOUD) {
+        del_engr_at(x, y);   /* clouds cannot have engravings */
+    }
 }
 
 function selection_rndcoord(sel, removeit) {
@@ -380,6 +396,11 @@ function litstate_rnd(litstate) {
 
 export function add_sp_room(lowx, lowy, hix, hiy, lit, rtype, irregular, needfill, joined) {
     const g = game;
+    // C ref: mklev.c do_room_or_subroom(): "locations might bump level edges in wall-less rooms".
+    if (!lowx) lowx++;
+    if (!lowy) lowy++;
+    if (hix >= COLNO - 1) hix = COLNO - 2;
+    if (hiy >= ROWNO - 1) hiy = ROWNO - 2;
     const roomnoidx = g.level.nroom;
     const croom = {
         lx: lowx, ly: lowy, hx: hix, hy: hiy,
@@ -1096,7 +1117,7 @@ function create_ice_room(croom) {
     for (const c of cells) {
         // des.terrain(sel, "I") -> set_levltyp(x,y, ICE); preserve lit state.
         const loc = game.level?.at(c.x, c.y);
-        set_levltyp_lit(c.x, c.y, ICE, loc ? loc.lit : false);
+        sel_set_ter(c.x, c.y, { ter: ICE, tlit: SET_LIT_NOCHANGE });
     }
     if (percent(25)) {
         // ice:iterate walks the selection y-major (nhlsel.c l_selection_iterate),
@@ -1318,7 +1339,7 @@ function create_storeroom(croom) {
                 // from this same iterate loop can land on the same room-relative
                 // cell (e.g. two somexy rolls both == (9,3)), triggering this.
                 if (mm_mon_at(c.x, c.y)) {
-                    const cc = enexto_spawn(c.x, c.y, pm);
+                    const cc = enexto_gpflags(c.x, c.y, pm, 0);
                     if (cc) { c.x = cc.x; c.y = cc.y; }
                 }
                 // C ref: create_monster:1981 — if the (possibly relocated) spot
@@ -1697,34 +1718,10 @@ export function add_doors_to_room(croom) {
         for (let y = croom.ly - 1; y <= croom.hy + 1; y++) {
             const typ = game.level?.at(x, y)?.typ;
             if (typ == null) continue;
-            if (IS_DOOR(typ) || typ === SDOOR) sp_add_door(x, y, croom);
+            if (IS_DOOR(typ) || typ === SDOOR) maybe_add_door(x, y, croom);
         }
     for (let i = 0; i < (croom.nsubrooms || 0); i++)
         add_doors_to_room(croom.sbrooms[i]);
-}
-
-// C ref: mklev.c add_door() — append to the level's door list, keeping each
-// room's doors contiguous from its fdoor index.  No RNG.
-function sp_add_door(x, y, aroom) {
-    const lev = game.level;
-    if (!lev) return;
-    if (!lev.doors) lev.doors = [];
-    if (lev.doorindex == null) lev.doorindex = lev.doors.length;
-    for (let i = 0; i < aroom.doorct; i++) {
-        const d = lev.doors[aroom.fdoor + i];
-        if (d && d.x === x && d.y === y) return;
-    }
-    if (aroom.doorct === 0) aroom.fdoor = lev.doorindex;
-    aroom.doorct++;
-    for (let tmp = lev.doorindex; tmp > aroom.fdoor; tmp--)
-        lev.doors[tmp] = lev.doors[tmp - 1];
-    for (let i = 0; i < lev.nroom; i++) {
-        const broom = lev.rooms[i];
-        if (broom && broom !== aroom && broom.doorct && broom.fdoor >= aroom.fdoor)
-            broom.fdoor++;
-    }
-    lev.doorindex++;
-    lev.doors[aroom.fdoor] = { x, y };
 }
 
 // C ref: sp_lev.c fill_special_room() — fills vaults, zoos, shops, etc.
@@ -2290,7 +2287,7 @@ export function quest_create_monster(name, mx, my, peacefulOverride) {
     if (g_mvflags & G_GONE) ptr = null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
@@ -2315,11 +2312,11 @@ export function quest_create_object(otyp, mx, my, spe, carryingMon) {
     else { const c = bigrm_get_location_dry(); x = c.x; y = c.y; }
     let otmp;
     if (carryingMon) {
-        otmp = mksobj(otyp, true, true);           // not placed on floor
+        otmp = des_object_defaults(mksobj(otyp, true, true));   // not placed on floor
         if (spe != null) otmp.spe = spe;
         mpickobj(carryingMon, otmp);               // add_to_minv(): merges
     } else {
-        otmp = mksobj_at(otyp, x, y, true, true);
+        otmp = des_object_defaults(mksobj_at(otyp, x, y, true, true));
         if (spe != null) otmp.spe = spe;
     }
     return otmp;
@@ -2398,7 +2395,7 @@ export function quest_create_monster_at(name, x, y, peaceful) {
     rn2(3);                                            // induced_align
     let mx = x, my = y;
     if (mm_mon_at(mx, my)) {
-        const cc = enexto_spawn(mx, my, ptr);
+        const cc = enexto_gpflags(mx, my, ptr, 0);
         if (cc) { mx = cc.x; my = cc.y; }
     }
     const mtmp = makemon(ptr, mx, my, 0);
@@ -2429,7 +2426,18 @@ export function quest_create_monster_at(name, x, y, peaceful) {
 // mkstairs() lives in mklev.js, which imports this file, so it arrives through
 // the EXT bridge rather than a direct import (see the EXT header below).
 export function quest_place_stair(mx, my, up) {
-    EXT.mkstairs(q_absx(mx), q_absy(my), up ? 1 : 0, null, true);
+    const x = q_absx(mx), y = q_absy(my);
+    splev_stairway_site(x, y);
+    EXT.mkstairs(x, y, up ? 1 : 0, null, true);
+}
+
+// C ref: sp_lev.c l_create_stairway() after get_location_coord(): a trap on
+// the square is deleted and SpLev_Map[x][y] is marked, whatever kind of
+// stairway follows.
+export function splev_stairway_site(x, y) {
+    const badtrap = t_at(x, y);
+    if (badtrap) deltrap(badtrap);
+    splev_map_mark(x, y);
 }
 
 // The same mkstairs() call for builders that have already worked out an
@@ -2544,7 +2552,7 @@ export function quest_create_monster_randpos(name, peacefulOverride) {
     const c = bigrm_get_location_dry();
     let x = c.x, y = c.y;
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0);
@@ -2629,7 +2637,7 @@ export function quest_create_monster_class(classNum, mx, my) {
     const ptr = mkclass(classNum, ARC_G_NOGEN);
     if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
-    if (mm_mon_at(x, y)) { const cc = enexto_spawn(x, y, ptr); if (cc) { x = cc.x; y = cc.y; } }
+    if (mm_mon_at(x, y)) { const cc = enexto_gpflags(x, y, ptr, 0); if (cc) { x = cc.x; y = cc.y; } }
     const mtmp = makemon(ptr, x, y, 0);
     // C ref: sp_lev.c:2125 — an id-less des.monster keeps tmpmons.female = 0.
     if (mtmp) mtmp.female = 0;
@@ -2728,6 +2736,7 @@ export function tower1_load_map(mapstr, lit, halignLeft = false) {
 export function tower_place_ladder(mx, my, up = false) {
     const x = q_absx(mx), y = q_absy(my);
     const uz = game.u?.uz;
+    splev_stairway_site(x, y);
     const loc = game.level?.at(x, y);
     if (loc) loc.typ = LADDER;
     EXT.stairway_add(x, y, !!up, true,
@@ -3435,53 +3444,29 @@ export function vly_terrain_line(x1, y1, x2, y2, typ) {
     const dx = Math.sign(b.x - a.x), dy = Math.sign(b.y - a.y);
     const n = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
     for (let i = 0; i <= n; i++)
-        set_levltyp_lit(a.x + dx * i, a.y + dy * i, typ, SET_LIT_NOCHANGE);
+        sel_set_ter(a.x + dx * i, a.y + dy * i, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
 // C ref: sp_lev.c lspo_terrain() table form des.terrain({x=,y=,typ=}).  No RNG.
 export function vly_terrain_at(mx, my, typ) {
     const c = vly_abs(mx, my);
-    set_levltyp_lit(c.x, c.y, typ, SET_LIT_NOCHANGE);
+    sel_set_ter(c.x, c.y, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
-// C ref: mklev.c add_door(x, y, aroom).  Kept local to sp_lev.js (rather than
-// imported from mklev.js) because mklev.js already imports this module and a
-// second edge would close an import cycle.  No RNG.
-function splev_add_door(x, y, aroom) {
-    const g = game;
-    if (!g.level.doors) g.level.doors = [];
-    for (let i = 0; i < aroom.doorct; i++) {
-        const d = g.level.doors[aroom.fdoor + i];
-        if (d && d.x === x && d.y === y) return;
-    }
-    if (aroom.doorct === 0) aroom.fdoor = g.level.doorindex;
-    aroom.doorct++;
-    for (let tmp = g.level.doorindex; tmp > aroom.fdoor; tmp--)
-        g.level.doors[tmp] = g.level.doors[tmp - 1];
-    for (const broom of g.level.rooms || []) {
-        if (!broom || broom.hx <= 0 || broom === aroom || !(broom.doorct > 0)) continue;
-        if ((broom.fdoor ?? 0) >= aroom.fdoor) broom.fdoor++;
-    }
-    g.level.doors[aroom.fdoor] = { x, y };
-    g.level.doorindex++;
+const splev_add_door = (x, y, aroom) => EXT.add_door(x, y, aroom);
+
+// C ref: sp_lev.c maybe_add_door() (sp_lev.c:1113): offer door x,y to droom when it lies
+// inside a regular room's walls, carries the room's roomno, or borders it.  No RNG.
+export function maybe_add_door(x, y, droom) {
+    if (!droom || !(droom.hx >= 0)) return;
+    const inside = x >= droom.lx - 1 && x <= droom.hx + 1 && y >= droom.ly - 1 && y <= droom.hy + 1;
+    if ((!droom.irregular && inside)
+        || game.level?.at(x, y)?.roomno === droom.roomnoidx + ROOMOFFSET
+        || shared_with_room(x, y, droom))
+        splev_add_door(x, y, droom);
 }
 
-// C ref: sp_lev.c maybe_add_door() / add_doors_to_room() — after a region has
-// become a room, every DOOR/SDOOR square already on the map that belongs to it
-// joins its door list.  No RNG.
-function splev_add_doors_to_room(croom) {
-    const rmno = croom.roomnoidx + ROOMOFFSET;
-    for (let x = croom.lx - 1; x <= croom.hx + 1; x++)
-        for (let y = croom.ly - 1; y <= croom.hy + 1; y++) {
-            const loc = game.level?.at(x, y);
-            if (!loc || !(IS_DOOR(loc.typ) || loc.typ === SDOOR)) continue;
-            const mine = croom.irregular
-                ? (loc.roomno === rmno)
-                : (x >= croom.lx - 1 && x <= croom.hx + 1
-                   && y >= croom.ly - 1 && y <= croom.hy + 1);
-            if (mine || loc.roomno === rmno) splev_add_door(x, y, croom);
-        }
-}
+const splev_add_doors_to_room = (croom) => add_doors_to_room(croom);
 
 // C ref: mklev.c bydoor(x, y) — is any orthogonal neighbour already a door?
 // No RNG.
@@ -3754,6 +3739,21 @@ export function vly_object({ otyp = null, oclass = null, montype = null }) {
     return otmp;
 }
 
+// C ref: sp_lev.c lspo_object(): for id = statue/corpse/egg/tin/figurine the table path always
+// overwrites tmpobj.spe (CORPSTAT flags for statue/corpse, laid_by_you for egg, 0 for a tin or
+// figurine, 1 for a "spinach" tin), and create_object() then stores it over whatever
+// mksobj_init() rolled (statue/corpse gender CORPSTAT_*, tin preparation).  No RNG.
+export function splev_table_spe(otmp, { historic = 0, male = 0, female = 0, montype = null, laid_by_you = 0 } = {}) {
+    if (!otmp) return otmp;
+    const t = otmp.otyp;
+    if (t === STATUE || t === CORPSE)
+        otmp.spe = (historic ? CORPSTAT_HISTORIC : 0) | (male ? CORPSTAT_MALE : 0) | (female ? CORPSTAT_FEMALE : 0);
+    else if (t === otyp_by_name('egg')) otmp.spe = laid_by_you ? 1 : 0;
+    else if (t === otyp_by_name('tin') || t === otyp_by_name('figurine'))
+        otmp.spe = (t === otyp_by_name('tin') && montype === 'spinach') ? 1 : 0;
+    return otmp;
+}
+
 // C ref: sp_lev.c create_object() tail for a plain (non-container) des.object():
 // the default erosion/grease wipe, then stackobj() into an identical pile.
 export function splev_finish_object(otmp) {
@@ -3817,7 +3817,7 @@ export function vly_place_monster(ptr, female = 0) {
         x = c.x; y = c.y;
     }
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
@@ -3918,7 +3918,7 @@ export function splev_terrain_area(mx1, my1, mx2, my2, typ) {
     const a = vly_abs(mx1, my1), b = vly_abs(mx2, my2);
     for (let x = a.x; x <= b.x; x++)
         for (let y = a.y; y <= b.y; y++)
-            set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE);
+            sel_set_ter(x, y, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
 // C ref: sp_lev.c sel_set_feature() — a furniture square is left alone;
@@ -3958,23 +3958,7 @@ export function splev_door_at(state, mx, my) {
 // the des.region that creates the shop, so without this pass the shop has no
 // door at all.  No RNG.
 export function splev_link_doors_rooms() {
-    const g = game;
-    for (let y = 0; y < ROWNO; y++)
-        for (let x = 0; x < COLNO; x++) {
-            const loc = g.level?.at(x, y);
-            if (!loc || !(IS_DOOR(loc.typ) || loc.typ === SDOOR)) continue;
-            set_door_orientation(x, y);
-            for (let i = 0; i < (g.level?.nroom ?? 0); i++) {
-                const croom = g.level.rooms[i];
-                if (!croom || croom.hx < 0) continue;
-                const rmno = croom.roomnoidx + ROOMOFFSET;
-                const mine = croom.irregular
-                    ? (loc.roomno === rmno)
-                    : (x >= croom.lx - 1 && x <= croom.hx + 1
-                       && y >= croom.ly - 1 && y <= croom.hy + 1);
-                if (mine) splev_add_door(x, y, croom);
-            }
-        }
+    link_doors_rooms();
 }
 
 function splev_In_mines() {
@@ -4043,7 +4027,7 @@ export function splev_create_monster({ name = null, cls = 0, mx = null, my = nul
         x = r.x; y = r.y;
     }
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     // C ref: sp_lev.c create_monster:1981 — a (possibly enexto-relocated) spot
@@ -4100,7 +4084,8 @@ export function splev_object_at({ otyp = null, oclass = null, montype = null,
     if (otyp != null) otmp = mksobj_at(otyp, c.x, c.y, true, true);
     else if (oclass != null) otmp = mkobj_at(oclass, c.x, c.y, true);
     else otmp = mkobj_at(0 /* RANDOM_CLASS */, c.x, c.y, true);
-    if (otmp && historic) otmp.spe = 4;
+    if (otmp && otyp != null) splev_table_spe(otmp, { historic });
+    else if (otmp && historic) otmp.spe = 4;
     if (otmp && montype != null) {
         const pmidx = name_to_pmidx(montype);
         if (pmidx >= 0) set_corpsenm(otmp, pmidx);
@@ -4197,7 +4182,7 @@ const EXT_NAMES = [
     'topologize', 'makecorridors', 'mkstairs', 'level_finalize_topology',
     'makeroguerooms', 'induced_align', 'stairway_add', 'wallification',
     'mineralize', 'create_room', 'create_subroom', 'dig_corridor',
-    'maybe_add_door', 'mktrap', 'pick_vibrasquare_location',
+    'mktrap', 'pick_vibrasquare_location', 'add_door',
     // not ported anywhere in js/ yet
     'mkmap', 'mk_roamer', 'mk_mplayer', 'mdrop_special_objs',
     'remove_monster', 'place_monster', 'mongone', 'poly_when_stoned',
@@ -4655,9 +4640,9 @@ export function link_doors_rooms() {
                 for (let tmpi = 0; tmpi < svn_nroom(); tmpi++) {
                     const rm = svr_rooms()[tmpi];
                     if (!rm) continue;
-                    EXT.maybe_add_door(x, y, rm);
+                    maybe_add_door(x, y, rm);
                     for (let m = 0; m < (rm.nsubrooms || 0); m++)
-                        EXT.maybe_add_door(x, y, rm.sbrooms[m]);
+                        maybe_add_door(x, y, rm.sbrooms[m]);
                 }
             }
         }
@@ -4982,10 +4967,10 @@ export function create_monster(m, croom) {
     let x = c.x, y = c.y;
 
     /* try to find a close place if someone else is already there.
-       C: `MON_AT(x,y) && enexto(&cc, x, y, pm)`; this port's enexto_spawn()
+       C: `MON_AT(x,y) && enexto(&cc, x, y, pm)`; this port's enexto_gpflags(, 0)
        is that call, returning the coord or null. */
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, pm);
+        const cc = enexto_gpflags(x, y, pm, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
 
@@ -5050,7 +5035,7 @@ export function create_monster(m, croom) {
                             get_location(rc, DRY, croom);
                             x = rc.x; y = rc.y;
                             if (mm_mon_at(x, y)) {
-                                const cc = enexto_spawn(x, y, pm);
+                                const cc = enexto_gpflags(x, y, pm, 0);
                                 if (cc) { x = cc.x; y = cc.y; }
                             }
                         } while (m_bad_boulder_spot(x, y) && --retrylimit > 0);
@@ -7077,10 +7062,8 @@ export function lspo_gas_cloud(t) {
 }
 
 // C ref: sp_lev.c:4977 lspo_terrain() -- des.terrain().  The existing
-// sel_set_ter() in this file implements set_levltyp_lit() only; C additionally
-// closes a new SDOOR, orients a door against its left neighbour, sets
-// icedpool on ICE and wipes engravings under a CLOUD.  Left as-is here rather
-// than duplicated: fixing it belongs in that function, in its own change.
+// sel_set_ter() closes a new SDOOR, orients a door against its left neighbour, sets
+// icedpool on ICE and wipes engravings under a CLOUD (all in sel_set_ter()).
 export function lspo_terrain(...args) {
     const tmpterrain = { tlit: SET_LIT_NOCHANGE, ter: INVALID_TYPE };
     const xy = { x: 0, y: 0 };

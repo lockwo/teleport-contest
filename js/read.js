@@ -2459,7 +2459,11 @@ export async function drop_boulder_on_player(confused, helmet_protects, byu,
         newsym(u.ux, u.uy);
     }
     // C: losehp(Maybe_Half_Phys(dmg), "scroll of earth", KILLED_BY_AN)
-    if (dmg) await losehp_read(dmg, 'scroll of earth', KILLED_BY_AN);
+    if (dmg) {
+        const { Half_physical_damage_hero } = await import('./youprop.js');
+        await losehp_read(Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg,
+                          'scroll of earth', KILLED_BY_AN);
+    }
 }
 
 // C ref: read.c:2341 drop_boulder_on_monster(x, y, confused, byu).  Same RNG
@@ -2998,7 +3002,7 @@ export async function do_class_genocide() {
             } else if (game.flags?.debug && buf[0] === '*') {
                 const { DEADMONSTER, mongone } = await import('./mon.js');
                 gonecnt = 0;
-                for (const mtmp of [...(game.level?.monsters || [])]) {
+                for (const mtmp of [...(game.level?.monsters || [])].reverse()) { /* fmon newest-first */
                     if (DEADMONSTER(mtmp)) continue;
                     await mongone(mtmp);
                     gonecnt++;

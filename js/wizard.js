@@ -157,8 +157,9 @@ export async function nasty(summoner) {
 
                 const mp = M.monster_by_pmidx(makeindex);
                 if (summoner) {
-                    const spot = M.enexto_spawn(summoner.mux ?? summoner.mx,
-                                                summoner.muy ?? summoner.my, mp);
+                    const { enexto_gpflags } = await import('./teleport.js');
+                    const spot = enexto_gpflags(summoner.mux ?? summoner.mx,
+                                                summoner.muy ?? summoner.my, mp, 0);
                     if (!spot) continue;
                     bypos.x = spot.x; bypos.y = spot.y;
                 }
@@ -352,17 +353,18 @@ const RLOC_MSG = 0x02;
 // C ref: wizard.c:139 M_Wants(mask) == (mtmp->data->mflags3 & (mask)).
 function M_Wants(mtmp, mask) { return (mflags3_of(mdata(mtmp)) & mask) !== 0; }
 // C ref: mkobj.c fobj — every object lying on the level's floor, in chain
-// order.  This port keeps one array per level and tags each entry's location.
+// order (newest placement first; dogmove.js fobj()).  This port keeps one array
+// per level and tags each entry's location.
+import { fobj as fobj_chain } from './dogmove.js';
 function floorObjects() {
-    return (game.level?.objects || []).filter((o) => o.where === OBJ_FLOOR);
+    return fobj_chain().filter((o) => o.where === OBJ_FLOOR);
 }
 // C ref: display.h u_at(x, y).
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
-// C ref: display.h MON_AT(x, y).
+// C ref: display.h MON_AT(x, y) — the m_at() grid (display.js).
+import { m_at as grid_m_at } from './display.js';
 function MON_AT(x, y) {
-    for (const m of monsterList())
-        if (!DEADMONSTER(m) && m.mx === x && m.my === y) return true;
-    return false;
+    return !!grid_m_at(x, y);
 }
 // C ref: hacklib.c isok(x, y).
 function isok_wiz(x, y) { return x >= 1 && x < 80 && y >= 0 && y < 21; }
@@ -400,7 +402,7 @@ export function mon_has_arti(mtmp, otyp) {
 // DEADMONSTER() filter here: C's comment is "no need ... since they have no
 // inventory".
 export function other_mon_has_arti(mtmp, otyp) {
-    for (const mtmp2 of monsterList())
+    for (const mtmp2 of [...monsterList()].reverse()) /* fmon: newest first */
         if (mtmp2 !== mtmp)
             if (mon_has_arti(mtmp2, otyp))
                 return mtmp2;

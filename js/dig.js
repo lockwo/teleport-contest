@@ -12,7 +12,7 @@ import { Invis_hero, Fumbling_hero, Deaf_hero, uteetering_at_seen_pit, uescaped_
 import { rnd, rn2, rn1 } from './rng.js';
 import { align_str } from './role.js';
 import { hard_helmet } from './do_wear.js';
-import { newsym, feel_location, feel_newsym, You_hear, You_feel, show_glyph_cell, flush_screen, verbalize, stairway_at } from './display.js';
+import { newsym, feel_location, feel_newsym, You_hear, You_feel, show_glyph_cell, flush_screen, verbalize, stairway_at, canseemon_shared } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, STOMACH, Unaware, is_pool, is_lava, is_moat, is_pool_or_lava, is_ice } from './const.js';
 import { CLR_WHITE } from './terminal.js';
 import { unblock_point, recalc_block_point, cansee, couldsee, Blind } from './vision.js';
@@ -30,8 +30,8 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { Is_special, ceiling, has_ceiling as has_ceiling_dg, altarmask_at, ledger_no } from './dungeon.js';
-import { inside_room } from './mkroom.js';
+import { ceiling, has_ceiling as has_ceiling_dg, altarmask_at, ledger_no } from './dungeon.js';
+import { in_town } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
 // A stone wall or tree is diggable unless the cell is flagged W_NONDIGGABLE
@@ -56,7 +56,10 @@ function closed_door(x, y) {
 // js/eat.js:1955 metallivorous_hero(): no polyform this port models grants
 // the hero the metal-eating M1_METALLIVORE flag, so this is hardcoded FALSE
 // exactly like the sibling copy.
-function metallivorous_hero_chew() { return false; }
+function metallivorous_hero_chew() {
+    const d = game.u?.data;
+    return !!d && (mflags1_of(d) & M1_METALLIVORE) !== 0;
+}
 
 // C ref: hack.c:646 still_chewing(x, y) — a metallivorous/rock-eating
 // polyform hero (or one wielding no pick but able to tunnel/eat through an
@@ -175,7 +178,7 @@ export async function still_chewing(x, y) {
     } else if (lev.typ === IRONBARS) {
         if (metallivorous_hero_chew()) {
             const nut = base_oc_weight({ otyp: HEAVY_IRON_BALL });
-            u.uhunger = (u.uhunger | 0) + nut; /* C: morehungry(-nut) */
+            await (await import('./eat.js')).morehungry(-nut); /* lump-sum nutrition, no choking */
         }
         digtxt = (u.ux === x && u.uy === y)
             ? 'devour the iron bars.' : 'eat through the bars.';
@@ -659,29 +662,6 @@ export async function zap_dig() {
     return;
 }
 
-// C ref: hack.c:3564 in_town(x, y) — a room WITH subrooms is Mine Town; with no
-// subroomed rooms at all the whole level counts.  Was a `return false` stub, so
-// a tunnelling dwarf inside Mine Town carved CORR where C leaves a doorless
-// DOOR (mdig_tunnel's is_cavernous_lev arm, and the same arm of zap_dig).
-// Duplicated from makemon.js in_town_js()/fountain.js in_town() rather than
-// imported: those two are file-private, and the S_LEVEL `town` flag stands in
-// for svl.level.flags.has_town, which nothing in this port writes.
-export function in_town(x, y) {
-    const lvl = game.level;
-    const slev = Is_special(game.u?.uz);
-    if (!slev || !slev.flags?.town) return false;
-    let has_subrooms = false;
-    for (let i = 0; i < (lvl?.nroom ?? 0); i++) {
-        const sroom = lvl.rooms[i];
-        if (!sroom || (sroom.hx ?? 0) <= 0) break;
-        if ((sroom.nsubrooms ?? 0) > 0) {
-            has_subrooms = true;
-            if (inside_room(sroom, x, y)) return true;
-        }
-    }
-    return !has_subrooms;
-}
-
 // C ref: dig.c dig_typ(otmp, x, y) — what a pick/axe would be working on at
 // <x,y>.  Only a pick digs rock/boulders/statues; only an axe fells a tree;
 // both chop a closed door.  Anything else is DIGTYP_UNDIGGABLE, which is what
@@ -851,7 +831,7 @@ import { does_block, vision_recalc } from './vision.js';
 import { F_WARNED } from './const.js';
 import {
     mflags1_of, M1_FLY, M1_WALLWALK, M1_CLING, M1_CONCEAL, M1_AMORPHOUS,
-    M1_TUNNEL, M1_NEEDPICK, M1_UNSOLID,
+    M1_TUNNEL, M1_NEEDPICK, M1_UNSOLID, M1_METALLIVORE,
 } from './monflags_data.js';
 import {
     IS_THRONE, IS_ALTAR, IS_FOUNTAIN, IS_SINK, IS_GRAVE, IS_FURNITURE,
@@ -1012,10 +992,7 @@ function is_watch_(ptr) {
     const n = ptr?.name || '';
     return n === 'watchman' || n === 'watch captain';
 }
-function canseemon_(mtmp) {
-    if (!mtmp) return false;
-    return cansee(mtmp.mx, mtmp.my) && !mtmp.minvis && !mtmp.mundetected;
-}
+function canseemon_(mtmp) { return canseemon_shared(mtmp); }
 // C ref: mondata.h:35 hides_under(ptr) == ((ptr)->mflags1 & M1_CONCEAL).
 function hides_under_(ptr) { return (mflags1_of(ptr) & M1_CONCEAL) !== 0; }
 
@@ -1109,10 +1086,12 @@ async function angry_guards(silent) {
     return await (await import('./questpgr.js')).angry_guards(silent);
 }
 // C ref: mon.c get_iter_mons(fn) — first monster on the level for which fn()
-// answers TRUE.  js/dokick.js:278 has it, unexported.
+// answers TRUE.  C walks fmon newest-first and skips DEADMONSTER and
+// mon_offmap() (mstate != MON_FLOOR) monsters.
+import { fmonOrder as fmonOrder_dig, DEADMONSTER as DEADMONSTER_dig } from './mon.js';
 function get_iter_mons(fn) {
-    for (const mtmp of (game.level?.monsters || []))
-        if (mtmp && !mtmp.mdead && fn(mtmp)) return mtmp;
+    for (const mtmp of fmonOrder_dig())
+        if (!DEADMONSTER_dig(mtmp) && (mtmp.mstate | 0) === 0 && fn(mtmp)) return mtmp;
     return null;
 }
 // C ref: trap.c xytodir(dx, dy) — index into xdir[]/ydir[], or DIR_ERR.
@@ -1775,7 +1754,8 @@ export async function digactualhole(x, y, madeby, ttyp) {
         const { seetrap } = await import('./trap.js');
         seetrap(ttmp);
     } else if (madeby_u) {
-        ttmp.tseen = 1;                  /* C: feeltrap(ttmp) */
+        const { feeltrap } = await import('./trap.js');
+        feeltrap(ttmp);
     }
 
     const tname = trapname(ttyp, true);
@@ -2613,7 +2593,7 @@ export async function bury_an_obj(otmp, dealloced) {
      * obj_resists(,0,0) prevents Rider corpses from being buried.  It also
      * prevents The Amulet and invocation tools from being buried.
      */
-    if (otmp === game.uchain || obj_resists(otmp, 0, 0)) return otmp2;
+    if (otmp === game.u?.uchain || obj_resists(otmp, 0, 0)) return otmp2;
 
     if (otmp.otyp === LEASH && otmp.leashmon) {
         const { o_unleash } = await import('./apply.js');

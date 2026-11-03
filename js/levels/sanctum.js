@@ -3,13 +3,14 @@
 // shared special-level machinery still lives there and is imported below.
 
 import {
-    AM_NONE, ANTI_MAGIC, A_NONE, COLNO, FILL_NORMAL, FIRE_TRAP, G_GONE, IRONBARS, IS_STWALL,
+    AM_NONE, ANTI_MAGIC, A_NONE, COLNO, FILL_NORMAL, FIRE_TRAP, G_EXTINCT, G_GONE, G_UNIQ, IRONBARS, IS_STWALL,
     IS_TREE, MAGIC_TRAP, MORGUE, ROWNO, SLP_GAS_TRAP, SPIKED_PIT, W_NONPASSWALL,
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
+    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { ARMOR_CLASS, GEM_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
@@ -70,11 +71,14 @@ function sanc_monster(name, mx, my, opts = {}) {
     const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
     const named = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!named) return null;
-    const ptr = (game.mvitals?.[pmidx]?.mvflags & G_GONE) ? null : named;
+    const g_mvflags = (game.mvitals?.[pmidx]?.mvflags) | 0;
+    const ptr = (g_mvflags & G_GONE) ? null : named;
     if (sp_align === null) rn2(3);                // induced_align (dungeon.c:2012)
+    // C ref: sp_lev.c create_monster():1950 -- an extinct unique makes nothing.
+    if ((named.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
     let x = mx, y = my;
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, ptr, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
     // C's G_GONE arm passes NULL to makemon(), starting its rndmonst() scan.

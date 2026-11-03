@@ -14,6 +14,7 @@
 //   - the m_in_out_region / m_digweapon_check arms of newdogpos.
 
 import { game } from './gstate.js';
+import { See_invisible_hero } from './youprop.js';
 import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT, A_NONE, EPRI, EMIN, is_pool, is_lava, LARGEST_INT, OBJ_FLOOR } from './const.js';
 import { an, s_suffix } from './hacklib.js';
 import { rn2, rnd, getRngLog } from './rng.js';
@@ -23,11 +24,11 @@ import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
 import { obj_resists } from './zap.js';
 import { is_quest_artifact } from './questpgr.js';
-import { Deaf_hero, newsym, display_nhwindow_message, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at, You_feel } from './display.js';
+import { canseemon_shared, Deaf_hero, newsym, display_nhwindow_message, vobj_at, object_glyph, see_with_infrared, worm_seg_owner_at, You_feel } from './display.js';
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
-import { floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
+import { splitobj, floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
 import { dist2, mfndpos, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item,
     Conflict, resist_conflict, mattacku, m_digweapon_check, locomotion } from './monmove.js';
@@ -277,10 +278,10 @@ export const PET_REAL_VISION = true;
 
 // C ref: rm.h MON_AT(x,y) — svl.level.monsters[x][y] != 0, which includes a
 // long worm's TAIL squares (worm.c place_worm_seg stores the worm there).
+// display.js m_at() is that grid: it skips dead/detached/ridden monsters.
+import { m_at as grid_m_at } from './display.js';
 function MON_AT(x, y) {
-    for (const m of game.level?.monsters || [])
-        if (m.mx === x && m.my === y && !(m.mhp != null && m.mhp <= 0)) return m;
-    return worm_seg_owner_at(x, y) || false;
+    return grid_m_at(x, y) || false;
 }
 
 // C ref: rm.h levl[x][y].typ + the object chain at a square.
@@ -879,7 +880,7 @@ async function dog_invent(mtmp, edog, udist) {
                         // the object into the pet's minvent (mpickobj, no RNG).
                         let otmp = obj;
                         if (carryamt !== (obj.quan || 1))
-                            otmp = pet_splitobj(obj, carryamt);
+                            otmp = splitobj(obj, carryamt);
                         // C ref: dogmove.c:451-462 — if the hero can see the pet's
                         // tile, announce the pickup (verbose default) via pline_xy
                         // -> vpline -> update_topl.  doname() is evaluated before the
@@ -1015,31 +1016,6 @@ export async function mdrop_obj(mtmp, obj, verbosely) {
 
 // C ref: monmove.c weapon_check states (mon.h NEED_WEAPON / NEED_HTH_WEAPON).
 const NEED_WEAPON_PET = 1, NEED_HTH_WEAPON_PET = 3;
-
-// C ref: mkobj.c splitobj(obj,num) — split `num` off a stack into a new obj
-// whose o_id comes from nextoid(obj, otmp): the o_id price-parity loop, which
-// can skip context.ident ahead without drawing RNG, then next_ident()'s rnd(2).
-// Both halves are re-weighed:
-// leaving the remainder at the FULL stack weight made curr_mon_load() and
-// can_carry() (and the hero's own burden maths, once the pet drops it) read a
-// weight C no longer assigns.
-// C splitobj() links the new piece into the same nobj/nexthere chains as the
-// original ("obj -> otmp -> next"), so a floor stack's split-off piece is itself
-// a floor object: delobj() of the eaten piece then finds update_map TRUE and
-// newsym()s the square (display-rng draws while hallucinating).
-function pet_splitobj(obj, num) {
-    const split = { ...obj, quan: num };
-    split.o_id = nextoid(obj, split);
-    obj.quan = (obj.quan || 1) - num;
-    obj.owt = weight(obj);
-    split.owt = weight(split);
-    const arr = game.level?.objects;
-    if (arr && obj.where === OBJ_FLOOR) {
-        const i = arr.indexOf(obj);
-        if (i >= 0) arr.splice(i, 0, split);   /* chain order: split sits below obj */
-    }
-    return split;
-}
 
 // Remove an object (or split fragment) from the floor pile.
 function pet_extract_floor(obj) {
@@ -1967,7 +1943,7 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
     // n>1 comestibles is split, which assigns the split piece a fresh o_id via
     // next_ident() -> rnd(2).
     if ((obj.quan || 1) > 1 && obj.oclass === FOOD_CLASS)
-        obj = pet_splitobj(obj, 1);
+        obj = splitobj(obj, 1);
     let objnambuf = '';
     if (obj.unpaid) {
         const { xname } = await import('./invent.js');
@@ -1984,7 +1960,7 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
         // is the monster's own visibility flags (not canseemon(), which tests the
         // pet's NEW square and so lost the message when it moved off-view to eat).
         const sawpet = cansee(x, y)
-            && !(mtmp.minvis && !game.u?.see_invis) && !mtmp.mundetected;
+            && !(mtmp.minvis && !See_invisible_hero()) && !mtmp.mundetected;
         const what = pet_doname(obj, true);
         if (sawpet || (seeobj && canspotmon(mtmp))) {
             // C ref: dogmove.c:286 — a tunneller "digs in" instead of eating.
@@ -2118,16 +2094,7 @@ async function emit_pet_msg(msg, at) {
 // in view and it isn't invisible unless the hero sees invisible).  Used to gate
 // the pet's reluctant-step topline.
 function canseemon(mtmp) {
-    if (!mtmp) return false;
-    if (game.u?.uswallow) return true;
-    if (mtmp.minvis && !game.u?.see_invis) return false;
-    // C ref: display.h _mon_visible() — `(!minvis || See_invisible) && !mundetected`.
-    if (mtmp.mundetected) return false;
-    // C ref: display.h _canseemon() — `cansee(mx, my) || see_with_infrared(mon)`.
-    // The infravision half is what lets a non-human hero (dwarf/gnome/orc/elf)
-    // see a warm-blooded monster on an unlit square that is still in line of
-    // sight; omitting it silently suppressed those monsters' messages.
-    return !!cansee(mtmp.mx, mtmp.my) || see_with_infrared(mtmp);
+    return canseemon_shared(mtmp);
 }
 
 // C ref: mondata.h is_flyer(ptr) = (mflags1 & M1_FLY).  This was a FOUR-entry

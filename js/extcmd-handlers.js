@@ -1067,7 +1067,7 @@ export async function jump(magic) {
     // suppresses both (no --More--, no tip text — cursor goes straight to the
     // hero).  Gated here with the TIP_GETPOS flag (1<<4) so only the first
     // #jump pages the prompt.
-    const TIP_GETPOS = 1 << 4;
+    const TIP_GETPOS = 1 << 3; /* 1 << const.js TIP_GETPOS */
     const tipPending = !!game.flags?.tips && !((game.context?.tips || 0) & TIP_GETPOS);
     if (tipPending) {
         await topl_more();
@@ -1721,8 +1721,9 @@ export async function docallcmd() {
 // there (or under the hero) and offer to call its type.
 async function namefloorobj() {
     const u = game.u;
-    const hides = u.uundetected && game.youmonst?.data
-        && hides_under_flag(game.youmonst.data);
+    const ydata_nf = (await import('./invent.js')).youmonst_data();
+    const hides = u.uundetected && ydata_nf
+        && hides_under_flag(ydata_nf);
     const buf0 = `object on map (or '.' for one ${hides ? 'over' : 'under'} you)`;
     const cc = await getpos(buf0, u.ux, u.uy, null, /*force=*/false,
                             game.flags?.verbose !== false);
@@ -1744,7 +1745,7 @@ async function namefloorobj() {
         ? simpleonames(obj) : (objects[STRANGE_OBJECT]?.name ?? 'strange object');
     const use_plural = (obj.quan ?? 1) > 1;
     if (Hallucination_u()) {
-        const female = !!(u.upolyd ? u.mfemale : game.flags?.female);
+        const female = !!(u.Upolyd ? u.mfemale : game.flags?.female);
         const unames = [
             (female && game.urole?.name?.f) ? game.urole.name.f : game.urole?.name?.m,
             rank_of(rn2_on_display_rng(30) + 1, game.urole?.mnum, female),
@@ -1988,6 +1989,26 @@ function render_container_contents(box) {
     draw_corner_window(lines, maxcol, '--More--', 0);
 }
 
+// C ref: end.c container_contents(box, FALSE, FALSE, TRUE) — an empty box only
+// gets pline("%s is empty.") + display_nhwindow(WIN_MESSAGE, FALSE) (a --More--
+// for the pending line); a non-empty one gets the contents window, which
+// process_text_window() dismisses with " \r\n\033" only.
+async function look_in_container(box, menuUp = false) {
+    if (!(box.cobj && box.cobj.length)) {
+        if (menuUp) await dismiss_invent_screen(); /* in_or_out_menu() was destroyed */
+        box.cknown = 1; /* we're looking at the contents now */
+        await pline(`${capitalize(thesimpleoname(box))} is empty.`);
+        await (await import('./display.js')).display_nhwindow_message();
+        return;
+    }
+    render_container_contents(box);
+    for (;;) {
+        const k = await nhgetch();
+        const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
+        if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+    }
+}
+
 // C ref: use_container() inokay — the hero carries something other than the
 // container itself.
 function inv_other_than(box) {
@@ -2043,6 +2064,8 @@ async function use_container(box, more_containers) {
     let used = 0;
     game._pickup = game._pickup || {};
     game._pickup.sellobj_first = true; // in_container() should call sellobj_state()
+    // C ref: pickup.c use_container() — `if (!u_handsy()) return ECMD_OK;`
+    if (!(await (await import('./pickup.js')).u_handsy())) return 0;
     box.lknown = 1;
     // C ref: pickup.c:3001-3012 — a trapped container goes off instead of
     // opening; the turn is used up even if the trap fails.
@@ -2111,11 +2134,7 @@ async function use_container(box, more_containers) {
                 await explain_container_prompt(!!more_containers);
             } else if (c === ':') {
                 if (!box.cknown) used = 1; // gaining info costs a turn
-                render_container_contents(box);
-                for (;;) {
-                    const k = await nhgetch();
-                    if (k === 32 || k === 13 || k === 10 || k === 27) break;
-                }
+                await look_in_container(box);
             } else {
                 action = c;
                 break;
@@ -2174,14 +2193,7 @@ async function use_container(box, more_containers) {
             if (ch === '-' || ch === '\\') continue;         // redraw with '-' marker
             if (ch === sel[1]) { // ':' look inside
                 if (!box.cknown) used = 1; // gaining info costs a turn
-                render_container_contents(box);
-                // C ref: process_text_window() -> dmore(cw, quitchars): only
-                // " \r\n\033" dismiss the contents window.
-                for (;;) {
-                    const k = await nhgetch();
-                    const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
-                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
-                }
+                await look_in_container(box, true);
                 continue;
             }
             // C ref: '\033' cancels (select_menu -> -1 -> 'q'); ' ', '\n' and '\r'

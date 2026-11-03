@@ -5,18 +5,20 @@
 
 import {
     AM_CHAOTIC, AM_LAWFUL, AM_NEUTRAL, A_CHAOTIC, A_LAWFUL, A_NEUTRAL, A_NONE,
+    G_EXTINCT, G_GONE, G_UNIQ,
     COLNO, CROSSWALL, HWALL, IRONBARS, IS_STWALL, IS_TREE, ROOM, ROWNO, STONE, VWALL,
     W_NONDIGGABLE, W_NONPASSWALL,
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MM_EMIN, enexto_spawn, makemon, mm_mon_at, monster_by_pmidx,
+    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx
 } from '../makemon.js';
+import { enexto_gpflags } from '../teleport.js';
 import { rn2 } from '../rng.js';
 import {
     SET_LIT_NOCHANGE, TEMPLE_RTYPE, splev_find_montype, bigrm_load_map, bigrm_wallification, flip_level,
     vly_flip_dndest, vly_flip_updest, percent, quest_floodfill_match, quest_level_init_solidfill, quest_rndcoord,
-    quest_set_door, set_levltyp_lit, shuffle, splev_map_at, vly_abs, vly_altar,
+    quest_set_door, sel_set_ter, shuffle, splev_map_at, vly_abs, vly_altar,
     vly_region,
 } from '../sp_lev.js';
 import {
@@ -58,14 +60,19 @@ function astral_monster(name, mx, my, opts = {}) {
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     if (sp_align === null) rn2(3);                // induced_align (dungeon.c:2012)
+    // C ref: sp_lev.c create_monster():1947-1953 -- an extinct unique makes no
+    // monster at all; any other gone species falls back to a random one.
+    const g_mvflags = (game.mvitals?.[pmidx]?.mvflags) | 0;
+    if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+    const pm = (g_mvflags & G_GONE) ? null : ptr;
     let x, y;
     if (coord) { x = coord.x; y = coord.y; }      // already absolute (rndcoord)
     else { const c = vly_abs(mx, my); x = c.x; y = c.y; }
     if (mm_mon_at(x, y)) {
-        const cc = enexto_spawn(x, y, ptr);
+        const cc = enexto_gpflags(x, y, pm, 0);
         if (cc) { x = cc.x; y = cc.y; }
     }
-    const mtmp = makemon(ptr, x, y, sp_align !== null ? MM_EMIN : 0);
+    const mtmp = makemon(pm, x, y, sp_align !== null ? MM_EMIN : 0);
     if (!mtmp) return null;
     mtmp.female = female;                         // sp_lev.c:2125
     if (sp_align !== null) {
@@ -109,7 +116,7 @@ function astral_terrain_area(x1, y1, x2, y2, typ) {
     const a = vly_abs(x1, y1), b = vly_abs(x2, y2);
     for (let x = a.x; x <= b.x; x++)
         for (let y = a.y; y <= b.y; y++)
-            set_levltyp_lit(x, y, typ, SET_LIT_NOCHANGE);
+            sel_set_ter(x, y, { ter: typ, tlit: SET_LIT_NOCHANGE });
 }
 
 function astral_wall_property(mx1, my1, mx2, my2, bits) {
@@ -187,16 +194,16 @@ export async function makemaz_astral() {
                 astral_wallify();
                 // temporarily close the wing off so the flood stops at the entry
                 const c = vly_abs(33, 18);
-                set_levltyp_lit(c.x, c.y, VWALL, SET_LIT_NOCHANGE);
+                sel_set_ter(c.x, c.y, { ter: VWALL, tlit: SET_LIT_NOCHANGE });
                 hall = quest_floodfill_match(30, 16);
-                set_levltyp_lit(c.x, c.y, ROOM, SET_LIT_NOCHANGE);
+                sel_set_ter(c.x, c.y, { ter: ROOM, tlit: SET_LIT_NOCHANGE });
             } else {
                 astral_terrain_area(44, 14, 57, 18, ROOM);
                 astral_wallify();
                 const c = vly_abs(41, 18);
-                set_levltyp_lit(c.x, c.y, VWALL, SET_LIT_NOCHANGE);
+                sel_set_ter(c.x, c.y, { ter: VWALL, tlit: SET_LIT_NOCHANGE });
                 hall = quest_floodfill_match(44, 16);
-                set_levltyp_lit(c.x, c.y, ROOM, SET_LIT_NOCHANGE);
+                sel_set_ter(c.x, c.y, { ter: ROOM, tlit: SET_LIT_NOCHANGE });
             }
             const n = 4 + rn2(6);                 // math.random(4,9)
             for (let j = 0; j < n; j++) {
@@ -211,7 +218,7 @@ export async function makemaz_astral() {
                         rn2(3);                   // induced_align (no id, no align)
                         let { x, y } = c2;
                         if (mm_mon_at(x, y)) {
-                            const cc = enexto_spawn(x, y, null);
+                            const cc = enexto_gpflags(x, y, null, 0);
                             if (cc) { x = cc.x; y = cc.y; }
                         }
                         const mt = makemon(null, x, y, 0);

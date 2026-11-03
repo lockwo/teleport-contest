@@ -5,7 +5,7 @@
 // place_worm_tail_randomly) is what makemon() calls; the movement and attack
 // side below the divider is driven from monmove.js.
 
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, NON_PM, has_mcorpsenm, set_mcorpsenm } from './const.js';
@@ -918,6 +918,8 @@ export function worm_known(worm) {
     }
     return false;
 }
+
+hooks.worm_known = worm_known;
 
 // C ref: worm.c:938 wseg_at(worm, x, y) — construct an index number for a worm
 // tail segment (insight.c probe_monster uses it to name the segment hit).

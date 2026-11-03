@@ -21,14 +21,14 @@
 // consume no RNG, so leaving them un-modelled in detail is RNG-faithful.
 
 import { game, hooks } from './gstate.js';
-import { Fumbling_hero, Wounded_legs_hero, Stunned_hero, Stone_resistance_hero } from './youprop.js';
+import { Fumbling_hero, Wounded_legs_hero, Stunned_hero, Stone_resistance_hero, Lev_at_will_hero } from './youprop.js';
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
 import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
          canseemon_shared, y_n } from './display.js';
 import { m_at, Hallucination_u } from './display.js';
-import { DEADMONSTER, mvitals_died, m_detach } from './mon.js';
-import { killed, corpse_chance, make_corpse } from './uhitm.js';
+import { DEADMONSTER } from './mon.js';
+import { killed } from './uhitm.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx, can_saddle, put_saddle_on_mon } from './makemon.js';
@@ -128,10 +128,10 @@ export async function mount_steed(mtmp, force) {
         await pline(`You couldn't ride ${a_monnam(mtmp)}, let alone its tail.`);
         return false;
     }
-    if (u.uswallow || u.ustuck || u.utrap || game.uball
+    if (u.uswallow || u.ustuck || u.utrap || u.uball
         || !steed_test_move(u.ux, u.uy, mtmp.mx - u.ux, mtmp.my - u.uy)) {
         const { body_part } = await import('./polyself.js');
-        if (game.uball || !(u.uswallow || u.ustuck || u.utrap))
+        if (u.uball || !(u.uswallow || u.ustuck || u.utrap))
             await pline(`You are unable to swing your ${body_part(LEG)} over.`);
         else
             await pline('You are stuck here for now.');
@@ -185,8 +185,8 @@ export async function mount_steed(mtmp, force) {
     }
 
     // Is the player impaired?
-    const lev = !!u.uprops?.Levitation;
-    const lev_at_will = ((u.uprops?.HLevitation | 0) & I_SPECIAL) !== 0 && !(u.uprops?.ELevitation | 0);
+    const lev = Levitation_fu();
+    const lev_at_will = Lev_at_will_hero();
     if (!force && !is_floater_std(ptr) && !is_flyer_std(ptr) && lev && !lev_at_will) {
         await pline(`You cannot reach ${mon_nam(mtmp)}.`);
         return false;
@@ -295,15 +295,10 @@ function steed_test_move(ux, uy, dx, dy) {
 }
 
 // MON_AT excluding the ridden steed itself (which is colocated with the hero
-// and flagged mridden, i.e. off the map grid in C terms).
+// and flagged mridden, i.e. off the map grid in C terms); m_at() skips it, and
+// dead/detached monsters, like C's grid.
 function steed_mon_at(x, y) {
-    const mons = game.level?.monsters;
-    if (!mons) return null;
-    for (const m of mons) {
-        if (m.mridden || DEADMONSTER(m)) continue;   /* dead monsters are off the grid */
-        if (m.mx === x && m.my === y) return m;
-    }
-    return null;
+    return m_at(x, y);
 }
 
 // C ref: steed.c:459 landing_spot(spot, reason, forceit) — pick the square
@@ -367,7 +362,7 @@ function landing_spot(reason, forceit) {
                     const kn_trap = i === 0 && !!trap && !!trap.tseen
                         && trap.ttyp !== VIBRATING_SQUARE;
                     const boulder = i <= 1 && !!sobj_at(BOULDER, x, y)
-                        && !throws_rocks_std(game.youmonst?.data);
+                        && !throws_rocks_std(youmonst_data());
                     if (!kn_trap && !boulder) {
                         spot.x = x; spot.y = y;
                         min_distance = distance;
@@ -380,7 +375,7 @@ function landing_spot(reason, forceit) {
     }
 
     if (forceit && !found) {
-        const sp = enexto_gpflags(u.ux, u.uy, game.youmonst?.data, 0);
+        const sp = enexto_gpflags(u.ux, u.uy, youmonst_data(), 0);
         if (sp) { spot.x = sp.x; spot.y = sp.y; found = true; }
     }
     return found ? spot : null;
@@ -547,8 +542,8 @@ export async function dismount_steed(reason) {
 // C ref: hack.c u_locomotion(def) — the current hero's own way of moving.
 function u_locomotion_std(def) {
     const u = game.u;
-    if (u?.uprops?.Levitation) return 'float';
-    if (u?.uprops?.Flying) return 'fly';
+    if (Levitation_fu()) return 'float';
+    if (Flying_fu()) return 'fly';
     return def;
 }
 // C ref: youprop.h Stunned.
@@ -576,7 +571,7 @@ function nonliving_steed(ptr) {
 }
 // C ref: muse.c throws_rocks(ptr) — a rock-throwing giant/troll can stand on
 // a boulder square without triggering landing_spot's boulder-avoidance.
-function throws_rocks_std(ptr) { return !!ptr?.throws_rocks; }
+function throws_rocks_std(ptr) { return throws_rocks_flag(ptr); }
 // C ref: mon.c place_monster(mon,x,y) — dog.js/vault.js keep private copies;
 // this is steed.c's own call site, so it gets one here too.  Also clears the
 // port-local `mridden` flag: this port renders/looks up a ridden steed as
@@ -590,34 +585,14 @@ function steed_place_monster(mon, x, y) {
     const list = game.level?.monsters;
     if (list && !list.includes(mon)) list.push(mon);
 }
-// C ref: mon.c mondead(mtmp) — for a steed species none of the lifesaving/
-// vampshifter/vault-guard special cases apply, so this reduces to the
-// death-bookkeeping tail: bump the species' death counter, clear an
-// invisible glyph, then m_detach() (drops minvent — including the saddle —
-// removes any light source, purges mtmp from the level).
-async function steed_mondead(mtmp) {
-    mtmp.mhp = 0;
-    await mvitals_died(mtmp);
-    if (game.level?.at(mtmp.mx, mtmp.my)?.invisMon) unmap_object(mtmp.mx, mtmp.my);
-    await m_detach(mtmp, mtmp.data, true);
-}
-// C ref: mon.c mondied(mdef) — mondead() then, unless life-saved (not
-// modelled anywhere in this codebase), maybe drop a corpse.
-async function steed_mondied(mtmp) {
-    const x = mtmp.mx, y = mtmp.my;
-    await steed_mondead(mtmp);
-    if (await corpse_chance(mtmp) && (steed_accessible(x, y) || is_pool(x, y)))
-        await make_corpse(mtmp, x, y);
-}
 // C ref: mon.c monkilled(mdef, "", -AD_PHYS) — steed died from an impersonal
 // cause (no adjacent square to flee to).  fltxt="" so the message never gets
 // a "by the ..." suffix; how=-AD_PHYS is neither AD_DGST/-AD_RBRE/AD_FIRE, so
-// corpse dropping applies normally with no exp/luck/treasure change (unlike
+// mondied() runs (lifesaving, corpse) with no exp/luck/treasure change (unlike
 // killed(), which is what DISMOUNT_BYCHOICE / the water-lava death arm use).
 async function steed_monkilled(mtmp) {
-    if (canseemon_shared(mtmp))
-        await pline(`${Monnam_uhitm(mtmp)} is ${nonliving_steed(mtmp.data) ? 'destroyed' : 'killed'}!`);
-    await steed_mondied(mtmp);
+    const { monkilled_mm } = await import('./mhitm.js');
+    await monkilled_mm(mtmp, 0 /* -AD_PHYS */, '');
 }
 
 // C ref: steed.c doride() — the #ride command.  With no current steed, read a
@@ -673,6 +648,7 @@ import { Blind_telepat } from './youprop.js';
 import { mflags1_of, M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID, M1_SLITHY,
          M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS, mflags2_of,
          M2_UNDEAD } from './monflags_data.js';
+import { throws_rocks_flag } from './monflags_data.js';
 import { A_DEX, A_CHA, A_WIS, ECMD_OK, ECMD_TIME, ECMD_CANCEL,
          P_RIDING, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
          DISMOUNT_BYCHOICE, DISMOUNT_THROWN, DISMOUNT_FELL, DISMOUNT_KNOCKED,
@@ -719,7 +695,8 @@ function is_floater_std(ptr) { return ptr?.mcls === S_EYE || ptr?.mcls === S_LIG
 export async function use_saddle(otmp) {
     const u = game.u;
 
-    if (!u_handsy_std())
+    const { u_handsy } = await import('./pickup.js');
+    if (!await u_handsy())
         return ECMD_OK;
 
     /* Select an animal */
@@ -967,8 +944,6 @@ export async function poly_steed(steed, oldshape) {
 }
 
 // ── local adapters for C callees with no exported JS counterpart ────────────
-// C ref: do_wear.c u_handsy() — a hero with no hands can't apply a saddle.
-function u_handsy_std() { return true; }
 // C ref: you.h Underwater / Stone_resistance / Confusion / Fumbling / Glib.
 function Underwater_std() { return !!game.u?.uinwater; }
 function Stone_resistance_std() { return Stone_resistance_hero(); }

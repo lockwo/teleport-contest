@@ -647,6 +647,7 @@ export async function domonnoise(mtmp) {
                 break;
             default:
                 pline_msg = 'shouts "Fee Fie Foe Foo!" and guffaws.';
+                await wake_nearto_core(mtmp.mx, mtmp.my, 7 * 7, false);
                 break;
             }
             break;

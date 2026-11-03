@@ -31,8 +31,10 @@ import { which_armor } from './worn.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
     FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { adjalign, exercise, adjattrib, Fixed_abil, change_luck } from './attrib.js';
-import { losexp, xlev_to_rank, pluslvl, innate_intrinsics } from './exper.js';
+import { losexp, xlev_to_rank, pluslvl, innate_intrinsics, setuhpmax } from './exper.js';
 import { heal_legs } from './trap.js';
+import { stuck_ring } from './do_wear.js';
+const RIN_LEVITATION_OTYP = 183 /* RIN_LEVITATION */;
 import { hcolor, a_monnam } from './do_name.js';
 import { Blind } from './vision.js';
 import { region_danger, region_safety } from './region.js';
@@ -251,8 +253,8 @@ function in_trouble() {
         return TROUBLE_COLLAPSING;
     if (stuck_in_wall()) return TROUBLE_STUCK_IN_WALL;
     if (Cursed_obj(game.uarmf, 'LEVITATION_BOOTS')
-        || Cursed_obj(game.uleft, 'RIN_LEVITATION')
-        || Cursed_obj(game.uright, 'RIN_LEVITATION'))
+        || stuck_ring(game.uleft, RIN_LEVITATION_OTYP)
+        || stuck_ring(game.uright, RIN_LEVITATION_OTYP))
         return TROUBLE_CURSED_LEVITATION;
     /* nohands(gy.youmonst.data) || !freehand() */
     if (nohands_hero() || !freehand_hero()) {
@@ -261,10 +263,11 @@ function in_trouble() {
             && (!uprop('Unchanging') || ((() => { const oc = unchanger_hero(); return oc && oc.cursed; })())))
             return TROUBLE_UNUSEABLE_HANDS;
     }
-    if (game.ublindf && game.ublindf.cursed) return TROUBLE_CURSED_BLINDFOLD;
+    if (game.ublindf && game.ublindf.otyp !== 232 /* LENSES: Blindfolded */
+        && game.ublindf.cursed) return TROUBLE_CURSED_BLINDFOLD;
 
     /* minor troubles */
-    if (u.uball) return TROUBLE_PUNISHED; /* hack.h Punished == (uball != 0) */
+    if (u.uball || (u.utrap && u.utraptype === 6 /* TT_BURIEDBALL */)) return TROUBLE_PUNISHED; /* hack.h Punished == (uball != 0) */
     if (Cursed_obj(game.uarmg, 'GAUNTLETS_OF_FUMBLING')
         || Cursed_obj(game.uarmf, 'FUMBLE_BOOTS'))
         return TROUBLE_FUMBLING;
@@ -280,7 +283,7 @@ function in_trouble() {
         if (ABASE(i) < AMAX(i)) return TROUBLE_POISONED;
     if (Wounded_legs() && !u.usteed) return TROUBLE_WOUNDED_LEGS;
     if ((u.uhs | 0) >= HUNGRY) return TROUBLE_HUNGRY;
-    if (u.uprops?.Stun || u.HStun || u.ustun || u.formprops?.Stunned) return TROUBLE_STUNNED;
+    if (u.uprops?.Stun || u.HStun || u.ustun) return TROUBLE_STUNNED;
     if (u.uprops?.Confusion || u.uconf) return TROUBLE_CONFUSED;
     if (Hallucination()) return TROUBLE_HALLUCINATION;
     return 0;
@@ -640,12 +643,16 @@ async function Yobjnam2_local(obj, verb) {
 function hcolor_amber() { return hcolor('amber'); }
 
 // C ref: eat.c init_uhunger().  NOT_HUNGRY == 1.
-function init_uhunger() {
+async function init_uhunger() {
     const u = game.u;
-    game.botl = true;
+    if ((u.uhs ?? NOT_HUNGRY) !== NOT_HUNGRY || (u.atemp?.a?.[0] | 0) < 0)
+        game.botl = true;
     u.uhunger = 900;
     u.uhs = NOT_HUNGRY;
-    if ((u.atemp?.a?.[0] | 0) < 0) u.atemp.a[0] = 0; /* ATEMP(A_STR) */
+    if ((u.atemp?.a?.[0] | 0) < 0) {  /* ATEMP(A_STR) */
+        u.atemp.a[0] = 0;
+        await _inv?.encumber_msg();
+    }
 }
 const NOT_HUNGRY = 1;
 
@@ -704,7 +711,8 @@ async function fix_worst_trouble(trouble) {
         /* FALLTHRU — C shares the arm with TROUBLE_HUNGRY */
     case TROUBLE_HUNGRY:
         await update_topl(`Your ${(await import('./invent.js')).body_part(STOMACH)} feels content.`);
-        init_uhunger();
+        await init_uhunger();
+        game.botl = true;
         break;
     case TROUBLE_SICK:
         await You_feel('better.');
@@ -720,12 +728,12 @@ async function fix_worst_trouble(trouble) {
         await You_feel('much better.');
         if (u.Upolyd) {
             const mmax = (u.mhmax | 0) + rnd(5);
-            u.mhmax = Math.max(mmax, 6);
+            setuhpmax(Math.max(mmax, 6), false); /* acts as setmhmax() */
             u.mh = u.mhmax;
         }
         let maxhp = u.uhpmax | 0;
         if (maxhp < (u.ulevel | 0) * 5 + 11) maxhp += rnd(5);
-        u.uhpmax = Math.max(maxhp, 6);
+        setuhpmax(Math.max(maxhp, 6), true);
         u.uhp = u.uhpmax;
         game.botl = true;
         break;
@@ -762,8 +770,8 @@ async function fix_worst_trouble(trouble) {
     case TROUBLE_CURSED_LEVITATION: {
         let otmp = null;
         if (Cursed_obj(game.uarmf, 'LEVITATION_BOOTS')) otmp = game.uarmf;
-        else if (Cursed_obj(game.uleft, 'RIN_LEVITATION')) otmp = game.uleft;
-        else if (Cursed_obj(game.uright, 'RIN_LEVITATION')) otmp = game.uright;
+        else if ((otmp = stuck_ring(game.uleft, RIN_LEVITATION_OTYP)) != null) { /* what = leftglow if the ring itself */ }
+        else otmp = stuck_ring(game.uright, RIN_LEVITATION_OTYP);
         await fix_curse_trouble(otmp, ringglow(otmp));
         break;
     }
@@ -795,8 +803,13 @@ async function fix_worst_trouble(trouble) {
     }
     case TROUBLE_PUNISHED: {
         await update_topl('Your chain disappears.');
-        const { unpunish } = await import('./read.js');
-        unpunish();
+        if (u.utrap && u.utraptype === 6 /* TT_BURIEDBALL */) {
+            const { buried_ball_to_freedom } = await import('./dig.js');
+            await buried_ball_to_freedom();
+        } else {
+            const { unpunish } = await import('./read.js');
+            unpunish();
+        }
         break;
     }
     case TROUBLE_FUMBLING: {
@@ -821,6 +834,7 @@ async function fix_worst_trouble(trouble) {
                 game.botl = true;
             }
         }
+        await _inv?.encumber_msg();
         break;
     case TROUBLE_BLIND: {
         /* handles deafness as well as blindness */
@@ -1065,7 +1079,7 @@ async function pleased(g_align) {
                 game.botl = true; /* before potential message */
                 await _inv.encumber_msg();
             }
-            if ((u.uhunger | 0) < 900) init_uhunger();
+            if ((u.uhunger | 0) < 900) await init_uhunger();
             if ((u.uluck | 0) < 0) u.uluck = 0;
             u.ucreamed = 0;
             await _pot.make_blinded_hero(0, true);
@@ -1357,8 +1371,7 @@ async function god_zaps_you(resp_god) {
             if (Blind()) await update_topl("For some reason you're unaffected.");
             else await D.zap.ureflects('%s reflects from your %s.', 'It');
             monstseesu(M_SEEN_REFL);
-        } else if (HProp_pr('HShock_resistance') || HProp_pr('EShock_resistance')
-                   || has_innate_pr('HShock_resistance')) {
+        } else if (D.zap.Shock_resistance()) {
             await shieldeff_pr();
             await update_topl('It seems not to affect you.');
             monstseesu(M_SEEN_ELEC);
@@ -1422,7 +1435,8 @@ async function shieldeff_pr() {
 }
 // C ref: dungeon.h Is_sanctum(lev) — the Wizard of Yendor's sanctum.
 function Is_sanctum_pr(lev) {
-    return In_hell(lev) && (lev?.dlevel === game.svd?.dungeons?.[lev.dnum]?.dunlev_ureached);
+    const sl = game.sanctum_level;
+    return !!lev && !!sl && lev.dnum === sl.dnum && lev.dlevel === sl.dlevel;
 }
 // C ref: pronoun overrides — uhim() is "him"/"her" for the hero.
 function uhim_pr() { return game.flags?.female ? 'her' : 'him'; }
@@ -1584,6 +1598,8 @@ async function offer_fake_amulet(otmp, highaltar, altaralign) {
         change_luck(-1);
     } else {
         /* don't you dare try to fool the gods */
+        if (Deaf_pr())
+            await update_topl('Oh, no.'); /* didn't hear thunderclap */
         change_luck(-3);
         adjalign(-1);
         u.ugangr = (u.ugangr || 0) + 3;
@@ -2031,8 +2047,7 @@ export async function dosacrifice() {
             await offer_too_soon(altaralign);
             return 1; // ECMD_TIME
         }
-        // GAP: pray.c:1529 offer_real_amulet() ends the game via
-        // done(ASCENDED); end.js exports only done_in_by().
+        await offer_real_amulet(otmp, altaralign); /* ends the game */
         return 1;
     }
     if (otmp.otyp === FAKE_AMULET_OF_YENDOR) {
@@ -2475,6 +2490,7 @@ export async function offer_real_amulet(otmp, altaralign) {
         await D.dsp.pline('An invisible choir sings, and you are bathed in'
             + ' radiance...');
         await godvoice(altaralign, 'Mortal, thou hast done well!');
+        await D.dsp.display_nhwindow_message();
         await verbalize('In return for thy service, I grant thee the gift of'
             + ' Immortality!');
         await D.dsp.pline(`You ascend to the status of Demigod`
@@ -2488,7 +2504,8 @@ export async function pray_revive() {
     const D = await loadPrayExtras();
     const u = game.u;
     let otmp = null;
-    for (const o of (game.level?.objects || [])) {
+    /* nexthere chain: topmost first */
+    for (const o of [...(game.level?.objects || [])].reverse()) {
         if (o.where !== OBJ_FLOOR || o.ox !== u.ux || o.oy !== u.uy) continue;
         if ((o.otyp === CORPSE || o.otyp === P_STATUE)
             && D.mkb.has_omonst(o)

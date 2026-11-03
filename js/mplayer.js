@@ -527,9 +527,8 @@ export async function mplayer_talk(mtmp) {
     await pline(`Talk? -- "${line}"`);
 }
 
-// C ref: rm.h MON_AT(x,y) — a monster (not the hero) occupies the square.
+// C ref: rm.h MON_AT(x,y) — the m_at() grid slot (display.js).
+import { m_at as grid_m_at } from './display.js';
 function MON_AT(x, y) {
-    for (const m of fmon())
-        if (m.mx === x && m.my === y && !m.mburied && !m.dead) return m;
-    return null;
+    return grid_m_at(x, y);
 }

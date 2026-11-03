@@ -228,7 +228,10 @@ export async function getbones() {
         const bundle = await bones_getlev(blob);
 
         // C ref: bones.c:757 u.uroleplay.numbones++.
-        if (game.u) game.u.numbones = (game.u.numbones || 0) + 1;
+        if (game.u) {
+            game.u.uroleplay = game.u.uroleplay || {};
+            game.u.uroleplay.numbones = (game.u.uroleplay.numbones || 0) + 1;
+        }
 
         // C ref: bones.c:760 — wizard "Unlink bones?" gate.  'n' (default) keeps
         // the file; 'y' deletes it.  Either way the bones stay loaded.
@@ -596,8 +599,10 @@ export async function savebones(how = 0, corpse = null) {
             if (Array.isArray(mons_list)) {
                 // C: mongone() -> mdrop_special_objs() draws obj_resists()'s
                 // rn2(100) per carried item before the monster is detached.
-                for (const m of [...mons_list])
-                    if (remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD)) {
+                /* iter_mons(): fmon newest-first, skipping DEADMONSTER and mon_offmap */
+                for (const m of [...mons_list].reverse())
+                    if (!DEADMONSTER(m) && (m.mstate | 0) === 0
+                        && remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD)) {
                         await mongone(m);
                         const i = mons_list.indexOf(m);
                         if (i >= 0) mons_list.splice(i, 1);
@@ -621,7 +626,7 @@ export async function savebones(how = 0, corpse = null) {
         // item draws rn2(5) (curse) then, on the common branch, rn2(8).
         const { place_object } = await import('./mkobj.js');
         const hooks = {
-            curse: (o) => { if (o) { o.cursed = 1; o.blessed = 0; } },
+            curse: (o) => { if (o && o.oclass !== 12 /* COIN_CLASS: curse() no-op */) { o.cursed = 1; o.blessed = 0; } },
             toFloor: (o) => { if (o) { o.owornmask = 0; place_object(o, x, y); } },
             toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
         };

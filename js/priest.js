@@ -6,7 +6,7 @@
 // type="shrine"/"sanctum"), and it is the sole RNG consumer of the temple fill.
 
 import { game, hooks } from './gstate.js';
-import { MGIVENNAME, RLOC_NOMSG } from './const.js';
+import { MGIVENNAME, RLOC_NOMSG, W_ARMC } from './const.js';
 import { s_suffix, just_an } from './hacklib.js';
 import { incr_itimeout } from './youprop.js';
 import { roomAt } from './roomat.js';
@@ -53,13 +53,16 @@ export function mon_aligntyp(mon) {
     return (algn > 0) ? 1 : (algn < 0) ? -1 : 0;
 }
 
-// C ref: worn.c which_armor(mon, W_ARMC) — the cloak slot.  m_initinv gives an
-// aligned cleric a robe and worn.c m_dowear puts it on, so the slot is filled by
-// the ROBE when one was generated.  No RNG.
-const ROBE = 143;
+// C ref: worn.c which_armor(mon, W_ARMC) — the worn cloak.  m_initinv gives an aligned
+// cleric a robe, a cloak of protection or a cloak of magic resistance, and m_dowear
+// puts it on.  Fall back to the first carried cloak in case wearing was not recorded.
+const ROBE = 143, CLOAK_OF_PROTECTION = 146, CLOAK_OF_MAGIC_RESISTANCE = 148;
 function which_cloak(mtmp) {
-    for (const o of mtmp?.minvent || [])
-        if (o && o.otyp === ROBE) return o;
+    const inv = mtmp?.minvent || [];
+    for (const o of inv)
+        if (o && ((o.owornmask | 0) & W_ARMC)) return o;
+    for (const o of inv)
+        if (o && (o.otyp === ROBE || o.otyp === CLOAK_OF_PROTECTION || o.otyp === CLOAK_OF_MAGIC_RESISTANCE)) return o;
     return null;
 }
 
@@ -155,7 +158,7 @@ export function temple_occupied(array) {
 
 // C ref: priest.c:392 findpriest(roomno).
 export function findpriest(roomno) {
-    for (const m of game.level?.monsters || []) {
+    for (const m of [...(game.level?.monsters || [])].reverse()) { /* fmon: newest first */
         if (m.mhp != null && m.mhp <= 0) continue;
         if (!m.ispriest) continue;
         if (EPRI_(m)?.shroom === roomno && histemple_at(m, m.mx, m.my))
@@ -817,7 +820,8 @@ export async function ghod_hitsu(priest) {
 // No RNG.
 export async function clearpriests() {
     const { mongone } = await import('./mon.js');
-    for (const mtmp of Array.from(game.level?.monsters || [])) {
+    /* fmon newest-first: mongone() draws obj_resists() per carried object */
+    for (const mtmp of Array.from(game.level?.monsters || []).reverse()) {
         if (mtmp.mhp != null && mtmp.mhp <= 0) continue;   /* DEADMONSTER */
         if (mtmp.ispriest && !on_level_(EPRI_(mtmp)?.shrlevel, game.u?.uz))
             await mongone(mtmp);

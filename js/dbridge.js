@@ -22,20 +22,20 @@ import {
     Is_stronghold, is_pool, is_lava,
     KILLED_BY_AN, NO_KILLER_PREFIX, CRUSHING, DROWNING, BURNING,
     XKILL_GIVEMSG, XKILL_NOMSG, XKILL_NOCORPSE, XKILL_NOCONDUCT, OBJ_FREE, OBJ_FLOOR,
-    MAY_HIT } from './const.js';
+    MAY_HIT, Unaware as Unaware_hero } from './const.js';
 import { rn2, rnd } from './rng.js';
 import { m_at, newsym, pline, canseemon_shared, You_see, You_hear } from './display.js';
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
 import { t_at, deltrap, spoteffects } from './trap.js';
 import { mksobj_at, objects } from './mkobj.js';
-import { DEADMONSTER, mmove_of, wake_nearto } from './mon.js';
+import { DEADMONSTER, mmove_of, wake_nearto, sensemon } from './mon.js';
 import { killed, mon_nam, Monnam } from './uhitm.js';
 import { update_monster_region } from './region.js';
 import { mflags1_of, M1_FLY, M1_SWIM, M1_WALLWALK, noncorporeal } from './monflags_data.js';
 import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { revive_nasty } from './do.js';
 import { del_engr_at } from './engrave.js';
-import { delallobj, sobj_at } from './invent.js';
+import { delallobj, sobj_at, Breathless_hero, Amphibious_hero } from './invent.js';
 import { vtense } from './plural.js';
 import { youmonst_data } from './invent.js';
 
@@ -842,10 +842,8 @@ function helpless(mon) {
     return !!(mon.msleeping || !canmove);
 }
 
-// C ref: display.h canspotmon(mon) = canseemon(mon) || sensemon(mon).  Nothing
-// in this port grants telepathy/detection yet (js/mon.js:655 documents the same
-// state), so sensemon() is the tp_sensemon() half only.
-function canspotmon(mon) { return canseemon_shared(mon); }
+// C ref: display.h canspotmon(mon) = canseemon(mon) || sensemon(mon).
+function canspotmon(mon) { return canseemon_shared(mon) || sensemon(mon); }
 
 // ── hero properties (youprop.h) ──
 
@@ -861,14 +859,14 @@ function Levitation() { return Levitation_hero(); }
 function Flying() { return Flying_hero(); }
 function Wwalking() { return Wwalking_hero(); }
 export function Swimming() { return Swimming_hero(); }
-export function Breathless() { return HProp('Breathless', 'HBreathless', 'EBreathless') > 0; }
-export function Amphibious() { return HProp('Amphibious', 'HAmphibious', 'EAmphibious') > 0; }
+export function Breathless() { return Breathless_hero(); }
+export function Amphibious() { return Amphibious_hero(); }
 function Passes_walls() { return Passes_walls_hero(); }
 function Confusion() { return HProp('Confusion', 'HConfusion', 'EConfusion') > 0; }
 function Stunned() { return Stunned_hero(); }
 function Fumbling() { return Fumbling_hero(); }
 function Hallucination() { return HProp('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu; }
 // C ref: youprop.h Unaware — asleep, unconscious or otherwise not perceiving.
-function Unaware() { return !!(game.u?.usleep || game.u?.Unaware); }
+function Unaware() { return Unaware_hero(); }
 function Deaf() { return Deaf_hero(); }
 function Underwater() { return !!(game.u?.uinwater); }

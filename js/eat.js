@@ -19,7 +19,7 @@ import { SICK, STONED, VOMITING, SLIMED, HUNGER, LIGHT_HEADED } from './const.js
 import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
 import { more_experienced, newexplevel, pluslvl, has_innate_fromoutside } from './exper.js';
-import { incr_itimeout, set_itimeout, Poison_resistance, Wwalking_hero, Flying_hero, Hunger_hero, Acid_resistance_hero, Sick_resistance_hero, Stone_resistance_hero } from './youprop.js';
+import { incr_itimeout, set_itimeout, Poison_resistance, Wwalking_hero, Flying_hero, Levitation_hero, Hunger_hero, Acid_resistance_hero, Sick_resistance_hero, Stone_resistance_hero, Unchanging_hero } from './youprop.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -486,45 +486,10 @@ function carried(otmp) { return otmp?.where === OBJ_INVENT; }
 // and abort the meal) returns null in that case.
 async function touchfood(otmp) {
     const was_carried = carried(otmp);
-    if ((otmp.quan || 1) > 1 && !was_carried && otmp.where === OBJ_FLOOR
-        && Array.isArray(game.level?.objects)) {
-        // C: `if (!carried(otmp)) (void) splitobj(otmp, otmp->quan - 1L);` —
-        // the bitten piece (quan 1) STAYS on the floor, and the remaining
-        // quan-1 stack becomes a NEW floor object inserted right after it in
-        // fobj/nexthere (obj -> rest -> next; our array is oldest-first, so
-        // that is just BEFORE it).  Both stay on the floor while the meal
-        // lasts, so a pet's dog_goal fobj scan dogfood()s (obj_resists
-        // rn2(100)) both.  splitobj -> nextoid -> next_ident == one rnd(2).
-        _mkobj.next_ident();
-        const rest = { ...otmp, quan: (otmp.quan || 1) - 1, owornmask: 0,
-                       o_id: `${otmp.o_id || 'food'}-rest` };
-        otmp.quan = 1;
-        otmp.owt = _mkobj.weight(otmp);
-        rest.owt = _mkobj.weight(rest);
-        const objs = game.level.objects;
-        objs.splice(objs.indexOf(otmp), 0, rest);
-    } else if ((otmp.quan || 1) > 1 && was_carried) {
-        // C: otmp = splitobj(otmp, 1L) — the real splitobj() (nextoid's rnd(2),
-        // and splitbill() when the stack is unpaid).
-        otmp = _invent.splitobj(otmp, 1);
-    } else if ((otmp.quan || 1) > 1) {
-        // C: splitobj(otmp, 1L) -> nextoid() -> next_ident() == one rnd(2).
-        // This path builds the bitten item directly, so it advances
-        // context.ident here rather than calling invent.js's splitobj().
-        _mkobj.nextoid(otmp, otmp);    // nextoid(): o_id price-parity loop then the single rnd(2)
-        const stack = otmp;
-        otmp = {
-            ...stack,
-            quan: 1,
-            owt: 0,
-            owornmask: 0,
-            where: OBJ_FREE,
-            o_id: `${stack.o_id || 'food'}-bite`,
-        };
-        otmp.owt = _mkobj.weight(otmp);
-        // splitobj() takes the piece out of the stack right away.
-        stack.quan -= 1;
-        stack.owt = _mkobj.weight(stack);
+    // C: if (quan > 1) { if (!carried) splitobj(otmp, quan - 1); else otmp = splitobj(otmp, 1); }
+    if ((otmp.quan || 1) > 1) {
+        if (!was_carried) _invent.splitobj(otmp, otmp.quan - 1);
+        else otmp = _invent.splitobj(otmp, 1);
     }
     if (!otmp.oeaten) {
         // C ref: eat.c touchfood() — `costly_alteration(otmp, COST_BITE)` bills
@@ -649,6 +614,8 @@ export async function newuhs(incr) {
                     game.multi_reason = 'fainted from lack of food';
                     game.nomovemsg = 'You regain consciousness.';
                     game.afternmv = unfaint;
+                    if (!Levitation_hero())
+                        await (await import('./polyself.js')).selftouch('Falling, you');
                 }
                 newhs = FAINTED;
             }
@@ -756,7 +723,15 @@ export async function newuhs(incr) {
             await bot();                    /* eat.c:3503 bot() */
         }
         // C ref: eat.c:3505 — dying of hunger and exhaustion when the status
-        // change happens at 0 HP; done() is not modelled here.
+        // change happens at 0 HP.
+        if ((u.Upolyd ? u.mh : u.uhp) < 1) {
+            await update_topl('You die from hunger and exhaustion.');
+            game._killer_name = 'died of exhaustion';
+            const { done } = await import('./end.js');
+            const { STARVING } = await import('./const.js');
+            await done(STARVING);
+            return;
+        }
     }
 }
 
@@ -769,11 +744,12 @@ export async function morehungry(num) {
 }
 
 // C ref: eat.c unfaint() — the afternmv that ends a faint.
-export function unfaint() {
+export async function unfaint() {
     Hear_again();
     const u = game.u;
     if (u && (u.uhs ?? NOT_HUNGRY) > FAINTING) u.uhs = FAINTING;
-    game._eat_occupation = null;
+    await (await import('./hack.js')).stop_occupation();
+    game.botl = true;
     return 0;
 }
 
@@ -1168,7 +1144,7 @@ export async function floorfood(verb, corpsecheck) {
                 if (c === 'q') return null;
                 ++_getobj_else;
             }
-            const gold = (game.level?.objects || []).find(
+            const gold = [...(game.level?.objects || [])].reverse().find( /* g_at: topmost first */
                 (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy
                        && o.oclass === COIN_CLASS);
             if (!hero_is_pm('rust monster') && gold) {
@@ -1332,6 +1308,7 @@ export async function doeat() {
     if (otmp.otyp === 193 /* RIN_SLOW_DIGESTION */) {
         await pline('This ring is indigestible!');
         await rottenfood_eat(otmp);
+        if (otmp.dknown) await _invent.trycall(otmp);
         return ECMD_TIME_;                               // ECMD_TIME
     }
     if (otmp.oclass !== FOOD_CLASS) return await doeat_nonfood(otmp) ? ECMD_TIME_ : ECMD_OK_;
@@ -1551,7 +1528,7 @@ async function fprefx(otmp) {
         give_feedback = true;
         break;
     case CLOVE_OF_GARLIC:
-        if (u?.uundead) {
+        if ((mflags2_of(hero_data_eat()) & 0x2 /* M2_UNDEAD */) !== 0) {
             const t = rn1(v?.reqtime ?? 1, 5);
             const { make_vomiting } = await import('./potion.js');
             await make_vomiting(t, false);      /* make_vomiting(rn1(reqtime, 5), FALSE) */
@@ -1670,7 +1647,7 @@ async function fpostfx(otmp) {
         {
             const _pi = await import('./polyself.js');
             if (u && _invent?.youmonst_data_pub()?.pmidx === name_to_pmidx('killer bee')
-                && !(u.uprops?.HUnchanging || u.uprops?.Unchanging)
+                && !Unchanging_hero()
                 && await _pi.polymon(name_to_pmidx('queen bee')))
                 break;
         }
@@ -1934,10 +1911,15 @@ async function cprefx(pm) {
         return;
     } else if (nm === 'green slime') {
         const u = game.u;
-        if (u && !u.uprops?.Slimed) {
+        const { slimeproof } = await import('./mondata.js');
+        if (u && !u.uprops?.Slimed && !Unchanging_hero()
+            && !slimeproof(_invent.youmonst_data_pub())) {
             await update_topl("You don't feel very well.");
-            u.uprops = u.uprops || {};
-            u.uprops.Slimed = 10;
+            const { make_slimed } = await import('./potion.js');
+            await make_slimed(10, null);
+            const { delayed_killer } = await import('./end.js');
+            const { SLIMED, KILLED_BY_AN } = await import('./const.js');
+            delayed_killer(SLIMED, KILLED_BY_AN, '');
         }
     }
     // C ref: eat.c:827,861 — PM_LIZARD (and any acidic corpse) calls
@@ -1989,6 +1971,8 @@ async function cpostfx(pm) {
     const nm = ptr?.name || '';
     let check_intrinsics = false;
     let catch_lycanthropy = NON_PM;
+    /* in case afternmv didn't get called for previously mimicking gold */
+    if (game._eatmbuf) await eatmdone();
 
     // C ref: eat.c:1144-1152 — the three human-form lycanthrope corpses.
     // Checked by FLAG, not species name: monsters.h gives a lycanthrope's
@@ -2065,8 +2049,7 @@ async function cpostfx(pm) {
         const u = game.u;
         const ymcls = (typeof u?.data?.mcls === 'number') ? u.data.mcls : u?.data?.mlet;
         if (ymcls !== S_MIMIC_CLS
-            && !(u?.uprops?.HUnchanging || u?.uprops?.EUnchanging
-                 || _invent.worn_extrinsic(UNCHANGING))) {
+            && !Unchanging_hero()) {
             const hallu = !!u?.uhallu;
             const tempshape = !hallu ? 'a pile of gold' : 'an orange';
             u.uconduct = u.uconduct || {};
@@ -2137,8 +2120,7 @@ async function cpostfx(pm) {
     case 'chameleon': case 'doppelganger': case 'sandestin':
     case 'genetic engineer': {
         // C ref: eat.c:1244 — polyself corpses.
-        if (game.u?.uprops?.HUnchanging || game.u?.uprops?.EUnchanging
-            || _invent.worn_extrinsic(UNCHANGING)) {
+        if (Unchanging_hero()) {
             await You_feel('momentarily different.');
         } else {
             const ctx = (game.context = game.context || {});
@@ -2320,8 +2302,7 @@ async function eatcorpse(otmp) {
         && !poly_when_stoned_eat();
     const { slimeproof } = await import('./mondata.js');
     const slimeable = (corpse_mon_name(mnum) === 'green slime'
-                       && !u?.uprops?.Slimed && !u?.uprops?.HUnchanging
-                       && !u?.uprops?.EUnchanging
+                       && !u?.uprops?.Slimed && !Unchanging_hero()
                        && !slimeproof(_invent.youmonst_data_pub()));
 
     // C ref: eatcorpse — conduct: !vegan -> unvegan++ (no RNG/msg here);
@@ -2664,6 +2645,24 @@ const PROP_KEY = {
     [P_TELEPORT_CONTROL]: 'HTeleport_control',
     [P_LEVITATION]: 'Levitation',
 };
+// prop.h enum order (1..LAST_PROP) -> the u.uprops key this port keeps that
+// property under (js/extcmd-handlers.js WIZINTRINSIC_PROPS), for any oc_oprop
+// eataccessory() hands to the generic accessors.
+const PROP_KEY_BY_NUM = [null,
+    'HFire_resistance', 'HCold_resistance', 'HSleep_resistance', 'HDisint_resistance',
+    'HShock_resistance', 'HPoison_resistance', 'HAcid_resistance', 'HStone_resistance',
+    'HDrain_resistance', 'HSick_resistance', 'Invulnerable', 'HAntimagic', 'Stun',
+    'Confusion', 'Blinded', 'HDeaf', 'Sick', 'Stoned', 'Strangled', 'Vomiting', 'Glib',
+    'Slimed', 'HHallucination', 'HHalluc_resistance', 'HFumbling', 'Wounded_legs',
+    'Sleepy', 'HHunger', 'HSee_invisible', 'HTelepat', 'HWarning', 'HWarn_of_mon',
+    'HWarn_undead', 'HSearching', 'HClairvoyant', 'HInfravision', 'HDetect_monsters',
+    'HBlnd_resistance', 'HAdorned', 'HInvis', 'HDisplaced', 'HStealth',
+    'HAggravate_monster', 'HConflict', 'HJumping', 'HTeleportation', 'HTeleport_control',
+    'Levitation', 'Flying', 'HWwalking', 'HSwimming', 'HMagical_breathing',
+    'HPasses_walls', 'HSlow_digestion', 'HHalf_spell_damage', 'HHalf_physical_damage',
+    'HRegeneration', 'Energy_regeneration', 'HProtection',
+    'HProtection_from_shape_changers', 'HPolymorph', 'HPolymorph_control', 'HUnchanging',
+    'HFast', 'HReflecting', 'HFree_action', 'HFixed_abil', 'HLifesaved'];
 function uprop_get(prop) {
     const key = PROP_KEY[prop];
     return key ? ((game.u?.uprops?.[key]) | 0) : 0;
@@ -3455,7 +3454,7 @@ export async function consume_tin(mesg) {
             // Fixed_abil arms are the no-gain cases.
             await pline(`This makes you feel like ${
                 Halluc ? "Swee'pea"
-                : !(u?.uprops?.HFixed_abil) ? 'Popeye'
+                : !T.attrib.Fixed_abil() ? 'Popeye'
                 : (game.flags?.female ? 'Olive Oyl' : 'Bluto')}!`);
         await gainstr(tin, 0, false);
 
@@ -3578,7 +3577,7 @@ export async function start_tin(otmp) {
             break;
         }
         if (!no_opener) {
-            await pline(`Using your ${objName(uwep)} you try to open the tin.`);
+            await pline(`Using ${_invent.yobjnam(uwep, null)} you try to open the tin.`);
         } else {
             tmp = await start_tin_no_opener(otmp, T);
             if (tmp == null) return;             /* the tin slipped away */
@@ -3737,7 +3736,7 @@ export async function eataccessory(otmp) {
             break;
         case AMULET_OF_UNCHANGING:
             /* un-change: it's a pun */
-            if (!u?.uprops?.HUnchanging && u?.Upolyd) {
+            if (!Unchanging_hero() && u?.Upolyd) {
                 await accessory_has_effect(otmp);
                 _invent.makeknown(typ);
                 await T.polyself.rehumanize();
@@ -3823,13 +3822,13 @@ export async function eataccessory(otmp) {
 // PROP_KEY above covers what eat.c itself touches, and anything outside it
 // falls back to a numbered slot so the bit is at least stable.
 function uprop_get_raw(prop) {
-    const key = PROP_KEY[prop] || `Hprop${prop}`;
+    const key = PROP_KEY[prop] || PROP_KEY_BY_NUM[prop] || `Hprop${prop}`;
     return (game.u?.uprops?.[key]) | 0;
 }
 function uprop_set_raw(prop, val) {
     if (!game.u) return;
     game.u.uprops = game.u.uprops || {};
-    game.u.uprops[PROP_KEY[prop] || `Hprop${prop}`] = val;
+    game.u.uprops[PROP_KEY[prop] || PROP_KEY_BY_NUM[prop] || `Hprop${prop}`] = val;
 }
 
 // C ref: eat.c:2414 eatspecial() — the tail of doeat_nonfood(): deliver the
@@ -3958,7 +3957,7 @@ export async function edibility_prompts(otmp) {
         if (corpse_mon_name(mnum) === 'green slime'
             || otmp.otyp === GLOB_OF_GREEN_SLIME) {
             const { slimeproof } = await import('./mondata.js');
-            stoneorslime = !(u?.uprops?.HUnchanging || u?.uprops?.EUnchanging)
+            stoneorslime = !Unchanging_hero()
                            && !slimeproof(_invent.youmonst_data_pub());
         }
 
@@ -3996,7 +3995,9 @@ export async function edibility_prompts(otmp) {
         buf = `${foodsmell} unhealthy.`;
     } else if (cadaver && sp && mon_acidic(sp) && !Acid_resistance_hero()) {
         buf = `${foodsmell} rather acidic.`;
-    // C's rust-monster arm needs Upolyd.
+    } else if (u?.Upolyd && hero_is_pm('rust monster') && is_metallic_eat(otmp)
+               && otmp.oerodeproof) {
+        buf = `${foodsmell} disgusting to you right now.`;
     /* Breaks conduct, but otherwise safe. */
     } else if (!(u?.uconduct?.unvegan)
                && ((material === LEATHER || material === BONE

@@ -31,7 +31,7 @@ import { In_hell } from './dungeon.js';
 import { mflags2_of, M2_LORD, M2_PRINCE, M2_DEMON, M2_MINION } from './monflags_data.js';
 import {
     makemon, mkclass, mkclass_aligned, monster_by_pmidx, name_to_pmidx,
-    set_malign, mpickobj, enexto_spawn, mongets_pub, makemon_appears_msg,
+    set_malign, mpickobj, mongets_pub, makemon_appears_msg
 } from './makemon.js';
 import { is_art, ART_DEMONBANE, ART_EXCALIBUR } from './artifact.js';
 import { DEADMONSTER, mongone } from './mon.js';
@@ -40,12 +40,12 @@ import { canspotmon, x_monnam } from './uhitm.js';
 import { Monnam, Amonnam, mon_nam, ARTICLE_A } from './do_name.js';
 import { show_transient_light, transient_light_cleanup } from './light.js';
 import { align_gname, roles } from './role.js';
-import { currency, worn_extrinsic } from './invent.js';
+import { currency, worn_extrinsic, youmonst_data } from './invent.js';
 import { money2mon } from './shk.js';
 import { bless, mksobj } from './mkobj.js';
 import { mon_has_amulet } from './monspecial.js';
 import { which_armor, m_dowear } from './worn.js';
-import { rloc, tele_restrict, RLOC_MSG } from './teleport.js';
+import { rloc, tele_restrict, RLOC_MSG, enexto_gpflags } from './teleport.js';
 import { livelog_printf, LL_UMONST } from './livelog.js';
 import { Hear_again } from './eat.js';
 import { nomul, stop_occupation } from './hack.js';
@@ -94,7 +94,7 @@ function Conflict() {
     const u = game.u;
     // C ref: youprop.h Conflict -- (HConflict || EConflict); the worn-ring
     // half lives in the extrinsic word (prop.h CONFLICT == 44).
-    return !!(u?.uprops?.Conflict || u?.HConflict || u?.EConflict
+    return !!(u?.uprops?.HConflict || u?.uprops?.Conflict || u?.HConflict || u?.EConflict
         || worn_extrinsic(44));
 }
 // C ref: eat.h is_fainted() — uhs == FAINTED.
@@ -543,7 +543,7 @@ export async function demon_talk(mtmp) {
     }
     // C ref: minion.c:299 `gy.youmonst.data->mlet == S_DEMON` — numeric class,
     // i.e. this port's .mcls.
-    if (game.youmonst?.data?.mcls === S_DEMON) { /* Won't blackmail their own. */
+    if (youmonst_data()?.mcls === S_DEMON) { /* Won't blackmail their own. */
         if (!Deaf())
             await pline(`${Amonnam(mtmp)} says, "Good hunting, ${game.flags?.female ? 'Sister' : 'Brother'}."`);
         else if (canseemon_shared(mtmp))
@@ -663,7 +663,7 @@ export async function lose_guardian_angel(mon) {
     for (i = rn1(3, 2); i > 0; --i) {
         mm.x = game.u.ux;
         mm.y = game.u.uy;
-        const spot = enexto_spawn(mm.x, mm.y, monster_by_pmidx(p.ANGEL));
+        const spot = enexto_gpflags(mm.x, mm.y, monster_by_pmidx(p.ANGEL), 0);
         if (spot) {
             mm.x = spot.x; mm.y = spot.y;
             await mk_roamer(monster_by_pmidx(p.ANGEL),
@@ -703,7 +703,7 @@ export async function gain_guardian_angel() {
         await verbalize('Thou hast been worthy of me!');
         mm.x = game.u.ux;
         mm.y = game.u.uy;
-        const spot = enexto_spawn(mm.x, mm.y, monster_by_pmidx(p.ANGEL));
+        const spot = enexto_gpflags(mm.x, mm.y, monster_by_pmidx(p.ANGEL), 0);
         if (spot) {
             mm.x = spot.x; mm.y = spot.y;
             mtmp = await mk_roamer(monster_by_pmidx(p.ANGEL),
