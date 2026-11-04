@@ -2292,7 +2292,7 @@ export function quest_create_monster(name, mx, my, peacefulOverride) {
     }
     const mtmp = makemon(ptr, x, y, 0);
     if (mtmp) mtmp.female = gender.v;                  // sp_lev.c:2125
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     // C ref: makemon.c S_EEL case -> hideunder(mtmp) during mklev: an eel on a
     // pool becomes mundetected (submerged), so it renders as water.  No RNG.
     if (mtmp && ptr && ptr.mcls === 57 /* S_EEL */) {
@@ -2400,7 +2400,7 @@ export function quest_create_monster_at(name, x, y, peaceful) {
     }
     const mtmp = makemon(ptr, mx, my, 0);
     if (mtmp) mtmp.female = gend;
-    if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = !!peaceful; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -2557,7 +2557,7 @@ export function quest_create_monster_randpos(name, peacefulOverride) {
     }
     const mtmp = makemon(ptr, x, y, 0);
     if (mtmp) mtmp.female = gender.v;                  // sp_lev.c:2125
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -2646,6 +2646,13 @@ export function quest_create_monster_class(classNum, mx, my) {
         if (t === POOL || t === MOAT || t === WATER) mtmp.mundetected = true;
     }
     return mtmp;
+}
+
+// C ref: sp_lev.c spo_end_moninvent() — the end of a des.monster() custom
+// inventory function: m_dowear(invent_carrying_monster, TRUE), so the starting
+// armor is worn without a wear delay (a quest leader's fedora, plate mail...).
+export function quest_end_moninvent(mtmp) {
+    if (mtmp) m_dowear(mtmp, true);
 }
 
 // C ref: sp_lev.c create_monster tail — a monster with a CUSTOM inventory

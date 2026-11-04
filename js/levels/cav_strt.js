@@ -6,7 +6,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, gx, gy, lspo_region, quest_create_monster,
-    quest_create_object, quest_drop_default_invent, quest_place_stair,
+    quest_create_object, quest_drop_default_invent, quest_end_moninvent, quest_place_stair,
     quest_region_light, quest_register_branch, quest_set_door, vly_altar,
     reset_xystart_size,
 } from '../sp_lev.js';
@@ -96,6 +96,7 @@ export async function makemaz_cav_strt() {
         quest_drop_default_invent(karnov);
         quest_create_object(134 /*LEATHER_ARMOR*/, null, null, 5, karnov);
         quest_create_object(77 /*CLUB*/, null, null, 5, karnov);
+        quest_end_moninvent(karnov);
         quest_create_object(CHEST, 34, 2, null, null);
         const neanderthals = [[20, 3], [20, 2], [20, 1], [21, 3],
                               [21, 2], [21, 1], [22, 1], [26, 9]];

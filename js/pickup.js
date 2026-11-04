@@ -31,7 +31,7 @@ import {
 import {
     invlet_basic, inventoryArray, near_capacity, inv_weight, xname, corpse_xname, killer_xname,
     obj_doname as doname, otense, currency, merge_choice, addinv, freeinv, flush_artitouch,
-    obj_here, prinv, prinv_fmt, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
+    obj_here, prinv, is_worn, count_unpaid, count_buc, look_here, tally_BUCX,
     ansimpleoname, display_inventory_interactive, Stone_resistance_hero,
     describe_decor, sortloot, unsortloot, will_feel_cockatrice,
     SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, SORTLOOT_PETRIFY,
@@ -1344,7 +1344,7 @@ export function pickup_prinv_prefix(verb) {
 /* prinv() is a pline() (topl.c update_topl): successive item lines accumulate
    onto one topline or page with --More--, and a wrapped line pages at once. */
 export async function pickup_prinv(obj, count, verb) {
-    await update_topl(prinv_fmt(pickup_prinv_prefix(verb), obj, count));
+    await prinv(pickup_prinv_prefix(verb), obj, count);
 }
 
 /* pickup.c:1978 encumber_msg() lives in js/invent.js (it is the one piece of
@@ -1410,7 +1410,7 @@ export async function reverse_loot() {
         let n = inv_cnt(true);
         for (const otmp of [...invent]) {
             if (!rn2(n + 1)) {
-                await update_topl(prinv_fmt('You find old loot:', otmp, 0));
+                await prinv('You find old loot:', otmp, 0);
                 return true;
             }
             --n;

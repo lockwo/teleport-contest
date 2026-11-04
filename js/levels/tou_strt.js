@@ -5,7 +5,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, lspo_region, quest_create_monster, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
+    quest_drop_default_invent, quest_end_moninvent, quest_place_stair, quest_region_light,
     quest_register_branch, quest_set_door,
     reset_xystart_size,
 } from '../sp_lev.js';
@@ -101,6 +101,7 @@ export async function makemaz_tou_strt() {
         quest_drop_default_invent(twoflower);
         quest_create_object(163 /*LOW_BOOTS*/, null, null, 3, twoflower);
         quest_create_object(136 /*HAWAIIAN_SHIRT*/, null, null, 3, twoflower);
+        quest_end_moninvent(twoflower);
         quest_create_object(CHEST, 64, 3, null, null);
         const guides = [[29, 3], [32, 4], [35, 2], [38, 3], [45, 3], [48, 2],
                         [49, 4], [51, 3], [57, 3], [62, 4], [66, 4]];

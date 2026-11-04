@@ -11,7 +11,7 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx
+    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx, set_malign
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { rn2 } from '../rng.js';
@@ -84,7 +84,7 @@ function astral_monster(name, mx, my, opts = {}) {
         mtmp.mtrapseen = ~0;
         mtmp.msleeping = 0;
     }
-    if (peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    if (peaceful != null) { mtmp.mpeaceful = peaceful ? 1 : 0; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -223,7 +223,7 @@ export async function makemaz_astral() {
                         }
                         const mt = makemon(null, x, y, 0);
                         if (mt) mt.female = 0;    // sp_lev.c:2125, id-less default
-                        if (mt) mt.mpeaceful = 0;
+                        if (mt) { mt.mpeaceful = 0; set_malign(mt); } // sp_lev.c:2129
                     }
                 }
             }

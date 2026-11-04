@@ -931,10 +931,17 @@ export async function rhack(key) {
         // never reaches parse()'s flush_screen(1), so nothing moves it back before
         // the replayed command's own prompt (or a getobj() that reads its answer
         // silently, invent.c in_doagain readchar()) waits for a key.
-        if (!replay) game._parse_cleared_topl = !!game._pending_message;
+        // A stale line (tty_display_nhwindow(WIN_MESSAGE, FALSE) left toplin EMPTY with
+        // the text on screen, see display_nhwindow_message) is not erased by
+        // tty_clear_nhwindow(NHW_MESSAGE), which only wipes when toplin != EMPTY, so
+        // the cursor is not homed either.
+        const staleTopl = !!game._pending_message
+            && game._toplinStale === game._pending_message;
+        if (!staleTopl) game._toplinStale = null;
+        if (!replay) game._parse_cleared_topl = !!game._pending_message && !staleTopl;
         // A canned key was never read from the player (no parse(), so no
         // clear_nhwindow(WIN_MESSAGE)): the previous command's message stays up.
-        if (!canned) game._pending_message = '';
+        if (!canned && !staleTopl) game._pending_message = '';
         // The top line was acknowledged by this keystroke; reset the topl
         // NEED_MORE state so the next turn's messages start a fresh line
         // (C ref: topl.c clears toplin when the player's input is read).
@@ -2166,7 +2173,7 @@ function unmap_invisible(x, y) {
 // map + trap-only + hero-only frame to reveal the trap unambiguously before
 // pausing with --More--; docrt() afterward restores the normal (object-on-
 // top) view.  Hallucination always forces the same clear+pause, per C.
-async function find_trap(trap) {
+export async function find_trap(trap) {
     trap.tseen = 1;
     exercise(A_WIS, true); // -> rn2(19)
     if (Blind()) feel_location(trap.tx, trap.ty); // C: feel_newsym()
@@ -3880,7 +3887,6 @@ async function domove_core(dx, dy, attemptTracked) {
             newsym(u.ux0, u.uy0);
             vision_recalc(1);
             await invocation_message(); // hack.c:2974
-            newsym(u.ux, u.uy);
         }
         // C ref: hack.c:2976-2977 — put the ball and chain back before spoteffects().
         if (bcSwap) {
@@ -6071,7 +6077,12 @@ function cmd_typ_at(x, y) { return cmd_levl(x, y)?.typ | 0; }
 // C ref: display.h glyph_at(x,y) == GLYPH_UNEXPLORED.  This port has no numeric
 // glyph ids; "never revealed" is seenv == 0 with no remembered background
 // (js/hack.js terrain_description() uses the same criterion).
+// While swallowed, display.c swallowed() cls()es the map (clear_glyph_buffer()
+// leaves every gbuf glyph GLYPH_UNEXPLORED) and redraws only the 3x3 stomach
+// around the hero, so the remembered map does not count outside it.
 function cmd_glyph_unexplored(x, y) {
+    const u = game.u;
+    if (u?.uswallow) return Math.abs(x - u.ux) > 1 || Math.abs(y - u.uy) > 1;
     const loc = cmd_levl(x, y);
     return !loc || (!loc.seenv && loc.remembered_glyph == null);
 }

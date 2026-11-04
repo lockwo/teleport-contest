@@ -6,7 +6,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     lspo_region, quest_create_monster, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
+    quest_drop_default_invent, quest_end_moninvent, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_set_door,
     bigrm_load_map,
     reset_xystart_size,
@@ -99,6 +99,7 @@ export async function makemaz_wiz_strt() {
         quest_drop_default_invent(neferet);
         quest_create_object(139 /*ELVEN_CLOAK*/, null, null, 5, neferet);
         quest_create_object(79 /*QUARTERSTAFF*/, null, null, 5, neferet);
+        quest_end_moninvent(neferet);
         quest_create_object(CHEST, 24, 5, null, null);
         const apprentices = [[30, 7], [24, 6], [15, 6], [15, 12],
                              [26, 11], [27, 11], [19, 9], [20, 9]];

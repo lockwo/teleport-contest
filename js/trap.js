@@ -345,12 +345,14 @@ export function maybe_finish_sokoban() {
 
 // C ref: trap.c deltrap() — unlink and free a trap.  The lightweight port keeps
 // traps in a flat array, so removal is a splice.  clear_conjoined_pits(trap)
-// is not ported (inert here — nothing sets ttmp->conjoined); the Sokoban
-// completion check IS wired below, matching C's `if (Sokoban && (trap->ttyp
-// == PIT || trap->ttyp == HOLE)) maybe_finish_sokoban();` tail.
+// runs first, as in C, so a pit dug through to a neighbour (dig.js sets
+// ttmp->conjoined) leaves no stale conjoined bit on the neighbouring pit; the
+// Sokoban completion check is wired below, matching C's `if (Sokoban &&
+// (trap->ttyp == PIT || trap->ttyp == HOLE)) maybe_finish_sokoban();` tail.
 export function deltrap(trap) {
     const list = game.level?.traps;
     if (!list || !trap) return;
+    clear_conjoined_pits(trap);
     const i = list.indexOf(trap);
     if (i >= 0) list.splice(i, 1);
     if (game.level?.flags?.sokoban_rules
@@ -1865,10 +1867,7 @@ async function trapeffect_web(trap, trflags) {
 
 // C ref: trap.c trapeffect_slp_gas_trap(&gy.youmonst, trap, trflags).
 // breathless(gy.youmonst.data) is FALSE for every role monster, so the branch
-// turns purely on Sleep_resistance.  NOTE: nothing in this port grants the
-// hero SleepResistance yet (u_init.c's racial/role intrinsics are unported),
-// so an elf or a Monk takes the wrong arm here and draws an rnd(25) C skips —
-// that is a u_init gap, not a trap.c one.
+// turns purely on Sleep_resistance (zap.js derives the elf/Monk innate source).
 async function trapeffect_slp_gas_trap(trap, _trflags) {
     seetrap(trap);
     const { Sleep_resistance, fall_asleep } = await import('./zap.js');
@@ -2585,9 +2584,9 @@ async function trapeffect_poly_trap(trap, trflags) {
         await poly_obj(game.uarmf, game.uarmf.otyp === IRON_SHOES_OTYP
             ? KICKING_BOOTS : IRON_SHOES_OTYP);
         update_inventory();
-        if (game.uarmf) (await import('./invent.js')).prinv(null, game.uarmf, 0);
+        if (game.uarmf) await (await import('./invent.js')).prinv(null, game.uarmf, 0);
     } else if ((await import('./zap.js')).Antimagic() || (await import('./zap.js')).Unchanging()) {
-        // shieldeff() draws nothing.
+        await (await import('./display.js')).shieldeff(game.u.ux, game.u.uy);
         await You_feel('momentarily different.');
         /* Trap did nothing; don't remove it --KAA */
     } else {
@@ -2972,8 +2971,9 @@ export async function dofiretrap(box) {
     }
     await pline(`A ${TOWER_OF_FLAME} ${box ? 'bursts' : 'erupts'} from ${noun}!`);
     if (Fire_resistance) {
-        // shieldeff() draws nothing; monstseesu() records the resistance for
-        // every monster that can see the hero (m_seenres() steers wand choice).
+        await (await import('./display.js')).shieldeff(u.ux, u.uy);
+        // monstseesu() records the resistance for every monster that can see
+        // the hero (m_seenres() steers wand choice).
         monstseesu(M_SEEN_FIRE);
         num = rn2(2);
     } else if (u?.Upolyd) {
@@ -3989,6 +3989,8 @@ async function tele_trap(trap) {
     const { noteleport_level } = await import('./monmove.js');
     if (In_endgame(u?.uz) || (await import('./youprop.js')).Antimagic_hero()
         || noteleport_level({ data: youmonst_data_pub() })) {
+        if ((await import('./youprop.js')).Antimagic_hero())
+            await (await import('./display.js')).shieldeff(u.ux, u.uy);
         await You_feel('a wrenching sensation.');
     } else if (!(await (await import('./apply.js')).next_to_u())) {
         /* a leashed pet that cannot follow keeps the hero here */
@@ -4056,9 +4058,11 @@ export async function level_tele_trap(trap, trflags) {
     }
     await update_topl(`You ${verbbuf} a level teleport trap!`);
 
-    // Antimagic (shieldeff has no RNG) and In_endgame both abort before the
-    // deltrap, leaving the trap in place.
+    // teleport.c:1551 shieldeff() when Antimagic blocks an unintended trigger;
+    // In_endgame also aborts before the deltrap, leaving the trap in place.
     const antimagic = (await import('./youprop.js')).Antimagic_hero();
+    if (antimagic && !intentional)
+        await (await import('./display.js')).shieldeff(u.ux, u.uy);
     if ((antimagic && !intentional) || In_endgame(u?.uz)) {
         await You_feel('a wrenching sensation.');
         return;
@@ -5748,9 +5752,7 @@ async function trapeffect_rolling_boulder_trap(trap, _trflags) {
 // C ref: trap.c:3260 launch_obj() — the single port behind both rolling-
 // boulder triggers (hero above, monster in monmove.js mon_mintrap) and the
 // pushed-boulder-onto-trap path (cmd.js).  Returns 0 = nothing launched,
-// 1 = launched and placed, 2 = launched and used up.  Not modelled: the
-// down_gate()/ship_object() arm and the per-trap switch for traps lying in
-// the path (land mine, teleporters, pits/holes beyond flooreffects()).
+// 1 = launched and placed, 2 = launched and used up.
 export async function launch_obj(otyp, x1, y1, x2, y2, style) {
     const u = game.u;
     const { thitu, ohitmon } = await import('./monmove.js');

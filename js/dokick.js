@@ -1141,7 +1141,8 @@ async function really_kick_object(x, y) {
     const trap = t_at(x, y);
     if (trap) {
         if ((is_pit_ttyp(trap.ttyp) && !Passes_walls()) || trap.ttyp === WEB) {
-            if (!trap.tseen) { trap.tseen = 1; newsym(x, y); }
+            if (!trap.tseen)
+                await (await import('./cmd.js')).find_trap(trap);
             await update_topl(`You can't kick something that's in a ${
                 Hallucination_k() ? 'tizzy'
                     : trap.ttyp === WEB ? 'web' : 'pit'}!`);

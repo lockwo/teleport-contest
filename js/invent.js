@@ -654,9 +654,8 @@ export function short_oname(obj, lenlimit) {
 export { simple_typename } from './objnam.js';
 
 // C ref: wield.c wield_tool(obj, verb) — wield a tool for #rub/#force/&c.
-// Returns TRUE when the tool got wielded.  All four refusals (worn item, welded
-// weapon, shield vs bimanual, failed swap) are ported; only cantwield() (a
-// handless polyform) is left out, since no polyform reaches this port.
+// Returns TRUE when the tool got wielded.  All the refusals (worn item, welded
+// weapon, cantwield() polyform, shield vs bimanual, failed swap) are ported.
 export async function wield_tool(obj, verb) {
     if (game.uwep && obj === game.uwep) return true; // already wielding it
     if (!verb) verb = 'wield';
@@ -681,8 +680,11 @@ export async function wield_tool(obj, verb) {
         }
         return false;
     }
-    // cantwield(): a handless/nolimbs polyform can't hold anything strongly
-    // enough; not reachable for a humanoid hero, so no branch is emitted here.
+    // C ref: wield.c wield_tool() — cantwield(youmonst.data) = nohands || verysmall.
+    if (nohands_youmonst() || verysmall_youmonst()) {
+        await pline(`You can't hold ${more_than_1 ? 'them' : 'it'} strongly enough.`);
+        return false;
+    }
     if (game.uarms && bimanual(obj)) {
         await pline(`You cannot ${verb} a two-handed ${obj.oclass === WEAPON_CLASS ? 'weapon' : 'tool'} while wearing a shield.`);
         return false;
@@ -2505,11 +2507,17 @@ export async function dodiscovered() {
         if (await choose_disco_sort(1) < 0)
             return ECMD_OK;
     }
-    const rows = await discoveriesRows();
-    if (!rows) {
+    const rawRows = await discoveriesRows();
+    if (!rawRows) {
         game._pending_message = note_topl('You haven\'t discovered anything yet...');
         return ECMD_OK;
     }
+    // C ref: wintty.c tty_putstr() NHW_TEXT — every putstr() line is
+    // compress_str()'d and a line of CO or more is broken at a space, each
+    // piece occupying its own row of the paged window.
+    const { tty_putstr_text } = await import('./pager.js');
+    const rows = [];
+    for (const ln of rawRows) tty_putstr_text(rows, ln);
     // C ref: tty process_text_window() paging — a full-screen text window fits
     // (rows-1) content lines per page (row 23 holds the morestr); when more
     // content remains the footer is "--More--", else "(end)".
@@ -3525,7 +3533,7 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
         setuqwep(obj);
     // C's prinv() is a pline(): it must page a pending touch_artifact() blast
     // before showing the inventory line, rather than overwrite that blast.
-    if (hold_msg || drop_fmt) await update_topl(prinv_fmt(hold_msg, obj, oquan));
+    if (hold_msg || drop_fmt) await prinv(hold_msg, obj, oquan);
     update_inventory();
     await encumber_msg();
     return obj;
@@ -3895,7 +3903,7 @@ async function getobj_menu_inner(lets, altlets, bufFirst, allowed, allowxtra = f
         // C ref: invent.c display_pickinv() — an empty pack says "Not carrying
         // anything." and returns '\0' at once; getobj() then `continue`s and the
         // re-issued prompt pages that message with --More--.
-        if (display_pickinv(choices, xtraChoice, menuquery, allowxtra, true, null) === '\0'
+        if (await display_pickinv(choices, xtraChoice, menuquery, allowxtra, true, null) === '\0'
             && !inventoryArray().length && !usextra) {
             game._yn_need_more = true;   // the re-prompt pages the message
             return '\0';
@@ -5232,7 +5240,7 @@ async function on_msg_accessory(obj) {
         // the message and the keystroke its --More-- consumes.  update_topl()
         // leaves toplin == NEED_MORE too, so a later same-turn message still
         // accumulates onto this line exactly as before.
-        await update_topl(prinv_fmt(null, obj, 0));
+        await prinv(null, obj, 0);
         return;
     }
     // C ref: on_msg() verbose branch uses an(xname(otmp)) — no worn-status
@@ -6152,9 +6160,9 @@ async function doquiver_core(verb) {
     // being silently clobbered.
     if (verb === 'ready') {
         setuqwep(newquiver);
-        await update_topl(prinv_fmt(null, newquiver, 0));
+        await prinv(null, newquiver, 0);
     } else {
-        await update_topl(prinv_fmt('You ready:', newquiver, 0));
+        await prinv('You ready:', newquiver, 0);
         setuqwep(newquiver);
     }
 
@@ -6330,7 +6338,7 @@ async function ready_weapon(wep) {
             wep.owornmask = dummy | QW_WEP;
             if (wep.otyp === AKLYS_OTYP && ((wep.owornmask | 0) & QW_WEP) !== 0)
                 await update_topl('You secure the tether.');
-            await update_topl(prinv_fmt(null, wep, 0));
+            await prinv(null, wep, 0);
             wep.owornmask = dummy;
             // C ref: prinv() -> pline() leaves toplin == NEED_MORE, so a
             // following same-turn message (e.g. a pet's attack on the freed
@@ -6505,10 +6513,10 @@ export async function doswapweapon() {
         setuswapwep(oldswap);                 // wield failed; put it back
     } else {
         setuswapwep(oldwep);
-        // C: prinv() is a pline(), so this second line goes through
-        // update_topl() and pages the first one behind a --More--.
-        await update_topl(game.uswapwep ? prinv_fmt(null, game.uswapwep, 0)
-                                        : 'You have no secondary weapon readied.');
+        // C: prinv() is a pline(), so this second line pages the first one
+        // behind a --More--.
+        if (game.uswapwep) await prinv(null, game.uswapwep, 0);
+        else await update_topl('You have no secondary weapon readied.');
     }
     if (game.u?.twoweap) {
         const { can_twoweapon } = await import('./wield.js');
@@ -8339,7 +8347,7 @@ export async function dofire(getDir) {
         if (obj) {
             const saved = obj.owornmask || 0;
             obj.owornmask = saved & ~QW_QUIVER;
-            prinv('You ready:', obj, 0);
+            await prinv('You ready:', obj, 0);
             obj.owornmask = saved;
         } else {
             await pline('You have nothing appropriate for your quiver.');
@@ -8648,13 +8656,8 @@ export async function dotravel_target() {
 }
 
 // ── dodrop (C ref: do.c dodrop -> drop) ──
-// Wizard/normal 'd' command: prompt for an inventory item then drop it on the
-// floor.  The recorded sessions drop ordinary (non-worn, non-cursed) items on
-// plain floor, so we model the common drop() path: announce "You drop X.",
-// remove it from inventory, place it on the floor and refresh the cell.  The
-// shop / altar / sink-ring / water / can't-reach-floor branches (all RNG-free
-// for these recordings but unused) are not modelled.  Returns ECMD_TIME (1)
-// when an item is dropped, 0 when the command is cancelled.
+// The 'd' command: prompt for an inventory item then drop it.  Returns
+// ECMD_TIME (1) when an item is dropped, 0 when the command is cancelled.
 // C ref: do.c dodrop():29 — the 'd' command: drop one inventory item.  A
 // deliberate drop while standing in a shop is prompted ("Sell it? [ynaq]")
 // rather than silently bought, unlike an accidental drop (glibr()'s slipping
@@ -9984,7 +9987,7 @@ export async function pick_one_obj(obj, count = 0) {
     }
     // C ref: pickup.c:1883/invent.c prinv() — announce each object with
     // pline before attempting the next lift or its encumbrance prompt.
-    await update_topl(prinv_fmt(liftPrefix, held, quan));
+    await prinv(liftPrefix, held, quan);
     } finally {
         game.gm.mrg_to_wielded = false;
     }
@@ -10583,7 +10586,7 @@ export function fully_identify_obj(otmp) { makeknown(otmp?.otyp); if (otmp?.oart
 // previous item instead, so use update_topl() here.
 export async function identify(otmp) {
     fully_identify_obj(otmp);
-    await update_topl(prinv_fmt(null, otmp, 0));
+    await prinv(null, otmp, 0);
     return 1;
 }
 // C ref: invent.c menu_identify — repeatedly open a PICK_ANY inventory menu
@@ -10781,25 +10784,11 @@ export function prinv_fmt(prefix, obj, quan = 0) {
     return `${prefix ? `${prefix} ` : ''}${text}${totalbuf}`;
 }
 
-export function prinv(prefix, obj, quan = 0) {
-    // C ref: invent.c prinv() -> pline() -> vpline():266 flush_screen(1), which
-    // runs bot() when disp.botl is set (display.js botl_flush(), synchronously).
-    if (game.botl) {
-        game.botl = false;
-        if (game.u?.uhp !== -1) delete game._botlFrozen;
-        game._curcap = near_capacity();
-        bot_snapshot();
-    }
-    game._pending_message = prinv_fmt(prefix, obj, quan);
-    // C ref: invent.c prinv() emits its line with pline(), which routes through
-    // topl.c update_topl() and leaves gt.toplin == TOPLIN_NEED_MORE.  Any
-    // message printed afterwards in the same command therefore either merges
-    // onto this line or fires --More-- first; without recording the state the
-    // follow-up (e.g. wizcmds.c wiz_wish()'s encumber_msg()) silently
-    // overwrites the item line instead.
-    remember_topl();
-    game._toplines = wrap_topl(game._pending_message).join('\n');
-    game._toplin = 1; // TOPLIN_NEED_MORE
+// C ref: invent.c prinv() -- xprname() line emitted with pline("%s", ...).
+// update_topl() is the live pline path (vision flush, botl flush, merge onto /
+// --More-- over a pending topline), so prinv can page an earlier message.
+export async function prinv(prefix, obj, quan = 0) {
+    await update_topl(prinv_fmt(prefix, obj, quan));
 }
 
 // doname_invent for a (temporarily) overridden quantity, restoring it after.
@@ -11692,7 +11681,7 @@ export async function dispinv_with_action(lets = null, use_inuse_ordering = fals
         // display_inventory(), so force_invmenu cannot turn this into a menu.
         const save_force_invmenu = game.flags?.force_invmenu;
         if (game.flags) game.flags.force_invmenu = false;
-        display_inventory(lets, false);
+        await display_inventory(lets, false);
         if (game.flags) game.flags.force_invmenu = save_force_invmenu;
         return ECMD_OK;
     }
@@ -11914,7 +11903,7 @@ function force_invmenu_special(lets, allowxtra = false, usextra = false) {
     return null;
 }
 
-export function display_pickinv(lets = null, xtra_choice = null, query = null, allowxtra = false, want_reply = false, out_cnt = null) {
+export async function display_pickinv(lets = null, xtra_choice = null, query = null, allowxtra = false, want_reply = false, out_cnt = null) {
     // C ref: invent.c display_pickinv():3084 `usextra = (xtra_choice &&
     // allowxtra);` — the "Miscellaneous / - - <hands>" row getobj()'s '?'/'*'
     // menu draws when hands is a reachable answer (getobj_menu()'s own
@@ -11936,14 +11925,13 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
         // C ref: invent.c:3139 — nothing to list at all: "Not carrying anything."
         // (before any force_invmenu "Special" row could make the menu non-empty).
         if (n === 0) {
-            game._pending_message = note_topl('Not carrying anything.');
-            game._toplin = 1;
+            await update_topl('Not carrying anything.');
             return '\0';
         }
         if (n === 1 && !want_reply && !game.flags?.force_invmenu
             && !game.iflags?.menu_requested) {
             const otmp = inv.find((o) => !lets || o.invlet === String(lets)[0]);
-            if (otmp) prinv(null, otmp, 0);
+            if (otmp) await prinv(null, otmp, 0);
             if (out_cnt) out_cnt.value = -1;
             return '\0';
         }
@@ -11971,14 +11959,7 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
     // tty_end_menu(): the prompt becomes the first line, followed by a blank.
     if (rows.length && query) rows.unshift([query, '']);
     if (!rows.length) {
-        // Narrow fix (not update_topl): display_pickinv() is sync and called
-        // from several other files (end.js, pager.js) that would all need an
-        // await cascade to route this through update_topl properly.  Setting
-        // toplin=1 alongside the write is enough for the many *other*
-        // generic `if (game._toplin === 1) topl_more()` command epilogues
-        // elsewhere to still page a still-pending earlier message correctly.
-        game._pending_message = note_topl('Not carrying anything.');
-        game._toplin = 1;
+        await update_topl('Not carrying anything.');
         return '\0';
     }
     // Pass null EXPLICITLY, not nothing: renderMenuScreen's default parameter is
@@ -11990,11 +11971,11 @@ export function display_pickinv(lets = null, xtra_choice = null, query = null, a
     return '\0';
 }
 
-export function display_inventory(lets = null, want_reply = false) {
-    return display_pickinv(lets, null, null, false, want_reply, null);
+export async function display_inventory(lets = null, want_reply = false) {
+    return await display_pickinv(lets, null, null, false, want_reply, null);
 }
 
-export function repopulate_perminvent() { display_pickinv(null, null, null, false, false, null); }
+export async function repopulate_perminvent() { await display_pickinv(null, null, null, false, false, null); }
 // C ref: invent.c display_used_invlets() — PICK_ONE menu "Inventory letters
 // used:" listing every carried item (except `avoidlet`) in inventory-list
 // order, grouped by class when flags.sortpack is on.  Returns the picked
@@ -13011,8 +12992,8 @@ export async function doprwep() {
     if (!game.uwep) {
         await pline(`You are ${empty_handed()}.`);
     } else if (!game.iflags?.menu_requested) {
-        await update_topl(prinv_fmt(null, game.uwep, 0));
-        if (game.u?.twoweap && game.uswapwep) await update_topl(prinv_fmt(null, game.uswapwep, 0));
+        await prinv(null, game.uwep, 0);
+        if (game.u?.twoweap && game.uswapwep) await prinv(null, game.uswapwep, 0);
     } else {
         const lets = [game.uwep, game.u?.twoweap ? game.uswapwep : null, game.uquiver]
             .filter(Boolean).map((o) => o.invlet).join('');
@@ -13045,7 +13026,7 @@ export async function doprarm() {
     if (!worn.length) {
         noarmor(true);
     } else if (worn.length === 1 && !game.iflags?.menu_requested) {
-        await update_topl(prinv_fmt(null, worn[0], 0));
+        await prinv(null, worn[0], 0);
     } else {
         return await dispinv_with_action(worn.map((o) => o.invlet).join(''), true, null);
     }
@@ -13058,7 +13039,7 @@ export async function doprring() {
     if (!worn.length) {
         game._pending_message = note_topl('You are not wearing any rings.');
     } else if (worn.length === 1 && !game.iflags?.menu_requested) {
-        await update_topl(prinv_fmt(null, worn[0], 0));
+        await prinv(null, worn[0], 0);
     } else {
         return await dispinv_with_action(worn.map((o) => o.invlet).join(''), true,
                                          worn.length === 1 ? 'Ring' : 'Rings');
@@ -13071,7 +13052,7 @@ export async function dopramulet() {
     if (!game.uamul) {
         game._pending_message = note_topl('You are not wearing an amulet.');
     } else if (!game.iflags?.menu_requested) {
-        await update_topl(prinv_fmt(null, game.uamul, 0));
+        await prinv(null, game.uamul, 0);
     } else {
         return await dispinv_with_action(String(obj_to_let(game.uamul)), true, 'Amulet');
     }
@@ -13461,8 +13442,8 @@ export async function doorganize_core(obj) {
 
     /* messages deferred until inventory has been fully reestablished */
     if (game._merge_discovery_pending) await report_merge_discovery();
-    await update_topl(prinv_fmt(adj_type, obj, 0));
-    if (bumped) await update_topl(prinv_fmt('Moving:', bumped, 0));
+    await prinv(adj_type, obj, 0);
+    if (bumped) await prinv('Moving:', bumped, 0);
     if (splitting) clear_splitobjs(); /* reset splitobj context */
     update_inventory();
     return ECMD_OK;
@@ -13591,7 +13572,53 @@ export async function display_cinventory(obj) {
     return ret;
 }
 export function only_here(obj) { return obj?.ox === game.only?.x && obj?.oy === game.only?.y; }
-export function display_binventory(x, y, as_if_seen) { void as_if_seen; let n = 0; for (const obj of iterateObjects(game.level?.buriedobjlist)) if (obj.ox === x && obj.oy === y) ++n; return n; }
+// C ref: invent.c display_binventory() — list items under water/lava (when the
+// hero floats above it) and buried items at (x,y); used by a wand of probing
+// zapped down.  Returns the number of objects found.
+export async function display_binventory(x, y, as_if_seen) {
+    const { hliquid } = await import('./do_name.js');
+    let underwhat = 'here';
+    let n = 0, n2 = 0;
+
+    /* if hero is levitating or flying over water or lava, list any items
+       below (the map won't be showing them); if hero is underwater, player
+       should use the normal look_here command instead of probing */
+    const floor_objs = objects_at(x, y);
+    if (is_pool_or_lava(x, y) && !game.u?.uinwater && floor_objs.length > 0) {
+        const seen_liquid = hliquid(is_pool(x, y) ? 'water' : 'lava');
+        if (floor_objs.length === 1) {
+            const obj = floor_objs[0];
+            let more_than_1 = is_plural(obj);
+            await pline(`There ${more_than_1 ? 'are' : 'is'} ${doname(obj)} under the ${seen_liquid} here.`);
+            n2 = 1;
+            /* "pair of boots" is singular but "beneath it" sounds strange */
+            if (pair_of(obj)) more_than_1 = true;
+            underwhat = more_than_1 ? 'under them' : 'beneath it';
+        } else {
+            await query_objlist_menu(`Things that are under the ${seen_liquid} here:`,
+                                     floor_objs, BY_NEXTHERE, PICK_NONE, allow_all);
+            n2 = floor_objs.length;
+            underwhat = 'beneath them';
+        }
+    }
+
+    /* count # of buried objects here */
+    const buried = game.level?.buriedobjlist;
+    for (const obj of iterateObjects(buried)) {
+        if (obj.ox === x && obj.oy === y) {
+            if (as_if_seen) observe_object(obj);
+            n++;
+        }
+    }
+    if (n) {
+        game.only = { x, y };
+        /* "buried here", but vary if we've already shown underwater items */
+        await query_objlist_menu(`Things that are buried ${underwhat}:`, buried,
+                                 INVORDER_SORT, PICK_NONE, only_here);
+        game.only = null;
+    }
+    return n + n2;
+}
 
 export function prepare_perminvent(_window) {
     const invmode = iflags().perminv_mode || 0;
@@ -13601,20 +13628,20 @@ export function prepare_perminvent(_window) {
     }
 }
 
-export function sync_perminvent() {
+export async function sync_perminvent() {
     if (!iflags().perm_invent) return;
     prepare_perminvent(game.WIN_INVEN ?? WIN_ERR);
-    if (program_state().beyond_savefile_load) display_inventory(null, false);
+    if (program_state().beyond_savefile_load) await display_inventory(null, false);
 }
 
-export function perm_invent_toggled(negated) {
+export async function perm_invent_toggled(negated) {
     in_perm_invent_toggled = true;
     if (negated) {
         iflags().perm_invent = false;
         game.WIN_INVEN = WIN_ERR;
     } else {
         iflags().perm_invent = true;
-        sync_perminvent();
+        await sync_perminvent();
     }
     in_perm_invent_toggled = false;
 }

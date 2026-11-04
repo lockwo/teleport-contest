@@ -1450,7 +1450,7 @@ export async function take_off() {
 
 // C ref: do_wear.c:1688 stop_donning(stolenobj) — steal.c interrupts a dressing
 // maneuver.  Returns the multi-turns that were still outstanding (for the
-// theft's own timing).  js/steal.js currently stubs this to 0.
+// theft's own timing).
 export async function stop_donning(stolenobj) {
     const otmp = (game.invent || []).find(
         (o) => ((o.owornmask | 0) & W_ARMOR_WORN) && donning(o));

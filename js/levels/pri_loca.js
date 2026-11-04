@@ -11,7 +11,7 @@ import {
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
 import { makemon, mm_mon_at, monster_by_pmidx, name_to_pmidx,
-         MM_EMIN  } from '../makemon.js';
+         MM_EMIN, set_malign  } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { somexy } from '../mkroom.js';
 import { rn2, rnd } from '../rng.js';
@@ -405,6 +405,7 @@ function pri_create_roamer(name, mx, my, peaceful) {
     mtmp.emin = { min_align: A_NONE, renegade: false };
     mtmp.mtrapseen = ~0;                        // mon_learns_traps(ALL_TRAPS)
     mtmp.mpeaceful = peaceful ? 1 : 0;
+    set_malign(mtmp);                           // sp_lev.c:2129
     mtmp.msleeping = 0;
     return mtmp;
 }

@@ -16,7 +16,7 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
-import { makemon, mkclass, monster_by_pmidx, name_to_pmidx } from '../makemon.js';
+import { makemon, mkclass, monster_by_pmidx, name_to_pmidx, set_malign } from '../makemon.js';
 import { walkfrom, mz } from '../mkmaze.js';
 import { BOULDER, GEM_CLASS, RANDOM_CLASS, mkgold, mkobj_at, mksobj_at } from '../mkobj.js';
 import { occupied } from '../mkroom.js';
@@ -494,7 +494,7 @@ export function geh_monster_at(spec, mx, my, peaceful = null) {
     const c = geh_loc(mx, my);
     const mtmp = makemon(ptr, c.x, c.y, 0);
     if (mtmp) mtmp.female = female;                 // sp_lev.c:2125
-    if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = peaceful ? 1 : 0; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 

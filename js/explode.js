@@ -51,7 +51,8 @@ const EXPL_NONE = 0, EXPL_MON = 1, EXPL_HERO = 2, EXPL_SKIP = 4;
 const WAND_CLASS = 11, SCROLL_CLASS = 9, GEM_CLASS = 13;
 const WAN_MAGIC_MISSILE = 429, WAN_DIGGING = 428, WAN_SLEEP = 432;
 const POT_OIL = 321, SCR_FIRE = 339;
-const BOULDER = 475, STATUE = 476, ROCK = 474, EGG = 266;
+const BOULDER = 475, STATUE = 476, ROCK = 474, EGG = 266, GOLD_PIECE = 438;
+const SHOPBASE = 14;                    // mkroom.h room type base
 const GLASS = 19;                       // objclass.h oc_material
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
@@ -567,6 +568,14 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
     const individual_object = !!obj;
     const schain = [];
     let farthest = 0, total = 0;
+    // C ref: explode.c:745 — scattering from a costly shop square: snapshot the
+    // shopkeeper's credit/debit so gold carried out can be reported afterwards.
+    const { in_rooms: in_rooms_sc, shop_keeper: shop_keeper_sc } = await import('./shkroom.js');
+    const SHK = await import('./shk.js');
+    const shkp = shop_keeper_sc(in_rooms_sc(sx, sy, SHOPBASE)[0]);
+    const shop_origin = !!shkp && SHK.costly_spot(sx, sy);
+    let lostgoods = false;
+    if (shop_origin) await SHK.credit_report(shkp, 0, true); /* baseline, without msgs */
 
     for (;;) {
         let otmp = individual_object ? obj : (objects_at(sx, sy)[0] || null);
@@ -666,6 +675,8 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
                         if (game.multi) nomul(0);
                         const dam = dmgval(stmp.obj, game.u);
                         let hitvalu = 8 + (stmp.obj?.spe | 0);
+                        if (((await import('./invent.js')).youmonst_data_pub()?.msize ?? 0) >= 3 /* bigmonst */)
+                            hitvalu++;
                         const hitu = await thitu(hitvalu, Maybe_Half_Phys(dam), stmp.obj);
                         if (hitu) { stmp.range -= 3; await stop_occupation(); }
                     }
@@ -679,11 +690,25 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
     for (const stmp of schain) {
         const x = stmp.ox, y = stmp.oy;
         if (stmp.obj) {
-            if (x !== sx || y !== sy) total += (stmp.obj.quan | 0);
+            let obj_left_shop = false;
+            if (x !== sx || y !== sy) {
+                total += (stmp.obj.quan | 0);
+                obj_left_shop = (shop_origin && !SHK.costly_spot(x, y));
+            }
             // C ref: explode.c:897 — an object that lands in water/lava or on a
             // boulder-filling square is consumed by flooreffects() and not placed.
             const { flooreffects } = await import('./do.js');
             if (!await flooreffects(stmp.obj, x, y, 'land')) {
+                /* C: strchr(u.urooms, *in_rooms(u.ux, u.uy, SHOPBASE)) is true
+                   for the terminating NUL when the hero is not in a shop */
+                const hero_shop = in_rooms_sc(game.u.ux, game.u.uy, SHOPBASE)[0] ?? 0;
+                if (obj_left_shop && (hero_shop === 0 || (game.u.urooms || []).includes(hero_shop))) {
+                    /* only gold is billed (explode.c:906-917) */
+                    if (stmp.obj.otyp === GOLD_PIECE) {
+                        await SHK.addtobill(stmp.obj, false, false, true);
+                        lostgoods = true;
+                    }
+                }
                 place_object(stmp.obj, x, y);
                 stackobj(stmp.obj);
             }
@@ -694,6 +719,8 @@ export async function scatter(sx, sy, blastforce, scflags, obj) {
     const mtmp = m_at(sx, sy);
     if (mtmp && mtmp.mtrapped) mtmp.mtrapped = 0;
     hooks.maybe_unhide_at?.(sx, sy);
+    if (lostgoods) /* implies shop_origin and therefore shkp valid */
+        await SHK.credit_report(shkp, 1, false);
     return total;
 }
 

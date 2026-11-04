@@ -582,6 +582,12 @@ export async function mhitm_ad_drli(magr, mattk, mdef, mhm, ops) {
     }
 }
 
+/* C ref: display.c shieldeff(mdef->mx, mdef->my) */
+async function shieldeff_mon(mon) {
+    const { shieldeff } = await import('./display.js');
+    await shieldeff(mon.mx, mon.my);
+}
+
 export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
     const pd = ops.permonst(mdef);
     const orig_dmg = mhm.damage;
@@ -643,9 +649,14 @@ export async function mhitm_ad_fire(magr, mattk, mdef, mhm, ops) {
         if (is_hero(magr)) {
             if (!Blind())
                 await ops.emit(`The fire doesn't heat ${ops.mon_nam(mdef)}!`);
-        } else if (ops.vis && ops.canseemon(mdef))
-            await ops.emit(`The fire doesn't seem to burn ${ops.mon_nam(mdef)}!`);
-        await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
+            await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
+            await shieldeff_mon(mdef);
+        } else {
+            if (ops.vis && ops.canseemon(mdef))
+                await ops.emit(`The fire doesn't seem to burn ${ops.mon_nam(mdef)}!`);
+            await shieldeff_mon(mdef);
+            await golemeffects(mdef, AD_FIRE, mhm.damage, ops);
+        }
         mhm.damage = 0;
     }
     mhm.damage += await destroy_items_mon(mdef, AD_FIRE, orig_dmg, ops);
@@ -660,6 +671,7 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
         if (await mhitm_mgc_atk_negated(magr, mdef, true, ops)) { mhm.damage = 0; return; }
         if (!Blind()) await ops.emit(`${ops.Monnam(mdef)} is covered in frost!`);
         if (resists_cold(ops, mdef) || defended(mdef, AD_COLD)) {
+            await shieldeff_mon(mdef);
             if (!Blind()) await ops.emit(`The frost doesn't chill ${ops.mon_nam(mdef)}!`);
             await golemeffects(mdef, AD_COLD, mhm.damage, ops);
             mhm.damage = 0;
@@ -693,6 +705,7 @@ export async function mhitm_ad_cold(magr, mattk, mdef, mhm, ops) {
     if (resists_cold(ops, mdef) || defended(mdef, AD_COLD)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The frost doesn't seem to chill ${ops.mon_nam(mdef)}!`);
+        await shieldeff_mon(mdef);
         await golemeffects(mdef, AD_COLD, mhm.damage, ops);
         mhm.damage = 0;
     }
@@ -707,6 +720,7 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
         if (resists_elec(ops, mdef) || defended(mdef, AD_ELEC)) {
             if (!Blind()) await ops.emit(`The zap doesn't shock ${ops.mon_nam(mdef)}!`);
             await golemeffects(mdef, AD_ELEC, mhm.damage, ops);
+            await shieldeff_mon(mdef);
             mhm.damage = 0;
         }
         mhm.damage += await destroy_items_mon(mdef, AD_ELEC, orig_dmg, ops);
@@ -738,6 +752,7 @@ export async function mhitm_ad_elec(magr, mattk, mdef, mhm, ops) {
     if (resists_elec(ops, mdef) || defended(mdef, AD_ELEC)) {
         if (ops.vis && ops.canseemon(mdef))
             await ops.emit(`The zap doesn't shock ${ops.mon_nam(mdef)}!`);
+        await shieldeff_mon(mdef);
         await golemeffects(mdef, AD_ELEC, mhm.damage, ops);
         mhm.damage = 0;
     }
@@ -1150,7 +1165,7 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
         }
         return;
     }
-    if (!has_head(pd)) {
+    if (game.notonhead || !has_head(pd)) {
         if (ops.vis && ops.canspotmon(mdef))
             await ops.emit(`${ops.Monnam(mdef)} doesn't seem harmed.`);
         mhm.damage = 0;
@@ -1159,8 +1174,10 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
         return;
     }
     if (((mdef.misc_worn_check | 0) & W_ARMH) && rn2(8)) {
-        if (ops.vis && ops.canspotmon(magr) && ops.canseemon(mdef))
-            await ops.emit(`${ops.Monnam(mdef)}'s helmet blocks ${ops.mon_nam(magr)}'s attack to its head.`);
+        if (ops.vis && ops.canspotmon(magr) && ops.canseemon(mdef)) {
+            const { mhis } = await import('./do_name.js');
+            await ops.emit(`${s_suffix(ops.Monnam(mdef))} helmet blocks ${s_suffix(ops.mon_nam(magr))} attack to ${mhis(mdef)} head.`);
+        }
         return;
     }
     const { which_armor } = await import('./worn.js');
@@ -1682,6 +1699,8 @@ export async function do_stone_mon(magr, mattk, mdef, mhm, ops) {
             mhm.hitflags = M_ATTK_MISS;
             mhm.done = true;
             return;
+        } else if (mdef.mtame && !ops.vis) {
+            await ops.emit('You have a peculiarly sad feeling for a moment, then it passes.'); /* brief_feeling */
         }
         mhm.hitflags = M_ATTK_DEF_DIED
             | (await ops.grow_up(magr, mdef) ? 0 : M_ATTK_AGR_DIED);

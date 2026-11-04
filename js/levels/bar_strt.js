@@ -8,7 +8,7 @@ import { CHEST } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, q_absx, q_absy, quest_create_monster,
-    quest_create_monster_at, quest_create_object, quest_create_trap, quest_drop_default_invent,
+    quest_create_monster_at, quest_create_object, quest_create_trap, quest_drop_default_invent, quest_end_moninvent,
     quest_flip_branch, quest_floodfill_match, quest_level_init_solidfill, quest_place_stair,
     quest_region_light, quest_register_branch, quest_replace_terrain, quest_rndcoord,
     quest_set_door, shuffle, splev_create_monster,
@@ -158,6 +158,7 @@ export async function makemaz_bar_strt() {
         quest_drop_default_invent(pelias);
         quest_create_object(58 /*RUNESWORD*/, null, null, 5, pelias);
         quest_create_object(128 /*CHAIN_MAIL*/, null, null, 5, pelias);
+        quest_end_moninvent(pelias);
         // The treasure of Pelias.
         quest_create_object(CHEST, 9, 5, null, null);
         // chieftain guards for the audience chamber.

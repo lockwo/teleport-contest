@@ -5,7 +5,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, lspo_region, quest_create_monster, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
+    quest_drop_default_invent, quest_end_moninvent, quest_place_stair, quest_region_light,
     quest_set_door,
     reset_xystart_size,
 } from '../sp_lev.js';
@@ -85,6 +85,7 @@ export async function makemaz_sam_strt() {
         if (mail) { mail.oerodeproof = 1; mail.cursed = 0; }
         const katana = quest_create_object(56 /*KATANA*/, null, null, 4, sato);
         if (katana) { katana.oerodeproof = 1; katana.cursed = 0; }
+        quest_end_moninvent(sato);
         quest_create_object(CHEST, 20, 4, null, null);
         const roshi = [[18, 4], [18, 5], [18, 6], [18, 7],
                        [26, 4], [26, 5], [26, 6], [26, 7]];

@@ -1054,7 +1054,6 @@ export function m_poisongas_ok_mon(mtmp) {
 // C ref: mon.c mfndpos(mon,&data,flag) — legal move positions around the
 // monster; cnt drives m_move's rn2(4*(cnt-j)), so a missing terrain arm
 // silently reshapes the whole stream. Consumes NO RNG itself.
-// Still omitted: fixed_tele_trap()+hastrack.
 export function mfndpos(mon, flag) {
     const poss = [];
     const x = mon.mx, y = mon.my;
@@ -5154,13 +5153,7 @@ function acurrstr() {
 // (2*SQSRCHRADIUS+1)^2 rectangle for a grabbable object, redirecting the goal
 // toward it; returns TRUE only when the object is on the monster's own square
 // (caller then bails to postmov).
-// SCOPED PORT: the pile scan draws NO rng (the function's only roll is the
-// in-shop `rn2(25)` skip), and no monster in the recorded sessions both stands
-// near a floor object AND would take it (snakes/elementals are M1_NOTAKE), so
-// the scan is omitted as rng-neutral; the in-shop rn2(25) and finish_search's
-// appr/goal override — the parts that DO fire — are reproduced faithfully.
-// (For item-grab parity, port the OBJ_AT pile loop here; it moves ggx/ggy,
-// not the rng stream.)
+// The port is m_search_items() below.
 // C ref: mondata.h metallivorous(ptr) == (mflags1 & M1_METALLIVORE).
 function metallivorous(ptr) { return (mflags1_of(ptr) & M1_METALLIVORE) !== 0; }
 const PM_RUST_MONSTER_NAME = "rust monster";
@@ -6388,6 +6381,9 @@ export async function mattacku(mtmp, mdat) {
                 if (foundyou) {
                     if (u.uswallow
                         || (!mtmp.mspec_used && tmp > (j = rnd(20 + i)))) {
+                        /* force swallowing monster to be displayed even when
+                           hero is moving away (mhitu.c:849) */
+                        await flush_screen(1);
                         const { gulpmu } = await import('./mhitu.js');
                         sum[i] = await gulpmu(mtmp, mattk);
                     } else {
@@ -7446,6 +7442,15 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
             return;
         }
     }
+    // C ref: mthrowu.c:639 — MT_FLIGHTCHECK(TRUE, 0) comes BEFORE `if (sym)
+    // tmp_at(DISP_FLASH, obj_to_glyph(...))`: a missile launched straight into
+    // a wall/closed door never moves, and never draws its hallucinated flash
+    // glyph off the display rng.
+    if (await flightcheck(sx, sy, false)) {
+        if (singleobj) await drop_thrown_missile(mon, singleobj, sx, sy, 0);
+        return;
+    }
+    game.mesg_given = 0;  // C ref: mthrowu.c:643 — no 'missile misses' message yet
     // C ref: mthrowu.c:649-651 — `if (sym) tmp_at(DISP_FLASH, obj_to_glyph(...))`.
     // sym = obj->oclass (always truthy for a thrown weapon/ammo); the contest
     // throwers (dagger/dart) are never autoreturn/tethered.  The flash glyph is
@@ -7488,13 +7493,6 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         blindinc = 0;
     };
     let bx = sx, by = sy;
-    // C ref: mthrowu.c:639 — MT_FLIGHTCHECK(TRUE, 0) BEFORE the flight loop: a
-    // missile launched straight into a wall/closed door never moves.
-    if (await flightcheck(bx, by, false)) {
-        if (singleobj) await drop_thrown_missile(mon, singleobj, bx, by, 0);
-        return;
-    }
-    game.mesg_given = 0;  // C ref: mthrowu.c:643 — no 'missile misses' message yet
     while (range-- > 0) {
         bx += dx; by += dy;
         // C ref: mthrowu.c m_throw():676-677 — as soon as the missile occupies

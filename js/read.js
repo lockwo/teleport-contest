@@ -99,7 +99,7 @@ const LEASH = 236;
 const POT_WATER = 322;
 
 const WT_IRON_BALL_INCR = 160;   // C ref: include/obj.h WT_IRON_BALL_INCR
-const ALL_SPELLS = 1;            // C ref: read.c forget() howmuch bit
+const ALL_SPELLS = 2;            // C ref: read.c forget() howmuch bit
 const WM_MASK = 0x07;            // C ref: rm.h WM_MASK (wall mode bits in an SDOOR's doormask)
 const PM_ACID_BLOB = 6, PM_YELLOW_LIGHT = 118, PM_BLACK_LIGHT = 119;
 // C ref: hack.h makemon() flags.
@@ -1442,9 +1442,10 @@ export async function destroy_arm() {
             }
         }
     }
-    // C ref: destroy_arm() ends with `if (ret) stop_occupation();` (deliberately
-    // NOT ported, see below) and never calls find_ac(): u.uac (hence the status
-    // line) stays stale until the next moveloop_core() head runs find_ac().
+    // C ref: do_wear.c destroy_arm() ends with `if (ret) stop_occupation();`.
+    // It never calls find_ac(): u.uac (hence the status line) stays stale until
+    // the next moveloop_core() head runs find_ac().
+    if (ret) await (await import('./hack.js')).stop_occupation();
     return ret;
 }
 

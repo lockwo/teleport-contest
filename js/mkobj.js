@@ -26,7 +26,7 @@ import {
 } from './makemon.js';
 import { block_point, recalc_block_point } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, obj_nutrition, eating_glob } from './eat.js';
-import { is_human_flag } from './monflags_data.js';
+import { is_human_flag, is_dwarf_flag } from './monflags_data.js';
 import { base_oc_cost } from './objcost_data.js';
 
 // artifact.js imports this module, and its top level needs `objects` while this one is still evaluating (steal.js reads it at load),
@@ -1384,7 +1384,7 @@ function zombie_form_pm(corpsenm) {
     case 'K':
         return 0;
     case 'h':
-        return /^dwarf( lord| king)?$/.test(ptr.name) ? 0 : NON_PM; /* is_dwarf */
+        return is_dwarf_flag(ptr) ? 0 : NON_PM;
     default:
         return NON_PM;
     }

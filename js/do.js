@@ -72,7 +72,7 @@ import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { enexto_gpflags, goodpos } from './teleport.js';
 import { m_in_air } from './monmove.js';
-import { near_capacity, addinv, prinv_fmt, worn_extrinsic, worn_blocked, youmonst_data, Tobjnam } from './invent.js';
+import { near_capacity, addinv, prinv, worn_extrinsic, worn_blocked, youmonst_data, Tobjnam } from './invent.js';
 import { BOULDER, run_object_timers, requeue_level_timers, mksobj, AMULET_OF_YENDOR,
          is_rider_pm, clear_no_charge_on_getlev } from './mkobj.js';
 import { vision_reset, vision_recalc, Blind, cansee,
@@ -1489,8 +1489,8 @@ export async function prev_level(at_stairs) {
 export async function doup() {
     const u = game.u;
     const stway = stairway_at(u.ux, u.uy);
-    // C ref: do.c doup -> set_move_cmd(DIR_UP, 0): u.dz = -1 (up), u.dx=u.dy=0.
-    u.dz = -1; u.dx = 0; u.dy = 0;
+    // C ref: do.c:1302 set_move_cmd(DIR_UP, 0).
+    (await import('./cmd.js')).set_move_cmd(9 /* DIR_UP */, 0);
 
     // C ref: do.c:1303 u_rooted() — costs the turn (ECMD_TIME).
     if (await u_rooted()) return 1;
@@ -1663,7 +1663,7 @@ export async function level_tele(readLevel, immediate = false) {
                     // prinv() is a pline(): its flush_screen(1) runs the bot() the
                     // menu dismissal's gb.bot_disabled left pending (disp.botlx), so
                     // the status is painted before goto_level() freezes the departing frame.
-                    await update_topl(prinv_fmt('Endgame prerequisite:', amu, 0));
+                    await prinv('Endgame prerequisite:', amu, 0);
                 }
             }
             force_dest = true;
@@ -2107,8 +2107,8 @@ async function u_stuck_cannot_go(updn) {
 export async function dodown() {
     const u = game.u;
 
-    // C ref: do.c:1135 set_move_cmd(DIR_DOWN, 0): u.dz = 1, u.dx = u.dy = 0.
-    u.dz = 1; u.dx = 0; u.dy = 0;
+    // C ref: do.c:1135 set_move_cmd(DIR_DOWN, 0).
+    (await import('./cmd.js')).set_move_cmd(8 /* DIR_DOWN */, 0);
 
     // C ref: do.c:1137 u_rooted() — costs the turn (ECMD_TIME).
     if (await u_rooted()) return 1;
@@ -2202,8 +2202,12 @@ export async function dodown() {
             await dotrap(trap, TOOKPLUNGE);
             return 1; // ECMD_TIME
         }
-        // C ref: do.c:1231 — with flags.autodig (default off) and a wielded
-        // pick-axe C digs down here instead; not modelled.
+        // C ref: do.c:1231-1233 — flags.autodig with a wielded digging tool
+        // digs down here instead of refusing.
+        if (game.flags?.autodig && !game.context?.nopick
+            && game.uwep && (await import('./weapon.js')).is_pick(game.uwep)) {
+            return await (await import('./dig.js')).use_pick_axe2(game.uwep);
+        }
         // C ref: do.c:1236 — a VIBRATING_SQUARE reads "You can't go down here yet."
         await pline(`You can't go down here${
             (trap && trap.ttyp === VIBRATING_SQUARE) ? ' yet' : ''}.`);

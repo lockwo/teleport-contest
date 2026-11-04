@@ -38,7 +38,8 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          HEAD, HAND, FOOT, FACE, G_GONE, S_LRING, ER_NOTHING, ER_DESTROYED,
          W_SADDLE, POLY_NOFLAGS, POLY_CONTROLLED, POLY_LOW_CTRL, INVIS,
          COLNO, ROWNO, SICK, SLIMED, STONED, KILLED_BY, KILLED_BY_AN, Unaware as Unaware_const, OBJ_INVENT,
-         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS, M_SEEN_SLEEP, LEG } from './const.js';
+         FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS, M_SEEN_SLEEP, LEG,
+         Is_airlevel, Is_waterlevel } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
 import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
 import { newuhs } from './eat.js';
@@ -850,9 +851,9 @@ async function peffect_paralysis(otmp) {
         await pline('You stiffen momentarily.');
         return;
     }
-    // Is_airlevel/Is_waterlevel share the "motionlessly suspended" arm with
-    // Levitation; neither level is reachable before the Planes.
-    if (Levitation())
+    // C ref: potion.c peffect_paralysis(): Levitation || Is_airlevel ||
+    // Is_waterlevel take the "motionlessly suspended" arm.
+    if (Levitation() || Is_airlevel(game.u?.uz) || Is_waterlevel(game.u?.uz))
         await pline('You are motionlessly suspended.');
     else if (game.u?.usteed)
         await pline('You are frozen in place!');
@@ -1865,7 +1866,7 @@ const P_P_BOW = 20, P_P_CROSSBOW = 22, P_P_SHURIKEN = 24, P_P_NONE = 0;
 // C ref: include/objclass.h oc_material IRON / COPPER (mkobj.js:186/188).
 const P_IRON = 11, P_COPPER = 13;
 // C ref: include/objclass.h object classes / include/hack.h BOLT_LIM.
-const P_TOOL_CLASS = 8, P_GEM_CLASS = 9, P_WEAPON_CLASS = 2;
+const P_TOOL_CLASS = 6, P_GEM_CLASS = 13, P_WEAPON_CLASS = 2;
 const P_BOLT_LIM = 8;
 // otyps in mkobj.js OBJECT_DATA order == include/onames.h order.
 const P_ALCHEMY_SMOCK = 144, P_OIL_LAMP = 227, P_MAGIC_LAMP = 228,

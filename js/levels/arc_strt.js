@@ -9,7 +9,7 @@ import { rn2 } from '../rng.js';
 import {
     ARC_S_MUMMY, ARC_S_SNAKE, bigrm_load_map, bigrm_wallification, flip_level,
     quest_create_monster, quest_create_monster_class, quest_create_object,
-    quest_create_trap_random, quest_drop_default_invent, quest_flip_branch,
+    quest_create_trap_random, quest_drop_default_invent, quest_end_moninvent, quest_flip_branch,
     quest_level_init_solidfill, quest_place_stair, quest_region_light, quest_register_branch,
     quest_set_door, shuffle,
     vly_non_diggable,
@@ -106,6 +106,7 @@ export async function makemaz_arc_strt() {
         quest_drop_default_invent(carnarvon);
         quest_create_object(92 /*FEDORA*/, null, null, 5, carnarvon);
         quest_create_object(82 /*BULLWHIP*/, null, null, 4, carnarvon);
+        quest_end_moninvent(carnarvon);
         // The treasure of Lord Carnarvon.
         quest_create_object(CHEST, 25, 10, null, null);
         // student guards for the audience chamber.

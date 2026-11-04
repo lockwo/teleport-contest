@@ -6,7 +6,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, q_absx, q_absy, quest_create_monster, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
+    quest_drop_default_invent, quest_end_moninvent, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_set_door,
     reset_xystart_size,
 } from '../sp_lev.js';
@@ -80,6 +80,7 @@ export async function makemaz_hea_strt() {
         const hippocrates = quest_create_monster('Hippocrates', 37, 10, null);
         quest_drop_default_invent(hippocrates);
         quest_create_object(37 /*SILVER_DAGGER*/, null, null, 5, hippocrates);
+        quest_end_moninvent(hippocrates);
         quest_create_object(CHEST, 37, 10, null, null);
         const attendants = [[29, 8], [29, 9], [29, 10], [29, 11],
                             [40, 9], [40, 10], [40, 11], [40, 13]];

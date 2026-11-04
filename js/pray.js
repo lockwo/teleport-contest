@@ -2089,7 +2089,7 @@ const ROLE_MONK = 5, ROLE_WIZARD = 12;
 // C ref: artifact.h ART_* ordinals (js/artifact.js:227-232).
 const P_ART_EXCALIBUR = 1, P_ART_STORMBRINGER = 2, P_ART_VORPAL_BLADE = 18;
 // C ref: const.js ONAME_GIFT / ONAME_KNOW_ARTI.
-const P_ONAME_GIFT = 0x0004, P_ONAME_KNOW_ARTI = 0x0100;
+const P_ONAME_GIFT = 0x0008, P_ONAME_KNOW_ARTI = 0x0100;
 // C ref: defsym.h MONSYM() indices used by maybe_turn_mon_iter()'s switch.
 const PS_LICH = 38, PS_MUMMY = 39, PS_VAMPIRE = 48, PS_WRAITH = 49,
     PS_ZOMBIE = 52, PS_GHOST = 54;

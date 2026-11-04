@@ -2085,7 +2085,7 @@ async function zap_updown(obj) {
                 surf = the(dungeon.surface(x, y));
             }
             await pline(`You probe beneath ${surf}.`);
-            ptmp += display_binventory(x, y, true);
+            ptmp += await display_binventory(x, y, true);
         }
         if (!ptmp)
             await pline('Your probe reveals nothing.');

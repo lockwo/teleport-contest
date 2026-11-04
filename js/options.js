@@ -3957,6 +3957,7 @@ let using_alias = false;
 // list, or the whole list (it splits and recurses itself).
 function parseoptions(optstr, tinitial, result) {
     let opts = optstr;
+    let retval = true;
 
     using_alias = false;
 
@@ -3966,20 +3967,21 @@ function parseoptions(optstr, tinitial, result) {
     if (tinitial) {
         const comma = opts.indexOf(',');
         if (comma >= 0) {
-            parseoptions(opts.slice(comma + 1), tinitial, result);
+            if (!parseoptions(opts.slice(comma + 1), tinitial, result))
+                retval = false;
             opts = opts.slice(0, comma);
         }
     }
     if (opts.length > BUFSZ / 2) {
         config_error_add(`Option too long, max length is ${BUFSZ / 2} characters`);
-        return;
+        return false;
     }
 
     while (opts.length && isspace(opts[0])) opts = opts.slice(1);
     while (opts.length && isspace(opts[opts.length - 1])) opts = opts.slice(0, -1);
     if (!opts) {
         config_error_add('Empty statement');
-        return;
+        return false;
     }
 
     // options.c:540 — a LOOP, so "!no", "nono" and the "no-" spelling all work.
@@ -4041,7 +4043,7 @@ function parseoptions(optstr, tinitial, result) {
         if (duplicate && !o.dupeok) complain_about_duplicate(o);
         if (negated && !o.negateok) {
             bad_negation(o.name, true);
-            return;
+            return false;
         }
         const op = string_for_opt(opts, true);
         if (o.typ === 'B') optresult = optfn_boolean(o, negated, opts, op, result);
@@ -4059,7 +4061,7 @@ function parseoptions(optstr, tinitial, result) {
     }
 
     if (optresult === OPTN_SILENTERR
-        || (got_match && ALLOPT[matchidx].disregarded)) return;
+        || (got_match && ALLOPT[matchidx].disregarded)) return false;
     // C ref: options.c parseoptions() — a PREFIX option whose suffix its
     // pfxfn() rejected names the suffix rather than reporting nothing.
     if (pfx_match && optresult === OPTN_ERR) {
@@ -4067,15 +4069,16 @@ function parseoptions(optstr, tinitial, result) {
         const colon = pfxbuf.indexOf(':');
         if (colon >= 0) pfxbuf = pfxbuf.slice(0, colon);
         config_error_add(`bad option suffix variation '${pfxbuf}'`);
-        return;
+        return false;
     }
-    if (got_match && optresult === OPTN_ERR) return;
-    if (optresult === OPTN_OK) return;
+    if (got_match && optresult === OPTN_ERR) return false;
+    if (optresult === OPTN_OK) return retval;
 
     // C ref: options.c parseoptions() falling off the end.  Only an option
     // name that matched NOTHING lands here: a matched option with a bad value
     // reports its own complaint from inside its optfn and returns first.
     config_error_add(`Unknown option '${opts}'`);
+    return false;
 }
 
 // C ref: options.c complain_about_duplicate().

@@ -127,7 +127,7 @@ const HAVE_MSVC = false;                /* _MSC_VER */
 
 // C ref: include/hack.h SFCTOOL_BIT — the high feature bit that the standalone
 // save-file conversion tool sets and NetHack itself never does.
-const SFCTOOL_BIT = 0x80000000;
+const SFCTOOL_BIT = 0x40000000;
 
 // ── mdlib.c file statics ──
 let idxopttext = 0;

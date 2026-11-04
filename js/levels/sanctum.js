@@ -8,7 +8,7 @@ import {
 } from '../const.js';
 import { game } from '../gstate.js';
 import {
-    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx
+    MM_EMIN, makemon, mm_mon_at, monster_by_pmidx, set_malign
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { ARMOR_CLASS, GEM_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS } from '../mkobj.js';
@@ -95,7 +95,7 @@ function sanc_monster(name, mx, my, opts = {}) {
         mtmp.mtrapseen = ~0;                      // mon_learns_traps(ALL_TRAPS)
         mtmp.msleeping = 0;
     }
-    if (peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    if (peaceful != null) { mtmp.mpeaceful = peaceful ? 1 : 0; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 

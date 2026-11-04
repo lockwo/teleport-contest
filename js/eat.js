@@ -1560,8 +1560,8 @@ async function fprefx(otmp) {
 // The default arm of fprefx()'s switch: returns TRUE when the generic
 // give_feedback line should be printed.
 async function fprefx_default(otmp, Halluc) {
-    // C: otmp->spe == svc.context.current_fruit (the player's own fruit).
-    // current_fruit is not modelled, so this can only fire once it is.
+    // C: otmp->spe == svc.context.current_fruit (the player's own fruit,
+    // set by options.js fruitadd()).
     if (otmp.otyp === SLIME_MOLD && !otmp.cursed
         && game.context?.current_fruit != null
         && otmp.spe === game.context.current_fruit) {

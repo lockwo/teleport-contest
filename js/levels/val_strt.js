@@ -6,7 +6,7 @@ import { game } from '../gstate.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, quest_create_monster, quest_create_object,
-    quest_drop_default_invent, quest_place_stair, quest_region_light,
+    quest_drop_default_invent, quest_end_moninvent, quest_place_stair, quest_region_light,
     quest_register_branch, quest_set_door, splev_feature,
     reset_xystart_size,
 } from '../sp_lev.js';
@@ -99,6 +99,7 @@ export async function makemaz_val_strt() {
         quest_drop_default_invent(norn);
         quest_create_object(125 /*BANDED_MAIL*/, null, null, 5, norn);
         quest_create_object(54 /*LONG_SWORD*/, null, null, 4, norn);
+        quest_end_moninvent(norn);
         quest_create_object(CHEST, 36, 10, null, null);
         const warriors = [[27, 8], [27, 9], [27, 11], [27, 12],
                           [42, 8], [42, 9], [42, 11], [42, 12]];

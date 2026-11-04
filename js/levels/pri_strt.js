@@ -10,7 +10,7 @@ import { maketrap } from '../trap.js';
 import {
     TEMPLE_RTYPE, bigrm_load_map, bigrm_wallification, flip_level, q_absx, q_absy,
     quest_create_monster, quest_create_monster_at, quest_create_object,
-    quest_create_trap_random, quest_drop_default_invent, quest_flip_branch,
+    quest_create_trap_random, quest_drop_default_invent, quest_end_moninvent, quest_flip_branch,
     quest_floodfill_match, quest_level_init_solidfill, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door, shuffle,
     vly_region,
@@ -127,6 +127,7 @@ export async function makemaz_pri_strt() {
         quest_drop_default_invent(archpriest);
         quest_create_object(143 /*ROBE*/, null, null, 4, archpriest);
         quest_create_object(73 /*MACE*/, null, null, 4, archpriest);
+        quest_end_moninvent(archpriest);
         // The treasure of the Arch Priest.
         quest_create_object(CHEST, 27, 10, null, null);
         // acolyte guards for the audience chamber.

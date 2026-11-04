@@ -1911,8 +1911,11 @@ function mon_warning(mon) {
 // The monster loop shared by the async see_monsters() and the synchronous
 // see_monsters_sync(); returns new_warn_obj_cnt (the number of monsters a
 // wielded Sting/Orcrist/Grimtooth warns of), or -1 when defer_see_monsters
-// made C return early.
-function see_monsters_loop() {
+// made C return early.  A generator: it yields each monster whose position
+// fails isok() (C newsym()'s impossible("newsym: attempting screen update for
+// <%d,%d>"), e.g. a bubble-moved monster parked at <0,0> in fmon) so the async
+// caller can print that message at the point C does, mid-loop.
+function* see_monsters_loop() {
     // C ref: display.c see_monsters() `if (gd.defer_see_monsters) return;` —
     // restgamestate() sets it so docrt() during a restore does not paint
     // sensed/telepathic monsters before moveloop_preamble() releases it.
@@ -1944,7 +1947,8 @@ function see_monsters_loop() {
         // here (nor is the hero's square, via the `!u.usteed` tail) — docrt()
         // at end-of-game disclosure leaves the remembered floor glyph.
         if ((mon.mstate || 0) & MON_STILL_ARRIVING) continue;
-        newsym(mon.mx, mon.my);
+        if (isok(mon.mx, mon.my)) newsym(mon.mx, mon.my);
+        else yield mon;
         // C ref: worm.c see_wsegs(mon) — every tail segment short of the
         // hidden one under the head.  Inlined: worm.js imports this module.
         if (mon.wormno && lev.wtails)
@@ -1966,9 +1970,22 @@ function vpline_clip(line) {
     return line;
 }
 
+// Drive see_monsters_loop() to completion; `bad` is called for each yielded monster.
+function run_see_monsters_loop(bad) {
+    const it = see_monsters_loop();
+    for (let r = it.next(); ; r = it.next()) {
+        if (r.done) return r.value;
+        bad?.(r.value);
+    }
+}
+
 export async function see_monsters() {
     await flush_sting_effects();
-    const new_warn_obj_cnt = see_monsters_loop();
+    const it = see_monsters_loop();
+    let r;
+    while (!(r = it.next()).done)
+        await impossible(`newsym: attempting screen update for <${r.value.mx},${r.value.my}>`);
+    const new_warn_obj_cnt = r.value;
     if (new_warn_obj_cnt < 0) return;
     /* Make Sting glow blue or stop glowing if required. */
     if (new_warn_obj_cnt !== (game.warn_obj_cnt | 0)) {
@@ -1985,7 +2002,7 @@ export async function see_monsters() {
 // pline.  The count is committed now; the message is queued and given by
 // flush_sting_effects() at the async boundary that follows the setworn().
 export function see_monsters_sync() {
-    const new_warn_obj_cnt = see_monsters_loop();
+    const new_warn_obj_cnt = run_see_monsters_loop(null);
     if (new_warn_obj_cnt < 0) return;
     if (new_warn_obj_cnt !== (game.warn_obj_cnt | 0)) {
         (game._pending_sting_effects ||= []).push(
@@ -2439,7 +2456,7 @@ function display_sensed_monster(x, y, mon, see_it) {
         : ((!see_it && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
             || female_attr(mg.female);
     show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr);
-    if (loc) loc.disp_monster = detect_monsters || !mimics_an_object(mon);
+    if (loc) loc.disp_monster = detect_monsters || mimic_sensed(mon) || !mimics_an_object(mon);
     if (M_AP_TYPE(mon) === M_AP_NOTHING || mimic_sensed(mon)) mon.meverseen = 1;
 }
 
@@ -2708,7 +2725,7 @@ function newsym_core(x, y) {
                              && !(mon.mtame && !Hallucination_u())
                              && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr || detAttr);
-            loc.disp_monster = detected || !mimics_an_object(mon);
+            loc.disp_monster = detected || mimic_sensed(mon) || !mimics_an_object(mon);
             /* display_monster(): `mon->meverseen = 1` once drawn as itself */
             if (M_AP_TYPE(mon) === M_AP_NOTHING || mimic_sensed(mon)) mon.meverseen = 1;
         } else if (mon && mon_warning(mon) && !worm_tail) {
@@ -3037,12 +3054,13 @@ export function hero_glyph() {
 // C ref: display.c `show_glyph(mon->mx, mon->my, mon_to_glyph(mon, rn2_on_display_rng))`
 // followed by display_self() — the post-cls() "this monster and me" frame that
 // muse.c you_aggravate() shows.  Plain (non-detected) glyph attribute: only the
-// wizmgender female mark applies.
+// wizmgender female mark applies.  display.h display_self() is an unconditional
+// show_glyph(u.ux, u.uy, ...): an engulfed hero is drawn too.
 export function show_monster_and_self(mon) {
     const mg = monster_glyph(mon);
     show_glyph_cell(mon.mx, mon.my, mg.ch, mg.color, mg.dec, female_attr(mg.female));
     const u = game.u;
-    if (u?.ux > 0 && !u.uswallow) {
+    if (u?.ux > 0) {
         const hg = hero_glyph();
         show_glyph_cell(u.ux, u.uy, hg.ch, hg.color, false, hg.attr, hg.keepColor);
     }
@@ -4909,6 +4927,7 @@ export async function pline(msg, opts = {}) {
         return;
     }
     if (softPending) await topl_more();
+    game._toplinStale = null; // a new line replaces any stale one (toplin EMPTY -> NEED_MORE)
     game._pending_message = msg;
     // C ref: pline -> vpline -> update_topl sets gt.toplines.
     // C ref: topl.c update_topl() calls remember_topl() before overwriting
@@ -5017,7 +5036,14 @@ export async function display_nhwindow_message() {
     // pline() leaves toplin == TOPLINE_NEED_MORE in C; this port tracks a
     // pline()d line by its text (_toplinSoft), which is just as unacknowledged.
     const cur = game._pending_message || '';
-    if (game._toplin !== TOPLIN_NEED_MORE && !(cur && game._toplinSoft === cur)) return;
+    if (game._toplin !== TOPLIN_NEED_MORE && !(cur && game._toplinSoft === cur)) {
+        // C ref: tty_display_nhwindow() NHW_MESSAGE `else toplin = TOPLINE_EMPTY`:
+        // an acknowledged (NON_EMPTY) line is NOT erased, only forgotten.  Its text
+        // stays on screen and the next parse() clear_nhwindow(WIN_MESSAGE) finds
+        // toplin already empty and leaves it until a new message replaces it.
+        game._toplinStale = cur || null;
+        return;
+    }
     await topl_more();
     game._toplin = 0;
     game._toplinSoft = null;
@@ -5384,6 +5410,7 @@ export async function update_topl(bp) {
     // the whole "You die...--More--" frame and ran one keystroke ahead of C for
     // the rest of the session.
     if (!notdied) game._winStop = false;
+    game._toplinStale = null; // a new line replaces any stale one (toplin EMPTY -> NEED_MORE)
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
     remember_topl();

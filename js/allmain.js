@@ -969,7 +969,7 @@ const S_EEL = 57;
 // the turn.  When riding and the hero moved, moveamt = mcalcmove(usteed, TRUE)
 // (rolls rn2(NORMAL_SPEED)); otherwise moveamt = youmonst.data->mmove
 // (== NORMAL_SPEED for a human) plus a possible Fast free-action bonus
-// (Fast: +NORMAL_SPEED on rn2(3)==0; Very_fast not modeled — never set here).
+// (Very_fast: +NORMAL_SPEED on rn2(3)!=0; Fast: +NORMAL_SPEED on rn2(3)==0).
 // The base amount is then reduced by encumbrance (Burdened -1/4, Stressed -1/2,
 // Strained -3/4, Overtaxed -7/8) — this is why a Burdened hero (e.g. after a
 // bear trap wounds a leg) moves slower and monsters get more moves per hero

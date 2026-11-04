@@ -1924,7 +1924,7 @@ export function base_soundname_to_filename(basename, buf, bufsz, approach) {
 // C ref: monst.h FEMALE / MALE (the gender indices set_voice() records).
 const MALE_SND = 0, FEMALE_SND = 1;
 // C ref: sndprocs.h voice_talking_artifact / voice_deity moreinfo bits.
-export const voice_talking_artifact = 0x0001, voice_deity = 0x0002;
+export const voice_talking_artifact = 0x0002, voice_deity = 0x0004;
 // C ref: decl.c gv.voice.
 export const voice = {
     gender: MALE_SND, serialno: 0, tone: 0, volume: 0, moreinfo: 0,

@@ -4,7 +4,7 @@
 
 import { COLNO, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
-import { makemon, mkclass, mm_mon_at  } from '../makemon.js';
+import { makemon, mkclass, mm_mon_at, set_malign } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { des_object_defaults, mkobj_at } from '../mkobj.js';
 import { stackobj } from '../invent.js';
@@ -40,7 +40,7 @@ function quest_create_monster_class_randpos(classNum, peacefulOverride) {
     }
     const mtmp = makemon(ptr, x, y, 0);
     if (mtmp) mtmp.female = 0;                          // sp_lev.c:2125, id-less default
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 

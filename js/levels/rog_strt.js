@@ -6,7 +6,7 @@ import { M_AP_FURNITURE } from '../const.js';
 import { CHEST } from '../mkobj.js';
 import {
     bigrm_load_map, quest_create_monster, quest_create_monster_at,
-    quest_create_object, quest_drop_default_invent, quest_floodfill_match,
+    quest_create_object, quest_drop_default_invent, quest_end_moninvent, quest_floodfill_match,
     quest_place_stair, quest_register_branch, quest_rndcoord, quest_set_door,
     shuffle,
     reset_xystart_size,
@@ -110,6 +110,7 @@ export async function makemaz_rog_strt() {
         const daggerquan = quest_lua_random(1, 4) + quest_lua_random(1, 4);
         const daggers = quest_create_object(34 /*DAGGER*/, null, null, 2, master);
         if (daggers) { daggers.quan = daggerquan; daggers.cursed = 0; }
+        quest_end_moninvent(master);
         quest_create_object(CHEST, 36, 11, null, null);
         const thugs = [[28, 10], [29, 11], [30, 9], [31, 7],
                        [31, 13], [33, 14], [30, 15], [35, 9], [36, 13]];

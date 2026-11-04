@@ -3169,11 +3169,9 @@ export function newcham(mtmp, mdat) {
         // armor-fit check, so both rn2(4)s fire even for a brand-new monster
         // that has no armor yet (its default inventory is given AFTER newcham()
         // returns — makemon.c:1368 allow_minvent = FALSE).  Only the RNG is
-        // replicated here: the async message/shedding path (possibly_unwield,
-        // mon_break_armor's own pline()s, mselftouch) is still unported for this
-        // sync call site, which is moot at creation (no armor exists yet) but a
-        // real gap for the later runtime newcham() callers (mon.js/zap.js/
-        // mhitm.js/uhitm.js) that may already be wearing armor.
+        // replicated here: the message/shedding path is moot at creation (no
+        // armor exists yet).  Runtime callers go through the async newcham()
+        // below, which runs mon.js mon_break_armor() and mselftouch().
         mhim(mtmp); mhis(mtmp);
         // C ref: mon.c:5489 newcham() -> check_gear_next_turn(mtmp): the new
         // form re-assesses its gear (m_dowear) on its next move.

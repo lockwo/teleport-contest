@@ -16,7 +16,7 @@ import { menuHeadAttr } from './menuattr.js';
 import {
     obj_doname, floor_object_name, classOrder, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
-    addinv, prinv, prinv_fmt, let_to_name, report_merge_discovery,
+    addinv, let_to_name, report_merge_discovery,
     wiz_identify, renderWindowScreen, renderMenuLines, select_command_menu, menu_page_pending, useup, xname,
     doattributes, dodrop, doremring, dotravel_target, dopay, doperminv,
     dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
@@ -1342,12 +1342,7 @@ async function dochat() {
             await update_topl(`${Monnam(mtmp)} seems not to notice you.`);
         return 0;
     }
-    // GAP (measured, deliberately omitted): C ref sounds.c:1389 does
-    //     mtmp->mstrategy &= ~STRAT_WAITMASK;   /* prod it into action */
-    // Costs 2 public steps on seed0367 (chatting to the Arch Priest un-freezes
-    // the quest leader, whose freed m_move then diverges from C's).  Restore
-    // once a freed STRAT_CLOSE leader moves the way C's does — a real
-    // omission, not a no-op.
+    // C ref: sounds.c:1389 dochat() — prod it into action.
     mtmp.mstrategy = (mtmp.mstrategy ?? 0) & ~STRAT_WAITMASK;
 
     // a tame pet that is busy eating just makes eating noises (no turn).

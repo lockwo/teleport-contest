@@ -2165,7 +2165,7 @@ const passes_walls = (ptr) => passes_walls_flag(ptr);
 // wintype.h NHW_MENU.  js/invent.js and js/end.js each keep a PRIVATE
 // create_nhwindow/putstr/display_nhwindow/destroy_nhwindow shim; neither is
 // exported, so these are the same shim again.  GAP: nothing renders.
-const NHW_MENU = 3;
+const NHW_MENU = 4;
 function create_nhwindow(_type) { return { lines: [] }; }
 function putstr(win, _attr, str) { if (win) win.lines.push(str); }
 function destroy_nhwindow(_win) {}

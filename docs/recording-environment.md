@@ -40,6 +40,13 @@ day-of-year calculations all used that zone.
 Each session's `datetime` field pins the wall clock at launch. The
 recorder patches in `nethack-c/patches/` show how.
 
+The official recordings were made in US daylight time, and
+`time_from_yyyymmddhhmmss()` copies `localtime(now)` before `mktime()`, so
+`tm_isdst` was 1 for every stamp, winter stamps included (they read one hour
+early). Patch 001 pins `t.tm_isdst = 1`, so a recording made after DST ends
+(standard time) reads the same instant. `js/calendar.js` models this as
+`RECORDER_TM_ISDST`.
+
 ## Everything else
 
 The recorder build is defined by `nethack-c/build-recorder.sh` and

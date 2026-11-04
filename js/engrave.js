@@ -291,9 +291,9 @@ export function getrumor(truth, exclude_cookie) {
 // sessions reach): blindness/faint guards short-circuit before getrumor (and
 // thus before any RNG), otherwise getrumor() is consulted with exclude_cookie
 // FALSE.  Returns the rumor text for the caller to pline().
-export const BY_COOKIE = 0;
-export const BY_PAPER = 1;
-export const BY_ORACLE = 2;
+export const BY_COOKIE = 1;
+export const BY_PAPER = 2;
+export const BY_ORACLE = 0;
 
 export function outrumor(truth, mechanism) {
     const reading = (mechanism === BY_COOKIE || mechanism === BY_PAPER);
@@ -1346,7 +1346,7 @@ export async function engrave_step() {
     const u = g.u;
     const ctx = g.context?.engraving;
     const { pline, newsym, update_topl } = await import('./display.js');
-    const { prinv_fmt, hands_obj, splitobj, obj_extract_self,
+    const { prinv, hands_obj, splitobj, obj_extract_self,
             addinv } = await import('./invent.js');
     if (!ctx || !u) { g.context.engraving = null; return false; }
     if (ctx.pos.x !== u.ux || ctx.pos.y !== u.uy) { /* teleported? */
@@ -1430,11 +1430,11 @@ export async function engrave_step() {
             obj_extract_self(stylus);
             const oquan = stylus.quan;
             stylus = addinv(stylus);
-            await update_topl(prinv_fmt(null, stylus, oquan));
+            await prinv(null, stylus, oquan);
         } else if (dulled && stylus.known) {
             // prinv() -> pline(): the refreshed "b - a -1 dagger" line pages the
             // "gets dull" line above it with --More--.
-            await update_topl(prinv_fmt(null, stylus, 1));
+            await prinv(null, stylus, 1);
         }
     } else if (marker) {
         const ink_cost = Math.max(Math.floor(rate / 2), 1);

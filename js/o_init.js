@@ -783,7 +783,7 @@ const NO_COLOR = 8, ATR_NONE = 0;
 const MENU_TRADITIONAL = 0, MENU_COMBINATION = 1, MENU_FULL = 2,
       MENU_PARTIAL = 3;
 /* include/hack.h:964-972 NHFILE mode bits */
-const COUNTING = 1, WRITING = 2, FREEING = 8;
+const COUNTING = 1, WRITING = 2, FREEING = 4;
 
 // C ref: include/objclass.h def_oc_syms[] (symbols.c).  js/symbols.js:485
 // exports the same table but importing it statically would put o_init.js in

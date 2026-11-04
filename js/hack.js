@@ -4405,8 +4405,10 @@ async function do_look_all(nearby, do_mons) {
                     const mtmp = m_at(x, y);
                     // C: glyph_is_monster(glyph_at()) — a mimic posing as an
                     // object/furniture displays THAT glyph, so it is not listed
-                    // here (the objects listing picks up object disguises).
-                    if (mtmp && canspotmon(mtmp)
+                    // here (the objects listing picks up object disguises), and
+                    // a monster inside a visible gas cloud region shows the
+                    // cloud's cmap glyph instead (display.c newsym).
+                    if (mtmp && canspotmon(mtmp) && loc?.disp_monster
                         && (M_AP_TYPE(mtmp) === 0 || M_AP_TYPE(mtmp) === M_AP_MONSTER)) {
                         lookbuf = look_at_monster(mtmp, x, y, false).buf;
                         sym = cellSym(loc);

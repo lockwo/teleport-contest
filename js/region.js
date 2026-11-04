@@ -14,11 +14,11 @@
 // ttl aged by the turns spent away.
 
 import { game } from './gstate.js';
-import { PLNMSG_ENVELOPED_IN_GAS, LUNG } from './const.js';
+import { PLNMSG_ENVELOPED_IN_GAS, LUNG, EYE } from './const.js';
 import { makeplural } from './plural.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
-         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES } from './const.js';
+         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES, FM_FMON } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
@@ -175,6 +175,7 @@ export function clear_regions() {
 // regions, ages the rest, and fires each visible region's inside-callback for
 // the hero and every monster it currently contains.
 export async function run_regions() {
+    const { find_mid } = await import('./light.js');
     const list = regions();
     let dissWithin = false;
     let dissSeen = 0;
@@ -205,9 +206,10 @@ export async function run_regions() {
         for (let j = 0; j < reg.monsters.length; j++) {
             const mtmp = reg.monsters[j];
             /* C: find_mid(reg->monsters[j], FM_FMON) fails for a monster that was
-               freed by dmonsfree(); dealloc_monst() wipes the JS object. */
+               freed by dmonsfree() (dealloc_monst() wipes the JS object) or that
+               left fmon (migrated away); a DEADMONSTER is skipped too. */
             const dead = !mtmp || mtmp.m_id == null
-                || (mtmp.mhp != null && mtmp.mhp <= 0);
+                || !find_mid(mtmp.m_id, FM_FMON);
             const died = dead ? true : await inside_gas_cloud(reg, mtmp);
             if (died) {
                 reg.monsters[j] = reg.monsters[reg.monsters.length - 1];
@@ -565,7 +567,7 @@ async function inside_gas_cloud(reg, mtmp) {
     if (isHero) {
         if (m_poisongas_ok_u() === M_POISONGAS_OK) return false;
         if (!Blind()) {
-            await update_topl('Your eyes sting.');
+            await update_topl(`Your ${makeplural((await import('./invent.js')).body_part(EYE))} sting.`);
             const { make_blinded_hero } = await import('./potion.js');
             await make_blinded_hero(1, false);
         }
@@ -601,6 +603,7 @@ async function inside_gas_cloud(reg, mtmp) {
     }
     const { Monnam } = await import('./do_name.js');
     const { m_poisongas_ok_mon } = await import('./monmove.js');
+    const { resists_poison } = await import('./mondata.js');
     const { wake_nearto } = await import('./mon.js');
     const { setmangry, killed } = await import('./uhitm.js');
     const { monkilled_mm } = await import('./mhitm.js');
@@ -616,9 +619,7 @@ async function inside_gas_cloud(reg, mtmp) {
             mtmp.mblinded = 1;
             mtmp.mcansee = 0;
         }
-        if (((data?.mresists || 0) | (mtmp.mextrinsics || 0)
-             | (mtmp.mintrinsics || 0)) & 0x20 /* MR_POISON */)
-            return false;
+        if (resists_poison(mtmp)) return false;
         mtmp.mhp -= rnd(dam) + 5;
         if (mtmp.mhp <= 0) {
             if (reg.herosFault) await killed(mtmp);

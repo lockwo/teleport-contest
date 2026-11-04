@@ -2031,7 +2031,7 @@ export async function dump_everything(how, when) {
     putstr(0, 0, '');
     putstr(0, 0, 'Inventory:');
     const I = await import('./invent.js');
-    I.display_inventory(null, true);
+    await I.display_inventory(null, true);
     const inv = Array.isArray(game.invent) ? game.invent : [];
     await container_contents(inv, true, true, false);
     // enlightenment(BASICENLIGHTENMENT | MAGICENLIGHTENMENT, final)

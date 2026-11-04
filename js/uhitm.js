@@ -188,9 +188,6 @@ export async function do_attack(mtmp) {
         if (inshop || foo) {
             // C ref: uhitm.c:492-494 — bumping a spotted shopkeeper is a
             // payment attempt, not an attack, and never a place-swap.
-            // (invent.js's dopay() is still the reduced "no shopkeeper here"
-            // stub; the call site is faithful so completing dopay() fixes
-            // this path too.)
             if (!game.context?.travel && !game.context?.run
                 && canspotmon(mtmp) && mtmp.isshk) {
                 const { dopay } = await import('./invent.js');
@@ -571,9 +568,8 @@ export async function stumble_onto_mimic(mtmp) {
 }
 
 // C ref: uhitm.c attack_checks(mtmp, wep) — pre-swing special cases: engulf,
-// forcefight, hidden/invisible reveal, mimic reveal, undetected-hider reveal;
-// peaceful "Really attack?" confirm not modeled (needs an interactive prompt
-// the recorded streams can't drive). TRUE = attack fully resolved here (no
+// forcefight, hidden/invisible reveal, mimic reveal, undetected-hider reveal,
+// and the flags.confirm "Really attack?" prompt. TRUE = attack fully resolved here (no
 // swing this turn); FALSE = fall through to hitum().
 export async function attack_checks(mtmp, wep = null) {
     // uhitm.c:216 — clear the monster's "waiting for you" AI flag now that

@@ -11,7 +11,7 @@ import { CHEST, mksobj } from '../mkobj.js';
 import { mk_mplayer } from '../mplayer.js';
 import {
     bigrm_get_location_dry, bigrm_load_map, lspo_region, percent,
-    quest_create_object, quest_drop_default_invent, quest_place_stair,
+    quest_create_object, quest_drop_default_invent, quest_end_moninvent, quest_place_stair,
     quest_region_light, quest_register_branch, quest_set_door,
     reset_xystart_size, splev_find_montype, vly_abs,
 } from '../sp_lev.js';
@@ -154,6 +154,7 @@ export async function makemaz_kni_strt() {
             artifact_exists(excalibur, 'Excalibur', 1, ONAME_LEVEL_DEF);
         }
         quest_create_object(121 /*PLATE_MAIL*/, null, null, 4, arthur);
+        quest_end_moninvent(arthur);
         quest_create_object(CHEST, 9, 7, null, null);
         for (const [kx, ky] of [[4, 2], [4, 13], [45, 2], [45, 13]])
             quest_knight_guard(kx, ky, 1);
@@ -174,6 +175,7 @@ export async function makemaz_kni_strt() {
             const horse = quest_monster({ name: 'warhorse', peaceful: 1 });
             quest_drop_default_invent(horse);
             if (percent(50)) quest_create_object(235 /*SADDLE*/, null, null, null, horse);
+            quest_end_moninvent(horse);
         }
     } finally {
         g._quest_gen = false;

@@ -943,7 +943,7 @@ async function makelevel() {
     // connectivity).  No-op unless iflags.sanity_check/debug_fuzzer is set.
     for (const complaint of mklev_sanity_check()) await impossible(complaint);
 
-    // Vault creation (simplified for contest)
+    // C ref: mklev.c:1322 vault creation.
     if (g.vault_x !== -1) {
         const vw = { v: 1 }, vh = { v: 1 };
         const vx = { v: g.vault_x }, vy = { v: g.vault_y };
@@ -2343,7 +2343,7 @@ function shrine_pos(roomno) {
 // AM_SHRINE is OR'd in after so the square renders as a temple altar, not a
 // plain one. C does NOT set needfill here (fill_special_room returns at its
 // needfill==FILL_NONE gate); the port set FILL_NORMAL, wrongly pushing the
-// room through the fill switch. priestini() (temple priest) still unported.
+// room through the fill switch.
 function mktemple() {
     const g = game;
     const sroom = pick_room(true);
@@ -3428,7 +3428,7 @@ function mk_monster_named(name, peacefulOverride) {
     const mtmp = makemon(data2, c.x, c.y, 0);
     // C ref: sp_lev.c create_monster() `mtmp->female = m->female;` (no RNG).
     if (mtmp) mtmp.female = mgend;
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -3464,7 +3464,7 @@ function mk_monster_class(classChar, peacefulOverride) {
     // tmpmons.female, so it keeps its `= 0` initialiser and create_monster's
     // `mtmp->female = m->female;` makes every des.monster("G") male.
     if (mtmp) mtmp.female = 0;
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -3662,7 +3662,7 @@ function mt4_place_monster(data, croom, peaceful) {
     }
     if (!inside_room(croom, c.x, c.y)) return null;
     const mtmp = makemon(data, c.x, c.y, 0);
-    if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = !!peaceful; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -4012,7 +4012,7 @@ function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
     mk_enexto_if_occupied(c, data2);
     const mtmp = makemon(data2, c.x, c.y, 0);
     if (mtmp) mtmp.female = mgend;
-    if (mtmp && peaceful != null) mtmp.mpeaceful = !!peaceful;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = !!peaceful; set_malign(mtmp); } // sp_lev.c:2129
     if (mtmp && levAdj) {                              // sp_lev.c:2168-2175
         if (mtmp.m_lev + levAdj > 49) mtmp.m_lev = 49;
         else if (mtmp.m_lev + levAdj < 0) mtmp.m_lev = 0;
@@ -4500,7 +4500,7 @@ function hf_monster_class_at(classChar, x, y, peacefulOverride) {
     mk_enexto_if_occupied(c, data);
     const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = 0;                       // class form: tmpmons.female stays 0 (sp_lev.c:2125)
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -4512,7 +4512,7 @@ function hf_monster_named_at(name, x, y, peacefulOverride) {
     mk_enexto_if_occupied(c, data);
     const mtmp = makemon(data, c.x, c.y, 0);
     if (mtmp) mtmp.female = mgend;                   // create_monster: mtmp->female = m->female
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -4552,7 +4552,7 @@ function mk_monster_random(peacefulOverride) {
     // C ref: sp_lev.c lspo_monster() safety net -- a bare des.monster() leaves
     // tmpmons.female BOOL_RANDOM, which becomes 0 (makemon's own roll is overwritten).
     if (mtmp) mtmp.female = 0;
-    if (mtmp && peacefulOverride != null) mtmp.mpeaceful = !!peacefulOverride;
+    if (mtmp && peacefulOverride != null) { mtmp.mpeaceful = !!peacefulOverride; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 
@@ -8040,9 +8040,15 @@ export async function mkinvpos(x, y, dist) {
         if (mon.m_ap_type)
             mon.m_ap_type = 0;                  /* seemimic(mon) */
 
-        /* NOT PORTED: mintrap() (trap.c) has no JS counterpart and
-           minliquid() is private at js/mon.js:591, so a monster caught by the
-           new fire trap or moat is left alone here. */
+        /* C ref: mklev.c mkinvpos() — a monster on the square meets the new
+           fire trap (mintrap) or the new moat (minliquid). */
+        if (t_at(x, y)) {
+            const { mon_mintrap } = await import('./monmove.js');
+            await mon_mintrap(mon, 0);
+        } else {
+            const { minliquid } = await import('./mon.js');
+            await minliquid(mon);
+        }
     }
 
     {

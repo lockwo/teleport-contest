@@ -25,7 +25,7 @@ import { monnear } from './dogmove.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import {
     NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE,
-    W_ARMOR, W_AMUL, W_ARMG, TT_PIT, TT_WEB, is_pit, BOLT_LIM,
+    W_ARMOR, W_AMUL, W_ARMG, W_ACCESSORY, W_WEP, TT_PIT, TT_WEB, is_pit, BOLT_LIM,
     M_SEEN_NOTHING, M_SEEN_MAGR, M_SEEN_FIRE, M_SEEN_COLD, M_SEEN_SLEEP,
     M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_POISON, M_SEEN_ACID,
     A_CON, A_CHA, A_DEX, A_STR, HAIR, HAND, W_RINGL, W_RINGR, KILLED_BY,
@@ -55,13 +55,13 @@ import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, make_sick } from './potion.js';
-import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender } from './invent.js';
+import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender, is_weptool } from './invent.js';
 import { has_innate } from './exper.js';
 import { resists_ston as md_resists_ston, resists_fire as md_resists_fire, resists_cold as md_resists_cold,
     resists_elec as md_resists_elec, resists_acid as md_resists_acid, resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu, get_atkdam_type } from './mondata.js';
 import { Monnam, mon_nam, mhis, mhe, hliquid } from './do_name.js';
 import { Invis } from './monmove.js';
-import { is_art, ART_STORMBRINGER, ART_VORPAL_BLADE } from './artifact.js';
+import { is_art, ART_STORMBRINGER, ART_VORPAL_BLADE, protects } from './artifact.js';
 import { Acid_resistance } from './explode.js';
 import { Cold_resistance, Shock_resistance, Fire_resistance } from './zap.js';
 import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION, REFLECTING } from './const.js';
@@ -219,10 +219,13 @@ export function magic_negation(mon) {
             via_amul = (o.otyp === AMULET_OF_GUARDING);
         }
         if (is_you || gotprot) continue;
-        // C's remaining per-item test is protects(o, worn), over the mask
-        // W_ARMOR|W_ACCESSORY (+W_WEP for a weapon or weptool).  It needs the
-        // artifact table (W_ART/W_ARTI); no monster in this port carries an
-        // artifact, so it can only answer FALSE.
+
+        /* omit W_SWAPWEP+W_QUIVER; W_ART+W_ARTI handled by protects() */
+        let wearmask = W_ARMOR | W_ACCESSORY;
+        if (o.oclass === 2 /* WEAPON_CLASS */ || is_weptool(o))
+            wearmask |= W_WEP;
+        if (protects(o, (wornmask & wearmask) !== 0))
+            gotprot = true;
     }
 
     if (gotprot) {
@@ -818,6 +821,8 @@ export async function gulpmu(mtmp, mattk) {
             if (!Blind()) {
                 await emitU("You can't see in here!");
                 await make_blinded_u(tmp, false);
+                /* was_blinded is 0 here (!Blind implies no Blinded timeout) */
+                if (!Blind()) await emitU('Your vision clears.');
             } else {
                 u.blinded = (u.blinded | 0) + 1;   // blind until disgorged
             }
@@ -1431,7 +1436,7 @@ export async function doseduce(mon) {
                 await impossible('ring replacement');
             }
             await inv.Ring_on(ring);
-            inv.prinv(null, ring, 0);
+            await inv.prinv(null, ring, 0);
         }
     }
 

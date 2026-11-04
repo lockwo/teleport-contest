@@ -620,10 +620,7 @@ function racial_exception_u(obj) {
 }
 
 // C ref: polyself.c drop_weapon(alone) — shed a wielded weapon the new form
-// can't use.  canletgo()'s cursed/welded-weapon branch isn't modeled (matches
-// the existing invent.js welded() stub, which always returns false), so C's
-// what[] is always "drop" and never "release".  Two-weaponing (u.twoweap /
-// uswapwep) is not modeled anywhere in this port.
+// can't use.
 async function drop_weapon(alone) {
     const u = game.u;
     if (!game.uwep) return;

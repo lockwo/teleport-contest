@@ -13,7 +13,7 @@ import {
 import { setup_waterlevel, mkportal } from '../mkmaze.js';
 import { find_level } from '../dungeon.js';
 import { game } from '../gstate.js';
-import { makemon, mkclass, mm_mon_at, monster_by_pmidx
+import { makemon, mkclass, mm_mon_at, monster_by_pmidx, set_malign
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { rn1, rn2 } from '../rng.js';
@@ -109,7 +109,7 @@ export function plane_monster(spec = {}) {
     }
     const mtmp = makemon(ptr, mx, my, 0 /* NO_MM_FLAGS */);
     if (mtmp) mtmp.female = female;               // sp_lev.c:2125
-    if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = peaceful ? 1 : 0; set_malign(mtmp); } // sp_lev.c:2129
     return mtmp;
 }
 

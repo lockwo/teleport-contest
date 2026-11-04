@@ -114,11 +114,11 @@ const SF_UPTODATE = 0, SF_OUTDATED = 1,
       SF_DM_I32LP64_ON_IL32LLP64 = 7, SF_DM_IL32LLP64_ON_I32LP64 = 8,
       SF_DM_MISMATCH = 9;
 /* include/hack.h:964-972 NHFILE mode bits */
-const COUNTING = 1, WRITING = 2, FREEING = 8;
+const COUNTING = 1, WRITING = 2, FREEING = 4;
 /* include/hack.h:977 enum sf_fnidx */
 const exportascii = 2;
 /* include/hack.h SFCTOOL_BIT */
-const SFCTOOL_BIT = 0x80000000;
+const SFCTOOL_BIT = 0x40000000;
 
 /* ── build/environment constants (docs/recording-environment.md) ──
  * sys/share/posixregex.c:52 `const char regex_id[] = "posixregex"` — this

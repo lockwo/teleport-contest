@@ -25,7 +25,7 @@ index 5a5287b2a..9bda4577d 100644
      char *d, *p, y[5], mo[3], md[3], h[3], mi[3], s[3];
  
      if (buf && strlen(buf) == 14) {
-@@ -150,7 +157,9 @@ time_from_yyyymmddhhmmss(char *buf)
+@@ -150,7 +157,13 @@ time_from_yyyymmddhhmmss(char *buf)
          for (k = 0; k < 2; ++k)
              *p++ = *d++;
          *p = '\0';
@@ -35,6 +35,10 @@ index 5a5287b2a..9bda4577d 100644
 +        lt = localtime((LOCALTIME_type) &now);
          if (lt) {
              t = *lt;
++            /* The official recordings were made in US daylight time, so
++               mktime() always saw tm_isdst == 1.  Pin it so a recording
++               made after DST ends reads the same fixed datetime. */
++            t.tm_isdst = 1;
              t.tm_year = atoi(y) - 1900;
 diff --git a/src/end.c b/src/end.c
 index a4ed7fc0d..92aa8179d 100644

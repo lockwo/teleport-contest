@@ -7,7 +7,7 @@ import { rnd } from '../rng.js';
 import { maketrap } from '../trap.js';
 import {
     bigrm_load_map, lspo_region, q_absx, q_absy, quest_create_monster,
-    quest_create_monster_at, quest_create_object, quest_drop_default_invent,
+    quest_create_monster_at, quest_create_object, quest_drop_default_invent, quest_end_moninvent,
     quest_floodfill_match, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door,
     splev_object_at,
@@ -101,6 +101,7 @@ export async function makemaz_mon_strt() {
         const master = quest_create_monster('Grand Master', 28, 10, null);
         quest_drop_default_invent(master);
         quest_create_object(143 /*ROBE*/, null, null, 6, master);
+        quest_end_moninvent(master);
         // No treasure chest!
         const abbots = [[32, 7], [32, 8], [32, 11], [32, 12],
                         [33, 7], [33, 8], [33, 11], [33, 12]];

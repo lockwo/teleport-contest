@@ -2043,7 +2043,7 @@ export function zombie_form(pm) {
 const QUEST_GUARDIAN_GENUS = [
     ['student', 'archeologist'], ['chieftain', 'barbarian'],
     ['neanderthal', 'caveman'], ['attendant', 'healer'],
-    ['page', 'knight'], ['abbot', 'monk'], ['acolyte', 'priest'],
+    ['page', 'knight'], ['abbot', 'monk'], ['acolyte', 'cleric'],
     ['hunter', 'ranger'], ['thug', 'rogue'], ['roshi', 'samurai'],
     ['guide', 'tourist'], ['apprentice', 'wizard'], ['warrior', 'valkyrie'],
 ];

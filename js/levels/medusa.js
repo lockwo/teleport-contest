@@ -27,7 +27,7 @@ import { Is_special } from '../dungeon.js';
 import { game } from '../gstate.js';
 import { depth as depth_of_level } from '../hacklib.js';
 import { makemon, mkclass, mm_mon_at, monster_by_pmidx,
-    name_to_pmidx, propagate, rndmonst
+    name_to_pmidx, propagate, rndmonst, set_malign
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { mongone, resists_ston } from '../mon.js';
@@ -222,7 +222,7 @@ function med_monster({ name = null, cls = 0, mx = null, my = null,
     }
     const mtmp = makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
     if (mtmp) mtmp.female = female;               // sp_lev.c:2125
-    if (mtmp && peaceful != null) mtmp.mpeaceful = peaceful ? 1 : 0;
+    if (mtmp && peaceful != null) { mtmp.mpeaceful = peaceful ? 1 : 0; set_malign(mtmp); } // sp_lev.c:2129
     if (mtmp && asleep != null) mtmp.msleeping = asleep ? 1 : 0;
     return mtmp;
 }
