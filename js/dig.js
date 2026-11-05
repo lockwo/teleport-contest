@@ -30,7 +30,7 @@ import {
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
 } from './const.js';
 import { is_pick, is_axe } from './weapon.js';
-import { ceiling, has_ceiling as has_ceiling_dg, altarmask_at, ledger_no } from './dungeon.js';
+import { ceiling, has_ceiling as has_ceiling_dg, altarmask_at, ledger_no, Invocation_lev } from './dungeon.js';
 import { in_town } from './mkroom.js';
 
 // C ref: hack.c may_dig(x, y) — "intended to be called only on ROCKs or TREEs".
@@ -823,7 +823,7 @@ import { m_at } from './display.js';
 import { t_at } from './mkroom.js';
 import { conjoined_pits as conjoined_pits_sync, reset_utrap, trapname } from './trap.js';
 import { set_utrap } from './polyself.js';
-import { bimanual as bimanual_dg } from './invent.js';
+import { bimanual as bimanual_dg, yobjnam, Yobjnam2 } from './invent.js';
 import {
     HEAVY_IRON_BALL, CORPSE, LEASH, POT_OIL, COIN_CLASS, POTION_CLASS,
 } from './mkobj.js';
@@ -1268,9 +1268,8 @@ export function dig_check(madeby, x, y) {
 function Can_dig_down_(uz) {
     if (game.level?.flags?.hardfloor) return false;
     if (Is_botlevel(uz)) return false;
-    /* C also excludes Invocation_lev(); this port's In_hell()/dunlevs test
-       lives in js/trap.js (Invocation_lev), which is not importable here. */
-    return true;
+    /* C ref: dungeon.c Can_dig_down: also not on the Invocation level */
+    return !Invocation_lev(uz);
 }
 
 // C ref: dig.c:254 digcheck_fail_message(digresult, madeby, x, y).
@@ -1368,12 +1367,13 @@ export async function dig() {
                 await dropx(uwep);
             } else {
                 /* C: Yobjnam2(uwep, "bounce") — "Your pick-axe bounces" */
+                const { Yobjnam2 } = await import('./invent.js');
                 if (u.usteed) {
                     const { mon_nam } = await import('./do_name.js');
-                    await pline(`Your ${xname(uwep)} bounces and ${
+                    await pline(`${Yobjnam2(uwep, 'bounce')} and ${
                         otense(uwep, 'hit')} ${mon_nam(u.usteed)}!`);
                 } else {
-                    await pline(`Ouch!  Your ${xname(uwep)} bounces and ${
+                    await pline(`Ouch!  ${Yobjnam2(uwep, 'bounce')} and ${
                         otense(uwep, 'hit')} you!`);
                 }
                 const { set_wounded_legs } = await import('./trap.js');
@@ -1381,7 +1381,8 @@ export async function dig() {
             }
             break;
         case 1: {
-            await pline(`Bang!  You hit with the broad side of the ${xname(uwep)}!`);
+            const { the } = await import('./objnam.js');
+            await pline(`Bang!  You hit with the broad side of ${the(xname(uwep))}!`);
             const { wake_nearby } = await import('./cmd.js');
             await wake_nearby(false);
             break;
@@ -1432,8 +1433,8 @@ export async function dig() {
                 await losehp(dmg, `chopping off ${game.flags?.female ? 'her' : 'his'} own ${
                     body_part(FOOT)}`, 1 /* KILLED_BY */);
             } else {
-                const { xname } = await import('./invent.js');
-                await pline(`You destroy the bear trap with your ${xname(uwep)}.`);
+                const { yobjnam } = await import('./invent.js');
+                await pline(`You destroy the bear trap with ${yobjnam(uwep, null)}.`);
                 const { deltrap } = await import('./trap.js');
                 deltrap(ttmp);
                 await reset_utrap(true);       /* release from trap, maybe Lev or Fly */
@@ -1444,9 +1445,9 @@ export async function dig() {
         } else if (ttmp && dcresult === DIGCHECK_PASSED_DESTROY_TRAP) {
             const ttmpname = trapname(ttmp.ttyp, false);
             if (ispick) {
-                const { xname } = await import('./invent.js');
+                const { yobjnam } = await import('./invent.js');
                 await pline(`You destroy ${ttmp.tseen ? `the ${ttmpname}`
-                            : an_(ttmpname)} with your ${xname(uwep)}.`);
+                            : an_(ttmpname)} with ${yobjnam(uwep, null)}.`);
             }
             const { deltrap } = await import('./trap.js');
             deltrap(ttmp);
@@ -1540,8 +1541,8 @@ export async function dig() {
                 if (!(lev.doormask & D_TRAPPED)) lev.doormask = D_BROKEN;
             } else if (closed_door(dpx, dpy)) {
                 /* C: simpleonames(uwep) — the type name with no prefixes */
-                const { xname } = await import('./invent.js');
-                digtxt = `You break through the door with your ${xname(uwep)}.`;
+                const { simpleonames } = await import('./objnam.js');
+                digtxt = `You break through the door with your ${simpleonames(uwep)}.`;
                 if (shopedge) {
                     const { add_damage } = await import('./shk.js');
                     await add_damage(dpx, dpy, SHOP_DOOR_COST);
@@ -2215,7 +2216,7 @@ export async function use_pick_axe2(obj) {
                     seetrap(trap);
                     await pline('There is a spider web there!');
                 }
-                await pline(`Your ${await xname_(obj)} becomes entangled in the web.`);
+                await pline(`${Yobjnam2(obj, 'become')} entangled in the web.`);
                 /* you ought to be able to let go; tough luck */
                 const { nomul } = await import('./hack.js');
                 nomul(-d(2, 2));
@@ -2266,9 +2267,9 @@ export async function use_pick_axe2(obj) {
                 }
             } else if (u.utrap && u.utraptype === TT_PIT
                        && (trap_with_u = t_at(u.ux, u.uy)) != null) {
-                await pline(`You swing your ${await xname_(obj)}, but the rubble has no place to go.`);
+                await pline(`You swing ${yobjnam(obj, null)}, but the rubble has no place to go.`);
             } else {
-                await pline(`You swing your ${await xname_(obj)} through thin air.`);
+                await pline(`You swing ${yobjnam(obj, null)} through thin air.`);
             }
         } else {
             const d_action = ['swinging', 'digging', 'chipping the statue',
@@ -2310,7 +2311,7 @@ export async function use_pick_axe2(obj) {
         }
     } else if (Is_airlevel(u.uz) || Is_waterlevel(u.uz)) {
         /* it must be air -- water checked above */
-        await pline(`You swing your ${await xname_(obj)} through thin air.`);
+        await pline(`You swing ${yobjnam(obj, null)} through thin air.`);
     } else if (!(await import('./engrave.js')).can_reach_floor(false)) {
         await (await import('./engrave.js')).cant_reach_floor(u.ux, u.uy, false, false, false);
     } else if (is_pool_or_lava(u.ux, u.uy)) {
@@ -2327,7 +2328,7 @@ export async function use_pick_axe2(obj) {
                   disarm a trap here */
                && (!trap || (trap.ttyp !== LANDMINE && trap.ttyp !== BEAR_TRAP))) {
         const { surface } = await import('./dungeon.js');
-        await pline(`Your ${await xname_(obj)} merely scratches the ${surface(u.ux, u.uy)}.`);
+        await pline(`${Yobjnam2(obj, null)} merely scratches the ${surface(u.ux, u.uy)}.`);
         await u_wipe_engr(3);
     } else {
         if (dg.pos.x !== u.ux || dg.pos.y !== u.uy

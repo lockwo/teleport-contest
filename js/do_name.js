@@ -9,7 +9,7 @@
 // js/dbridge.js each did separately) silently skips those display-stream draws,
 // so every later hallucination pick reads the wrong offset.
 import { Deaf_hero, See_invisible_hero } from './youprop.js';
-import { setONAME, MGIVENNAME, has_mgivenname, setMGIVENNAME } from './const.js';
+import { setONAME, MGIVENNAME, has_mgivenname, setMGIVENNAME, has_oname } from './const.js';
 import { game } from './gstate.js';
 import { rn2, rn1 } from './rng.js';
 import { rn2_on_display_rng } from './disprng.js';
@@ -299,15 +299,31 @@ export function monverbself(mon, monnamtext, verb, othertext) {
 // C allocates/frees an ONAME/MGIVENNAME buffer inside the obj/monst extras; in
 // JS the slot is just a property, but the four entry points exist so callers
 // read the same way C does.
-export function new_mgivenname(mtmp, _lth) {
-    if (mtmp && !mtmp.mextra) mtmp.mextra = {};
-    return mtmp?.mextra;
+export function new_mgivenname(mtmp, lth) {
+    /* C ref: do_name.c new_mgivenname() */
+    if (lth) {
+        /* allocate mextra if necessary; otherwise get rid of old name */
+        if (!mtmp.mextra) mtmp.mextra = {};
+        else free_mgivenname(mtmp);
+    } else {
+        /* zero length: the new name is empty; get rid of the old name */
+        if (has_mgivenname(mtmp)) free_mgivenname(mtmp);
+    }
+    return mtmp.mextra;
 }
 export function free_mgivenname(mtmp) {
     setMGIVENNAME(mtmp, null);
 }
-export function new_oname(obj, _lth) {
-    if (obj && !obj.oextra) obj.oextra = {};
+export function new_oname(obj, lth) {
+    /* C ref: do_name.c new_oname() */
+    if (lth) {
+        /* allocate oextra if necessary; otherwise get rid of old name */
+        if (!obj.oextra) obj.oextra = {};
+        else free_oname(obj);
+    } else {
+        /* zero length: the new name is empty; get rid of the old name */
+        if (has_oname(obj)) free_oname(obj);
+    }
     return obj?.oextra;
 }
 export function free_oname(obj) {
@@ -401,9 +417,15 @@ export async function name_from_player(prompt, _defname /* EDIT_GETLIN is off */
 // C ref: do_name.c christen_monst(mtmp, name).
 export function christen_monst(mtmp, name) {
     if (!mtmp) return mtmp;
-    if (!name || !name.length) { free_mgivenname(mtmp); return mtmp; }
-    new_mgivenname(mtmp, name.length + 1);
-    setMGIVENNAME(mtmp, name);
+    /* C: lth = (name && *name) ? strlen(name) + 1 : 0; clamp to PL_PSIZ */
+    let lth = (name && name.length) ? name.length + 1 : 0;
+    if (lth > PL_PSIZ) {
+        lth = PL_PSIZ;
+        name = name.slice(0, PL_PSIZ - 1);
+    }
+    new_mgivenname(mtmp, lth); /* removes old name if one is present */
+    if (lth)
+        setMGIVENNAME(mtmp, name);
     return mtmp;
 }
 

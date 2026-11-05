@@ -10,17 +10,19 @@ import { rn2, rnd } from './rng.js';
 import { depth } from './hacklib.js';
 import { distmin } from './hacklib.js';
 import { IS_ROOM, ROOMOFFSET, D_NODOOR, D_ISOPEN, D_LOCKED, D_TRAPPED,
-         SDOOR, DOOR, CORR, ROOM, MM_ESHK, ALL_TRAPS } from './const.js';
+         SDOOR, DOOR, CORR, ROOM, MM_ESHK, ALL_TRAPS, In_mines } from './const.js';
 import { mksobj, mksobj_at, mkobj_at, objects, weight, CORPSE } from './mkobj.js';
 import { set_tin_variety, HEALTHY_TIN } from './eat.js';
 import { mon_learns_traps } from './montraps.js';
-import { makemon, mkclass, mpickobj, name_to_pmidx, monster_by_pmidx } from './makemon.js';
+import { makemon, mkclass, mpickobj, name_to_pmidx, monster_by_pmidx, set_malign } from './makemon.js';
 import { make_engr_at } from './engrave.js';
 import { m_at } from './display.js';
 import { shtypes, get_shop_item, VEGETARIAN_CLASS } from './shtypes.js';
 import { Is_special, ledger_no } from './dungeon.js';
 import { obj_resists } from './zap.js';
 import { inside_shop } from './shk.js';
+import { cvt_sdoor_to_door } from './detect.js';
+import { in_rooms } from './shkroom.js';
 
 // C ref: shknam.c shkliquors[]..shkgeneral[] — per-shop-type personal name
 // pools for nameshk().  Platform-conditional entries (#ifdef OVERLAY/WIN32/
@@ -160,9 +162,10 @@ function nameshk(shk, poolKey) {
     let nlp = SHKNAME_POOL[poolKey];
     if (!nlp) return; // unknown pool: leave unnamed (falls back to species name)
 
-    if (poolKey === 'light') {
-        // C: minetown lighting shk special-case — the 'light' shtype (prob 0)
-        // is only ever placed via the Mine Town special level.
+    /* C ref: shknam.c nameshk: special-case minetown lighting shk only when
+       actually in a town-flagged mines level */
+    const sptr = (nlp === SHKNAME_POOL.light && In_mines(game.u?.uz)) ? Is_special(game.u?.uz) : null;
+    if (sptr && sptr.flags?.town) {
         shk.eshk.shknam = '+Izchak';
         shk.female = 0;
         return;
@@ -342,6 +345,7 @@ function shkinit(shp, sroom) {
     if (!shk) return -1;
     shk.isshk = 1;
     shk.mpeaceful = 1;
+    set_malign(shk); /* C ref: shknam.c shkinit() */
     shk.msleeping = 0;
     mon_learns_traps(shk, ALL_TRAPS);   // we know all the traps already
     shk.eshk = shk.eshk || {};
@@ -435,7 +439,7 @@ export function stock_room(shp_indx, sroom) {
         const loc = game.level.at(fd.x, fd.y);
         if (loc) {
             if (loc.doormask === D_NODOOR) loc.doormask = D_ISOPEN;
-            if (loc.typ === SDOOR) loc.typ = DOOR;
+            if (loc.typ === SDOOR) cvt_sdoor_to_door(loc); /* C ref: shknam.c:744 */
             if (loc.doormask & D_TRAPPED) loc.doormask = D_LOCKED;
             if (loc.doormask === D_LOCKED) {
                 let m = fd.x, n = fd.y;
@@ -513,10 +517,9 @@ function shk_mongone(shk, sroom) {
     shk.isshk = 0;
 }
 
-// C ref: hack.c *in_rooms(x, y, 0) — non-empty iff <x,y> is roomno-assigned to
-// a real room (typewanted==0 means "any room type").
+// C ref: hack.c *in_rooms(x, y, 0) — true iff the buffer's first room number is
+// nonzero.  A SHARED / SHARED_PLUS square (wall ring owned by two rooms) is
+// resolved by in_rooms()'s neighbour scan, not by reading levl[x][y].roomno.
 function in_any_room(x, y) {
-    const loc = game.level?.at(x, y);
-    if (!loc) return false;
-    return (loc.roomno ?? 0) - ROOMOFFSET >= 0;
+    return in_rooms(x, y, 0).length > 0;
 }

@@ -25,7 +25,7 @@
 // gas-spore explosion (mon_explodes, via js/explode.js) are now wired below.
 
 import { Half_physical_damage_hero, Antimagic_hero, Unchanging_hero, Passes_walls_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
-import { setONAME } from './const.js';
+import { setONAME, Unaware } from './const.js';
 import { game } from './gstate.js';
 import { PLNMSG_HIDE_UNDER, is_pool } from './const.js';
 import { s_suffix, an } from './hacklib.js';
@@ -39,7 +39,7 @@ import {
     MGIVENNAME, has_mgivenname,
 } from './const.js';
 import { DEADMONSTER, mvitals_died, resurrect_kop, healmon, unstuck, vamp_stone, lifesaved_monster,
-    level_specific_nocorpse, vamprises, mon_hates_silver, corpse_chance } from './mon.js';
+    level_specific_nocorpse, vamprises, mon_hates_silver, corpse_chance, sensemon } from './mon.js';
 import { newsym, map_invisible, unmap_object, m_at, canseemon_shared, You_feel } from './display.js';
 import { cansee } from './vision.js';
 import { update_topl, Deaf_hero, Hallucination_u, You_hear, flush_screen } from './display.js';
@@ -67,7 +67,7 @@ import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger, golemeffects } from 
 // boundary); js/mhitu.js is the single faithful copy.
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac } from './worn.js';
-import { Monnam, mon_nam, a_monnam, mhis, mhe, YMonnam, hliquid } from './do_name.js';
+import { Monnam, mon_nam, Some_Monnam, some_mon_nam, noname_monnam, a_monnam, mhis, mhe, YMonnam, hliquid } from './do_name.js';
 import { M_AP_TYPE, M_AP_MONSTER } from './const.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
@@ -309,8 +309,8 @@ function mm_ops() {
         permonst,
         Monnam,
         mon_nam,
-        Monnam_vis: Monnam,
-        mon_nam_vis: mon_nam,
+        Some_Monnam,
+        some_mon_nam,
         canseemon: mm_can_see_mon,
         canspotmon: mm_can_see_mon,
         emit: emitMMmsg,
@@ -1345,10 +1345,17 @@ export async function mattackm(magr, mdef) {
     if (mdef.mundetected) {
         mdef.mundetected = 0;
         newsym(mdef.mx, mdef.my);
-        if (mm_can_see_mon(mdef))
-        {
-            /* C ref: mhitm.c:342-348 */
-            if (game.last_msg === PLNMSG_HIDE_UNDER && mdef.m_id === game.last_hider)
+        // C ref: mhitm.c:337-349 — `canseemon(mdef) && !sensemon(mdef)`: a hider
+        // the hero senses (telepathy, warning, detection) is not "noticed", and
+        // an unaware hero only dreams of it.
+        if (mm_can_see_mon(mdef) && !sensemon(mdef)) {
+            if (Unaware()) {
+                const justone = ((pd?.geno ?? 0) & G_UNIQ) !== 0;
+                let montype = noname_monnam(mdef, justone ? 1 /* ARTICLE_THE */
+                                                          : 0 /* ARTICLE_NONE */);
+                if (!justone) montype = (await import('./plural.js')).makeplural(montype);
+                await emitMMmsg(`You dream of ${montype}.`);
+            } else if (game.last_msg === PLNMSG_HIDE_UNDER && mdef.m_id === game.last_hider)
                 await emitMMmsg(`${Monnam(mdef)} emerges from hiding.`, mdef);
             else if (mdef.m_id === game.last_hider)
                 await emitMMmsg(`You notice ${mon_nam(mdef)}.`);

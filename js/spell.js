@@ -355,30 +355,29 @@ function percent_success(spell) {
 // C ref: spell.c spell_backfire(spell) — what casting a forgotten spell does.
 // One rn2(10) and no other draw; the confusion/stun timers it sets steer later
 // moves (confdir()'s rn2(8) redirect), so this is not cosmetic.
-function spell_backfire(spell) {
+async function spell_backfire(spell) {
     const u = game.u;
     if (!u.uprops) u.uprops = {};
+    const { make_confused } = await import('./potion.js');
+    const { make_stunned_u: make_stunned } = await import('./mhitu.js');
     const duration = (spellev(spell) + 1) * 3;           /* 6..24 */
     const old_stun = u.uprops.Stun || 0, old_conf = u.uprops.Confusion || 0;
-    const set_conf = (t) => { u.uprops.Confusion = t; u.uconf = t > 0; };
-    const set_stun = (t) => { u.uprops.Stun = t; };
     switch (rn2(10)) {
     case 0: case 1: case 2: case 3:
-        set_conf(old_conf + duration);                                   /* 40% */
+        await make_confused(old_conf + duration, false);                 /* 40% */
         break;
     case 4: case 5: case 6:
-        set_conf(old_conf + Math.trunc(2 * duration / 3));               /* 30% */
-        set_stun(old_stun + Math.trunc(duration / 3));
+        await make_confused(old_conf + Math.trunc(2 * duration / 3), false); /* 30% */
+        await make_stunned(old_stun + Math.trunc(duration / 3), false);
         break;
     case 7: case 8:
-        set_stun(old_stun + Math.trunc(2 * duration / 3));               /* 20% */
-        set_conf(old_conf + Math.trunc(duration / 3));
+        await make_stunned(old_stun + Math.trunc(2 * duration / 3), false); /* 20% */
+        await make_confused(old_conf + Math.trunc(duration / 3), false);
         break;
     default:
-        set_stun(old_stun + duration);                                   /* 10% */
+        await make_stunned(old_stun + duration, false);                  /* 10% */
         break;
     }
-    game.botl = true;
 }
 
 // C ref: eat.c morehungry(num) — u.uhunger -= num; newuhs(TRUE).  newuhs can
@@ -407,7 +406,7 @@ async function spelleffects_check(spell) {
     if (spellknow(spell) <= 0) {
         await pline('Your knowledge of this spell is twisted.');
         await pline('It invokes nightmarish images in your mind...');
-        spell_backfire(spell);
+        await spell_backfire(spell);
         u.uen -= rnd(energy);
         if (u.uen < 0) u.uen = 0;
         game.botl = true;
@@ -839,7 +838,7 @@ async function cursed_book(bp) {
     case 4: {
         await update_topl('These runes were just too much to comprehend.');
         const { make_confused } = await import('./potion.js');
-        make_confused((game.u?.uprops?.Confusion || 0) + rn1(7, 16), false);
+        await make_confused((game.u?.uprops?.Confusion || 0) + rn1(7, 16), false);
         break;
     }
     case 5: {

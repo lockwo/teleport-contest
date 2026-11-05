@@ -735,12 +735,17 @@ export function vision_recalc(control = 0) {
     // they light, which the IN_SIGHT passes below treat exactly like lev->lit.
     // new_light_source() sets vision_full_recalc; that must not re-arm a recalc
     // we are already inside.
+    // The Blind arm (`else if (Blind)`, reached only when neither swallowed nor
+    // control == 2) ends in `goto skip`, past do_light_sources(): a blind
+    // hero's viz_array carries no TEMP_LIT bits at all.
     // The hook is registered by js/light.js (imported for effect from
     // jsmain.js): a direct `import` here reorders ESM evaluation and TDZ-traps
     // mkobj.js through u_init.js.
-    const _vfr = game.vision_full_recalc;
-    hooks.lightsources?.(next);   // C ref: vision.c:703, also on the Rogue level
-    game.vision_full_recalc = _vfr;
+    if (control === 2 || u.uswallow || !Blind()) {
+        const _vfr = game.vision_full_recalc;
+        hooks.lightsources?.(next);   // C ref: vision.c:703, also on the Rogue level
+        game.vision_full_recalc = _vfr;
+    }
 
     // Compute IN_SIGHT from COULD_SEE + lighting
     const level = game.level;
@@ -921,8 +926,13 @@ export function Blind() {
     // [BLINDED].extrinsic)", and the Eyes of the Overworld (artifact lenses,
     // oartifact 26) set BBlinded, which overrides every other source.
     const bf = game.ublindf;
+    // C ref: youprop.h Blindfolded is EBlinded (u.uprops[BLINDED].extrinsic),
+    // not "ublindf is set": nhlua.c nhl_gamestate() restores `struct u` over the
+    // setworn() that re-wore a towel/blindfold, leaving ublindf set with the
+    // extrinsic bit gone, so the hero is not Blind after leaving the tutorial.
     const blindfolded = !!bf && (bf.otyp === 233 /* BLINDFOLD */
-                                 || bf.otyp === 234 /* TOWEL */);
+                                 || bf.otyp === 234 /* TOWEL */)
+        && ((u?.uprops_extrinsic?.[15 /* BLINDED */] | 0) !== 0);
     const eyes_of_overworld = !!bf && bf.oartifact === 26;
     return !!u && !eyes_of_overworld
         && ((u.blinded || 0) > 0 || blindfolded || !!u.permablind
@@ -963,6 +973,11 @@ export function couldsee(x, y) {
 // on the hero).  Applies func(x, y) to every couldsee() cell within the
 // circle of the given range around (scol, srow).
 export function do_clear_area(scol, srow, range, func) {
+    /* If not centered on hero, do the hard work of figuring the area */
+    if (scol !== game.u?.ux || srow !== game.u?.uy) {
+        view_from(srow, scol, null, null, null, range, func, null);
+        return;
+    }
     for (const [x, y] of clear_area_cells(scol, srow, range)) func(x, y);
 }
 
@@ -995,6 +1010,10 @@ export async function do_clear_area_async(scol, srow, range, func, override_visi
 export function clear_area_cells(scol, srow, range) {
     const cells = [];
     if (scol !== game.u?.ux || srow !== game.u?.uy || range < 1) return cells;
+    if (game.vision_full_recalc) {
+        vision_recalc(0); /* recalc vision if dirty */
+        game.vision_full_recalc = 0;
+    }
     const limits = circle_data.slice(circle_start[range]);
     const maxY = Math.min(srow + range, ROWNO - 1);
     const minY = Math.max(srow - range, 0);

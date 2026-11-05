@@ -51,7 +51,7 @@ import { objects } from './mkobj.js';
 import { engr_at, can_reach_floor } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { visible_region_at, show_region } from './region.js';
-import { ACCESSIBLE, IS_ROOM, IS_POOL, IS_LAVA, In_sokoban,
+import { ACCESSIBLE, IS_ROOM, IS_POOL, IS_LAVA, IS_OBSTRUCTED, IS_DOOR, In_sokoban,
          Is_knox_level, Is_rogue_level, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { In_hell, endgamelevelname } from './dungeon.js';
 import { observe_object } from './o_init.js';
@@ -1447,6 +1447,18 @@ function bw_terrain_attr(loc, x, y, ch) {
     }
 }
 
+// C ref: display.c _map_location()/newsym() `show_region(reg, x, y)` — a visible
+// gas cloud is drawn over the map square by show_glyph() ONLY (levl[x][y].glyph
+// keeps the underlying memory), so glyph_at() is S_cloud/S_poisoncloud until the
+// square is next redrawn.  `disp_region` records that the displayed glyph is the
+// region's, since '#' alone cannot tell a cloud from a corridor.
+function show_region_glyph(x, y, reg) {
+    const rg = show_region(reg);
+    show_glyph_cell(x, y, rg.ch, rg.color, false);
+    const loc = game.level?.at(x, y);
+    if (loc) loc.disp_region = true;
+}
+
 // ── show_glyph_cell ──
 export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr = 0, keepColor = false, dark = false) {
     const loc = game.level?.at(x, y);
@@ -1496,6 +1508,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.disp_monster = false;
     loc.disp_hstatue = false;
     loc.disp_trap = false;
+    loc.disp_region = false;
     loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
        dark-room floor (S_darkroom, CLR_BLACK) is stored with its lit colour,
@@ -2256,8 +2269,7 @@ export function map_location(x, y, show = false) {
         if (!Blind()) {
             const reg = visible_region_at(x, y);
             if (reg) {
-                const rg = show_region(reg);
-                show_glyph_cell(x, y, rg.ch, rg.color, false);
+                show_region_glyph(x, y, reg);
             }
         }
     }
@@ -2315,6 +2327,22 @@ function feel_location_terrain(x, y) {
         // remembered object/trap/darkroom glyph are left exactly as they are, so
         // a blind #close/#open at such a square learns nothing and costs no turn.
         const rg = loc.remembered_glyph;
+        // C ref: display.c feel_location() Levitation Rules: "Boulders are felt
+        // because they are large enough".  After stone/walls/closed doors (which
+        // map_background) and BEFORE doorways, room/water and hallways, a boulder
+        // on the square is what the hero feels.
+        if (!(IS_OBSTRUCTED(loc.typ)
+              || (IS_DOOR(loc.typ) && (loc.doormask & (D_LOCKED | D_CLOSED))))) {
+            let boulder = null;
+            for (const o of game.level?.objects || [])
+                if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === BOULDER_OTYP)
+                    boulder = o; /* last in the array = first in C's nexthere chain */
+            if (boulder) {
+                loc.invisMon = false;
+                map_object(boulder, true);
+                return true;
+            }
+        }
         if (IS_ROOM(loc.typ) || IS_POOL(loc.typ)) {
             let do_room_glyph = false;
             let map_bg = false;
@@ -2397,8 +2425,7 @@ function feel_location_terrain(x, y) {
     if (!darkroom_shown && !Blind()) {
         const reg = visible_region_at(x, y);
         if (reg) {
-            const rg = show_region(reg);
-            show_glyph_cell(x, y, rg.ch, rg.color, false);
+            show_region_glyph(x, y, reg);
         }
     }
 
@@ -2465,7 +2492,7 @@ function display_sensed_monster(x, y, mon, see_it) {
 // newsym_core() and the announcement is queued (newsym() is synchronous; the
 // queue drains before the next topline message or key read, as notice_mon's).
 const DISP_FIELDS = ['disp_ch', 'disp_color', 'disp_decgfx', 'disp_attr', 'disp_dark',
-                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap'];
+                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap', 'disp_region'];
 function snapDisp(loc) {
     const s = {};
     for (const f of DISP_FIELDS) s[f] = loc[f];
@@ -2563,8 +2590,7 @@ function newsym_core(x, y) {
         const reg = visible_region_at(x, y);
         if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
             && !mon_overrides_region(m_at(x, y), x, y)) {
-            const rg = show_region(reg);
-            show_glyph_cell(x, y, rg.ch, rg.color, false);
+            show_region_glyph(x, y, reg);
             return;
         }
         // C ref: display.c newsym u_at branch —
@@ -2586,10 +2612,16 @@ function newsym_core(x, y) {
         } else {
             show_bg_glyph(x, y, bg);
         }
-        remember_bg(loc, bg);
-        // C ref: _map_location() overwrites levl[x][y].glyph, so a remembered
-        // 'I' under the hero is gone (it must not reappear when he steps off).
-        loc.invisMon = false;
+        // C ref: map_background()/map_object()/map_trap() store `levl[x][y].glyph`
+        // only `if (svl.level.flags.hero_memory)`; the Planes of Water and Air clear
+        // it (mkmaze.c fixup_special), so the hero's own square stays remembered as
+        // the level's base element (setup_waterlevel / water_pos) while he stands on it.
+        if (game.level?.flags?.hero_memory) {
+            remember_bg(loc, bg);
+            // C ref: _map_location() overwrites levl[x][y].glyph, so a remembered
+            // 'I' under the hero is gone (it must not reappear when he steps off).
+            loc.invisMon = false;
+        }
         update_lastseentyp(x, y); // _map_location() -> update_lastseentyp()
         return;
     }
@@ -2653,8 +2685,7 @@ function newsym_core(x, y) {
         const reg = visible_region_at(x, y);
         if (reg && (ACCESSIBLE(loc.typ) || (reg.visible && (IS_POOL(loc.typ) || IS_LAVA(loc.typ))))
             && !mon_overrides_region(mon, x, y)) {
-            const rg = show_region(reg);
-            show_glyph_cell(x, y, rg.ch, rg.color, false);
+            show_region_glyph(x, y, reg);
             return;
         }
         // C ref: display.c newsym:1014 — `see_it = mon && (mon_visible(mon)
@@ -2713,7 +2744,8 @@ function newsym_core(x, y) {
             // back, losing one remembered cell per mimic for the rest of the game.
             if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon))
                 loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec,
-                    objotyp: M_AP_TYPE(mon) === M_AP_OBJECT ? (mon.mappearance | 0) : 0 };
+                    objotyp: (mg.hallucotyp != null || M_AP_TYPE(mon) !== M_AP_OBJECT) ? 0 : (mon.mappearance | 0),
+                    hallucotyp: mg.hallucotyp, corpsenm: mg.corpsenm };
             // Detection reveals a mimic but preserves its visible disguise in map memory.
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
                 mg = monster_glyph(mon, true);
@@ -2753,8 +2785,7 @@ function newsym_core(x, y) {
             if (!Blind()) {
                 const reg = visible_region_at(x, y);
                 if (reg) {
-                    const rg = show_region(reg);
-                    show_glyph_cell(x, y, rg.ch, rg.color, false);
+                    show_region_glyph(x, y, reg);
                 }
             }
         }
@@ -2897,7 +2928,7 @@ export function unmap_object(x, y) {
         g = { ch: ' ', color: NO_COLOR, dec: false };
     }
     loc.invisMon = false;
-    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false, bwEngr: !!g.bwEngr };
+    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false, bwEngr: !!g.bwEngr, wall: !!g.wall };
 }
 
 // ── docrt ──
@@ -3354,12 +3385,17 @@ function _botFields(order, transient = null) {
     const raw = new Array(MAXBLSTATS).fill('');
     const active = new Array(MAXBLSTATS).fill(true);
 
-    // C ref: botl.c status_initialize() fldenabl.
+    // C ref: botl.c status_initialize() fldenabl.  tty keeps the XP/EXP/HD
+    // enable state it was given there (polyself.js set_uasmon() reassesses it);
+    // a `struct u` memcpy that clears Upolyd (nhlua.c nhl_gamestate() leaving
+    // the tutorial) leaves "HD:n" on the line, because evaluate_and_notify_
+    // windowport() skips BL_HD while !Upolyd and tty ignores inactive BL_XP.
+    const polyFields = game._ttyPolyFields ?? !!u.Upolyd;
     active[BL_SCORE] = SCORE_ON_BOTL && !!game.flags?.showscore;
     active[BL_TIME] = !!game.flags?.time;
-    active[BL_EXP] = !!game.flags?.showexp && !u.Upolyd;
-    active[BL_XP] = !u.Upolyd;
-    active[BL_HD] = !!u.Upolyd;
+    active[BL_EXP] = !!game.flags?.showexp && !polyFields;
+    active[BL_XP] = !polyFields;
+    active[BL_HD] = polyFields;
     active[BL_VERS] = !!game.flags?.showvers;
     active[BL_WEAPON] = !!game.flags?.weaponstatus;
     active[BL_ARMOR] = !!game.flags?.armorstatus;
@@ -3425,7 +3461,8 @@ function _botFields(order, transient = null) {
     raw[BL_ENE] = String(Math.min(status_held('uen', u.uen) || 0, 9999));
     raw[BL_ENEMAX] = String(Math.min(status_held('uenmax', u.uenmax) || 0, 9999));
     raw[BL_AC] = String(transient ? transient.uac : u.uac ?? 0);
-    raw[BL_HD] = String(u.data?.mlevel ?? 0);
+    if (u.Upolyd) game._ttyHD = String(u.data?.mlevel ?? 0);
+    raw[BL_HD] = u.Upolyd ? game._ttyHD : (game._ttyHD ?? String(u.data?.mlevel ?? 0));
     raw[BL_XP] = String(status_held('xl', u.ulevel || 1));
     raw[BL_EXP] = String(u.uexp || 0);
     // C ref: allmain.c:262-263 `if (flags.time && !svc.context.run)
@@ -3696,133 +3733,252 @@ function _renderStatus() {
     _ttyFieldUpdates(st, val, lth);
     const cond_shrinklvl = _makeThingsFit(st, order, nrows, active, val, lth, condBits);
     const cond = _condWords(condBits, cond_shrinklvl);
-    const rows = [];
-    // C ref: check_fields() -- x is 1-based and each field abuts the previous.
-    const posx = new Array(MAXBLSTATS).fill(0);
-    const posy = new Array(MAXBLSTATS).fill(0);
-    for (let row = 0; row < nrows; row++) {
-        let col = 1;
-        for (const idx of order[row]) {
-            if (idx === BL_FLUSH) break;
-            if (!active[idx]) continue;
-            posx[idx] = col;
-            posy[idx] = row;
-            col += lth[idx];
+    return _ttyRenderStatus({
+        st, order, nrows, active, val, lth, cond, condBits, hl, hlOn, hpPct, critHp,
+    });
+}
+
+// C ref: wintty.c tty_status[NOW|BEFORE][], cw->data[][] (the status window's
+// text, which survives clear_nhwindow() of the map and cl_end()), finalx[][]
+// and the last values handed to tty_status_update().  `phys` holds what the
+// terminal shows: null = never drawn since the last full redraw.
+function _newTtyField() {
+    return { x: 0, y: 0, lth: 0, color: NO_COLOR, attr: 0, dirty: false, redraw: false };
+}
+function _newTtyWin(nrows) {
+    return {
+        nrows,
+        dat: Array.from({ length: MAX_STATUS_ROWS }, () => new Array(STATUS_COLS - 1).fill(' ')),
+        phys: Array.from({ length: MAX_STATUS_ROWS }, () => new Array(STATUS_COLS).fill(null)),
+        now: Array.from({ length: MAXBLSTATS }, _newTtyField),
+        before: Array.from({ length: MAXBLSTATS }, _newTtyField),
+        finalx: Array.from({ length: MAX_STATUS_ROWS }, () => [0, 0]),
+        vals: new Array(MAXBLSTATS).fill(null),
+        bits: null,
+    };
+}
+function _cloneTtyWin(w) {
+    return {
+        nrows: w.nrows,
+        dat: w.dat.map((r) => r.slice()),
+        phys: w.phys.map((r) => r.slice()),
+        now: w.now.map((f) => ({ ...f })),
+        before: w.before.map((f) => ({ ...f })),
+        finalx: w.finalx.map((r) => r.slice()),
+        vals: w.vals.slice(),
+        bits: w.bits,
+    };
+}
+
+// C ref: wintty.c tty_putstatusfield().
+function _ttyPutStatusField(w, text, x, y, attr = 0, color = NO_COLOR) {
+    if (x >= STATUS_COLS || y >= w.nrows) return;
+    for (let i = 0; i < text.length; i++) {
+        const n = i + x;
+        if (n < STATUS_COLS) {
+            w.dat[y][n - 1] = text[i];
+            w.phys[y][n - 1] = { ch: text[i], attr: attr | 0, color };
         }
     }
+}
+
+// C ref: wintty.c tty_status_update() (marking NOW fields dirty), check_fields()
+// and render_status(), run against the persistent window state.  The state is
+// advanced only when botl_flush() runs bot() (game._ttyCommit); any other call
+// is a live preview of what that flush would draw over the last committed one.
+function _ttyRenderStatus(c) {
+    const { st, order, nrows, active, val, lth, cond, condBits, hl, hlOn, hpPct, critHp } = c;
+    const commit = game._ttyCommit;
+    const force = commit ? commit.force : !!game.botlx;
+    if (!st.win || st.win.nrows !== nrows) st.win = _newTtyWin(nrows);
+    const w = _cloneTtyWin(st.win);
+    const { now, before, dat, finalx } = w;
+    const hpbar = !!game.flags?.hitpointbar;
+    if (force) for (const r of w.phys) r.fill(null);
+
+    /* tty_status_update(): every field whose value, color or attribute
+       changed since the last flush is dirty. */
+    for (let idx = 0; idx < MAXBLSTATS; idx++) {
+        if (!active[idx]) continue;
+        const n = now[idx], b = before[idx];
+        n.lth = lth[idx];
+        n.color = hl && idx !== BL_CONDITION ? (hl.color[idx] ?? NO_COLOR) : NO_COLOR;
+        n.attr = hl && idx !== BL_CONDITION ? (hl.attr[idx] | 0) : 0;
+        /* C ref: wintty.c tty_status_update() sets a field's color/attr only when
+           bot() sends the field.  While losexp() has the rank title held (its
+           level-loss plines run before disp.botl), the live poll already sees the
+           new title but no HP update, which would reset the hitpointbar's inverse
+           attr on BL_TITLE; the screen still shows the last bot()'s highlight. */
+        if (idx === BL_TITLE && status_held('rank', null) !== null) {
+            n.color = b.color;
+            n.attr = b.attr;
+        }
+        n.dirty = idx === BL_CONDITION
+            ? w.bits !== condBits
+            : (w.vals[idx] !== val[idx] || n.color !== b.color || n.attr !== b.attr);
+    }
+    if (hpbar && active[BL_TITLE] && active[BL_HP] && now[BL_HP].dirty) now[BL_TITLE].dirty = true;
+    /* botl.c sends BL_FLUSH only when some field changed (or botlx forced a
+       BL_RESET); with nothing to send the window keeps what it shows. */
+    if (!force && !now.some((f, idx) => active[idx] && f.dirty))
+        return st.win.phys.slice(0, nrows).map((r) => r.slice());
+
+    /* check_fields() */
     for (let row = 0; row < nrows; row++) {
-        const cells = new Array(STATUS_COLS).fill(null);
-        const fields = order[row];
-        for (let i = 0; i < fields.length; i++) {
-            const idx = fields[i];
-            if (idx === BL_FLUSH) break;
+        let col = 1, updateRight = false;
+        for (let i = 0; order[row][i] !== BL_FLUSH; ++i) {
+            const idx = order[row][i];
             if (!active[idx]) continue;
-            let x = posx[idx];
-            if (idx === BL_CONDITION) {
-                if (!cond.length) continue;
-                const tlth = lth[BL_CONDITION];
-                // C ref: render_status() -- on the last of three rows the
-                // conditions are indented to line up with the hunger field on
-                // the row above; if they will not fit there they are right
-                // justified, and only then left where they fall.
-                if (row === MAX_STATUS_ROWS - 1) {
-                    let lastCol = STATUS_COLS;
-                    if (active[BL_VERS] && fields[i + 1] === BL_VERS)
-                        lastCol -= lth[BL_VERS];
-                    let cstart;
-                    if (posy[BL_HUNGER] < row && x < posx[BL_HUNGER]
-                        && posx[BL_HUNGER] + tlth < lastCol - 1)
-                        cstart = posx[BL_HUNGER];
-                    else if (x + tlth < STATUS_COLS - 1)
-                        cstart = lastCol - tlth;
-                    else
-                        cstart = x;
-                    if (x < cstart) x = cstart;
-                }
-                for (const w of cond) {
-                    _putStatusField(cells, ' ', x++, 0);
-                    let cattr = 0, ccolor = NO_COLOR;
-                    if (hlOn) {
-                        const cm = hl.colormasks;
-                        if (cm) {
-                            const bits = [[CLR_MAX + 2, 0x02], [CLR_MAX + 3, 0x04],
-                                          [CLR_MAX + 4, 0x08], [CLR_MAX + 5, 0x10],
-                                          [CLR_MAX + 6, 0x20], [CLR_MAX + 7, 0x40]];
-                            for (const [k, m] of bits)
-                                if ((w.mask & cm[k]) !== 0) cattr |= m;
-                            for (let k = 0; k < CLR_MAX; ++k)
-                                if ((w.mask & cm[k]) !== 0) { ccolor = k; break; }
-                        }
+            const n = now[idx], b = before[idx];
+            n.redraw = false;
+            n.y = row;
+            n.x = col;
+            if (n.x + n.lth !== b.x + b.lth) updateRight = true;
+            else if (n.lth !== b.lth || n.x !== b.x) n.redraw = true;
+            else updateRight = false;
+            let matchprev = false;
+            if (!updateRight && !force && !n.redraw
+                && idx !== BL_CONDITION && n.color === b.color && n.attr === b.attr) {
+                matchprev = true;
+                if (n.dirty) {
+                    const nb = val[idx];
+                    let k = 0, cc = col - 1;
+                    while (k < nb.length && cc < STATUS_COLS) {
+                        if (nb[k] !== (dat[row][cc] ?? '\0')) break;
+                        k++;
+                        cc++;
                     }
-                    _putStatusField(cells, w.text, x, _hlAttr(cattr), _hlColor(ccolor));
-                    x += w.text.length;
-                }
-            } else if (idx === BL_TITLE && game.flags?.hitpointbar) {
-                // C ref: render_status() "Title with Hitpoint Bar" -- the title
-                // is forced to exactly 30 columns inside [ ], and the leading
-                // hpbar_percent% of it is drawn in inverse video.
-                let bar = val[BL_TITLE].slice(0, 30).padEnd(30);
-                if (critHp) bar = _repadWithDashes(bar);
-                const barLen = bar.length;
-                let barPos = barLen;
-                if (hpPct < 100) {
-                    barPos = Math.trunc((barLen * hpPct) / 100);
-                    if (barPos < 1 && hpPct > 0) barPos = 1;
-                    if (barPos >= barLen) barPos = barLen - 1;
-                }
-                const part1 = bar.slice(0, barPos), part2 = bar.slice(barPos);
-                const battr = hl ? _hlAttr(hl.attr[BL_TITLE]) : ATR_INVERSE;
-                const bcolor = hlOn ? _hlColor(hl.color[BL_TITLE]) : NO_COLOR;
-                _putStatusField(cells, '[', x++, 0);
-                if (part1) {
-                    _putStatusField(cells, part1, x, battr, bcolor);
-                    x += part1.length;
-                }
-                if (part2) {
-                    _putStatusField(cells, part2, x, 0);
-                    x += part2.length;
-                }
-                _putStatusField(cells, ']', x++, 0);
-            } else {
-                /* C ref: wintty.c render_status() BL_VERS arm.  x is the
-                   field's check_fields() column, not the running draw column:
-                   the blank-fill from there to the right-justify column
-                   erases whatever the indented condition words drew in
-                   between (the C "FIXME: x ends up out of synch" case; the
-                   vx resync is only reachable when version directly follows
-                   conditions in fieldorder, which no order array has). */
-                if (idx === BL_VERS && fields[i + 1] === BL_FLUSH) {
-                    const vstart = STATUS_COLS - lth[BL_VERS];
-                    /* `dat[x - 1]` is the status window's persistent text: a
-                       cell this render has not drawn still holds the earlier
-                       render's character (e.g. the 'd' of a longer "Shield"
-                       under a shorter "Naked"), which must be blanked too. */
-                    const dgrid = game.nhDisplay?.grid?.[(game.nhDisplay.rows ?? 24) - nrows + row];
-                    for (; x < vstart; x++) {
-                        const dch = cells[x - 1] ? cells[x - 1].ch : (dgrid?.[x - 1]?.ch || ' ');
-                        if (dch !== ' ') _putStatusField(cells, ' ', x, 0);
-                    }
-                }
-                let text = val[idx];
-                if (hlOn) {
-                    while (text[0] === ' ') {
-                        _putStatusField(cells, ' ', x++, 0);
-                        text = text.slice(1);
-                    }
-                    if (text[0] === '/' && idx === BL_EXP) {
-                        _putStatusField(cells, '/', x++, 0);
-                        text = text.slice(1);
-                    }
-                    _putStatusField(cells, text, x, _hlAttr(hl.attr[idx]),
-                                    _hlColor(hl.color[idx]));
-                } else {
-                    _putStatusField(cells, text, x, 0);
+                    if (k < nb.length) matchprev = false;
                 }
             }
+            if (force || updateRight || (n.dirty && !matchprev)) n.redraw = true;
+            col += n.lth;
         }
-        rows.push(cells);
     }
-    return rows;
+
+    /* render_status() */
+    for (let row = 0; row < nrows; row++) {
+        const fields = order[row];
+        for (let i = 0; fields[i] !== BL_FLUSH; ++i) {
+            const idx = fields[i];
+            if (!active[idx]) continue;
+            const n = now[idx];
+            let x = n.x;
+            const tlth = n.lth;
+            if (n.redraw) {
+                if (idx === BL_CONDITION) {
+                    if (row === MAX_STATUS_ROWS - 1 && condBits !== 0) {
+                        let lastCol = STATUS_COLS, cstart;
+                        if (active[BL_VERS] && fields[i + 1] === BL_VERS)
+                            lastCol -= now[BL_VERS].lth;
+                        if (before[BL_HUNGER].y < row && x < before[BL_HUNGER].x
+                            && before[BL_HUNGER].x + tlth < lastCol - 1)
+                            cstart = before[BL_HUNGER].x;
+                        else if (x + tlth < STATUS_COLS - 1)
+                            cstart = lastCol - tlth;
+                        else
+                            cstart = x;
+                        if (x < cstart) {
+                            do {
+                                if (dat[row][x - 1] !== ' ') _ttyPutStatusField(w, ' ', x, row);
+                            } while (++x < cstart);
+                            n.x = x;
+                        }
+                    }
+                    for (const wd of cond) {
+                        _ttyPutStatusField(w, ' ', x++, row);
+                        let cattr = 0, ccolor = NO_COLOR;
+                        if (hlOn) {
+                            const cm = hl.colormasks;
+                            if (cm) {
+                                const bits = [[CLR_MAX + 2, 0x02], [CLR_MAX + 3, 0x04],
+                                              [CLR_MAX + 4, 0x08], [CLR_MAX + 5, 0x10],
+                                              [CLR_MAX + 6, 0x20], [CLR_MAX + 7, 0x40]];
+                                for (const [k, m] of bits)
+                                    if ((wd.mask & cm[k]) !== 0) cattr |= m;
+                                for (let k = 0; k < CLR_MAX; ++k)
+                                    if ((wd.mask & cm[k]) !== 0) { ccolor = k; break; }
+                            }
+                        }
+                        _ttyPutStatusField(w, wd.text, x, row, _hlAttr(cattr), _hlColor(ccolor));
+                        x += wd.text.length;
+                    }
+                    if (x > STATUS_COLS) x = STATUS_COLS;
+                } else if (idx === BL_TITLE && hpbar) {
+                    // C ref: render_status() "Title with Hitpoint Bar" -- the title
+                    // is forced to exactly 30 columns inside [ ], and the leading
+                    // hpbar_percent% of it is drawn in inverse video.
+                    let bar = val[BL_TITLE].slice(0, 30).padEnd(30);
+                    if (critHp) bar = _repadWithDashes(bar);
+                    const barLen = bar.length;
+                    let barPos = barLen;
+                    if (hpPct < 100) {
+                        barPos = Math.trunc((barLen * hpPct) / 100);
+                        if (barPos < 1 && hpPct > 0) barPos = 1;
+                        if (barPos >= barLen) barPos = barLen - 1;
+                    }
+                    const part1 = bar.slice(0, barPos), part2 = bar.slice(barPos);
+                    const battr = hl ? _hlAttr(n.attr) : ATR_INVERSE;
+                    const bcolor = hlOn ? _hlColor(n.color) : NO_COLOR;
+                    _ttyPutStatusField(w, '[', x++, row);
+                    if (part1) {
+                        _ttyPutStatusField(w, part1, x, row, battr, bcolor);
+                        x += part1.length;
+                    }
+                    if (part2) {
+                        _ttyPutStatusField(w, part2, x, row, 0);
+                        x += part2.length;
+                    }
+                    _ttyPutStatusField(w, ']', x++, row);
+                } else {
+                    // C ref: render_status() BL_VERS arm: right justify version
+                    // when it is last on its row.  `dat[x - 1]` is the status
+                    // window's persistent text, so cells an earlier render drew
+                    // (a longer "Shield" under a shorter "Naked", indented
+                    // condition words) are blanked too.
+                    if (idx === BL_VERS && fields[i + 1] === BL_FLUSH) {
+                        const vstart = STATUS_COLS - n.lth;
+                        if (x < vstart) {
+                            do {
+                                if (dat[row][x - 1] !== ' ') _ttyPutStatusField(w, ' ', x, row);
+                            } while (++x < vstart);
+                            n.x = x;
+                        }
+                    }
+                    let text = val[idx];
+                    if (hlOn) {
+                        while (text[0] === ' ') {
+                            _ttyPutStatusField(w, ' ', x++, row);
+                            text = text.slice(1);
+                        }
+                        if (text[0] === '/' && idx === BL_EXP) {
+                            _ttyPutStatusField(w, '/', x++, row);
+                            text = text.slice(1);
+                        }
+                        _ttyPutStatusField(w, text, x, row, _hlAttr(hl.attr[idx]),
+                                           _hlColor(hl.color[idx]));
+                    } else {
+                        _ttyPutStatusField(w, text, x, row, 0);
+                    }
+                    x += text.length;
+                }
+            } else {
+                x += tlth;
+            }
+            finalx[row][0] = x - 1;
+            n.dirty = false;
+            n.redraw = false;
+            w.vals[idx] = val[idx];
+            before[idx] = { ...n };
+        }
+        const fx = finalx[row][0];
+        if ((fx < finalx[row][1] || !finalx[row][1]) && fx + 1 < STATUS_COLS)
+            for (let cc = fx; cc < STATUS_COLS; cc++) w.phys[row][cc] = null; /* cl_end() */
+        finalx[row][1] = fx;
+    }
+    w.bits = condBits;
+    if (commit) st.win = w;
+    return w.phys.slice(0, nrows).map((r) => r.slice());
 }
 
 // Every recorded session (public and held-out alike) is encoded by an ANSI
@@ -4059,6 +4215,7 @@ function new_status_window() {
     game._statusSnap = null;
     game._statusSnapLevel = null;
     game.botlx = true;
+    if (game._ttyStatus) game._ttyStatus.win = null;
 }
 
 // C ref: wintty.c tty_preference_update() — the tty answer to options.c
@@ -4579,6 +4736,7 @@ export async function cls_flush_messages() {
 export async function cls() {
     game._statusSnap = null;
     await cls_flush_messages();
+    game.botlx = true; /* C ref: display.c cls() `disp.botlx = TRUE` — force update of botl window */
     game._toplin = 0;
     game._toplinSoft = null;
     const display = game?.nhDisplay;
@@ -4659,7 +4817,10 @@ export async function bot() {
     // C bot() publishes status immediately, without repainting the map.
     delete game._deafPending;
     await botl_flush(true);
-    if (!game._modal_screen) renderStatusLines(game.nhDisplay);
+    // C ref: botl.c:259 bot() — `if (u.uhp != -1 && ...)` draws nothing for the
+    // dosave() sentinel HP, which a fatal hit landing on exactly -1 collides with:
+    // a screen cleared by cls() (drag_down()) then stays without status rows.
+    if (!game._modal_screen && game.u?.uhp !== -1) renderStatusLines(game.nhDisplay);
 }
 
 // C ref: pline.c vpline():266-274 — `if (gv.vision_full_recalc) vision_recalc(0);`
@@ -4690,6 +4851,17 @@ function msgtype_suppressed(msg) {
     const typ = game.msgtype_type(msg, false);
     return typ === MSGTYP_NOSHOW
            || (typ === MSGTYP_NOREP && msg === game._prevmsg);
+}
+
+// C ref: pager.c do_screen_description() / topl.c redotoplin(): a farlook line whose
+// glyph prefix is a symset-remapped (high-bit) cmap char.  The history ring keeps the
+// decoded char, so the messages that carried one are tagged by their first 30
+// characters, and ^P (not a putmixed() caller) shows that prefix as a blank.
+export function note_dec_prefix_msg(text) {
+    (game._decPrefixMsgs ||= new Set()).add(String(text).slice(0, 30));
+}
+export function is_dec_prefix_msg(text) {
+    return !!text && !!game._decPrefixMsgs?.has(String(text).slice(0, 30));
 }
 
 // ── tty message history ring ──
@@ -5023,7 +5195,11 @@ export function wrap_topl(msg) {
 const DEFMORESTR = '--More--';
 const CO = 80;
 
+// C ref: win/tty/topl.c more() — `if (iflags.debug_fuzzer) return;` before
+// anything is drawn or read (yn_function() sets debug_fuzzer to
+// fuzzer_impossible_continue around its impossible()).
 export async function topl_more() {
+    if (game.iflags?.debug_fuzzer) return;
     await topl_more_ext('');
 }
 
@@ -5248,19 +5424,28 @@ async function botl_flush(direct = false) {
         tst.prevLev = null;
         delete game._statusUpdateAll;
     }
+    const botlxForce = !!game.botlx;
     game.botl = game.botlx = false;
     if (game.disp) game.disp.botl = false;
     if (game._statusClsBlank) game._statusDocrt = false; // status repaints AFTER the map
     delete game._statusClsBlank;
     game.time_botl = false;
+    // bot() publishes the live values: drop the status_hold() overrides BEFORE
+    // taking the signature, or the poll's next _statusSig() mismatches this
+    // one and invents a time_botl (T: advancing with no bot() in C).
+    delete game._statusHold;
     if (game.flags?.time) game._pubSig = _statusSig();
     game._shownMoves = game.moves || 1;
-    delete game._statusHold;
     if (game.u?.uhp !== -1)
         delete game._botlFrozen;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
-    bot_snapshot(direct);
+    game._ttyCommit = { force: botlxForce };
+    try {
+        bot_snapshot(direct);
+    } finally {
+        delete game._ttyCommit;
+    }
 }
 
 // C ref: botl.c timebot() — republish the move counter when only
@@ -5269,6 +5454,16 @@ export function timebot_sync() {
     if (!game.time_botl) return;
     game.time_botl = false;
     game._shownMoves = game.moves || 1;
+    /* timebot() flushes the tty status window too */
+    if (game.flags?.time && game.u && !game._staleFrame && !game._botlFrozen
+        && game.u.uhp !== -1 && !game._statusClsBlank) {
+        game._ttyCommit = { force: false };
+        try {
+            game._botlLast = _renderStatus();
+        } finally {
+            delete game._ttyCommit;
+        }
+    }
 }
 
 // C ref: pline.c Norep(line, ...) — pline() with PLINE_NOREPEAT: the message is
@@ -5513,6 +5708,18 @@ function topl_cursor_after(str) {
     return [curx, cury];
 }
 
+// C ref: hacklib.c visctrl() — how a key is spelled inside an error message.
+function visctrl_char(c) {
+    let code = typeof c === 'number' ? c : c.charCodeAt(0);
+    let out = '';
+    if (code & 0x80) out += 'M-';
+    code &= 0x7f;
+    if (code < 0o40) out += '^' + String.fromCharCode(code | 0o100);
+    else if (code === 0o177) out += '^?';
+    else out += String.fromCharCode(code);
+    return out;
+}
+
 // C ref: topl.c tty_yn_function / hack.h y_n.  Render a yes/no prompt and read
 // a valid response.  When a top-line message is still pending acknowledgment
 // (needMore), show "--More--" first (capturing that as its own step) before the
@@ -5525,14 +5732,34 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = false) {
     // saved on CQ_REPEAT for #repeat.
     if (addcmdq) {
         const { cmdq_pop, cmdq_clear, cmdq_add_key } = await import('./invent.js');
-        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY } = await import('./const.js');
+        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_USER_INPUT } = await import('./const.js');
         const cq = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
-        if (cq) {
+        if (cq && cq.typ !== CMDQ_USER_INPUT) {
             let res = '\x1b';
             if (cq.typ === CMDQ_KEY) res = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
             else cmdq_clear(CQ_CANNED);
             cmdq_add_key(CQ_REPEAT, res);
-            if (resp && res && !resp.includes(res)) res = def || '\x1b';
+            // C ref: cmd.c yn_function():5565-5585 — "should not happen but cq.key
+            // has been observed to not obey 'resp'" (a queued key whose letter was
+            // re-assigned since it was queued, or a non-key queue entry answered
+            // ESC): impossible() and answer `def ? def : ESC`.  The TEMP code around
+            // it sets iflags.debug_fuzzer = fuzzer_impossible_continue while the
+            // messages are printed, so tty more() returns at once (no --More--
+            // key is read) and the report lines overwrite one another.
+            if (resp && res && !resp.includes(res)) {
+                const altres = (def && def !== '\0') ? def : '\x1b';
+                if (!game.in_doagain || game.flags?.debug) {
+                    const iflags = game.iflags || (game.iflags = {});
+                    const fuzzing = iflags.debug_fuzzer;
+                    iflags.debug_fuzzer = 2; /* fuzzer_impossible_continue */
+                    try {
+                        await impossible(`yn_function() returned '${visctrl_char(res)}'; using '${visctrl_char(altres)}' instead`);
+                    } finally {
+                        iflags.debug_fuzzer = fuzzing;
+                    }
+                }
+                res = altres;
+            }
             return res;
         }
         const res = await y_n(query, resp, def, false);
@@ -6603,6 +6830,26 @@ export async function flash_glyph_at(x, y, tg, rpt) {
         show_glyph(x, y, glyph[i % 2]);
         await flush_screen(1);
         await nh_delay_output_d();
+    }
+}
+
+// C ref: display.c flash_glyph_at() final frame — the loop's even iteration
+// count ends on glyph[1] = levl[x][y].glyph (or back_to_glyph() without
+// hero_memory), drawn with show_glyph() and with NO newsym() afterwards.  This
+// port paints the live cell buffer directly; the frames in between are
+// display-only.  Used by flash_mon(), where the remembered glyph overwrites
+// whatever sat on the cell (e.g. a swallow-boundary glyph while engulfed).
+export function show_remembered_glyph_at(x, y) {
+    const loc = game.level?.at(x, y);
+    if (!loc) return;
+    const rg = loc.remembered_glyph;
+    if (game.level?.flags?.hero_memory && rg) {
+        show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg), false, !!rg.darkroom);
+    } else if (game.level?.flags?.hero_memory) {
+        show_glyph_cell(x, y, ' ', NO_COLOR, false);
+    } else {
+        const bg = background_glyph(loc, x, y);
+        show_bg_glyph(x, y, bg);
     }
 }
 

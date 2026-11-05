@@ -13,7 +13,7 @@
 // preserving timeout bits beside any persistent-source flags.
 
 import { game, hooks } from './gstate.js';
-import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero } from './youprop.js';
+import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero, Deaf_hero } from './youprop.js';
 import { panic as _panic } from './panic.js';
 import { NO_COLOR } from './terminal.js';
 import { s_suffix } from './hacklib.js';
@@ -249,7 +249,7 @@ async function expire_fumbling() {
         game.multi_reason = 'fumbling';
         game.nomovemsg = '';
         if (inv_weight() > -WT_NOISY_INV) {
-            if (!(u.uprops?.HDeaf || u.Deaf)) await pline('You make a lot of noise!');
+            if (!Deaf_hero()) await pline('You make a lot of noise!');
             const { wake_nearby } = await import('./cmd.js');
             await wake_nearby(false);
         }
@@ -1234,7 +1234,10 @@ export async function levitation_dialogue() {
     const u = game.u;
     const i = Math.floor((_prop('Levitation') - 1) / 2);
 
-    if (u?.ELevitation) return;
+    /* C: `if (ELevitation) return;` -- the E half is the worn-gear store
+       (boots/ring of levitation), not u.ELevitation, which nothing sets. */
+    const { worn_extrinsic } = await import('./invent.js');
+    if ((u?.uprops?.ELevitation | 0) || worn_extrinsic(C.LEVITATION)) return;
     const loc = _levl(u.ux, u.uy);
     if (!ACCESSIBLE(loc?.typ) && !is_pool_or_lava(u.ux, u.uy)) return;
 
@@ -2941,6 +2944,22 @@ export function timer_is_local(timer) {
     }
     _panic('timer_is_local');
     return false;
+}
+
+// C ref: save.c savelev_core() -> timeout.c save_timers(RANGE_LEVEL) ->
+// maybe_write_timer() -> timer_is_local() -> obj_is_local(), and light.c
+// save_light_sources(RANGE_LEVEL).  Object timers live on the object here
+// (not in timer_base), so scan the object chains instead: a timed or lit
+// object that is OBJ_FREE (the tutorial's gmst_invent stash after
+// nhl_gamestate() freeinv()'d it) makes obj_is_local() panic("obj_is_local").
+export function savelev_timer_scan() {
+    const scan = (list) => {
+        for (const o of list || []) {
+            if (o.timed || o.lamplit) obj_is_local(o);
+            if (Array.isArray(o.cobj)) scan(o.cobj);
+        }
+    };
+    scan(game.gg?.gmst_invent);
 }
 
 // C ref: timeout.c:2626 maybe_write_timer(nhfp, range, write_it) — count the

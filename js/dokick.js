@@ -1583,7 +1583,8 @@ export async function dokick() {
     if (Levitation()) {
         const xx = u.ux - dir.dx, yy = u.uy - dir.dy;
         const bt = isok(xx, yy) ? game.level?.at(xx, yy) : null;
-        if (bt && !IS_OBSTRUCTED(bt.typ) && !IS_DOOR(bt.typ)) {
+        if (bt && !IS_OBSTRUCTED(bt.typ) && !IS_DOOR(bt.typ)
+            && (!Is_airlevel() || !objects_at(xx, yy).length)) {
             await pline('You have nothing to brace yourself against.');
             return ECMD_OK;
         }
@@ -1592,7 +1593,10 @@ export async function dokick() {
     const mtmp = isok(x, y) ? m_at(x, y) : null;
     // C ref: dokick.c:1377-1381 — the kick may be called off by attack_checks()
     // (hidden monster revealed / peaceful declined) or by overexertion().
+    let oldmem = null;
     if (mtmp) {
+        const oloc = game.level?.at(x, y);
+        if (oloc) oldmem = { rg: oloc.remembered_glyph, inv: !!glyph_is_invisible(x, y) };
         if (!(await maybe_kick_monster(mtmp, x, y)))
             return game.context?.move ? ECMD_TIME : ECMD_OK;
     }
@@ -1605,6 +1609,17 @@ export async function dokick() {
     // C ref: dokick.c:1406-1441 — monsters come first of the five square tests.
     if (mtmp) {
         await kick_monster(mtmp, x, y);
+        /* C: see comment in attack_checks() — if we mapped an invisible
+           monster and immediately killed it, we don't want to forget what we
+           thought was there before the kick */
+        if (DEADMONSTER(mtmp) && oldmem && glyph_is_invisible(x, y) && !oldmem.inv) {
+            const kloc = game.level?.at(x, y);
+            if (kloc) {
+                kloc.remembered_glyph = oldmem.rg;
+                kloc.invisMon = oldmem.inv;
+                newsym(x, y);
+            }
+        }
         if (!DEADMONSTER(mtmp) && !canspotmon(mtmp)
             && mtmp.mx === x && mtmp.my === y
             && !glyph_is_invisible(x, y)
@@ -1990,15 +2005,14 @@ export function deliver_obj_to_mon(mtmp, cnt, deliverflags) {
                         | M2_GNOME | M2_ORC | M2_DEMON | M2_GIANT;
 
     let delivered = 0;
-    // Migration arrays are oldest-first, unlike C's prepended object chain.
-    for (let i = list.length - 1; i >= 0; i--) {
-        const otmp = list[i];
+    // gm.migrating_objs is head-first (add_to_migration unshifts), as in C.
+    for (const otmp of [...list]) {
         const where = (otmp.owornmask || 0) & 0x7fff;
         if ((where & MIGR_TO_SPECIES) === 0) continue;
 
         if (otmp.migr_species != null && otmp.migr_species !== NON_PM
             && (mflags2_of(mtmp.data) & DELIVER_PM) === otmp.migr_species) {
-            list.splice(i, 1);
+            list.splice(list.indexOf(otmp), 1);
             otmp.where = OBJ_FREE;
             otmp.owornmask = 0;
             otmp.ox = 0;
@@ -2106,6 +2120,8 @@ export async function obj_delivery(near_hero) {
     const { delobj } = await import('./invent.js');
     const { IS_SOFT } = await import('./const.js');
 
+    /* C ref: dokick.c obj_delivery walks gm.migrating_objs head first, and
+       add_to_migration prepends: newest first.  The JS array is head-first too. */
     for (const otmp of [...list]) {
         if (otmp.ox !== u.uz.dnum || otmp.oy !== u.uz.dlevel) continue;
 

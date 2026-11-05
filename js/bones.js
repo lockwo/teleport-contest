@@ -28,9 +28,11 @@ import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { Is_special, ledger_no } from './dungeon.js';
 import { roles } from './role.js';
-import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE,
-         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED, ONAME, has_oname, OMONST } from './const.js';
-import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of,
+import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
+         Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED, ONAME, has_oname, OMONST,
+         DEFUNCT_MONSTER, NON_PM, MGIVENNAME, setMGIVENNAME, has_mgivenname } from './const.js';
+import { roomAt } from './roomat.js';
+import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of, is_undead_flag,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
 import { can_carry, DEADMONSTER } from './mon.js';
 
@@ -251,6 +253,55 @@ export async function getbones() {
         game.stairs = bundle.stairs ?? game.stairs;
         game.fmon = game.level.monsters;
         game._bones_loaded = true;   // goto_level(): skip the fill/mineralize pass
+
+        // C ref: restore.c:1195-1221 getlev() `for (mtmp = fmon; ...)` — with
+        // ghostly set, each monster in chain order (restmon above): "reset
+        // peaceful/malign relative to new character" (the bones level was saved
+        // with the DEAD hero's relations baked in: Elara the lawful Priest's
+        // dwarves were peaceful, and left as-is they run monmove.c:1894's
+        // peaceful-only rn2(10) getitems probe for the neutral Healer who inherits
+        // them; peace_minded() itself only rolls for a CO-aligned monster), then
+        // restore_cham(), then `if (ghostly) hide_monst(mtmp)` — "give hiders a
+        // chance to hide before their next move" (a garter snake under a pile
+        // goes undetected, so m_search_items() skips that pile).  getbones() runs
+        // inside mklev(), so in_mklev is set for hideunder()'s no-message path.
+        {
+            const { peace_minded_bigrm, set_malign, monster_by_pmidx } = await import('./makemon.js');
+            const { restore_cham, hide_monst } = await import('./mon.js');
+            const S_UNICORN = 'u';
+            const ual = Math.sign(game.u?.ualign?.type ?? 0);
+            const was_mklev = game.in_mklev;
+            game.in_mklev = true;
+            for (const m of [...(game.level.monsters || [])].reverse()) {
+                const ptr = m.data || monster_by_pmidx(m.mnum);
+                if (!ptr) continue;
+                if (!m.isshk) {
+                    // likes_gems is implied by the S_UNICORN class here: the only
+                    // S_UNICORN members that aren't unicorns are ponies/horses, whose
+                    // maligntyp is 0, so the sign test below already excludes them.
+                    const uni = ptr.mcls === S_UNICORN && Math.sign(ptr.maligntyp ?? 0) !== 0;
+                    m.mpeaceful = (uni && ual === Math.sign(ptr.maligntyp ?? 0))
+                        ? true : !!peace_minded_bigrm(ptr);
+                }
+                set_malign(m);
+                await restore_cham(m);
+                await hide_monst(m);
+            }
+            game.in_mklev = was_mklev;
+        }
+
+        // C ref: bones.c getbones(): a bones monster whose species is extinct or
+        // genocided here carries the DEFUNCT_MONSTER cookie (restore.c getlev
+        // propagate()); "Removing defunct monster" -> mongone().
+        {
+            const { mongone } = await import('./mon.js');
+            for (const m of [...(game.level.monsters || [])].reverse())
+                if (m.mhpmax === DEFUNCT_MONSTER) await mongone(m);
+        }
+        // C ref: bones.c getbones(): fix_shop_damage() after the object chains
+        // are reset, then sanitize_engravings() once the file is closed.
+        await (await import('./shk.js')).fix_shop_damage();
+        (await import('./engrave.js')).sanitize_engravings();
         return true;
     } catch (e) {
         // Any decode/graft failure: behave as if no bones (fresh makelevel).  The
@@ -309,8 +360,18 @@ async function bones_getlev(blob) {
     // in that same order, so the walk is the reverse of this port's
     // creation-ordered level.monsters array (fmonOrder()).
     const chain_order = [...(level.monsters || [])].reverse();
+    const { propagate, monster_by_pmidx: monster_by_pmidx_b } = await import('./makemon.js');
+    const { sanitize_engr_text: sanitize_engr_text_b } = await import('./engrave.js');
     for (const m of chain_order) {
         m.m_id = next_ident();
+        // C ref: restore.c getlev(): `if (propagate(mndx, TRUE, ghostly) == 0)
+        // mtmp->mhpmax = DEFUNCT_MONSTER` -- cookie to trigger purge in getbones().
+        const mdat = m.data || monster_by_pmidx_b(m.mnum);
+        const mndx = (m.cham == null || m.cham === NON_PM) ? mdat?.pmidx : m.cham;
+        if (mndx != null && propagate(mndx, true, true) === 0)
+            m.mhpmax = DEFUNCT_MONSTER;
+        /* C ref: bones.c getbones(): if (has_mgivenname(mtmp)) sanitize_name(MGIVENNAME(mtmp)) */
+        if (has_mgivenname(m)) setMGIVENNAME(m, sanitize_engr_text_b(MGIVENNAME(m)));
         if (Array.isArray(m.minvent)) for (const o of m.minvent) stamp_obj(o);
     }
     // C ref: restore.c getlev() -> restore_buried_uchain()/buriedobjlist chain.
@@ -329,10 +390,8 @@ async function bones_getlev(blob) {
         const { is_quest_artifact } = await import('./questpgr.js');
         const { sanitize_engr_text } = await import('./engrave.js');
         const { setONAME, ONAME, ONAME_BONES } = await import('./const.js');
-        const room_at = (x, y) => {
-            const rno = level.at?.(x, y)?.roomno;
-            return rno >= ROOMOFFSET ? level.rooms?.[rno - ROOMOFFSET] : null;
-        };
+        const { inside_shop: shk_inside_shop, tended_shop } = await import('./shk.js');
+        const { in_rooms } = await import('./shkroom.js');
         const deps = {
             O: { objects, FOOD_CLASS },
             obj_extract_self, dealloc_obj, free_oname, free_omonst, set_corpsenm,
@@ -344,40 +403,25 @@ async function bones_getlev(blob) {
                 loc.y = obj.oy;
                 return true;
             },
-            inside_shop: (x, y) => (room_at(x, y)?.rtype ?? 0) >= SHOPBASE,
-            tended_shop: (x, y) => !!room_at(x, y)?.resident?.isshk,
+            /* C inside_shop(): roomno >= ROOMOFFSET, not on the wall ring
+               (levl.edge), and a shop rtype (subrooms included). */
+            inside_shop: (x, y) => shk_inside_shop(x, y),
+            /* C: `*(p = in_rooms(ox, oy, SHOPBASE)) &&
+               tended_shop(&svr.rooms[*p - ROOMOFFSET])` */
+            tended_shop: (x, y) => {
+                const p = in_rooms(x, y, SHOPBASE);
+                return !!p[0] && tended_shop(roomAt(p[0]));
+            },
         };
-        for (const m of [...(level.monsters || [])].reverse()) await resetobjs(m.minvent, true, deps);
+        for (const m of [...(level.monsters || [])].reverse())
+            if (m.mhpmax !== DEFUNCT_MONSTER) await resetobjs(m.minvent, true, deps);
         await resetobjs(level.objects, true, deps);
         await resetobjs(level.buriedobjlist, true, deps);
     }
 
-    // C ref: restore.c:1203 getlev()'s `if (ghostly)` arm — "reset peaceful/malign
-    // relative to new character".  The bones level was saved with the DEAD hero's
-    // relations baked in: Elara the lawful Priest's dwarves were peaceful, and
-    // left as-is they run monmove.c:1894's peaceful-only rn2(10) getitems probe
-    // for the neutral Healer who inherits them.  peace_minded() itself only rolls
-    // for a CO-aligned monster, so a cross-aligned bones level draws nothing here.
-    {
-        const { peace_minded_bigrm, set_malign, monster_by_pmidx } = await import('./makemon.js');
-        const S_UNICORN = 'u';
-        const ual = Math.sign(game.u?.ualign?.type ?? 0);
-        // getlev()'s `for (mtmp = fmon; ...)`: chain order (see restmon above),
-        // which fixes WHICH monster gets each peace_minded() draw pair.
-        for (const m of [...(level.monsters || [])].reverse()) {
-            const ptr = m.data || monster_by_pmidx(m.mnum);
-            if (!ptr) continue;
-            if (!m.isshk) {
-                // likes_gems is implied by the S_UNICORN class here: the only
-                // S_UNICORN members that aren't unicorns are ponies/horses, whose
-                // maligntyp is 0 — so the sign test below already excludes them.
-                const uni = ptr.mcls === S_UNICORN && Math.sign(ptr.maligntyp ?? 0) !== 0;
-                m.mpeaceful = (uni && ual === Math.sign(ptr.maligntyp ?? 0))
-                    ? true : !!peace_minded_bigrm(ptr);
-            }
-            set_malign(m);
-        }
-    }
+    // (The ghostly monster loop of restore.c getlev() runs from getbones() once
+    // the bones level is installed: hide_monst()/restore_cham() act on the level
+    // the monster is standing in.)
     return { level, stairs: bundle.stairs };
 }
 
@@ -467,11 +511,28 @@ export function give_to_nearby_mon(otmp, x, y, place_object) {
 // sessions die on bones-ineligible levels so savebones()/this path isn't on
 // the parity-critical stream, but the exact rn2 order is preserved so it stays
 // correct if a future session reaches it.
-export function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
+export async function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
     const inv = game.u?.invent || game.invent || [];
+    const { obj_no_longer_held } = await import('./do.js');
+    const { artifact_light, obj_is_burning } = await import('./light.js');
+    const { end_burn } = await import('./timeout.js');
+    const { SLIME_MOLD, weight } = await import('./mkobj.js');
+    /* C: u.twoweap = FALSE; bypass set_twoweap() -- the second weapon must
+       not get welded when it becomes cursed below. */
+    if (game.u) game.u.twoweap = false;
     // iterate a snapshot since the C loop extracts each item from gi.invent
     for (const otmp of [...inv]) {
         hooks.extract?.(otmp);                                 // C: obj_extract_self(otmp)
+        /* C: when turning into green slime all gear remains held; other
+           "arise from the dead" types aren't holding equipment. */
+        if (!mtmp || is_undead_flag(mtmp.data))
+            await obj_no_longer_held(otmp);
+        /* lamps don't go out when dropped */
+        if ((cont || artifact_light(otmp)) && obj_is_burning(otmp))
+            await end_burn(otmp, true);                        /* smother in statue */
+        otmp.owornmask = 0;
+        if (otmp.otyp === SLIME_MOLD)
+            goodfruit(otmp.spe);
         if (rn2(5)) hooks.curse?.(otmp);                       // C: if (rn2(5)) curse(otmp);
         if (mtmp) {
             hooks.toMon?.(mtmp, otmp);                         // C: add_to_minv(mtmp, otmp)
@@ -483,6 +544,7 @@ export function drop_upon_death(mtmp, cont, x, y, hooks = {}) {
             hooks.toFloor?.(otmp, x, y);
         }
     }
+    if (cont) cont.owt = weight(cont);                         // C: cont->owt = weight(cont)
 }
 
 // C ref: bones.c:697 set_ghostly_objlist() — fix_ghostly_obj() reads the bit
@@ -500,18 +562,25 @@ function set_ghostly_objlist(chain) {
 //   mtmp->iswiz || mptr == &mons[PM_MEDUSA] || mptr->msound == MS_NEMESIS
 //   || mptr->msound == MS_LEADER || is_Vlad(mtmp)
 //   || (mptr == &mons[PM_ORACLE] && !fixuporacle(mtmp))
-// The two species arms are mons[] identity comparisons in C, so resolving them
+// The species arms are mons[] identity comparisons in C, so resolving them
 // through name_to_pmidx() is the faithful translation, not a name heuristic —
-// everything else is a flag test.  The Oracle arm is omitted: fixuporacle()
-// succeeds whenever her level has a Delphi room, which is the only way she is
-// on a level at all, so C keeps her in that case too.
-function remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD) {
+// everything else is a flag test.  The Oracle arm calls fixuporacle(), which
+// also re-seats her in her Delphi chamber (enexto/rloc_to RNG) and marks her
+// peaceful.
+async function remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD, PM_ORACLE) {
     const p = m?.data;
     if (!p) return false;
     const snd = msound_of(p);
-    return !!(m.iswiz || snd === MS_NEMESIS || snd === MS_LEADER
-              || (PM_MEDUSA >= 0 && m.mnum === PM_MEDUSA)
-              || (PM_VLAD >= 0 && (m.mnum === PM_VLAD || m.cham === PM_VLAD)));
+    if (m.iswiz || snd === MS_NEMESIS || snd === MS_LEADER
+        || (PM_MEDUSA >= 0 && m.mnum === PM_MEDUSA)
+        || (PM_VLAD >= 0 && (m.mnum === PM_VLAD || m.cham === PM_VLAD)))
+        return true;
+    if (PM_ORACLE >= 0 && m.mnum === PM_ORACLE) {
+        const { enexto_gpflags, rloc_to } = await import('./teleport.js');
+        return !(await fixuporacle(m, {
+            enexto: (x, y, d) => enexto_gpflags(x, y, d, 0), rloc_to }));
+    }
+    return false;
 }
 
 // C ref: trap.c unhideable_trap() — the traps that are always shown.
@@ -549,6 +618,9 @@ export async function savebones(how = 0, corpse = null) {
         // bones in place.  Our port used to clobber the blob unconditionally, so
         // a second hero dying on a level another hero already haunted would hand
         // the THIRD hero the wrong legacy level.
+        // C ref: bones.c savebones() clear_bypasses() — before open_bonesfile().
+        (await import('./worn.js')).clear_bypasses();
+
         {
             const existing = (typeof storage.getItem === 'function')
                 ? storage.getItem(key) : null;
@@ -566,11 +638,11 @@ export async function savebones(how = 0, corpse = null) {
 
         // C ref: bones.c:446 forget_engravings() — "next hero won't have read any
         // engravings yet".
-        for (const ep of (g.level?.engravings || [])) {
-            if (!ep) continue;
-            ep.erevealed = 0;
-            ep.eread = 0;
-        }
+        (await import('./engrave.js')).forget_engravings();
+
+        // C ref: bones.c savebones() — mark all named fruits as nonexistent;
+        // resetobjs() re-marks the ones that still exist (goodfruit()).
+        for (let f = g.ffruit; f; f = f.nextf) f.fid = -f.fid;
 
         // C ref: bones.c:437-444 — unleash_all(), unpunish() for a Punished hero,
         // and dismount_steed(DISMOUNT_BONES) (landing_spot/enexto RNG, the steed
@@ -594,6 +666,7 @@ export async function savebones(how = 0, corpse = null) {
             const { name_to_pmidx } = await import('./makemon.js');
             const PM_MEDUSA = name_to_pmidx('Medusa') ?? -1;
             const PM_VLAD = name_to_pmidx('Vlad the Impaler') ?? -1;
+            const PM_ORACLE = name_to_pmidx('Oracle') ?? -1;
             const { mongone } = await import('./mon.js');
             const mons_list = g.level?.monsters;
             if (Array.isArray(mons_list)) {
@@ -602,7 +675,7 @@ export async function savebones(how = 0, corpse = null) {
                 /* iter_mons(): fmon newest-first, skipping DEADMONSTER and mon_offmap */
                 for (const m of [...mons_list].reverse())
                     if (!DEADMONSTER(m) && (m.mstate | 0) === 0
-                        && remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD)) {
+                        && await remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD, PM_ORACLE)) {
                         await mongone(m);
                         const i = mons_list.indexOf(m);
                         if (i >= 0) mons_list.splice(i, 1);
@@ -644,7 +717,7 @@ export async function savebones(how = 0, corpse = null) {
             const { mk_named_object, STATUE, add_to_container, weight } = await import('./mkobj.js');
             const otmp = mk_named_object(STATUE, monster_by_pmidx(g.u?.umonnum), x, y,
                                          svp_plname());
-            drop_upon_death(null, otmp, x, y, {
+            await drop_upon_death(null, otmp, x, y, {
                 ...hooks,
                 addToContainer: (cont, o) => { add_to_container(cont, o); },
             });
@@ -652,7 +725,7 @@ export async function savebones(how = 0, corpse = null) {
             otmp.owt = weight(otmp);
             mtmp = null;
         } else {
-        if (!arisen) drop_upon_death(null, null, x, y, hooks);
+        if (!arisen) await drop_upon_death(null, null, x, y, hooks);
         const saved_in_mklev = g.in_mklev;
         g.in_mklev = true;
         try {
@@ -663,7 +736,7 @@ export async function savebones(how = 0, corpse = null) {
         }
         if (!mtmp) {
             if (arisen) {
-                drop_upon_death(null, null, x, y, hooks);
+                await drop_upon_death(null, null, x, y, hooks);
                 g.u.ugrave_arise = NON_PM;
             }
             return;
@@ -673,7 +746,7 @@ export async function savebones(how = 0, corpse = null) {
         christen_monst(mtmp, svp_plname());
         if (arisen) {
             (await import('./display.js')).newsym(x, y);
-            drop_upon_death(mtmp, null, x, y, hooks);
+            await drop_upon_death(mtmp, null, x, y, hooks);
             const { MUMMY_WRAPPING } = await import('./mkobj.js');
             if (mtmp.data?.mcls === S_MUMMY
                 && !(mtmp.minvent || []).some(o => o.otyp === MUMMY_WRAPPING))
@@ -688,6 +761,23 @@ export async function savebones(how = 0, corpse = null) {
         mtmp.mhp = mtmp.mhpmax = g.u?.uhpmax ?? 1;
         mtmp.female = !!g.flags?.female;
         mtmp.msleeping = 1;
+        // C ref: bones.c savebones() — record who the ghost was (newebones()).
+        if (!mtmp.mextra?.ebones) newebones(mtmp);
+        if (mtmp.mextra?.ebones) {
+            const eb = mtmp.mextra.ebones;
+            const { roles: rl, races: rc } = await import('./role.js');
+            const ri = rl.findIndex((r) => r.name.m === rl[g.initrole]?.name?.m);
+            if (ri >= 0) eb.role = ri;
+            const ci = rc.findIndex((r) => r.noun === rc[g.initrace]?.noun);
+            if (ci >= 0) eb.race = ci;
+            eb.oldalign = { ...(g.u?.ualign || {}) };
+            eb.deathlevel = g.u?.ulevel;
+            eb.luck = g.u?.uluck; /* moreluck not included */
+            eb.mnum = rl[g.initrole]?.mnum; /* Role_switch */
+            eb.female = !!g.flags?.female;
+            eb.demigod = g.u?.uevent?.udemigod;
+            eb.crowned = g.u?.uevent?.uhand_of_elbereth;
+        }
         }
 
         // C ref: bones.c:538-546 — per-monster: mark its pack ghostly, resetobjs
@@ -783,12 +873,18 @@ export async function savebones(how = 0, corpse = null) {
             const fc3 = (s) => String(s ?? '').slice(0, 3);
             const female = !!g.flags?.female;
             const alignIdx = 1 - (g.u?.ualign?.type ?? 0);
+            const { formatkiller } = await import('./topten.js');
+            const { yyyymmddhhmmss } = await import('./calendar.js');
             const entry = {
                 who: `${svp_plname()}-${fc3(roles[g.initrole]?.filecode)}`
                     + `-${fc3(races[g.initrace]?.filecode)}`
                     + `-${fc3(genders[female ? 1 : 0]?.filecode)}`
                     + `-${fc3(aligns[alignIdx]?.filecode)}`,
-                how, frpx: x, frpy: y, bonesknown: false,
+                // C ref: bones.c savebones() formatkiller(newbones->how, BUFSZ, how,
+                // TRUE) and yyyymmddhhmmss(when); `when` is getnow() at death.
+                how: formatkiller(256 /* sizeof newbones->how: BUFSZ */, how, true),
+                when: yyyymmddhhmmss(0),
+                frpx: x, frpy: y, bonesknown: false,
             };
             // "most recent (this dead hero) first"
             g.level.bonesinfo = [entry, ...(g.level.bonesinfo || [])];
@@ -804,6 +900,9 @@ export async function savebones(how = 0, corpse = null) {
         // C ref: bones.c:610 savelev() — serialise the level for the next hero.
         // savelev_core() (save.c:553) also writes save_track(), so the DEAD
         // hero's footprint ring travels with the bones level.
+        // C ref: bones.c savebones() update_mlstmv() — "update monsters for
+        // eventual restoration", just before savelev().
+        await (await import('./dog.js')).update_mlstmv();
         const { serializeGameState } = await import('./save.js');
         const { save_track } = await import('./track.js');
         storage.setItem(key, serializeGameState({
@@ -1028,9 +1127,14 @@ export async function fixuporacle(oracle, deps = {}) {
         return false;
 
     oracle.mpeaceful = 1;   /* for behavior toward the next character */
-    const rooms = game.level?.rooms || [];
+    /* C's svr.rooms[] is ONE flat array of (MAXNROFROOMS + 1) * 2 slots: rooms,
+       then from MAXNROFROOMS + 1 the subrooms, where the Delphi chamber lives
+       (oracle.lua nests it inside the centre room).  room_at(i) is
+       svr.rooms[i]; indexing level.rooms[] alone never saw the subroom. */
+    const SIZE_ROOMS = (MAXNROFROOMS + 1) * 2;
+    const room_at = (i) => roomAt(i + ROOMOFFSET);
     let o_ridx = roomno_at(oracle.mx, oracle.my) - ROOMOFFSET;
-    if (o_ridx >= 0 && rooms[o_ridx]?.rtype === DELPHI)
+    if (o_ridx >= 0 && room_at(o_ridx)?.rtype === DELPHI)
         return true;        /* no fixup needed */
 
     /*
@@ -1041,17 +1145,18 @@ export async function fixuporacle(oracle, deps = {}) {
      */
 
     /* find the original delphi chamber; should always succeed.  C scans the
-       whole fixed-size svr.rooms[] array, so `ridx === SIZE(rooms)` is its
-       "not found" answer — mirrored here with rooms.length. */
+       whole fixed-size svr.rooms[] array, so `ridx === SIZE(svr.rooms)` is
+       its "not found" answer. */
     let ridx = 0;
-    for (; ridx < rooms.length; ++ridx)
-        if ((rooms[ridx]?.orig_rtype | 0) === DELPHI)
+    for (; ridx < SIZE_ROOMS; ++ridx)
+        if ((room_at(ridx)?.orig_rtype | 0) === DELPHI)
             break;
 
-    if (o_ridx !== ridx && ridx < rooms.length) {
+    if (o_ridx !== ridx && ridx < SIZE_ROOMS) {
         /* room found and she's not in it, so try to move her there */
-        const cc = { x: Math.trunc((rooms[ridx].lx + rooms[ridx].hx) / 2),
-                     y: Math.trunc((rooms[ridx].ly + rooms[ridx].hy) / 2) };
+        const droom = room_at(ridx);
+        const cc = { x: Math.trunc((droom.lx + droom.hx) / 2),
+                     y: Math.trunc((droom.ly + droom.hy) / 2) };
         const spot = deps.enexto?.(cc.x, cc.y, oracle.data);
         if (spot) {
             await deps.rloc_to?.(oracle, spot.x, spot.y);
@@ -1062,7 +1167,7 @@ export async function fixuporacle(oracle, deps = {}) {
            happen before this fixup was introduced] */
     }
     if (ridx === o_ridx)    /* if she's in her room, mark it as such */
-        rooms[ridx].rtype = DELPHI;
+        room_at(ridx).rtype = DELPHI;
     return true;            /* keep the oracle in the new bones file */
 }
 // C ref: rm.h levl[x][y].roomno.

@@ -1256,7 +1256,7 @@ export async function list_migrating_mons(nextlevl) {
     if (xtra) prmpt += `\x1b${xtra}`;
 
     const { yn_function } = await import('./extcmd-handlers.js');
-    const c = await yn_function('List which?', prmpt, 'q');
+    const c = await yn_function('List which?', prmpt, 'q', true);
     let n = (c === 'c') ? here
         : (c === 'n') ? nxtlv
           : (c === 'o') ? other

@@ -35,7 +35,7 @@ import { makemon, name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { x_monnam, canspotmon } from './uhitm.js';
 import { somegold } from './steal.js';
-import { create_gas_cloud } from './region.js';
+import { create_gas_cloud, visible_region_at } from './region.js';
 import { monster_detect, nomul } from './hack.js';
 import { observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
@@ -96,13 +96,25 @@ function Role_if_knight() {
 }
 
 // C ref: artifact.c exist_artifact(LONG_SWORD, artiname(ART_EXCALIBUR)) — has
-// Excalibur already been made?  The port has no artifact registry, so scan the
-// hero's pack and the current level's floor for oartifact == 1 (Excalibur's
-// artilist index, ART_EXCALIBUR in artifact.js).
-function exist_excalibur() {
-    for (const o of (game.invent || [])) if (o?.oartifact === 1) return true;
-    for (const o of (game.level?.objects || [])) if (o?.oartifact === 1) return true;
-    return false;
+// Excalibur already been made?  artifact.js keeps the artifact registry.
+async function exist_excalibur() {
+    const { exist_artifact } = await import('./artifact.js');
+    return exist_artifact(LONG_SWORD, 'Excalibur');
+}
+
+// C ref: fountain.c:21 floating_above(what).
+async function floating_above(what) {
+    const u = game.u;
+    let umsg = `You are floating high above the ${what}.`;
+    const { TT_INFLOOR, TT_LAVA } = await import('./const.js');
+
+    if (u.utrap && (u.utraptype === TT_INFLOOR || u.utraptype === TT_LAVA)) {
+        /* when stuck in floor (not possible at fountain or sink location,
+           so must be attempting to move down), override the usual message */
+        const { surface } = await import('./dungeon.js');
+        umsg = `You are trapped in the ${surface(u.ux, u.uy)}.`;
+    }
+    await update_topl(umsg);
 }
 
 // C ref: fountain.c wash_hands() — dipping '-' (or worn gloves) into water.
@@ -132,7 +144,7 @@ export async function dipfountain(obj) {
     const is_hands = obj && obj._hands;
 
     if (Levitation_hero()) {
-        await update_topl('You are floating high above the fountain.');
+        await floating_above('fountain');
         return;
     }
 
@@ -143,7 +155,7 @@ export async function dipfountain(obj) {
     if (obj.otyp === LONG_SWORD && u.ulevel >= 5
         && !rn2(Role_if_knight() ? 6 : 30)
         && (obj.quan || 1) === 1 && !obj.oartifact
-        && !exist_excalibur()) {
+        && !(await exist_excalibur())) {
         if ((u.ualign?.type ?? 0) !== 1 /* A_LAWFUL */) {
             await update_topl(`A freezing mist rises from the ${hliquid('water')}`
                               + ' and envelopes the sword.');
@@ -156,12 +168,15 @@ export async function dipfountain(obj) {
             await update_topl(
                 'From the murky depths, a hand reaches up to bless the sword.');
             await update_topl('As the hand retreats, the fountain disappears!');
-            // oname(obj, artiname(ART_EXCALIBUR)) + discover_artifact():
-            // artifact.js keys artifact properties off obj.oartifact (1 ==
-            // ART_EXCALIBUR).
-            obj.oartifact = 1;
-            setONAME(obj, 'Excalibur');
-            bless(obj);
+            // C ref: fountain.c dipfountain() `obj = oname(obj,
+            // artiname(ART_EXCALIBUR), ONAME_VIA_DIP | ONAME_KNOW_ARTI);
+            // discover_artifact(ART_EXCALIBUR);`
+            const { oname } = await import('./invent.js');
+            const { discover_artifact, ART_EXCALIBUR } = await import('./artifact.js');
+            const { ONAME_VIA_DIP, ONAME_KNOW_ARTI } = await import('./const.js');
+            obj = await oname(obj, 'Excalibur', ONAME_VIA_DIP | ONAME_KNOW_ARTI);
+            discover_artifact(ART_EXCALIBUR);
+            await bless(obj);
             obj.oeroded = 0; obj.oeroded2 = 0; obj.oerodeproof = true;
             exercise(A_WIS, true);
         }
@@ -199,7 +214,7 @@ export async function dipfountain(obj) {
         if (!is_hands && obj.cursed) {
             if (!Blind())
                 await update_topl(`The ${hliquid('water')} glows for a moment.`);
-            uncurse(obj);
+            await uncurse(obj);
         } else {
             await update_topl('A feeling of loss comes over you.');
         }
@@ -295,7 +310,7 @@ export async function drinkfountain() {
     const fate = rnd(30);
 
     if (Levitation_hero()) {
-        await update_topl('You are floating high above the fountain.');
+        await floating_above('fountain');
         return;
     }
 
@@ -706,7 +721,16 @@ export async function dryup(x, y, isyou) {
     }
     // C ref: fountain.c:225 — the message is gated on cansee(x, y) (and on the
     // square not being hidden under a cloud glyph).
-    if (cansee(x, y)) await update_topl('The fountain dries up!');
+    if (cansee(x, y)) {
+        /* C ref: fountain.c:224-227 — `glyph_at(x, y)` is a cloud glyph only when
+           the visible region overlay is what is drawn there (no hero or sensed
+           monster on top of it; display.c _map_location() show_region()). */
+        const mon_here = m_at(x, y);
+        const cloud_shown = !Blind() && !!visible_region_at(x, y)
+            && !(game.u?.ux === x && game.u?.uy === y)
+            && !(mon_here && canspotmon(mon_here));
+        if (!cloud_shown) await update_topl('The fountain dries up!');
+    }
     // replace the fountain with ordinary floor
     loc.typ = ROOM;
     loc.flags = 0;
@@ -803,7 +827,7 @@ export async function sink_backs_up(x, y) {
 export async function drinksink() {
     const u = game.u;
     if (Levitation_hero()) {
-        await update_topl('You are floating high above the sink.');
+        await floating_above('sink');
         return;
     }
     const loc = game.level?.at(u.ux, u.uy);

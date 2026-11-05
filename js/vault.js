@@ -148,6 +148,7 @@ function sobj_at(otyp, x, y) {
 // coordinate write plus list membership.
 function place_monster(mon, x, y) {
     mon.mx = x; mon.my = y;
+    mon.mstate = 0; /* C: mon->mstate = MON_FLOOR */
     const list = game.level?.monsters;
     if (list && !list.includes(mon)) list.push(mon);
 }
@@ -191,7 +192,7 @@ function map_location(x, y, show) {
     const loc = levl_at(x, y);
     if (!loc) return;
     const bg = background_glyph(loc, x, y);
-    loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, pile: !!bg.pile };
+    loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, pile: !!bg.pile, wall: !!bg.wall };
     if (show) {
         const attr = (bg.pile && game.flags?.hilite_pile
             && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;

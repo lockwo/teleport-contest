@@ -38,7 +38,7 @@ import { monster_by_pmidx, newcham_wizard_aware,
     pickvampshape_pub, set_mimic_sym, makemon, makemon_appears_msg, can_saddle  } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
-    tp_sensemon, match_warn_of_mon, Hallucination_u, Deaf_hero, You_feel } from './display.js';
+    tp_sensemon, match_warn_of_mon, Hallucination_u, Deaf_hero, You_feel, show_remembered_glyph_at } from './display.js';
 import { dist2 } from './hacklib.js';
 import { monnear } from './dogmove.js';
 import { Monnam, mon_nam } from './uhitm.js';
@@ -461,20 +461,7 @@ async function new_were(mon) {
     newsym(mon.mx, mon.my);
     await mon_break_armor(mon, false);
     const { possibly_unwield } = await import('./weapon.js');
-    const dropped = await possibly_unwield(mon, false);
-    if (dropped) {
-        const { flooreffects } = await import('./do.js');
-        const { stackobj, distant_doname } = await import('./invent.js');
-        if (cansee(mon.mx, mon.my)) {
-            await update_topl(`${Monnam(mon)} drops ${distant_doname(dropped, true)}.`);
-            newsym(mon.mx, mon.my);
-        }
-        dropped.where = OBJ_FREE;
-        if (!await flooreffects(dropped, mon.mx, mon.my, 'drop')) {
-            place_object(dropped, mon.mx, mon.my);
-            stackobj(dropped);
-        }
-    }
+    await possibly_unwield(mon, false);
     if (game.context?.mon_moving && !mon.mpeaceful
         && onscary(mon.mux, mon.muy, mon) && monnear(mon, mon.mux, mon.muy))
         await monflee(mon, rn1(9, 2), true, true); /* 2..10 turns */
@@ -3617,13 +3604,17 @@ export async function wiz_force_cham_form(mon) {
             mndx = NON_PM;
             break;
         }
-        mndx = name_to_pmidx(buf.replace(/\s+/g, ' ').trim()); /* C: name_to_mon */
+        const PS = await import('./polyself.js');
+        const mbuf = buf.replace(/\s+/g, ' ').trim(); /* C: mungspaces(buf) */
+        mndx = PS.name_to_mon(mbuf).mntmp;
         if (mndx === NON_PM) {
-            /* C ref: mon.c:5124 `monclass = name_to_monclass(buf, &mndx); if
-               (monclass && mndx == NON_PM) mndx = mkclass_poly(monclass);` —
-               js/polyself.js has both, module-private, so the CLASS half of the
-               prompt has nothing to resolve against. */
-            monclass = 0;
+            /* didn't get a type, so check whether it's a class
+               (single letter or text match with def_monsyms[]) */
+            const r = await PS.name_to_monclass(mbuf);
+            monclass = r.klass;
+            mndx = r.mndx;
+            if (monclass && mndx === NON_PM)
+                mndx = PS.mkclass_poly(monclass);
         }
         if (ismnum(mndx)) {
             /* got a specific type of monster; use it if we can */
@@ -3953,10 +3944,11 @@ export function flash_mon(mtmp) {
         count = Math.trunc(count / 2);
     if (row) row[mx] |= (VIZ_IN_SIGHT | VIZ_COULD_SEE);
     /* C ref: display.c flash_glyph_at(x, y, mon_to_glyph(mtmp, newsym_rn2),
-       count) — neither flash_glyph_at() nor the newsym_rn2 glyph pick (which
-       DRAWS off the DISPLAY rng for a hallucinated monster) has a port yet.
-       The glyph pick is what_mon(): one display-rng draw while hallucinating. */
+       count) — the flash frames are display-only and the glyph pick (what_mon())
+       DRAWS one display-rng value while hallucinating.  The loop ends with the
+       remembered glyph showing, drawn with no newsym() of its own. */
     if (Hallucination_u()) random_monster();
+    show_remembered_glyph_at(mx, my);
     void count;
     if (row) row[mx] = saveviz;
     newsym(mx, my);

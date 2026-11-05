@@ -490,11 +490,14 @@ function ini_inv_wear_armor(obj) {
         // two-handed weapon is already wielded (no stock role hits this, but
         // the guard is what C tests).
         if (is_shield(obj) && !game.uarms
-            && !(game.uwep && bimanual(game.uwep))) setworn(obj, W_ARMS);
-        else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
+            && !(game.uwep && bimanual(game.uwep))) {
+            if (game.u) game.u.twoweap = false; /* C: set_twoweap(FALSE) */
+            setworn(obj, W_ARMS);
+        } else if (is_helmet(obj) && !game.uarmh) setworn(obj, W_ARMH);
         else if (is_gloves(obj) && !game.uarmg) setworn(obj, W_ARMG);
         else if (is_shirt(obj) && !game.uarmu) setworn(obj, W_ARMU);
         else if (is_cloak(obj) && !game.uarmc) setworn(obj, W_ARMC);
+        else if (is_armor_range(obj, 163, 172) && !game.uarmf) setworn(obj, W_ARMF); /* is_boots */
         else if (is_suit(obj) && !game.uarm) setworn(obj, W_ARM);
     }
 
@@ -1340,6 +1343,7 @@ export function u_init_role() {
 
 export function u_init_inventory_attrs() {
     const was_log_mkobj_rne = game._log_mkobj_rne;
+    (game.gl ||= {}).lastinvnr = 51; /* C ref: u_init.c u_init_inventory_attrs */
     game.u = game.u || {};
     game.invent = [];
     game.u.umoney0 = 0;

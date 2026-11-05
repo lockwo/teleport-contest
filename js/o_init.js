@@ -1545,7 +1545,9 @@ export async function rename_disco() {
      */
 
     /* for each class, show discoveries in that class */
-    for (const s of (flags.inv_order || DISCO_INV_ORDER())) {
+    /* C: flags.inv_order has no VENOM_CLASS (DISCO_INV_ORDER appends it for
+       the dodiscovered() callers), so venom is never offered here */
+    for (const s of (flags.inv_order || DISCO_INV_ORDER().filter((c) => c !== VENOM_CLASS))) {
         oclass = s;
         prev_class = oclass + 1; /* forced different from oclass */
         for (i = bases[oclass];

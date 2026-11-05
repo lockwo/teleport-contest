@@ -253,7 +253,7 @@ export async function newgame() {
             await mnexto(occupant, 0x0004 /* RLOC_NOMSG */);
         }
     }
-    makedog();
+    await makedog();
 
     // C ref: allmain.c newgame() u_init_inventory_attrs() — role/race
     // attributes and starting inventory, after makedog().
@@ -427,14 +427,32 @@ async function newgame_real() {
         await pickup(1);
     }
 
+    // C ref: allmain.c moveloop_preamble():91-110 — everything after the
+    // new-game pickup(1) and BEFORE moveloop() calls maybe_do_tutorial():
+    // encumber_msg() in case autopickup grabbed something heavy, a deferred
+    // see_monsters(), u.uz0.dlevel = u.uz.dlevel (so u_on_newpos() stops treating
+    // every move as a level change), context.move = 0 and in_moveloop = 1
+    // (o_init.c discover_object()'s gem_learned() price hook and
+    // dog.c initedog()'s first-pet livelog read it).
+    {
+        const { encumber_msg } = await import('./invent.js');
+        await encumber_msg();
+    }
+    if (game.defer_see_monsters) {
+        game.defer_see_monsters = false;
+        const { see_monsters } = await import('./display.js');
+        await see_monsters();
+    }
+    game.u.uz0.dlevel = game.u.uz.dlevel;
+    game.context.move = 0;
+    game.program_state = game.program_state || {};
+    game.program_state.in_moveloop = 1;
+
     // C ref: allmain.c moveloop() -> maybe_do_tutorial().  When the tutorial
     // wasn't disabled in the rc, a menu asking "Do you want a tutorial?" is
     // displayed; showing that menu flushes the pending top-line message,
     // which forces its "--More--" first (if not already acknowledged).
     await maybe_do_tutorial(preambleShownMore);
-    /* C ref: allmain.c:97 — so u_on_newpos() stops treating every move as a
-       level change (which would reset u.ux0/u.uy0) */
-    game.u.uz0.dlevel = game.u.uz.dlevel;
 }
 
 // C ref: allmain.c moveloop_preamble() — the new-game moon-phase /
@@ -986,8 +1004,10 @@ function u_calc_moveamt(wtcap) {
         // C ref: allmain.c:123 — moveamt = gy.youmonst.data->mmove.  Every
         // playable role's mons[] entry has mmove == NORMAL_SPEED, so this is
         // only observable while polymorphed (red dragon 9, gnome 6): a slower
-        // form yields extra monster rounds per hero action.
-        moveamt = u.Upolyd ? base_mmove({ data: u.data }) : NORMAL_SPEED;
+        // form yields extra monster rounds per hero action.  u.data is not
+        // cleared when Upolyd drops without set_uasmon() (nhlua.c
+        // nhl_gamestate() restore), exactly like youmonst.data in C.
+        moveamt = u.data ? base_mmove({ data: u.data }) : NORMAL_SPEED;
         if (youHaveVeryFast()) {
             if (rn2(3) !== 0) moveamt += NORMAL_SPEED;
         } else if (youHaveFast()) {

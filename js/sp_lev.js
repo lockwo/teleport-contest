@@ -217,6 +217,7 @@ import { resists_ston,
 import { m_dowear } from './worn.js';
 import { christen_monst, lookup_novel } from './do_name.js';
 import { in_rooms } from './shkroom.js';
+import { roomAt } from './roomat.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 
 export const gx = { xstart: 1, xsize: COLNO - 1, x_maze_max: (COLNO - 1) & ~1 };
@@ -419,13 +420,19 @@ export function add_sp_room(lowx, lowy, hix, hiy, lit, rtype, irregular, needfil
     return croom;
 }
 
+// C ref: selvar.c selection_from_mkroom() — every square of the room's bounding
+// box that is NOT on the wall ring (levl.edge) and carries the room's roomno,
+// whatever its terrain (a fountain or pool placed earlier still counts).  The
+// list is x-major because every consumer here stands in for the Lua selection's
+// column-major selection_filter_percent()/rndcoord() walk.
 function selection_room(croom) {
     const sel = [];
     const roomno = croom.roomnoidx + ROOMOFFSET;
     for (let x = croom.lx; x <= croom.hx; x++) {
         for (let y = croom.ly; y <= croom.hy; y++) {
             const loc = game.level?.at(x, y);
-            if (loc?.roomno === roomno && loc.typ === ROOM) sel.push({ x, y });
+            if (isok(x, y) && loc && !loc.edge && loc.roomno === roomno)
+                sel.push({ x, y });
         }
     }
     return sel;
@@ -499,7 +506,11 @@ function splev_theme_object(otyp, classChar, loc) {
     const otmp = (otyp != null)
         ? splev_create_object_id(otyp, null, { mx: loc.x, my: loc.y })
         : mkobj_at(def_char_to_objclass(classChar), loc.x, loc.y, true);
-    if (otmp) unbless(otmp);
+    // C ref: sp_lev.c create_object() tail — default erosion/grease wipe, then
+    // stackobj() merges the new object into an identical stack on the square
+    // (the ghost's two daggers are ONE fobj entry, so dog_goal's dogfood()
+    // scan draws one obj_resists rn2(100) for them, not two).
+    if (otmp) { unbless(otmp); splev_finish_object(otmp); }
     return otmp;
 }
 
@@ -628,12 +639,10 @@ function splev_create_object_id(otyp, croom, { mx = -1, my = -1, lit = false,
     // the CORPSTAT_* flag word (0 with no historic/male/female key) for a
     // STATUE/CORPSE, overwriting the gender mksobj just rolled.
     if (otmp && spe != null) otmp.spe = spe;
-    // C: `if (o->lit) begin_burn(otmp, FALSE)`.  No RNG (the BURN_OBJECT
-    // timeout is obj->age, not a roll), but a lit lamp IS a light source.
-    if (otmp && lit) {
-        otmp.lamplit = 1;
-        new_light_source(x, y, 3, LS_OBJECT, otmp);  // timeout.c begin_burn radius
-    }
+    // C: `if (o->lit) begin_burn(otmp, FALSE)`.  No RNG, but the lamp gets its
+    // BURN_OBJECT timer (end_burn() impossible()s on a lit lamp without one)
+    // and its light source.
+    if (otmp && lit) hooks.beginLampBurn(x, y, otmp);
     return otmp;
 }
 
@@ -1561,7 +1570,11 @@ function fill_zoo_core(sroom) {
     const g = game;
     const LUMP_OF_ROYAL_JELLY = 286;
     const type = sroom.rtype;
-    const rmno = (g.level?.rooms?.indexOf(sroom) ?? -1) + ROOMOFFSET;
+    /* C: `(sroom - svr.rooms) + ROOMOFFSET` — a subroom sits at
+       svr.rooms[MAXNROFROOMS + 1 + n], which indexOf() over level.rooms[]
+       reports as -1 (== SHARED_PLUS once ROOMOFFSET is added). */
+    const zridx = g.level?.rooms?.indexOf(sroom) ?? -1;
+    const rmno = (zridx >= 0 ? zridx : (sroom.roomnoidx ?? -1)) + ROOMOFFSET;
 
     const centre = fill_zoo_head(sroom, type, rmno);
     if (!centre) return;
@@ -1824,8 +1837,12 @@ export function lspo_region({ region, type = 'ordinary', irregular = false,
     // C ref: sp_lev.c:5651 room_not_needed — a plain rectangular ordinary
     // region only sets lighting (light_region()); no room is created.
     // arrival_room (not modelled here) is passed by callers as irregular.
-    if (rtype === OROOM && !irregular && !game.in_mk_themerooms
-        && (game.level?.nroom ?? 0) < MAXNROFROOMS) {
+    const room_not_needed = rtype === OROOM && !irregular
+                            && !game.in_mk_themerooms;
+    // C: `if (room_not_needed || svn.nroom >= MAXNROFROOMS)` — a full rooms[]
+    // array (impossible("Too many rooms on new level!")) also degrades to a
+    // lighting-only region instead of creating a room.
+    if (room_not_needed || (game.level?.nroom ?? 0) >= MAXNROFROOMS) {
         light_region({ rlit, x1: dx1, y1: dy1, x2: dx2, y2: dy2 });
         return null;
     }
@@ -5317,7 +5334,7 @@ export function create_object(o, croom) {
     if (!(o.containment & SP_OBJ_CONTENT)) {
         stackobj(otmp);
 
-        if (o.lit) EXT.begin_burn(otmp, false);
+        if (o.lit) hooks.beginLampBurn(otmp.ox, otmp.oy, otmp);
 
         if (o.buried) {
             const box = { dealloced: false };
@@ -5367,7 +5384,9 @@ export function create_altar(a, croom) {
            list of roomno values (index + ROOMOFFSET); take the first. */
         const rl = in_rooms(c.x, c.y, TEMPLE);
         const sproom = rl.length ? rl[0] : 0;
-        if (sproom) croom = svr_rooms()[sproom - ROOMOFFSET];
+        /* C: `&svr.rooms[sproom - ROOMOFFSET]` — flat array, subrooms included
+           (a Minetown temple is a subroom of the town room). */
+        if (sproom) croom = roomAt(sproom);
         else croom_is_temple = false;
     }
     const x = c.x, y = c.y;
@@ -5463,12 +5482,18 @@ export function build_room(r, mkr) {
     const rtype = (!r.chance || rn2(100) < r.chance) ? r.rtype : OROOM;
 
     if (mkr) {
-        aroom = game.level?.subrooms?.[game.level?.nsubroom || 0];
         okroom = EXT.create_subroom(mkr, r.x, r.y, r.w, r.h, rtype, r.rlit);
+        /* C takes `&gs.subrooms[gn.nsubroom]` BEFORE the call, which is the
+           slot add_subroom() fills.  Here add_subroom() builds a fresh object,
+           so a pre-call lookup is a stale/undefined slot: read it back. */
+        if (okroom) aroom = mkr.sbrooms[mkr.nsubrooms - 1];
     } else {
-        aroom = svr_rooms()[svn_nroom()];
+        const nroom0 = svn_nroom();
         okroom = EXT.create_room(r.x, r.y, r.w, r.h, r.xalign, r.yalign,
                                  rtype, r.rlit);
+        /* C: `&svr.rooms[svn.nroom]` pre-call == the slot add_room() fills;
+           add_room() replaces the {hx:-1} sentinel at nroom0 with the new room. */
+        aroom = svr_rooms()[nroom0];
     }
 
     if (okroom) {

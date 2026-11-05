@@ -574,9 +574,11 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
     }
 
     /* Keep chest/box traps and poisoned ammo if we may */
-    if (obj.otrapped && Is_box_z(otmp))
+    /* C ref: zap.c poly_obj — opoisoned is otrapped (obj.h:139), one bit */
+    const obj_trapbit = !!(obj.otrapped || obj.opoisoned);
+    if (obj_trapbit && Is_box_z(otmp))
         otmp.otrapped = 1;
-    if (obj.opoisoned && (await import('./objnam.js')).is_poisonable(otmp))
+    if (obj_trapbit && (await import('./objnam.js')).is_poisonable(otmp))
         otmp.opoisoned = 1;
 
     if (id === 0 && obj.otyp === CORPSE) {
@@ -3184,12 +3186,14 @@ export async function burn_floor_objects(x, y, give_feedback, u_caused) {
 
 // C ref: youprop.h Hallucination.
 // C ref: muse.c ureflects(fmt, str) — outermost reflection source first.
-// Draws no RNG; the reflection message and the makeknown are the observable.
+// `fmt && str` tests POINTERS (NULL means "no message"): an empty-string
+// `str`, as mcast_lightning passes, still prints.  No RNG; the reflection
+// message and the makeknown are the observable.
 const SHIELD_OF_REFLECTION_OTYP = 158, AMULET_OF_REFLECTION_OTYP = 208;
 export async function ureflects(fmt, str) {
     const { makeknown } = await import('./invent.js');
     if (game.uarms && game.uarms.otyp === SHIELD_OF_REFLECTION_OTYP) {
-        if (fmt && str) {
+        if (fmt != null && str != null) {
             await update_topl(fmt.replace('%s', str).replace('%s', 'shield'));
             makeknown(SHIELD_OF_REFLECTION_OTYP);
         }
@@ -3198,19 +3202,19 @@ export async function ureflects(fmt, str) {
     const { REFLECTING } = await import('./const.js');
     const reflecting = worn_extrinsic(REFLECTING);
     if (reflecting & W_WEP) {
-        if (fmt && str)
+        if (fmt != null && str != null)
             await update_topl(fmt.replace('%s', str).replace('%s', 'weapon'));
         return true;
     }
     if (game.uamul && game.uamul.otyp === AMULET_OF_REFLECTION_OTYP) {
-        if (fmt && str) {
+        if (fmt != null && str != null) {
             await update_topl(fmt.replace('%s', str).replace('%s', 'medallion'));
             makeknown(AMULET_OF_REFLECTION_OTYP);
         }
         return true;
     }
     if ((reflecting & W_ARM) || game.u?.formprops?.Reflecting) {
-        if (fmt && str)
+        if (fmt != null && str != null)
             await update_topl(fmt.replace('%s', str).replace('%s',
                 (reflecting & W_ARM) ? (game.uskin ? 'luster' : 'armor') : 'scales'));
         return true;
@@ -3465,15 +3469,19 @@ async function disintegrate_mon(mon, type, fltxt) {
     //   || obj == m_amulet
     // and obj_resists() DRAWS rn2(100) for every carried item that isn't one of
     // the always-resists types.
+    // C ref: zap.c disintegrate_mon: each non-resisting item goes through
+    // extract_from_minvent(mon, otmp, TRUE, TRUE) (worn masks, wielded weapon,
+    // extrinsics) and obfree() (timers, light sources), not a bare list filter.
     if (Array.isArray(mon.minvent) && mon.minvent.length) {
-        const keep = [];
-        for (const o of mon.minvent) {
+        const { extract_from_minvent } = await import('./worn.js');
+        for (const o of [...mon.minvent]) {
             if (DISINT_RES_OTYPS.has(o.otyp)
                 || obj_resists(o, 5, 50) || is_quest_artifact(o)
                 || o === m_amulet)
-                keep.push(o);
+                continue;
+            await extract_from_minvent(mon, o, true, true);
+            obfree(o, null);
         }
-        mon.minvent = keep;
     }
 
     if (type < 0) {
@@ -5350,25 +5358,10 @@ export async function ustatusline() {
             info += `, in a cloud of ${reg.damg ? 'poison gas' : 'vapor'}`;
     }
 
-    const record = u.ualign?.record | 0;
-    let pio;
-    if (record >= 20) pio = 'piously';
-    else if (record > 13) pio = 'devoutly';
-    else if (record > 8) pio = 'fervently';
-    else if (record > 3) pio = 'stridently';
-    else if (record === 3) pio = '';
-    else if (record > 0) pio = 'haltingly';
-    else if (record === 0) pio = 'nominally';
-    else if (record >= -3) pio = 'strayed';
-    else if (record >= -8) pio = 'sinned';
-    else pio = 'transgressed';
+    const { piousness } = await import('./insight.js');
     const { align_str } = await import('./role.js');
-    const al = align_str(u.ualign?.type ?? 0);
-    let piobuf = pio;
-    if (record >= 0) {
-        if (record !== 3) piobuf += ' ';
-        piobuf += al;
-    }
+    // C ref: insight.c ustatusline() piousness(FALSE, align_str(u.ualign.type))
+    const piobuf = piousness(u.ualign?.record | 0, false, align_str(u.ualign?.type ?? 0));
     await pline(`Status of ${game.plname || 'Hero'} (${piobuf}):  Level ${
         u.Upolyd ? (u.data?.mlevel | 0) : (u.ulevel | 0)}  HP ${
         u.Upolyd ? u.mh : u.uhp}(${u.Upolyd ? u.mhmax : u.uhpmax})  AC ${u.uac | 0}${info}.`);
@@ -6056,8 +6049,8 @@ export async function cancel_item(obj) {
         }
     }
 
-    unbless(obj);
-    uncurse(obj);
+    await unbless(obj);
+    await uncurse(obj);
 }
 
 // C ref: zap.c:1367 blank_novel(obj) — soaking or cancelling a novel turns it

@@ -1,3 +1,4 @@
+import { discover_object, observe_object } from './o_init.js';
 // makemon.js - Monster creation.
 // C ref: makemon.c - rndmonst_adj, rndmonst, mkclass, mkclass_aligned,
 //        makemon, newmonhp, m_initweap.
@@ -1481,6 +1482,18 @@ function m_initthrow(_mtmp, otyp, oquan) {
     if (_mtmp) { _mtmp._hasinv = true; mpickobj(_mtmp, otmp); }
 }
 
+// C ref: obj.h Has_contents(); invent.c count_unpaid(list) — unpaid objects in
+// a container chain, recursively.
+function Has_contents_mm(o) { return !!(o?.cobj && o.cobj.length); }
+function count_unpaid_mm(list) {
+    let n = 0;
+    for (const o of (list || [])) {
+        if (o.unpaid) ++n;
+        if (Has_contents_mm(o)) n += count_unpaid_mm(o.cobj);
+    }
+    return n;
+}
+
 // C ref: mkobj.c mpickobj() — add an object to a monster's minvent. The full
 // C routine merges stacks and tracks weapon wielding; here we only need the
 // object to live in mtmp.minvent so relobj() can release it. No RNG.
@@ -1497,6 +1510,10 @@ export function mpickobj(mtmp, otmp) {
        or kicking code shouldn't continue to track and place it */
     if (otmp === game.thrownobj) game.thrownobj = null;
     else if (otmp === game.gk_kickedobj) game.gk_kickedobj = null;
+    /* C ref: steal.c:639-643 mpickobj() — an unpaid item on the floor that a
+       monster picks up comes off the shop bill. */
+    if (otmp.unpaid || (Has_contents_mm(otmp) && count_unpaid_mm(otmp.cobj)))
+        hooks.mpickobj_unbill?.(otmp);
     /* C ref: steal.c:655 — a hero-owned object on a shop floor that a monster
        takes possession of is no longer no_charge. */
     otmp.no_charge = 0;
@@ -2162,10 +2179,12 @@ export function put_saddle_on_mon(saddle, mtmp) {
     if (!saddle) {
         saddle = mksobj(SADDLE_OTYP, true, false);
         if (!saddle) return;
-        /* fully_identify_obj(saddle); mpickobj can later override
-           identification if out-of-view */
+        /* C ref: invent.c fully_identify_obj(): makeknown() + observe_object()
+           (a saddle is no artifact/egg/container); mpickobj can later
+           override identification if out-of-view */
+        discover_object(SADDLE_OTYP, true, true, true);
+        observe_object(saddle);
         saddle.known = saddle.bknown = saddle.rknown = 1;
-        saddle.dknown = 1;
     }
     if (mpickobj(mtmp, saddle))
         throw new Error('merged saddle?');
@@ -3080,6 +3099,7 @@ function apply_newcham(mtmp, mdat, olddata) {
        seemimic(mtmp);` — revert to a normal monster (mon.c seemimic()). */
     if (mtmp.m_ap_type && mdat.mcls !== S_MIMIC_MK) {
         const was_blocker = is_lightblocker_mappear(mtmp);
+        freemcorpsenm(mtmp); /* C: if (has_mcorpsenm(mtmp)) freemcorpsenm(mtmp) */
         mtmp.m_ap_type = M_AP_NOTHING;
         mtmp.mappearance = 0;
         if (was_blocker && !does_block(mtmp.mx, mtmp.my))
@@ -3311,26 +3331,7 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         // checking armor. Other monsters may immediately seek the dropped item.
         const polyspot = (ncflags & NC_VIA_WAND_OR_SPELL) !== 0;
         const { possibly_unwield } = await import('./weapon.js');
-        const dropped = await possibly_unwield(mtmp, polyspot);
-        if (dropped) {
-            const { update_topl, newsym } = await import('./display.js');
-            const { distant_doname, stackobj } = await import('./invent.js');
-            const { flooreffects } = await import('./do.js');
-            const { place_object } = await import('./mkobj.js');
-            if (mm_cansee(mtmp.mx, mtmp.my)) {
-                await update_topl(`${names.Monnam(mtmp)} drops ${distant_doname(dropped, true)}.`);
-                newsym(mtmp.mx, mtmp.my);
-            }
-            dropped.where = OBJ_FREE;
-            if (!await flooreffects(dropped, mtmp.mx, mtmp.my, 'drop')) {
-                if (polyspot) {
-                    dropped.bypass = 1;
-                    game.context.bypasses = true;
-                }
-                place_object(dropped, mtmp.mx, mtmp.my);
-                stackobj(dropped);
-            }
-        }
+        await possibly_unwield(mtmp, polyspot);
         const { mon_break_armor, check_gear_next_turn } = await import('./mon.js');
         await mon_break_armor(mtmp, (ncflags & NC_VIA_WAND_OR_SPELL) !== 0);
         if (!((mtmp.misc_worn_check | 0) & W_ARMG_MK))
@@ -4523,6 +4524,14 @@ export async function clone_mon(mon, x, y) {
     /* newmonst(); *m2 = *mon — a shallow copy of every field */
     let m2 = { ...mon };
     m2.mextra = null;
+    /* this port mirrors mextra's edog/emin/epri/eshk/egd as direct fields: C's
+       `m2->mextra = NULL` drops them too (else tamedog() finds the parent's
+       edog, runs initedog(FALSE) and the clone keeps the parent's meating) */
+    m2.edog = null;
+    m2.emin = null;
+    m2.epri = null;
+    m2.eshk = null;
+    m2.egd = null;
     /* C: m2->nmon = fmon; fmon = m2 — the link happens here, before
        place_monster(); placeOnLevel() (makemon.js) does both for this port. */
     m2.m_id = next_ident();

@@ -26,7 +26,7 @@ import { Levitation_hero, Fumbling_hero, Passes_walls_hero, Wounded_legs_hero, D
 import { game } from './gstate.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
-import { CQ_CANNED, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
+import { CQ_CANNED, CMDQ_KEY, CMDQ_EXTCMD, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
          ECMD_OK, ECMD_TIME, ECMD_CANCEL, Trap_Killed_Mon } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
@@ -458,8 +458,11 @@ async function its_dead(rx, ry, resp) {
             const mtmp = (await import('./mkobj.js')).get_mtraits(corpse, false);
             const ptr = monster_by_pmidx(corpse.corpsenm);
             if (mtmp) {
-                const m2 = mflags2_of(monster_by_pmidx(mtmp.mnum ?? corpse.corpsenm));
-                gndr = mtmp.female ? 1 : (m2 & 0x40000 /* M2_NEUTER */) ? 2 : 0;
+                /* C ref: apply.c its_dead(): mtmp->data = &mons[mtmp->mnum];
+                   gndr = pronoun_gender(mtmp, PRONOUN_NO_IT) */
+                mtmp.data = monster_by_pmidx(mtmp.mnum ?? corpse.corpsenm);
+                const { pronoun_gender } = await import('./mondata.js');
+                gndr = pronoun_gender(mtmp, 1 /* PRONOUN_NO_IT */);
             } else {
                 const m2 = mflags2_of(ptr);
                 if (m2 & 0x20000 /* M2_FEMALE */) gndr = 1;
@@ -976,7 +979,7 @@ async function flip_coin(obj) {
         await _invent.dropx(otmp);
         return ECMD_TIME;
     }
-    if (game.u?.uhallu) {
+    if (ap_Hallucination()) {
         await _display.pline(rn2(100) ? 'Wow, a double header!'
                              : 'The coin miraculously lands on its edge!');
     } else {
@@ -1614,7 +1617,7 @@ function distu_sq(x, y) {
 
 // C ref: apply.c get_valid_polearm_position(x, y).
 function valid_polearm_position(x, y, min_range, max_range) {
-    if (!(x >= 0 && x < 80 && y >= 0 && y < 21)) return false;
+    if (!isok(x, y)) return false;
     const d = distu_sq(x, y);
     if (d < min_range || d > max_range) return false;
     return _vision.cansee(x, y)
@@ -1667,6 +1670,12 @@ async function reapply_after_wield(obj, command = doapply) {
     // other than dokick, so the kicked location resets before monsters move.
     game.kickedloc = { x: 0, y: 0 };
     game._cmdqAbandonRetry = false;
+    // C ref: dig.c use_pick_axe() `cmdq_add_ec(CQ_CANNED, doapply);
+    // cmdq_add_key(CQ_CANNED, obj->invlet)`: both sit in CQ_CANNED while the
+    // wield turn runs, so a getlin() reached in that turn drains them.
+    const CM = await import('./cmd.js');
+    CM.cmdq_add_ec(CQ_CANNED, command);
+    _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     const moves_before = game.moves;
     await moveloop_turn();
     // C ref: allmain.c moveloop_core() tail: `if (disp.botl || disp.botlx)
@@ -1686,8 +1695,25 @@ async function reapply_after_wield(obj, command = doapply) {
     // turn) the caller's own iteration head runs that redraw instead; doing it
     // here too would draw the display RNG twice.
     await moveloop_input_redraw();
+    // C ref: windows.c getlin() reached during the turn (a monster read an
+    // unidentified scroll: docall "Call a scroll labeled ...") pops the
+    // queued doapply (any non-KEY entry ends its drain) and leaves the invlet
+    // KEY behind, which rhack() then runs as a fresh command key ('e' = eat).
+    const head = game._cmdq_canned?.[0];
+    if (!(head && head.typ === CMDQ_EXTCMD && head.ec_entry === CM.ext_func_tab_from_func(command))) {
+        const cq = _invent.cmdq_pop(CQ_CANNED);
+        if (cq && cq.typ === CMDQ_KEY) {
+            await CM.rhack(cq.key);
+            // rhack() dispatches ECMD_TIME by setting context.move rather than
+            // returning a value.  Propagate that result through this inline
+            // wield-turn seam so the following action still gets its turn.
+            return game.context?.move ? ECMD_TIME : ECMD_OK;
+        }
+        _invent.cmdq_clear(CQ_CANNED);
+        return ECMD_OK;
+    }
+    _invent.cmdq_pop(CQ_CANNED); /* rhack() pops the queued command */
     // getobj()'s cmdq fast path pops this invlet instead of drawing a prompt.
-    _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     return await command();
 }
 
@@ -3987,7 +4013,8 @@ export async function fig_transform(arg, timeout) {
         // a flat per-level list, so read the top object off it.
         const mshelter = ap_top_object_at(mtmp.mx, mtmp.my);
         /* [m_monnam() yields accurate mon type, overriding hallucination] */
-        const monnambuf = ap_an(mtmp.data?.name || c_something);
+        const monnambuf = (await import('./objnam.js')).an(
+            (await import('./do_name.js')).m_monnam(mtmp));
 
         if ((mtmp.minvis && !ap_See_invisible())
             || (mtmp.data?.mcls === S_MIMIC && ap_M_AP_TYPE(mtmp) !== 0))

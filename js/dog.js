@@ -13,8 +13,9 @@ import { levl_follower } from './mondata.js';
 import { set_malign, monster_by_pmidx, propagate, name_to_pmidx, put_saddle_on_mon } from './makemon.js';
 import { deliver_obj_to_mon } from './dokick.js';
 import { finish_meating } from './dogmove.js';
+import { set_apparxy } from './monmove.js';
 import { enexto_gpflags } from './teleport.js';
-import { m_at, set_msg_mon } from './display.js';
+import { m_at, set_msg_mon, newsym } from './display.js';
 
 export const PM_LITTLE_DOG = 16;
 export const PM_KITTEN = 32;
@@ -205,7 +206,7 @@ function makedog_mon(pettype, x, y) {
     return mtmp;
 }
 
-export function makedog() {
+export async function makedog() {
     const g = game;
     if (g.preferred_pet === 'n') {
         if (!g.context) g.context = {};
@@ -222,6 +223,10 @@ export function makedog() {
     // construction path, but it still needs the regular tame-monster
     // alignment value before the pet can later be killed or retamed.
     if (mtmp) set_malign(mtmp);
+    // C ref: makemon.c:1392-1395 makemon() `if (byyou) { newsym(); set_apparxy(mtmp); }` — the starting
+    // pet is created ON the hero's square (then mnexto'd), so its mux/muy are already the hero's position
+    // before its first move.  makedog_mon() bypasses makemon(), so run the tail here (no RNG: tame).
+    if (mtmp) set_apparxy(mtmp);
     if (!g.context.startingpet_mid) {
         g.context.startingpet_mid = mtmp.m_id;
         // C ref: dog.c makedog() — initial horses (PM_PONY) start wearing a
@@ -239,6 +244,11 @@ export function makedog() {
             put_saddle_on_mon(null, mtmp);
             mtmp.mtame = tame;
         }
+        // C ref: dog.c makedog() — the starting pet's type has been seen up
+        // close; the hero owns no camera yet (u_init_inventory comes later).
+        g.bhitpos = { x: mtmp.mx, y: mtmp.my };
+        g.notonhead = false;
+        await (await import('./mon.js')).see_monster_closeup(mtmp, false);
     }
 
     // C ref: dog.c makedog():232 — the pet's name comes from gd.dogname /
@@ -417,6 +427,7 @@ export async function m_into_limbo(mtmp) {
 function place_monster(mon, x, y) {
     mon.mx = x;
     mon.my = y;
+    mon.mstate = 0; /* C: mon->mstate = MON_FLOOR */
     const fm = fmon_list();
     if (!fm.includes(mon)) fm.push(mon);
 }
@@ -874,7 +885,7 @@ export async function mon_arrive(mtmp, when) {
         const nmv = game.moves - 1 - mtmp.mlstmv;
         const { mon_catchup_elapsed_time } = await import('./dogmove.js');
 
-        mon_catchup_elapsed_time(mtmp, nmv);
+        await mon_catchup_elapsed_time(mtmp, nmv);
 
         /* let monster move a bit on new level (see placement code below) */
         wander = Math.min(nmv, 8);
@@ -1086,6 +1097,17 @@ export async function keepdogs(pets_only, leftAt = null) {
     const { monnear } = await import('./dogmove.js');
     const { pline } = await import('./display.js');
     const g = gm_chains();
+    /* C ref: pline() -> flush_screen() paints the gbuf, which already holds the
+       newsym() that mon_leaving_level() queued for every follower taken off the
+       map earlier in this fmon walk, so those squares show bare terrain on any
+       frame a keepdogs() message raises (do.js defers the rest of leftAt until
+       the departing frame is held). */
+    const paint_departed = () => {
+        while (leftAt && leftAt.length) {
+            const [lx, ly] = leftAt.shift();
+            newsym(lx, ly);
+        }
+    };
 
     /* fmon walk (newest first: the level array is oldest-first, its tail is
        C's fmon head); relmon() prepends to mydogs, so the walk order decides
@@ -1130,19 +1152,23 @@ export async function keepdogs(pets_only, leftAt = null) {
             } else if (mtmp.meating || mtmp.mtrapped) {
                 if (await canseemon_shared(mtmp)) {
                     set_msg_mon(mtmp);
+                    paint_departed();
                     await pline(`${await Monnam_shared(mtmp)} is still `
                                 + `${mtmp.meating ? 'eating' : 'trapped'}.`);
                 }
                 stay_behind = true;
             } else if (mon_has_amulet(mtmp)) {
-                if (await canseemon_shared(mtmp))
+                if (await canseemon_shared(mtmp)) {
+                    paint_departed();
                     await pline(`${await Monnam_shared(mtmp)} seems very`
                                 + ' disoriented for a moment.');
+                }
                 stay_behind = true;
             }
             if (stay_behind) {
                 if (mtmp.mleashed) {
                     const { humanoid } = await import('./monflags_data.js');
+                    paint_departed();
                     await pline(`${humanoid(mtmp.data)
                                     ? (mtmp.female ? 'Her' : 'His')
                                     : 'Its'} leash suddenly comes loose.`);
@@ -1171,6 +1197,7 @@ export async function keepdogs(pets_only, leftAt = null) {
         } else if (mtmp.mleashed) {
             /* can happen if the quest leader ejects you while a leashed pet
                isn't next to you */
+            paint_departed();
             await pline(`${await Monnam_shared(mtmp)}'s leash goes slack.`);
             const { m_unleash } = await import('./apply.js');
             await m_unleash(mtmp, false);

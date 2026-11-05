@@ -662,7 +662,7 @@ export async function gulpmu(mtmp, mattk) {
         const omx = mtmp.mx, omy = mtmp.my;
         mtmp.mtrapped = 0;               /* no longer on the old trap */
         mtmp.mx = u.ux; mtmp.my = u.uy;
-        u.ustuck = mtmp;
+        (await import('./mon.js')).set_ustuck(mtmp);
         // C ref mhitu.c:1315 — only the NEW square is newsym()ed; the engulfer's
         // old tile keeps its stale glyph until the next full redraw, which is
         // what the recorded --More-- frame shows (seed0383 step 140 still has
@@ -718,7 +718,7 @@ export async function gulpmu(mtmp, mattk) {
                 mtmp.mx = omx; mtmp.my = omy;
                 await minstapetrify(mtmp, true);
                 if (u.uball) await (await import('./ball.js')).placebc();
-                u.ustuck = null;
+                (await import('./mon.js')).set_ustuck(null);
                 u.uswallow = 0;
                 return DEADMONSTER(mtmp) ? M_ATTK_AGR_DIED : M_ATTK_MISS;
             }
@@ -763,6 +763,14 @@ export async function gulpmu(mtmp, mattk) {
     }
 
     if (mtmp !== u.ustuck) return M_ATTK_MISS;
+    if (u.uball && u.uchain) {
+        /* ball&chain are in limbo while swallowed; update their internal
+           location to be at swallower's spot */
+        if (u.uchain.where === 0 /* OBJ_FREE */)
+            u.uchain.ox = mtmp.mx, u.uchain.oy = mtmp.my;
+        if (u.uball.where === 0 /* OBJ_FREE */)
+            u.uball.ox = mtmp.mx, u.uball.oy = mtmp.my;
+    }
     if (u.uswldtim > 0) u.uswldtim -= 1;
 
     switch (mattk.adtyp) {

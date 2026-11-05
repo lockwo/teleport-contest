@@ -28,14 +28,14 @@ import { canseemon_shared, Deaf_hero, newsym, display_nhwindow_message, vobj_at,
 import { couldsee as visCouldsee, clear_path, cansee, view_from } from './vision.js';
 import { Monnam, x_monnam, canspotmon } from './uhitm.js';
 import { noit_Monnam, y_monnam } from './do_name.js';
-import { splitobj, floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj } from './invent.js';
+import { splitobj, floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj, report_merge_discovery } from './invent.js';
 import { dist2, mfndpos, m_avoid_kicked_loc,
-    mon_allowflags, set_apparxy, onscary, mon_wield_item,
+    mon_allowflags, set_apparxy, onscary, mon_wield_item, should_displace, undesirable_disp,
     Conflict, resist_conflict, mattacku, m_digweapon_check, locomotion } from './monmove.js';
 import { goodpos } from './teleport.js';
 import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, ALLOW_M, ALLOW_MDISP, In_sokoban, SHOPBASE, W_SADDLE } from './const.js';
 import { t_at } from './trap.js';
-import { mattackm } from './mhitm.js';
+import { mattackm, mdisplacem } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
 import {
     FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, nextoid,
@@ -52,10 +52,10 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
 import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn } from './mon.js';
 import { on_qstart_level } from './questok.js';
-import { max_passive_dmg, resists_ston, resists_poison, resists_acid, big_little_match, slimeproof } from './mondata.js';
+import { max_passive_dmg, resists_ston, resists_poison, resists_acid, slimeproof } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
 import { gettrack } from './track.js';
-import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj } from './makemon.js';
+import { monster_by_pmidx, mon_msize, mon_cwt, mon_cnutrit, pm_to_cham, mpickobj, big_to_little, little_to_big } from './makemon.js';
 
 // dogfood quality enum (mextra.h): lower == more desirable.
 const DOGFOOD = 0, CADAVER = 1, ACCFOOD = 2, MANFOOD = 3,
@@ -241,7 +241,18 @@ export function same_race(pm1, pm2) {
         if (let1 === S_GHOST) return let2 === S_GHOST;
     } else if (is_undead_flag(pm2)) return false;
     /* check for monsters which grow into more mature forms */
-    if (let1 === let2 && big_little_match(pm1.pmidx, pm2.pmidx)) return true;
+    if (let1 === let2) {
+        /* C ref: mondata.c same_race: walk all smaller forms of m1, then all
+           larger ones (NOT big_little_match, which walks m2 upward). */
+        const m1 = pm1.pmidx, m2 = pm2.pmidx;
+        let prv, nxt;
+        for (prv = m1, nxt = big_to_little(m1); nxt !== prv;
+             prv = nxt, nxt = big_to_little(nxt))
+            if (nxt === m2) return true;
+        for (prv = m1, nxt = little_to_big(m1); nxt !== prv;
+             prv = nxt, nxt = little_to_big(nxt))
+            if (nxt === m2) return true;
+    }
     /* not caught by little/big handling */
     if (pm1.name === 'gargoyle' || pm1.name === 'winged gargoyle')
         return pm2.name === 'gargoyle' || pm2.name === 'winged gargoyle';
@@ -904,6 +915,9 @@ async function dog_invent(mtmp, edog, udist) {
                         pet_extract_floor(otmp);
                         newsym(omx, omy);
                         mpickobj(mtmp, otmp);
+                        // C ref: invent.c merged() -> pudding_merge_message() inside
+                        // mpickobj()'s add_to_minv() (a pet carrying a glob).
+                        if (game._merge_discovery_pending) await report_merge_discovery();
                         // C ref: dogmove.c:466-471 — a pet that attacks with
                         // AT_WEAP and still needs a melee weapon WIELDS what it
                         // just picked up, then flags a gear re-check.  Omitted
@@ -1657,11 +1671,7 @@ export async function dog_move(mtmp, after) {
     // is skipped.  mon_allowflags() gives every tame monster ALLOW_M, so this
     // only fires for the hero's own square when a monster (an engulfer) shares
     // it: mfndpos() reports that square as ALLOW_U (Conflict) and not ALLOW_M.
-    // C ref: dogmove.c:1080 — `better_with_displacing = should_displace(...)`
-    // and the ALLOW_MDISP arm of the candidate loop are omitted: mfndpos only
-    // sets ALLOW_MDISP for is_displacer(ptr) (the displacer beast), and with no
-    // displacing candidate should_displace() is FALSE for every other monster.
-    // Neither draws RNG, so this is inert until a displacer beast is tamed.
+    // (mfndpos only sets ALLOW_MDISP for is_displacer(ptr), the displacer beast.)
     let uncursedcnt = 0;
     for (let i = 0; i < cnt; i++) {
         const { x: nx, y: ny, info } = poss[i];
@@ -1669,6 +1679,11 @@ export async function dog_move(mtmp, after) {
         if (cursed_object_at(nx, ny)) continue;
         uncursedcnt++;
     }
+
+    // C ref: dogmove.c:1080 `better_with_displacing = should_displace(mtmp,
+    // &mfp, gg.gx, gg.gy)`.  Scans every candidate once, so its rn2(40) rolls
+    // (undesirable_disp) all land before the selection loop below.
+    const better_with_displacing = should_displace(mtmp, poss, g.gx, g.gy);
 
     let chcnt = 0, chi = -1;
     let nidist = GDIST(nix, niy, g);
@@ -1710,6 +1725,16 @@ export async function dog_move(mtmp, after) {
             const r = await dog_attack_mon(mtmp, mtmp2, omx, omy, after, nx, ny);
             if (r !== null) return r; // attacked -> done with this move
             continue;                 // balked -> next candidate square
+        }
+
+        // C ref: dogmove.c:1171-1179 — a displacer-beast pet barges through a
+        // monster-occupied square (ALLOW_MDISP) when that is the shortest way to
+        // its goal; mdisplacem() swaps places, the pet's move is over.
+        if ((poss[i].info & ALLOW_MDISP) && MON_AT(nx, ny)
+            && better_with_displacing && !undesirable_disp(mtmp, nx, ny)) {
+            const mstatus = await mdisplacem(mtmp, MON_AT(nx, ny), false); /* displace monster */
+            if (mstatus & M_ATTK_DEF_DIED) return MMOVE_DIED;
+            return MMOVE_NOTHING;
         }
 
         // C ref: dogmove.c:1183 — the pet avoids the square the hero just
@@ -2236,7 +2261,7 @@ export function monnear(mon, x, y) {
 // off-level attacks foes the un-healed pet balks at), and the starvation check
 // clears mtame/mpeaceful, which flips the monster out of dog_move entirely and
 // changes its mfndpos allowflags (ALLOW_M|ALLOW_TRAPS -> ALLOW_U).
-export function mon_catchup_elapsed_time(mtmp, nmv) {
+export async function mon_catchup_elapsed_time(mtmp, nmv) {
     let imv = (nmv >= LARGEST_INT) ? (LARGEST_INT - 1) : (nmv | 0);
 
     // might stop being afraid, blind or frozen (set to 1; movemon does the
@@ -2288,6 +2313,15 @@ export function mon_catchup_elapsed_time(mtmp, nmv) {
             && ((moves > (edog.hungrytime || 0) + DOG_WEAK && (mtmp.mhp ?? 99) < 3)
                 || moves > (edog.hungrytime || 0) + DOG_STARVE))
             mtmp.mtame = mtmp.mpeaceful = 0;
+    }
+
+    /* C ref: dog.c mon_catchup_elapsed_time: leashed monsters travel with the
+       hero and never lose time, so this is an impossible() case */
+    if (!mtmp.mtame && mtmp.mleashed) {
+        const { impossible } = await import('./display.js');
+        await impossible('catching up for leashed monster?');
+        const { m_unleash } = await import('./apply.js');
+        await m_unleash(mtmp, false);
     }
 
     // C ref: dog.c:1274-1277 — recover lost hit points.  A non-regenerating

@@ -12,7 +12,7 @@ import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
 import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, urgent_topl, Hallucination_u } from './display.js';
 import { rndmonnam } from './do_name.js';
-import { short_oname } from './objnam.js';
+import { short_oname, thesimpleoname } from './objnam.js';
 import {
     isok, is_pit, is_hole, TT_PIT,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
@@ -203,7 +203,6 @@ function upstart(s) {
     return str.charAt(0).toUpperCase() + str.slice(1);
 }
 function plur(n) { return Number(n) === 1 ? '' : 's'; }
-function thesimpleoname(obj) { return the(xname(obj)); }
 
 /* objclass.h def_oc_syms[].sym, indexed by oclass */
 const def_oc_syms = [
@@ -979,7 +978,10 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     let n = 0, last = null;
     for (const curr of olist) if (allow(curr)) { last = curr; n++; }
 
-    const engulfer_minvent = olist.length > 0 && olist[0].where === OBJ_MINVENT;
+    /* C ref: pickup.c query_objlist() `olist->where == OBJ_MINVENT && engulfing_u(olist->ocarry)`:
+       only the inventory of the monster the hero is inside counts, not any monster's. */
+    const engulfer_minvent = olist.length > 0 && olist[0].where === OBJ_MINVENT
+        && !!game.u?.uswallow && game.u?.ustuck === olist[0].ocarry;
     if (engulfer_minvent && n === 1 && olist[0].owornmask)
         qflags &= ~AUTOSELECT_SINGLE;
     if (engulfer) { ++n; qflags &= ~AUTOSELECT_SINGLE; }
@@ -1021,7 +1023,12 @@ export async function query_objlist(qstr, olist_p, qflags, pick_list, how,
     const picked = [];
     for (const mi of chosen) {
         const curr = mi.obj;
-        if (engulfer_minvent && curr.owornmask) continue;
+        if (engulfer_minvent && curr.owornmask) {
+            /* C: You_cant("pick %s up.", ysimple_name(curr)); */
+            const { ysimple_name } = await import('./invent.js');
+            await pline(`You can't pick ${ysimple_name(curr)} up.`);
+            continue;
+        }
         picked.push({ obj: curr, count: mi.count });
     }
     if (!picked.length) return 0;
@@ -1305,7 +1312,9 @@ export async function pickup_object(obj, count, telekinesis) {
        pick_one_obj() is that pair — it owns the shop billing and the topline
        chaining the recorded frames depend on. */
     const inv = await import('./invent.js');
-    await inv.pick_one_obj(obj, count);
+    const held = await inv.pick_one_obj(obj, count);
+    /* C ref: pickup.c pickup_object() `if (obj->ghostly) fix_ghostly_obj(obj)` */
+    if (held?.ghostly) await (await import('./bones.js')).fix_ghostly_obj(held);
     return 1;
 }
 
@@ -1503,11 +1512,10 @@ export async function loot_mon(mtmp, passed_info, prev_loot) {
                             + `${(await uh_()).x_monnam(mtmp, 1 /* ARTICLE_THE */, null, 0x08 /* SUPPRESS_SADDLE */, false)}.`);
                 return 1;   /* the attempt costs you time */
             }
-            obj_extract_self(otmp);
-            mtmp.misc_worn_check = (mtmp.misc_worn_check || 0) & ~otmp.owornmask;
-            otmp.owornmask = 0;
+            /* C ref: pickup.c loot_mon() extract_from_minvent(mtmp, otmp, TRUE, FALSE) */
+            await (await import('./worn.js')).extract_from_minvent(mtmp, otmp, true, false);
             if (game.flags?.verbose !== false)
-                await pline(`You take ${the(xname(otmp))} off of ${(await uh_()).mon_nam(mtmp)}.`);
+                await pline(`You take ${thesimpleoname(otmp)} off of ${(await uh_()).mon_nam(mtmp)}.`);
             await hold_another_object(otmp, 'You drop %s!', doname(otmp), null);
             timepassed = rnd(3);
             if (prev_loot) prev_loot.value = true;

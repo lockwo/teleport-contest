@@ -108,7 +108,7 @@ import { doeat } from './eat.js';
 import { dohelp, hmenu_dohistory } from './pager.js';
 import { dokick } from './dokick.js';
 import { doextlist, dosuspend_core, dosh_core } from './cmd.js';
-import { mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
+import { safe_qbuf, mon_beside, loot_mon, reverse_loot, removed_from_icebox, observe_quantum_cat, boh_loss, set_loot_reset_justpicked } from './pickup.js';
 import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
 import { mungspaces } from './hacklib.js';
 
@@ -1270,7 +1270,11 @@ async function dochat() {
     }
     const { getdir } = await import('./cmd.js');
     const dir = await getdir('Talk to whom? (in what direction)');
-    if (!dir) return 0; /* ECMD_CANCEL -> no turn */
+    if (!dir) {
+        /* C ref: sounds.c dochat() `return ECMD_CANCEL` -> rhack() reset_cmd_vars(TRUE) clears CQ_REPEAT */
+        game.context._getobj_cancelled = true;
+        return 0;
+    }
     u.dx = dir.dx; u.dy = dir.dy; u.dz = dir.dz || 0;
 
     // C ref: sounds.c dochat():1925 — chatting DOWN while riding talks to the
@@ -3199,7 +3203,8 @@ async function doforce() {
         // BEFORE `otmp->lknown = 1`, so a box whose lock state the hero has not
         // learned yet is still just "a chest" in the question; only a box that
         // was already lknown reads "a locked chest".
-        const qbuf = `There is ${obj_doname(box)} here; force its lock?`;
+        /* C ref: lock.c doforce() safe_qbuf(qbuf, "There is ", " here; force its lock?", otmp, doname, ansimpleoname, "a box") */
+        const qbuf = safe_qbuf('There is ', ' here; force its lock?', box, obj_doname, ansimpleoname, 'a box');
         box.lknown = 1;   /* set before ynq(), so 'n'/'q' still learns it */
         const c = await yn_function(qbuf, 'ynq', 'q');
         if (c === 'q') return 0;

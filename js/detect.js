@@ -108,11 +108,17 @@ async function findone(zx, zy, found) {
 
     if (mtmp && (!canspotmon(mtmp) || mtmp.mundetected || mtmp.m_ap_type)) {
         if (mtmp.m_ap_type) {
+            /* C: flash_glyph_at(zx, zy, mon_to_glyph(mtmp, rn2_on_display_rng), ...) */
+            if (Hallucination_u()) random_monster_disp();
             seemimicLocal(mtmp);
             found.num_mons++;
         } else if (mtmp.mundetected && (is_hider_flag(mtmp.data)
                                         || hides_under_flag(mtmp.data)
                                         || mtmp.data?.mcls === 57 /* S_EEL */)) {
+            /* C: flash_glyph_at(zx, zy, mon_to_glyph(mtmp, rn2_on_display_rng),
+               FOUND_FLASH_COUNT) — the glyph pick draws off the display rng
+               while hallucinating; the flash itself is display-only. */
+            if (Hallucination_u()) random_monster_disp();
             mtmp.mundetected = 0;
             newsym(zx, zy);
             found.num_mons++;
@@ -451,8 +457,10 @@ export function premap_detect() {
             if (!loc) continue;
             loc.seenv = 0xff; // SVALL
             loc.waslit = true;
+            if (loc.typ === SDOOR)
+                loc.wall_info = 0; /* C ref: detect.c:2146 (see rm.h for explanation) */
             const bg = terrain_background_glyph(loc, x, y);
-            loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec };
+            loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, wall: !!bg.wall };
             const obj = vobj_at(x, y);
             /* C: map_object(obj, 1) -- a hallucinating hero memorises a random
                object glyph (display RNG), not the boulder. */
@@ -735,7 +743,7 @@ function magic_map_background(x, y, show) {
     if (game.level?.flags?.hero_memory) {
         const old = glyph_at(x, y, true);
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
-            loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec };
+            loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall };
             if (g.darkroom) loc.remembered_glyph.darkroom = true;
             loc.mapped_trap_ttyp = 0;
         }

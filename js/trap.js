@@ -41,7 +41,7 @@ import {
     HOLE, TRAPDOOR, SQKY_BOARD, is_hole, In_quest,
     RUST_TRAP, BEAR_TRAP, DART_TRAP, MAGIC_TRAP, PIT, SPIKED_PIT,
     TT_BEARTRAP, TT_PIT, TT_LAVA, A_DEX, A_STR, A_CON, A_CHA, A_MAX, FOOT, LEG, HEAD, SPINE, LEFT_SIDE, RIGHT_SIDE, BOTH_SIDES,
-    RECURSIVETRAP, POLY_NOFLAGS, ICE,
+    RECURSIVETRAP, POLY_NOFLAGS, ICE, AIR, MAX_TYPE, ROT_ORGANIC,
     FORCETRAP, FORCEBUNGLE, TOOKPLUNGE, VIASITTING, FAILEDUNTRAP, HURTLING, FROMOUTSIDE,
     NOWEBMSG, TT_WEB, TT_NONE,
     ER_NOTHING, ER_GREASED, ER_DAMAGED, ER_DESTROYED,
@@ -79,8 +79,9 @@ import {
     POT_WATER, POT_OIL, COIN_CLASS, GEM_CLASS, LOADSTONE, LEASH, uncurse, blessorcurse,
     WAN_FIRE, FIRE_HORN, SPE_BOOK_OF_THE_DEAD, SCR_BLANK_PAPER, SPE_BLANK_PAPER,
     SPE_NOVEL, has_omonst, remove_object, HEAVY_IRON_BALL, KICKING_BOOTS,
-    erosion_matters, is_flammable,
+    erosion_matters, is_flammable, obj_ice_effects, stop_object_timer,
 } from './mkobj.js';
+import { spot_stop_timers } from './timeout.js';
 // C ref: objects.h IRON_SHOES (js/do_wear.js:66).
 const IRON_SHOES_OTYP = 164;
 import { makemon, rndmonst_adj, monster_by_pmidx, name_to_pmidx } from './makemon.js';
@@ -93,7 +94,7 @@ import { mindless as mindless_flag } from './monflags_data.js';
 import { AD_FIRE, AD_ACID, AD_ELEC, AD_MAGM, AD_DGST, AT_ENGL, attacktype_fordmg, sticks } from './monattk_data.js';
 import { S_HUMAN } from './symbols.js';
 import { GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT, ROLL, LAUNCH_UNSEEN, LAUNCH_KNOWN } from './const.js';
-import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MELT_ICE_AWAY } from './const.js';
+import { P_RIDING, P_BASIC, SUPPRESS_SADDLE, SHOPBASE, SHOP_HOLE_COST, HAND, MM_NOCOUNTBIRTH, MM_NOMSG, NO_MINVENT, STATUE_TRAP, DIED, KILLED_BY_AN, KILLED_BY, NO_KILLER_PREFIX, Is_airlevel, DISMOUNT_GENERIC, PLNMSG_BACK_ON_GROUND, M_SEEN_FIRE, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_MINVENT, COST_DECHNT, CORPSTAT_HISTORIC, M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MELT_ICE_AWAY, COST_BURN, COST_RUST, COST_ROT, COST_CORRODE, COST_CRACK } from './const.js';
 import { at_dgn_entrance, ceiling, In_hell as dungeon_In_hell, single_level_branch, surface, find_hell, hliquid } from './dungeon.js';
 import { depth } from './hacklib.js';
 import { check_special_room, in_rooms, shop_keeper } from './shkroom.js';
@@ -267,7 +268,10 @@ export function immune_to_trap(mon, ttype) {
         // Monk, a quarterstaff Wizard, or a Tourist whose darts are merely
         // quivered gets no prompt at all.  (PM_IRON_GOLEM needs a polymorphed
         // hero or a monster caller; neither happens here.)
-        for (const obj of (game.u?.invent || game.invent || [])) {
+        // C ref: trap.c immune_to_trap RUST_TRAP: pm == &mons[PM_IRON_GOLEM] is
+        // always harmed; the scan walks mon->minvent for a monster.
+        if (pm?.name === 'iron golem') return TRAP_NOT_IMMUNE;
+        for (const obj of (is_you ? (game.u?.invent || game.invent || []) : (mon?.minvent || []))) {
             if (is_rustprone(obj) && (obj.owornmask || 0)) {
                 if (is_you && (obj === game.uquiver
                                || (obj === game.uswapwep && !game.u?.twoweap)))
@@ -766,7 +770,16 @@ export function maketrap(x, y, typ) {
                    spot; terrain becomes room floor even if it was moat, lava,
                    or ice */
                 clear_flags = false; // keep lev.drawbridgemask
+                const was_ice = ((lev.drawbridgemask | 0) & 28 /* DB_UNDER */) === 8 /* DB_ICE */;
                 lev.drawbridgemask = ((lev.drawbridgemask | 0) & ~28 /* DB_UNDER */) | 16 /* DB_FLOOR */;
+                if (was_ice) {
+                    /* C ref: trap.c maketrap() — subset of set_levltyp() after
+                       changing ice to floor; frozen corpses resume rotting, no
+                       more ice to melt away.  (MELT_ICE_AWAY has no cleanup
+                       function, so spot_stop_timers() never suspends.) */
+                    obj_ice_effects(x, y, true);
+                    void spot_stop_timers(x, y, MELT_ICE_AWAY);
+                }
             } else if (IS_ROOM(lev.typ)) {
                 set_levltyp(x, y, ROOM);
             } else if (lev.typ === STONE || lev.typ === SCORR) {
@@ -789,10 +802,16 @@ export function maketrap(x, y, typ) {
         const buried = game.level?.buriedobjlist;
         if (buried?.length) {
             for (const otmp of [...buried]) {
-                if (!otmp || otmp.ox !== x || otmp.oy !== y || otmp.otyp === HEAVY_IRON_BALL)
+                if (!otmp || otmp.ox !== x || otmp.oy !== y)
+                    continue;
+                /* C ref: dig.c unearth_objs() — the hero's own buried ball goes
+                   back to being chained (buried_ball_to_punishment) instead. */
+                if (otmp.otyp === HEAVY_IRON_BALL && game.u?.utrap
+                    && game.u.utraptype === TT_BURIEDBALL)
                     continue;
                 buried.splice(buried.indexOf(otmp), 1);
                 otmp.where = OBJ_FLOOR;   /* place_object() re-links it */
+                if (otmp.timed) stop_object_timer(otmp, ROT_ORGANIC);
                 place_object(otmp, x, y);
                 stackobj(otmp);
             }
@@ -827,14 +846,28 @@ export function maketrap(x, y, typ) {
 }
 
 // C ref: mkmaze.c set_levltyp() — refuses to overwrite STAIRS/LADDER
-// (CAN_OVERWRITE_TERRAIN) and lights new lava.
+// (CAN_OVERWRITE_TERRAIN), lights new lava, and cleans up after melting ice.
 function set_levltyp(x, y, newtyp) {
+    if (!isok(x, y)) return false;
     const loc = game.level?.at?.(x, y);
-    if (!loc) return false;
-    if (loc.typ === STAIRS || loc.typ === LADDER) return false;
+    if (!loc || newtyp < STONE || newtyp >= MAX_TYPE) return false;
     const oldtyp = loc.typ;
+    /* hack for secret doors in garden theme rooms: levl[][].typ stays SDOOR
+       rather than change to AIR */
+    if (oldtyp === SDOOR && newtyp === AIR) {
+        loc.arboreal_sdoor = 1;
+        return true;
+    }
+    if (oldtyp === STAIRS || oldtyp === LADDER) return false;
+    /* typ==ICE || (typ==DRAWBRIDGE_UP && drawbridgemask==DB_ICE) */
+    const was_ice = is_ice(x, y);
     loc.typ = newtyp;
     if (IS_LAVA(newtyp)) loc.lit = 1;
+    if (was_ice && newtyp !== ICE) {
+        /* frozen corpses resume rotting, no more ice to melt away */
+        obj_ice_effects(x, y, true);
+        void spot_stop_timers(x, y, MELT_ICE_AWAY); /* no cleanup fn: runs synchronously */
+    }
     // C: a square gaining/losing fountain or sink status re-tallies
     // level.flags.nfountains/nsinks (dosounds() gates its rn2(400)/rn2(300)).
     if ((oldtyp === FOUNTAIN) !== (newtyp === FOUNTAIN)
@@ -1117,6 +1150,8 @@ export async function grease_protect(otmp, ostr, victim) {
 // C ref: trap.c erode_obj(otmp, ostr, type, ef_flags).  Floor objects are
 // visible only at bhitpos; submerged objects require an adjacent underwater
 // observer.  Damage still applies when its feedback cannot be seen.
+// C ref: trap.c erode_obj() `cost_type` — the hack.h COST_* verb for each ERODE_* type.
+const ERODE_COST = [COST_BURN, COST_RUST, COST_ROT, COST_CORRODE, COST_CRACK];
 export async function erode_obj(otmp, ostr, type, ef_flags) {
     if (!otmp) return ER_NOTHING;
     const isYou = carried(otmp);
@@ -1127,7 +1162,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
         && (!is_pool(pos.x, pos.y)
             || (game.u?.uinwater && Math.abs(pos.x - game.u.ux) <= 1
                 && Math.abs(pos.y - game.u.uy) <= 1));
-    if (!ostr) ostr = xname(otmp);
+    if (!ostr) ostr = (await import('./objnam.js')).cxname(otmp);
     if (visobj && /^the /i.test(ostr)) ostr = ostr.slice(4);
     const visible = isYou || vismon || visobj;
     const verbose = game.flags?.verbose !== false;
@@ -1195,7 +1230,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
                 : s_suffix((await import('./do_name.js')).Monnam(victim));
             await update_topl(`${owner} ${ostr} ${vtense(ostr, ERODE_ACTION[type])}${adverb}!`);
         }
-        if (ef_flags & EF_PAY) await costly_alteration(otmp, type);
+        if (ef_flags & EF_PAY) await costly_alteration(otmp, ERODE_COST[type]);
         if (is_primary) otmp.oeroded = erosion + 1; else otmp.oeroded2 = erosion + 1;
         if (isYou) update_inventory();
         // C ref: allmain.c moveloop_core() — find_ac() runs once per player
@@ -1212,7 +1247,7 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
                 : s_suffix((await import('./do_name.js')).Monnam(victim));
             await update_topl(`${owner} ${ostr} ${actbuf}!`);
         }
-        if (ef_flags & EF_PAY) await costly_alteration(otmp, type);
+        if (ef_flags & EF_PAY) await costly_alteration(otmp, ERODE_COST[type]);
         if (otmp.owornmask) {
             // C ref: trap.c:316 -- a hero-carried worn item goes through
             // remove_worn_item() (cancel_don() for a pending doffing, the
@@ -1221,7 +1256,14 @@ export async function erode_obj(otmp, ostr, type, ef_flags) {
             if (carried(otmp)) {
                 const { remove_worn_item } = await import('./invent.js');
                 await remove_worn_item(otmp, true);
-            } else unwear_armor(otmp);
+            } else if (mcarried_dmg(otmp)) {
+                /* results in otmp->where==OBJ_FREE; delobj() doesn't care */
+                const { extract_from_minvent } = await import('./worn.js');
+                await extract_from_minvent(otmp.ocarry, otmp, true, false);
+            } else {
+                /* worn but not in hero invent or monster minvent ? */
+                unwear_armor(otmp);
+            }
         }
         delobj(otmp);
         return ER_DESTROYED;
@@ -3244,8 +3286,16 @@ async function try_disarm(ttmp, force_failure) {
         await pline('There is a boulder in your way.');
         return 0;
     }
-    // The diagonal tight-space check duplicates hack.c test_move()'s bad_rock
-    // pair; bad_rock() is cmd.js's and the squeeze needs two adjacent walls.
+    /* duplicate tight-space checks from test_move */
+    if (u.dx && u.dy && bad_rock_hero(youmonst_data_pub(), u.ux, ttmp.ty)
+        && bad_rock_hero(youmonst_data_pub(), ttmp.tx, u.uy)) {
+        if ((inventoryArray().length && carried_weight() > WT_TOOMUCH_DIAGONAL)
+            || ((youmonst_data_pub()?.msize ?? 0) >= 3 /* bigmonst: MZ_LARGE */)) {
+            /* don't allow untrap if they can't get thru to it */
+            await pline(`You are unable to reach the ${trapname(ttype, false)}!`);
+            return 0;
+        }
+    }
     /* untrappable traps are located on the ground. */
     if (!can_reach_floor(under_u)) {
         const { p_skill_of } = await import('./enhance.js');
@@ -3870,7 +3920,9 @@ export async function untrap_at(x, y, force, autounlock_door = false) {
                 const { unblock_point } = await import('./vision.js');
                 unblock_point(x, y);
                 newsym(x, y);
-                // add_damage(): shop repair bookkeeping, no RNG.
+                /* (probably ought to charge for this damage...) */
+                if (in_rooms(x, y, SHOPBASE).length > 0)
+                    await add_damage(x, y, 0);
             } else {
                 await pline('You disarm it!');
                 loc.doormask = dm & ~D_TRAPPED;
@@ -5286,15 +5338,13 @@ export async function lava_effects() {
             // life-saved twice and failed to be teleported to safety both
             // times: give temporary fire resistance / water walking so the
             // next move doesn't just burn the hero up again
-            u.uprops = u.uprops || {};
-            const fireTimeout = u.uprops.HFire_resistance | 0;
-            u.uprops.HFire_resistance = (fireTimeout & ~TIMEOUT)
-                | (((fireTimeout & TIMEOUT) + 5) & TIMEOUT);
-            if (!Wwalking_fu()) {
-                const walkTimeout = u.uprops.HWwalking | 0;
-                u.uprops.HWwalking = (walkTimeout & ~TIMEOUT)
-                    | (((walkTimeout & TIMEOUT) + 5) & TIMEOUT);
-            }
+            // C ref: trap.c lava_effects() — set_itimeout(&HFire_resistance, 5L)
+            // SETS the timeout field (it does not add to what is there).
+            const { set_itimeout } = await import('./youprop.js');
+            if (!(await import('./zap.js')).Fire_resistance())
+                set_itimeout('HFire_resistance', 5);
+            if (!Wwalking_fu())
+                set_itimeout('HWwalking', 5);
             await lava_burn_stuff(dmg);
             return false;
         }

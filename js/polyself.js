@@ -324,6 +324,7 @@ const PM_STONE_GOLEM = name_to_pmidx('stone golem');
 // 3.7 merged incubus/succubus into one row; both names resolve to it.
 const PM_AMOROUS_DEMON = name_to_pmidx('amorous demon');
 const PM_DEATH = name_to_pmidx('Death');
+const PM_BLACK_DRAGON = name_to_pmidx('black dragon');
 const PM_BABY_GRAY_DRAGON = name_to_pmidx('baby gray dragon');
 const PM_GHOUL = name_to_pmidx('ghoul');
 const PM_BLACK_LIGHT = name_to_pmidx('black light');
@@ -710,7 +711,10 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
         /* resists_drli() with the wielded weapon suppressed */
         Drain_resistance: is_undead_flag(mdat) || is_demon_flag(mdat)
             || is_were_flag(mdat) || (u.ulycn ?? NON_PM) >= LOW_PM_IDX
-            || mdat?.pmidx === PM_DEATH || is_vampshifter_u(),
+            || mdat?.pmidx === PM_DEATH || is_vampshifter_u()
+            /* defended(): an adult dragon counts as wearing its own scales,
+               and black dragon scales defend against AD_DRLI */
+            || mdat?.pmidx === PM_BLACK_DRAGON,
         Antimagic: dmgtype(mdat, AD_MAGM) || mdat?.pmidx === PM_BABY_GRAY_DRAGON
             || dmgtype(mdat, AD_RBRE),
         Sick_resistance: mdat?.mlet === 'F' || mdat?.pmidx === PM_GHOUL,
@@ -762,6 +766,11 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // ... and sets gu.update_all, so that bot() resends EVERY field through
     // status_update() (see display.js botl_flush).
     game._statusUpdateAll = true;
+    // botl.c status_initialize() fldenabl: tty's status_activefields[] for
+    // BL_XP/BL_EXP/BL_HD are fixed here and stay put until the next
+    // reassessment, even if u.umonnum later changes without set_uasmon()
+    // (nhlua.c nhl_gamestate() restoring the pre-tutorial `struct u`).
+    game._ttyPolyFields = !!u.Upolyd;
     game.were_changes = 0;
 }
 // C ref: set_uasmon()'s PROPSET(prop, FROMFORM) bit for the current form.
@@ -1609,7 +1618,7 @@ const CLASS_TRUEMATCH = [
     ['devil', null, S_DEMON_CLS], ['bug', null, S_XAN_CLS],
     ['fish', null, S_EEL_CLS],
 ];
-async function name_to_monclass(in_str) {
+export async function name_to_monclass(in_str) {
     let mndx = NON_PM;
     const s = String(in_str || '');
     if (!s) return { klass: 0, mndx };
@@ -1662,7 +1671,7 @@ function mk_gen_ok(mndx, mvflagsmask, genomask) {
 // monster class, for a controlled polymorph that named a CLASS.  Genocided
 // types are skipped, extinct ones are acceptable, and polyok() is deliberately
 // NOT checked here (polyself() re-rolls).
-function mkclass_poly(klass) {
+export function mkclass_poly(klass) {
     let first, num = 0;
     for (first = LOW_PM_IDX; first < SPECIAL_PM(); first++)
         if (monster_by_pmidx(first)?.mcls === klass) break;
@@ -1897,7 +1906,7 @@ async function do_merge_dragon_armor(mntmp) {
     game.uarm = null;
     /* save/restore hack */
     uskin_mark(game.uskin);
-    if (was_lit) maybe_adjust_light(game.uskin, arm_light);
+    if (was_lit) await maybe_adjust_light(game.uskin, arm_light);
     const { update_inventory } = await import('./invent.js');
     await update_inventory();
 }
@@ -2948,7 +2957,7 @@ export async function skinback(silently) {
         game.uarm.owornmask = (game.uarm.owornmask | 0) & ~I_SPECIAL;
 
         if (artifact_light(game.uarm))
-            maybe_adjust_light(game.uarm, old_light);
+            await maybe_adjust_light(game.uarm, old_light);
     }
 }
 

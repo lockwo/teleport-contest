@@ -607,6 +607,8 @@ export async function newuhs(incr) {
                     game._hunger_msgs.faintDuration = duration;
                 } else {
                     game._eat_occupation = null;
+                    /* C ref: eat.c:3419 — "stop what you're doing, then faint" */
+                    await (await import('./hack.js')).stop_occupation(true);
                     await update_topl('You faint from lack of food.');
                     u.uprops = u.uprops || {};
                     u.uprops.HDeaf = (u.uprops.HDeaf || 0) + duration;
@@ -2112,7 +2114,7 @@ async function cpostfx(pm) {
             const { make_stunned_u } = await import('./mhitu.js');
             const { make_confused } = await import('./potion.js');
             if ((u.uprops.Stun | 0) > 2) await make_stunned_u(2, false);
-            if ((u.uprops.Confusion | 0) > 2) make_confused(2, false);
+            if ((u.uprops.Confusion | 0) > 2) await make_confused(2, false);
         }
         check_intrinsics = true;
         break;
@@ -2244,7 +2246,7 @@ async function rottenfood_eat(obj) {
         if (u) {
             if (!u.uprops) u.uprops = {};
             const newval = (u.uprops.Confusion || 0) + d(2, 4);   // eat.c:1822
-            (await import('./potion.js')).make_confused(newval, false);
+            await (await import('./potion.js')).make_confused(newval, false);
         }
     } else if (!rn2(4) && !_vision.Blind()) {                // eat.c:1823
         await update_topl('Everything suddenly goes dark.');

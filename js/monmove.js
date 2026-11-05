@@ -39,7 +39,7 @@ export function resist_conflict(mtmp) {
     return rnd(20) > rc;
 }
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
-import { findgold } from './steal.js';
+import { findgold, mpickobj } from './steal.js';
 // find_offensive/use_offensive: the FULL muse.c ports.  monmove.js used to
 // shadow them with a potion-only stub whose "the wand branches are not reached
 // by the contest's low-level monsters" comment was false — seed0030's angered
@@ -125,7 +125,7 @@ const PM_LEATHER_GOLEM_FT = _name_to_pmidx_cf('leather golem');
 const PM_MAIL_DAEMON = _name_to_pmidx_cf('mail daemon');
 import { castmu, buzzmu } from './mcastu.js';
 import { dog_move, dogfood, m_cansee, could_reach_item, finish_meating, monnear, relobj } from './dogmove.js';
-import { mon_msize, mon_cwt, monster_by_pmidx, makemon, makemon_appears_msg, add_to_minv as add_to_minv_mm } from './makemon.js';
+import { mon_msize, mon_cwt, monster_by_pmidx, makemon, makemon_appears_msg } from './makemon.js';
 import { level_difficulty } from './dungeon.js';
 // polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
 const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
@@ -142,9 +142,9 @@ import { place_object, next_ident, nextoid, BLINDING_VENOM, ACID_VENOM, VENOM_CL
 import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
     calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname,
     carrying as carrying_mm, worn_extrinsic as worn_extrinsic_mm, Aggravate_monster,
-    worn_blocked as worn_blocked_mm, splitobj, omon_adj, Tobjnam } from './invent.js';
-import { is_art, touch_artifact_monster, permapoisoned, ART_EXCALIBUR, ART_STORMBRINGER, ART_VORPAL_BLADE, ART_SNICKERSNEE, spec_abon } from './artifact.js';
-import { artifact_light } from './light.js';
+    worn_blocked as worn_blocked_mm, splitobj, omon_adj, Tobjnam, count_unpaid, report_merge_discovery } from './invent.js';
+import { defended, is_art, touch_artifact_monster, permapoisoned, ART_EXCALIBUR, ART_STORMBRINGER, ART_VORPAL_BLADE, ART_SNICKERSNEE, spec_abon } from './artifact.js';
+import { artifact_light, obj_sheds_light } from './light.js';
 const ART_GIANTSLAYER = 15, ART_OGRESMASHER = 16, LOADSTONE = 471;
 import { obj_resists, sleep_monst, resist, resists_magm } from './zap.js';
 // m_harmless_trap's FIRE_TRAP arm; mondata.js reads permonst.mresists (MR_FIRE).
@@ -158,7 +158,7 @@ import { makeplural, vtense } from './plural.js';
 import { Monnam, mon_nam, canspotmon, make_corpse, dmgval,
     setmangry, is_blunt_weapon_uh } from './uhitm.js';
 import { is_flimsy } from './mkobj.js';
-import { M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, FORCEBUNGLE, Unaware,
+import { NATTK, M_ATTK_MISS, M_ATTK_HIT, M_ATTK_AGR_DIED, M_ATTK_AGR_DONE, M_ATTK_DEF_DIED, M_AP_TYPE, SLT_ENCUMBER, FORCETRAP, FORCEBUNGLE, Unaware,
     M_POISONGAS_OK, M_POISONGAS_MINOR, M_POISONGAS_BAD, HURTLING } from './const.js';
 import { visible_region_at as visible_region_at_mf, region_is_poisoncloud } from './region.js';
 import { wipe_engr_at, engr_at, sengr_at } from './engrave.js';
@@ -1375,11 +1375,11 @@ function m_harmless_trap(mtmp, ttmp) {
             || unsolid(mdat);
     }
     case SLP_GAS_TRAP:
-        return resists_sleep(mtmp);          // defended(AD_SLEE): no monster wears such gear
+        return resists_sleep(mtmp) || defended(mtmp, AD_SLEE);
     case RUST_TRAP:
         return mdat?.name !== 'iron golem';
     case FIRE_TRAP:
-        return resists_fire(mtmp);
+        return resists_fire(mtmp) || defended(mtmp, AD_FIRE);
     case PIT:
     case SPIKED_PIT:
     case HOLE:
@@ -1388,7 +1388,7 @@ function m_harmless_trap(mtmp, ttmp) {
     case WEB:
         return amorphous(mdat) || webmaker(mdat) || is_whirly(mdat) || unsolid(mdat);
     case ANTI_MAGIC:
-        return resists_magm(mtmp);
+        return resists_magm(mtmp) || defended(mtmp, AD_MAGM);
     case STATUE_TRAP:
     case MAGIC_TRAP:
     case VIBRATING_SQUARE:
@@ -1632,7 +1632,7 @@ function cursed_object_at(x, y) {
 // C ref: monmove.c undesirable_disp(mtmp, x, y).  The rn2(40) only fires when
 // a trap actually sits on the candidate square, so most candidates draw
 // nothing — the short-circuit order here is load-bearing for the RNG stream.
-function undesirable_disp(mtmp, x, y) {
+export function undesirable_disp(mtmp, x, y) {
     const is_pet = mtmp.mtame && !mtmp.isminion;
     const trap = t_at(x, y);
     if (is_pet) {
@@ -1650,7 +1650,7 @@ function undesirable_disp(mtmp, x, y) {
 // an occupied square the shortest way to the goal?  Scans the whole candidate
 // list ONCE, so undesirable_disp's rn2(40) rolls all land here, before
 // m_move's per-candidate selection loop.
-function should_displace(mtmp, poss, ggx, ggy) {
+export function should_displace(mtmp, poss, ggx, ggy) {
     let shortestWith = -1, shortestWithout = -1, countWithout = 0;
     for (const p of poss) {
         const ndist = dist2(p.x, p.y, ggx, ggy);
@@ -2767,7 +2767,9 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         if (rn2(cwt + 1) < 400) return Trap_Effect_Finished;   // trap.c:2606
         const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
         const already_seen = trap.tseen;
-        if (mon_check_in_air(mtmp)) {
+        // C ref: trap.c trapeffect_landmine: m_in_air(mtmp) (mon.c), which also
+        // counts a hiding ceiling clinger, unlike check_in_air().
+        if (m_in_air(mtmp)) {
             if (in_sight && !already_seen) {
                 const { seetrap } = await import('./trap.js');
                 await pline_mon(mtmp,
@@ -2782,7 +2784,8 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             }
         } else if (in_sight) {
             newsym(mtmp.mx, mtmp.my);
-            await pline_mon(mtmp, `KAABLAMM!!!  ${Monnam(mtmp)} triggers `
+            // C ref: trap.c trapeffect_landmine: "KAABLAMM!!!  " only if !Deaf.
+            await pline_mon(mtmp, `${!Deaf_hero() ? 'KAABLAMM!!!  ' : ''}${Monnam(mtmp)} triggers `
                 + `${trap.madeby_u ? 'your' : 'a'} land mine!`);
         }
         if (!in_sight && !Deaf_hero())
@@ -2828,6 +2831,8 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         // next monster phase instead of returning from dochug() at the
         // msleeping gate, so leaving it out silently deletes their draws.
         const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
+        // C ref: trap.c trapeffect_sqky_board monster arm: m_in_air() -> finished.
+        if (m_in_air(mtmp)) return Trap_Effect_Finished;
         const Deaf = Deaf_hero();
         const { trapnote, seetrap } = await import('./trap.js');
         if (in_sight) {
@@ -3083,11 +3088,12 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             // silently passing over it.
             if (forcetrap_h && !Sokoban()) {
                 if (in_sight) {
+                    /* C ref: trap.c trapeffect_hole: seetrap() precedes the message */
+                    const { seetrap } = await import('./trap.js');
+                    seetrap(trap);
                     await pline_mon(mtmp, trap.ttyp === TRAPDOOR
                         ? `A trap door opens, but ${mon_nam(mtmp)} doesn't fall through.`
                         : `${Monnam(mtmp)} doesn't fall through the hole.`);
-                    const { seetrap } = await import('./trap.js');
-                    seetrap(trap);
                 }
                 return Trap_Effect_Finished;
             }
@@ -3348,8 +3354,9 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             mtmp.mhp -= damage;
             if (DEADMONSTER(mtmp)) {
                 const { monkilled_mm } = await import('./mhitm.js');
+                // C ref: trap.c trapeffect_anti_magic monkilled(mtmp, in_sight ? "compression..." : (const char *) 0, ...)
                 await monkilled_mm(mtmp, -AD_MAGM,
-                    in_sight ? 'compression from an anti-magic field' : '');
+                    in_sight ? 'compression from an anti-magic field' : null);
             }
             if (see_it) newsym(trap.tx, trap.ty);
         }
@@ -3365,19 +3372,25 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             const { update_mon_extrinsics } = await import('./worn.js');
             const { poly_obj_id } = await import('./zap.js');
             let shoes = which_armor(mtmp, W_ARMF);
-            shoes.owornmask = 0;
-            mtmp.misc_worn_check = (mtmp.misc_worn_check | 0) & ~W_ARMF;
-            update_mon_extrinsics(mtmp, shoes, false);
-            // extract/re-add moves the old shoes to minvent's head in C.
-            mtmp.minvent.splice(mtmp.minvent.indexOf(shoes), 1);
-            mtmp.minvent.unshift(shoes);
-            shoes.ocarry = mtmp;
+            /* remove and readd the shoes to forcibly unwear them */
+            /* C ref: trap.c trapeffect_poly_trap monster arm */
+            const { extract_from_minvent } = await import('./worn.js');
+            await extract_from_minvent(mtmp, shoes, true, true);
+            if (mpickobj(mtmp, shoes)) {
+                await impossible('re-equipping iron shoes destroyed them?');
+                return Trap_Effect_Finished;
+            }
             shoes = await poly_obj_id(shoes,
                 shoes.otyp === IRON_SHOES ? KICKING_BOOTS : IRON_SHOES);
-            mtmp.misc_worn_check |= W_ARMF;
-            shoes.owornmask = W_ARMF;
-            update_mon_extrinsics(mtmp, shoes, true);
-        } else if (!resists_magm(mtmp) && !(await resist(mtmp, WAND_CLASS, 0, false))) {
+            if (shoes) {
+                mtmp.misc_worn_check |= W_ARMF;
+                shoes.owornmask = W_ARMF;
+                update_mon_extrinsics(mtmp, shoes, true, true);
+            }
+        } else if (resists_magm(mtmp)) {
+            const { shieldeff_mon } = await import('./mon.js');
+            await shieldeff_mon(mtmp);
+        } else if (!(await resist(mtmp, WAND_CLASS, 0, false))) {
             const { newcham_wizard_aware } = await import('./makemon.js');
             await newcham_wizard_aware(mtmp, null, NC_SHOW_MSG);
             if (in_sight) {
@@ -4956,12 +4969,18 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
             // hero square: catch attempt (rn2(100-Dex)); a non-catch shatters.
             if (game.multi) (await import('./hack.js')).nomul(0);
             if (await u_catch_thrown_obj(singleobj)) {
+                // C ref: mthrowu.c m_throw() — every `break` out of the flight
+                // loop reaches the trailing tmp_at(bhitpos): it newsyms the
+                // previous flash square and flashes the hero's, which tmp_at
+                // DISP_END then newsyms (display RNG draws while Hallucinating).
+                flash_at(bx, by);
                 flash_end();
                 m_useup_thrown(mon, otmp, singleobj);
                 return;
             }
             const { potionhit_hero } = await import('./potion.js');
             await potionhit_hero(singleobj, 2 /*POTHIT_MONST_THROW*/);
+            flash_at(bx, by);   // C ref: mthrowu.c m_throw() trailing tmp_at(bhitpos)
             flash_end();
             m_useup_thrown(mon, otmp, singleobj);
             return;
@@ -5248,17 +5267,25 @@ async function delobj_local(otmp) {
         newsym(otmp.ox, otmp.oy);
     }
 }
-// obj_extract_self(otmp) + mpickobj: the object leaves the floor and joins
-// mtmp's minvent (engulfed by a gelatinous cube), matching mpickstuff's own
-// `where`/minvent convention below.
-function mon_engulf_obj(mtmp, otmp) {
-    const arr = game.level?.objects;
-    if (Array.isArray(arr)) {
-        const ix = arr.indexOf(otmp);
-        if (ix >= 0) arr.splice(ix, 1);
+// C ref: mon.c meatobj() `obj_extract_self(otmp); (void) mpickobj(mtmp, otmp);`
+// -- the object leaves the floor and joins mtmp's minvent (engulfed by a
+// gelatinous cube).  mpickobj() is what makes the hero forget what it knew of
+// the object when the cube is not seen (unknow_object), rewrites how_lost, and
+// (deferred until the object is in minvent) snuffs a burning light source.
+async function mon_engulf_obj(mtmp, otmp) {
+    remove_object(otmp);
+    let snuff_otmp = false;
+    if (obj_sheds_light(otmp) && attacktype(mtmp.data, AT_ENGL)) {
+        if (engulfing_u(mtmp) && !Blind())
+            await pline(`${Tobjnam(otmp, 'go')} out.`);
+        snuff_otmp = true;
     }
-    otmp.where = OBJ_FREE;
-    add_to_minv_mm(mtmp, otmp);      // mkobj.c:2648: merge, else prepend
+    mpickobj(mtmp, otmp);
+    if (game._merge_discovery_pending) await report_merge_discovery();
+    if (snuff_otmp) {
+        const { snuff_light_source } = await import('./light.js');
+        await snuff_light_source(mtmp.mx, mtmp.my);
+    }
 }
 
 // C ref: mon.c:1392 m_consume_obj(mtmp, otmp) — a monster eats/absorbs an
@@ -5361,24 +5388,30 @@ async function meatmetal(mtmp) {
         if (is_metallic(otmp) && !obj_resists(otmp, 5, 95)
             && touch_artifact_monster(otmp, mtmp)) {
             const vis = canseemon_mm(mtmp);
+            const { distant_name_pub, obj_doname } = await import('./invent.js');
+            let otmpname;
             if (isRustMon && otmp.oerodeproof) {
-                if (vis && verbose) {
-                    const { floor_object_name } = await import('./invent.js');
-                    set_msg_mon(mtmp);
-                    await pline(`${Monnam(mtmp)} eats ${floor_object_name(otmp)}!`);
+                if (vis) {
+                    /* C: distant_name() called for its side-effects even when !verbose */
+                    otmpname = distant_name_pub(otmp, obj_doname);
+                    if (verbose) {
+                        set_msg_mon(mtmp);
+                        await pline(`${Monnam(mtmp)} eats ${otmpname}!`);
+                    }
                 }
                 otmp.oerodeproof = 0;
                 mtmp.mstun = 1;
-                if (vis && verbose) {
-                    const { floor_object_name } = await import('./invent.js');
-                    await pline(`${Monnam(mtmp)} spits ${floor_object_name(otmp)} out in disgust!`);
+                if (vis) {
+                    otmpname = distant_name_pub(otmp, obj_doname);
+                    if (verbose)
+                        await pline(`${Monnam(mtmp)} spits ${otmpname} out in disgust!`);
                 }
             } else {
                 if (cansee(mtmp.mx, mtmp.my)) {
+                    otmpname = distant_name_pub(otmp, obj_doname);
                     if (verbose) {
-                        const { floor_object_name } = await import('./invent.js');
                         set_msg_mon(mtmp);
-                        await pline(`${Monnam(mtmp)} eats ${floor_object_name(otmp)}!`);
+                        await pline(`${Monnam(mtmp)} eats ${otmpname}!`);
                     }
                 } else if (verbose) {
                     await You_hear('a crunching sound.');
@@ -5448,7 +5481,7 @@ async function meatobj(mtmp) {
                 engulfMsg = `${Monnam(mtmp)} engulfs ${otmpname}.`;
             else if (ecount === 2)
                 engulfMsg = `${Monnam(mtmp)} engulfs several objects.`;
-            mon_engulf_obj(mtmp, otmp);
+            await mon_engulf_obj(mtmp, otmp);
         } else {
             // devour
             count++;
@@ -5698,21 +5731,11 @@ async function mpickstuff(mtmp) {
             // dagger").  Routed through pline_mon/update_topl so it appends to a
             // pending top line as C's topl buffer does (seed0002 step 263 pairs
             // it with "You feel less confused now.").
-            let otmp3;
-            if (carryamt !== (otmp.quan || 1)) {
-                // partial stack: split off carryamt into a fresh object.  C's
-                // splitobj() assigns the fragment a new o_id via next_ident()
-                // (rnd(2)); reproduce that roll so the PRNG advances as C does.
-                otmp3 = { ...otmp, quan: carryamt, o_id: nextoid(otmp, otmp) };
-                otmp.quan = (otmp.quan || 1) - carryamt;
-                // C ref: mkobj.c splitobj() re-weighs both halves; a stale
-                // remainder/fragment weight skews curr_mon_load() and so every
-                // later pctload gate in mon_would_take_item() and can_carry().
-                otmp.owt = weight(otmp);
-                otmp3.owt = weight(otmp3);
-            } else {
-                otmp3 = otmp;
-            }
+            // C ref: mon.c:1889 splitobj(otmp, carryamt) — the real splitobj()
+            // (new o_id via nextoid, re-weigh, timers, light source, oextra).
+            let otmp3 = otmp;
+            if (carryamt !== (otmp.quan || 1))
+                otmp3 = splitobj(otmp, carryamt);
             // C ref: mon.c:1891-1900 — announced BEFORE obj_extract_self, and it
             // names `otmp` (the post-split remainder), not otmp3.  update_topl,
             // not pline: C leaves toplin == NEED_MORE so a following message
@@ -5724,36 +5747,31 @@ async function mpickstuff(mtmp) {
             }
             // C ref: mon.c:1901 obj_extract_self(otmp3) -> remove_object(), which
             // also re-checks boulder vision: a giant lifting a boulder stops it
-            // blocking light.  The split fragment was never inserted into our
-            // floor array, so only the whole-stack case has anything to remove.
-            if (otmp3 === otmp) remove_object(otmp);
-            // C ref: steal.c:655-674 mpickobj() — ownership and knowledge
-            // change before add_to_minv tests stack compatibility.
-            otmp3.no_charge = 0;
-            if (!mtmp.mtame) {
-                if (!canseemon_mm(mtmp) && mtmp !== game.u?.ustuck) {
-                    const { unknow_object } = await import('./mkobj.js');
-                    unknow_object(otmp3);
-                }
-                if (otmp3.how_lost === 1) otmp3.how_lost = 3;
-                else if (otmp3.how_lost === 2) otmp3.how_lost = 0;
+            // blocking light.  splitobj() links the fragment into the floor pile.
+            remove_object(otmp3);
+            // C ref: steal.c:647-652 mpickobj() — no hidden light source inside an
+            // engulfer; the snuffing is deferred until the object is in minvent.
+            let snuff_otmp = false;
+            if (obj_sheds_light(otmp3) && attacktype(mtmp.data, AT_ENGL)) {
+                if (engulfing_u(mtmp) && !Blind())
+                    await pline(`${Tobjnam(otmp3, 'go')} out.`);
+                snuff_otmp = true;
             }
-            // C ref: mon.c:1902 -> mkobj.c:2655-2663 add_to_minv().
-            // Merge into an existing carried stack before prepending a new one.
-            const { merged } = await import('./invent.js');
-            mtmp.minvent = mtmp.minvent || [];
-            if (!mtmp.minvent.some(o => merged(o, otmp3))) {
-                otmp3.where = OBJ_MINVENT;
-                otmp3.ocarry = mtmp;
-                mtmp.minvent.unshift(otmp3);
+            // C ref: mon.c:1902 mpickobj(mtmp, otmp3): how_lost, unknow_object,
+            // carry_obj_effects and add_to_minv() (merge, else prepend).
+            mpickobj(mtmp, otmp3);
+            // C ref: invent.c merged() -> mkobj.c pudding_merge_message() runs INSIDE
+            // mpickobj()'s add_to_minv(): a glob joining the monster's glob out of
+            // the hero's sight is "You hear a faint sloshing sound." right now, not
+            // at the next pickup that happens to flush the deferred plan.
+            if (game._merge_discovery_pending) await report_merge_discovery();
+            if (snuff_otmp) {
+                const { snuff_light_source } = await import('./light.js');
+                await snuff_light_source(mtmp.mx, mtmp.my);
             }
             // C ref: mon.c:1904 check_gear_next_turn(mtmp) — mon.c:5915 sets
             // misc_worn_check|I_SPECIAL so movemon_singlemon (js/mon.js) runs
-            // m_dowear() next turn and spends that turn equipping.  The
-            // creation-time half of the pair (makemon.c:1445 m_dowear(TRUE), so
-            // a monster never pays a wear delay for its STARTING armour) lives
-            // in makemon.js via worn.js.  worn.js also owns the shared
-            // find_mac() calculation used by combat code.
+            // m_dowear() next turn and spends that turn equipping.
             mtmp.misc_worn_check = (mtmp.misc_worn_check | 0) | I_SPECIAL;
             newsym(mtmp.mx, mtmp.my);   // C ref: mon.c:1905
             return true; // pick only one object
@@ -6448,8 +6466,14 @@ export async function mattacku(mtmp, mdat) {
             }
         }
         if (sum[i] & M_ATTK_AGR_DIED) return 1;   // mhitu.c:945 attacker dead
-        if (sum[i] & M_ATTK_AGR_DONE) break;      // mhitu.c:947 attacker teleported
+        if (sum[i] & M_ATTK_AGR_DONE) return 0;   // mhitu.c:947 attacker teleported
     }
+    // C ref: mhitu.c:771 — mattacku() loops over all NATTK slots and tests
+    // DEADMONSTER(mtmp) at the top of each, so a monster with fewer than NATTK
+    // attacks that died during its last attack (a thrown missile that set off
+    // a gas spore, a counterattack) is still reported dead (return 1) via the
+    // first empty slot.  mon_attacks() is trimmed to the real attacks.
+    if (atks.length < NATTK && DEADMONSTER(mtmp)) return 1;
     return 0;
 }
 
@@ -7753,13 +7777,46 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
     }
     if (otmp) {
         if (hits_thrower) {
+            // C ref: mthrowu.c return_from_mtoss `if (otmp->oartifact)
+            // artifact_hit((struct monst *) 0, magr, otmp, &dmg, 0)`.
+            if (otmp.oartifact) {
+                const { artifact_hit } = await import('./artifact.js');
+                const dmgp = { d: dmg };
+                await artifact_hit(null, magr, otmp, dmgp, 0);
+                dmg = dmgp.d;
+            }
             magr.mhp -= dmg;
             if (magr.mhp <= 0) {
                 const { monkilled_mm } = await import('./mhitm.js');
-                await monkilled_mm(magr, 0, '');
+                // C: monkilled(magr, canspotmon(magr) ? "" : (char *) 0, AD_PHYS)
+                await monkilled_mm(magr, 0, canspotmon(magr) ? '' : null);
             }
         }
-        if (notcaught) await drop_thrown_missile(magr, otmp, x, y, 0);
+        if (notcaught) {
+            // C ref: mthrowu.c return_from_mtoss — snuff_candle(), ship_object(),
+            // flooreffects(.., "drop"), place_object()/stackobj(), the
+            // Splash!/Plop! sound and the light-source recalc.
+            const { snuff_candle } = await import('./apply.js');
+            await snuff_candle(otmp);
+            const { ship_object } = await import('./dokick.js');
+            if (!(await ship_object(otmp, x, y, false))) {
+                const { flooreffects } = await import('./do.js');
+                if (await flooreffects(otmp, x, y, 'drop')) {
+                    game.thrownobj = null;
+                    if (cansee(x, y)) newsym(x, y);
+                    return;
+                }
+                place_object(otmp, x, y);
+                stackobj(otmp);
+            }
+            if (!Deaf_hero() && !Underwater()) {
+                /* Some sound effects when item lands in water or lava */
+                const { is_flammable } = await import('./mkobj.js');
+                if (is_pool_at(x, y) || (is_lava_at(x, y) && !is_flammable(otmp)))
+                    await pline(weight(otmp) > 9 ? 'Splash!' : 'Plop!');
+            }
+            if (obj_sheds_light(otmp)) game.vision_full_recalc = 1;
+        }
     }
     game.thrownobj = null;
     if (cansee(x, y)) newsym(x, y);

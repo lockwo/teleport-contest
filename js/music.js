@@ -17,7 +17,7 @@ import { acurr_eff } from './attrib.js';
 import { fmonOrder } from './mon.js';
 import { m_at, newsym, update_topl, You_hear, You_feel, canseemon_shared as canseemon } from './display.js';
 import { cansee, Blind } from './vision.js';
-import { Is_stronghold, In_sokoban, SHOPBASE, STRAT_WAITMASK } from './const.js';
+import { Is_stronghold, In_sokoban, In_endgame, Is_astralevel, In_V_tower, SHOPBASE, STRAT_WAITMASK } from './const.js';
 import {
     mindless, humanoid, is_flyer_flag, is_mercenary_flag, mflags1_of,
     M1_CLING, M1_CONCEAL,
@@ -436,9 +436,13 @@ function ceiling_hider(p) {
 
 // C ref: music.c:470 generic_lvl_desc().
 function generic_lvl_desc() {
-    // Astral/endgame/sanctum/V-tower need dungeon predicates this port has no
-    // level data for; Sokoban and the ordinary dungeon are the reachable ones.
-    if (In_sokoban(game.u?.uz)) return 'puzzle';
+    const uz = game.u?.uz;
+    const sl = game.sanctum_level;
+    if (Is_astralevel(uz)) return 'astral plane';
+    if (In_endgame(uz)) return 'plane';
+    if (sl && uz && uz.dnum === sl.dnum && uz.dlevel === sl.dlevel) return 'sanctum';
+    if (In_sokoban(uz)) return 'puzzle';
+    if (In_V_tower(uz)) return 'tower';
     return 'dungeon';
 }
 

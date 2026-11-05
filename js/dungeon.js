@@ -42,7 +42,8 @@ import {
     M_AP_FURNITURE, M_AP_TYPE, SVALL, VISITED, MAXLINFO, BUFSZ,
     COUNTING, WRITING, FREEING,
     PICK_ONE, ASCENDED, ESCAPED,
-    is_pool, is_lava, is_ice
+    is_pool, is_lava, is_ice,
+    db_under_typ,
 } from './const.js';
 import { shtypes } from './shtypes.js';
 
@@ -833,8 +834,8 @@ function fixup_level_locations() {
                     (b) => b.end2.dnum === knox.dnum && b.end2.dlevel === knox.dlevel);
                 if (br) {
                     br.end1.dnum = game.n_dgns;
-                    // Re-sort the branch list now that end1 changed.
-                    game.branches.sort((a, b) => branch_val(a) - branch_val(b));
+                    /* adjust the branch's position on the list */
+                    insert_branch(br, true);
                 }
             }
         }
@@ -1130,7 +1131,9 @@ function pd_portal_expected(M, uz) {
     // at_dgn_entrance("The Quest") / Is_knox()
     for (const br of (M.branches || [])) {
         const dn = M.dungeons?.[br.end2.dnum]?.dname;
-        if ((dn === 'The Quest' || dn === 'Fort Ludios')
+        /* C ref: dungeon.c print_dungeon: at_dgn_entrance("The Quest") only;
+           Fort Ludios is covered by Is_knox below, not its portal level. */
+        if (dn === 'The Quest'
             && br.end1.dnum === uz.dnum && br.end1.dlevel === uz.dlevel)
             return true;
     }
@@ -1139,7 +1142,7 @@ function pd_portal_expected(M, uz) {
 }
 
 // C ref: dungeon.h Invocation_lev(lev) — the level just above the sanctum.
-function Invocation_lev(lev) {
+export function Invocation_lev(lev) {
     if (!lev) return false;
     const hell = game._full_dungeon?.dungeons?.findIndex?.((d) => d?.flags?.hellish);
     const dun = game.dungeons?.[lev.dnum];
@@ -1814,15 +1817,14 @@ export { hliquid } from './do_name.js';
 
 // C ref: dungeon.c surface(x,y) — the noun for the terrain at (x,y) used in
 // "sit on the %s", "Having fun sitting on the %s?", etc.  SURFACE_AT resolves
-// a raised drawbridge to the terrain beneath it; the contest sessions never
-// sit on a raised drawbridge, so the plain typ is used.
+// a raised drawbridge to the terrain beneath it (rm.h SURFACE_AT).
 function engl_adtyp(ptr, dtyp) {
     return mattk_of(ptr).some((a) => a.adtyp === dtyp && a.aatyp === AT_ENGL);
 }
 export function surface(x, y) {
     const u = game.u || {};
     const lev = game.level?.at(x, y) || {};
-    const levtyp = lev.typ; // SURFACE_AT(x,y): DRAWBRIDGE_UP resolves under-typ
+    const levtyp = lev.typ === DRAWBRIDGE_UP ? db_under_typ(lev.drawbridgemask | 0) : lev.typ;
     const uz = u.uz;
     if (x === u.ux && y === u.uy && u.uswallow && u.ustuck
         && is_animal(u.ustuck.data))

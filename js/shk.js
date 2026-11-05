@@ -405,6 +405,14 @@ export function inhishop(shkp) {
     return in_rooms(shkp.mx, shkp.my, SHOPBASE).includes(eshk.shoproom);
 }
 
+// C ref: shk.c tended_shop(sroom):1118 — the room's RESIDENT shopkeeper (read
+// straight off sroom->resident, no shop_keeper() rile_shk side effect) is
+// still inside his shop.
+export function tended_shop(sroom) {
+    const mtmp = sroom?.resident;
+    return !mtmp ? false : inhishop(mtmp);
+}
+
 // C ref: decl.c `struct mkroom svr.rooms[(MAXNROFROOMS + 1) * 2]` with
 // `gs.subrooms = &svr.rooms[MAXNROFROOMS + 1]` — C's rooms[] and subrooms[]
 // are ONE array, so every `svr.rooms[rno - ROOMOFFSET]` in shk.c resolves a
@@ -1017,6 +1025,9 @@ export async function money2u(mon, amount) {
         give = { ...mongold, quan: amount, owornmask: 0, nobj: null };
         give.o_id = nextoid(mongold, give);
         mongold.quan -= amount;
+        /* C splitobj(): both halves get owt = weight(obj) */
+        mongold.owt = weight(mongold);
+        give.owt = weight(give);
     } else {
         mon.minvent.splice(mon.minvent.indexOf(mongold), 1);
     }
@@ -2556,6 +2567,10 @@ export function find_objowner(obj, x, y) {
 hooks.no_charge_off_shop = (obj, x, y) =>
     !costly_spot(x, y) && !costly_adjacent(find_objowner(obj, x, y), x, y);
 
+/* makemon.js mpickobj() (steal.c:641-643) takes a monster-picked unpaid item
+   off the bill; it cannot import this module (cycle). */
+hooks.mpickobj_unbill = (obj) => subfrombill(obj, find_objowner(obj, obj.ox, obj.oy));
+
 // C ref: shk.c stolen_value(obj, x, y, peaceful, silent):3754 — the hero got
 // shop goods out of the shop (or gave up billable ones): charge for them.
 // A peaceful shk adds it to the debit, an angry one to `robbed` and the hunt
@@ -4068,32 +4083,38 @@ export async function block_door(x, y) {
 }
 
 // C ref: shk.c block_entry(x, y):5826 — the shk blocks a diagonal entry through
-// a broken door.  u.ux,u.uy is always the door.
-export async function block_entry(x, y) {
+// a broken door.  u.ux,u.uy is always the door.  block_entry() is the predicate
+// (shk_blocking_entry, returns the blocking shopkeeper or null) followed by the
+// "blocks your way!" feedback, split like block_door() so hack.js/cmd.js
+// test_move callers can decide synchronously and publish the line themselves.
+export function shk_blocking_entry(x, y) {
     const u = game.u;
     const uloc = game.level?.at(u.ux, u.uy);
     if (!(IS_DOOR(uloc?.typ ?? 0) && (uloc?.doormask || 0) === D_BROKEN))
-        return false;
+        return null;
 
     const roomno = in_rooms(x, y, SHOPBASE)[0] ?? 0;
-    if (roomno < 0 || !IS_SHOP(roomno)) return false; /* see block_door() */
+    if (roomno < 0 || !IS_SHOP(roomno)) return null; /* see block_door() */
     const shkp = shop_keeper(roomno);
-    if (!shkp || !inhishop(shkp)) return false;
+    if (!shkp || !inhishop(shkp)) return null;
 
     const eshkp = shkp.eshk;
-    if (eshkp.shd?.x !== u.ux || eshkp.shd?.y !== u.uy) return false;
+    if (eshkp.shd?.x !== u.ux || eshkp.shd?.y !== u.uy) return null;
 
     const sx = eshkp.shk.x, sy = eshkp.shk.y;
 
     if (shkp.mx === sx && shkp.my === sy && !helpless(shkp)
         && (x === sx - 1 || x === sx + 1 || y === sy - 1 || y === sy + 1)
         && (Invis() || carrying(PICK_AXE) || carrying(DWARVISH_MATTOCK)
-            || u.usteed)) {
-        await update_topl(`${Shknam(shkp)}${
-            Invis() ? ' senses your motion and' : ''} blocks your way!`);
-        return true;
-    }
-    return false;
+            || u.usteed))
+        return shkp;
+    return null;
+}
+export async function block_entry(x, y) {
+    const shkp = shk_blocking_entry(x, y);
+    if (!shkp) return false;
+    await block_door_feedback(shkp);
+    return true;
 }
 
 // C ref: shk.c shk_owns(buf, obj):5885 — "Foobar's " when the shop owns obj.

@@ -10,7 +10,7 @@ import { game, hooks } from './gstate.js';
 import { s_suffix, just_an } from './hacklib.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { NO_COLOR } from './terminal.js';
-import { roles, rank_of, align_gname, align_gtitle } from './role.js';
+import { roles, rank_of, align_gname, align_gtitle, align_str } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
 import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear } from './display.js';
@@ -2784,7 +2784,9 @@ function qt_convert_line(line) {
         // is put back and copied as ordinary text.
         case 'h': case 'H': case 'i': case 'I': case 'j': case 'J':
             if ('dlno'.includes(arg.toLowerCase())) {
-                out += qtext_pronoun(arg.toLowerCase(), line[i + 1], cc);
+                // C ref: questpgr.c convert_line: qtext_pronoun(*(c - 1), *c) passes the
+                // original-case subject, so %Dh/%Oh fall to the neuter default.
+                out += qtext_pronoun(arg, line[i + 1], cc);
                 i++;
             } else out += cc;
             break;
@@ -3052,7 +3054,7 @@ async function is_pure(talk) {
     // C's `wizard` (debug mode) is flags.debug here, matching bones.js is_wizard().
     if (game.flags?.debug && talk) {
         if (u.ualign?.type !== orig) {
-            await update_topl(`You are currently ${ALIGN_STR[u.ualign?.type]} instead of ${ALIGN_STR[orig]}.`);
+            await update_topl(`You are currently ${align_str(u.ualign?.type)} instead of ${align_str(orig)}.`);
         } else if ((u.ualignbase?.[0 /* A_CURRENT */] ?? orig) !== orig) {
             await update_topl('You have converted.');
         } else if ((u.ualign?.record ?? 0) < MIN_QUEST_ALIGN) {

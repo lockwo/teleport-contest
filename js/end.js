@@ -684,10 +684,17 @@ async function done(how) {
         // C ref: end.c:1206-1218 — maintain u.ugrave_arise for the special hows.
         {
             const { LEAVESTATUE: LEAVESTATUE_ } = await import('./const.js');
-            const BURNING_ = 5, DISSOLVED_ = 6, STONING_ = 8;
+            const BURNING_ = 5, DISSOLVED_ = 6, STONING_ = 8, TURNED_SLIME_ = 9;
             if (how === PANICKED) game.u.ugrave_arise = NON_PM - 3;
             else if (how === BURNING_ || how === DISSOLVED_) game.u.ugrave_arise = NON_PM - 2;
             else if (how === STONING_) game.u.ugrave_arise = LEAVESTATUE_;
+            else if (how === TURNED_SLIME_) {
+                /* green slime may have been genocided after the hero was infected */
+                const { name_to_pmidx } = await import('./makemon.js');
+                const slime = name_to_pmidx('green slime');
+                if (!((game.mvitals?.[slime]?.mvflags | 0) & G_GENOD))
+                    game.u.ugrave_arise = slime;
+            }
         }
         // C ref: end.c:1203-1204 — a boulder/statue still mid-flight from a
         // rolling-boulder trap when the hero dies gets dropped at its
@@ -1397,11 +1404,23 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     // nothing more to show or read: the recorder's last step is the key that
     // answered the prompt, and its screen is blank (the tty is gone), which the
     // score loader drops.  So take no further input boundary here.  The record
-    // file is still updated.
+    // file is still updated.  The one exception is the HUP topten_print()s that
+    // are NOT gated on done_stopprint: "You didn't beat your previous score of
+    // N points." (between two blank lines) is raw_print()ed once the tty is gone,
+    // so that frame is the last one recorded.
     if (stopprint) {
         topten_record_write(tt);
         game.program_state = game.program_state || {};
         game.program_state.gameover = true;
+        if (tt.notbeaten) {
+            disp.clearScreen();
+            const row = rawPrintBias();
+            disp.putstr(0, row + 1, tt.notbeaten, NO_COLOR, 0);
+            // topten_print("") x2 around the message, then really_done()'s two
+            // raw_print("")s for done_stopprint.
+            setFinalCursor(disp, row + 5);
+            await nhgetch();
+        }
         return;
     }
 

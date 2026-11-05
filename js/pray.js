@@ -26,7 +26,7 @@ import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_C
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMAX, MM_NOMSG,
     IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
-import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE, FOOT, EYE, STOMACH } from './const.js';
+import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE, FOOT, EYE, STOMACH, STRAT_APPEARMSG } from './const.js';
 import { which_armor } from './worn.js';
 import { FIRE_RES, TELEPORT, POISON_RES, TELEPAT, COLD_RES, INVIS, SEE_INVIS,
     FAST, STEALTH, PROTECTION, AGGRAVATE_MONSTER, OBJ_FLOOR, OBJ_INVENT } from './const.js';
@@ -426,22 +426,23 @@ export async function rndcurse() {
             // C ref: sit.c:609 intelligent artifacts resist 80% of the time.
             if (otmp.oartifact && D.art.spec_ability(otmp, D.art.SPFX_INTEL)
                 && rn2(10) < 8) {
-                const nm = D.inv.xname(otmp);
-                await update_topl(`${/^[A-Z]/.test(nm) ? '' : 'The '}${nm} ${D.inv.otense(otmp, 'resist')}!`);
+                /* C ref: sit.c rndcurse() Tobjnam(otmp, "resist") */
+                await update_topl(`${D.inv.Tobjnam(otmp, 'resist')}!`);
                 continue;
             }
-            if (otmp.blessed) unbless(otmp);
+            if (otmp.blessed) await unbless(otmp);
             else {
                 await curse(otmp);
             }
         }
+        D.inv.update_inventory();
     }
     /* treat steed's saddle as extended part of hero's inventory */
     let saddle;
     if (u.usteed && !rn2(4) && (saddle = which_armor(u.usteed, W_SADDLE))) {
         if (!saddle.cursed) { /* skip if already cursed */
-            if (saddle.blessed) unbless(saddle);
-            else curse(saddle);
+            if (saddle.blessed) await unbless(saddle);
+            else await curse(saddle);
             if (!Blind()) {
                 await update_topl(`${D.inv.Yobjnam2(saddle, 'glow')} ${hcolor(saddle.cursed ? 'black' : 'brown')}.`);
                 saddle.bknown = Hallucination() ? 0 : 1;
@@ -630,7 +631,7 @@ async function fix_curse_trouble(otmp, what) {
         await update_topl(`${what || await Yobjnam2_local(otmp, 'softly glow')} ${hcolor_amber()}.`);
         otmp.bknown = Hallucination() ? 0 : 1;
     }
-    uncurse(otmp);
+    await uncurse(otmp);
     (await import('./invent.js')).update_inventory();
 }
 // C ref: objnam.c Yobjnam2(obj, verb): the carried object's xname with the verb
@@ -881,7 +882,7 @@ async function fix_worst_trouble(trouble) {
                 await update_topl(`${(await import('./invent.js')).Yobjnam2(otmp, 'softly glow')} ${hcolor_amber()}.`);
                 otmp.bknown = 1;
             }
-            uncurse(otmp);
+            await uncurse(otmp);
         }
         break;
     }
@@ -1016,7 +1017,7 @@ async function pleased(g_align) {
                     else
                         await You_feel(`the power of ${u_gname()} `
                             + `over ${_inv.yname(uwep)}.`);
-                    uncurse(uwep);
+                    await uncurse(uwep);
                     uwep.bknown = 1;
                     repair_buf = '';
                 } else if (!uwep.blessed) {
@@ -1026,7 +1027,7 @@ async function pleased(g_align) {
                     else
                         await You_feel(`the blessing of ${u_gname()} `
                             + `over ${_inv.yname(uwep)}.`);
-                    bless(uwep);
+                    await bless(uwep);
                     uwep.bknown = 1;
                     repair_buf = '';
                 }
@@ -1098,7 +1099,7 @@ async function pleased(g_align) {
                         otmp.bknown = 1;
                         any++;
                     }
-                    uncurse(otmp);
+                    await uncurse(otmp);
                 }
             }
             if (any) _inv.update_inventory();
@@ -1726,7 +1727,7 @@ export async function uchangealign(newalign, reason) {
         if (reason === A_CG_HELM_ON) {
             adjalign(-7); /* for abuse -- record will be cleared shortly */
             await update_topl(`Your mind oscillates ${Hallucination() ? 'wildly' : 'briefly'}.`);
-            make_confused(rn1(2, 3), false);
+            await make_confused(rn1(2, 3), false);
             if (Is_astralevel() || rn2(50) < (u.ualign.abuse | 0))
                 await summon_furies(Is_astralevel() ? 0 : 1);
             livelog_printf(LL_ALIGNMENT, `used a helm to turn ${aligns[1 - newalign].adj}`);
@@ -1794,6 +1795,7 @@ async function sacrifice_your_race(otmp, highaltar, altaralign) {
             // when the hero can't make out what arrived.
             let dbuf = a_monnam(dmon);
             if (!dbuf || dbuf.toLowerCase() === 'it') dbuf = 'something dreadful';
+            else dmon.mstrategy = (dmon.mstrategy & ~STRAT_APPEARMSG) >>> 0;
             await update_topl(`You have summoned ${dbuf}!`);
             if (sgn(utype) === sgn(dmon.data?.maligntyp | 0)) dmon.mpeaceful = 1;
             await update_topl('You are terrified, and unable to move.');

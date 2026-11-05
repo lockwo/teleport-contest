@@ -533,7 +533,10 @@ export function remove_room(roomno) {
         /* since the order in the array only matters for making corridors, copy
          * the last room over the one being removed on the assumption that
          * corridors have already been dug. */
-        lev.rooms[croom_ix] = lev.rooms[maxroom_ix];
+        /* C: `*croom = *maxroom` is a struct COPY.  The slot at maxroom_ix
+           must stay a separate object so its `hx = -1` below does not also
+           turn the room that was just moved into croom_ix into the sentinel. */
+        lev.rooms[croom_ix] = { ...lev.rooms[maxroom_ix] };
 
         /* since maxroom moved, update affected level roomno values */
         oroomno = lev.nroom + ROOMOFFSET;

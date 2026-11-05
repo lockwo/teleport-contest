@@ -24,7 +24,7 @@
 //   ops.permonst(mon)        species record (name-resolved; see mhitm.js)
 //   ops.vis                  C's gv.vis, LATCHED by the caller before the hit
 //   ops.Monnam/mon_nam       unconditional "The jackal" / "the jackal"
-//   ops.Monnam_vis/mon_nam_vis   collapse to "it" when unspottable
+//   ops.Some_Monnam/some_mon_nam   "Someone"/"someone" or "Something"/"something" when unspottable
 //   ops.canseemon/canspotmon
 //   ops.emit(msg)            pline -> update_topl
 //   ops.monkilled(mdef, ad)  death line + detach + corpse (mon.c monkilled)
@@ -1314,7 +1314,7 @@ export async function mhitm_ad_wrap(magr, mattk, mdef, mhm, ops) {
     }
     if (magr.mcan) mhm.damage = 0;
     if (!mhm.damage && (ops.canseemon(magr) || ops.canseemon(mdef)))
-        await ops.emit(`${ops.Monnam_vis(magr)} brushes against ${ops.mon_nam_vis(mdef)}.`);
+        await ops.emit(`${ops.Some_Monnam(magr)} brushes against ${ops.some_mon_nam(mdef)}.`);
 }
 
 export async function mhitm_ad_plys(magr, mattk, mdef, mhm, ops) {

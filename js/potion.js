@@ -17,7 +17,7 @@ import { pline, update_topl, y_n, newsym, display_nhwindow_message,
          unmap_object, see_monsters, flush_sting_effects, set_mimic_blocking, You_feel, status_hold, You_see, You_hear } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
-         GETOBJ_DOWNPLAY, body_part, hands_obj, short_oname, xname,
+         GETOBJ_DOWNPLAY, body_part, hands_obj, obj_doname, xname,
          remove_worn_item, is_plural, pair_of, otense, aobjnam, Tobjnam, Yobjnam2, Yname2,
          learn_unseen_invent, yname, worn_blocked, worn_extrinsic, Free_action,
          inaccessible_equipment_quiet, GETOBJ_EXCLUDE_INACCESS, youmonst_data } from './invent.js';
@@ -41,13 +41,13 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS, M_SEEN_SLEEP, LEG,
          Is_airlevel, Is_waterlevel } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { fruitname, simpleonames, thesimpleoname } from './objnam.js';
-import { newuhs } from './eat.js';
+import { fruitname, simpleonames, thesimpleoname, short_oname } from './objnam.js';
+import { newuhs, eatmupdate } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
 // js/monattk_data.js is a generated LEAF module (no imports of its own), so
 // naming it cannot create an import cycle or a TDZ edge.
 import { dmgtype, AD_DISE, AD_PEST } from './monattk_data.js';
-import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
+import { mflags1_of, mflags2_of, msound_of, is_undead_flag, is_demon_flag } from './monflags_data.js';
 import { dipfountain, drinkfountain, drinksink, breaksink, wash_hands, sink_backs_up } from './fountain.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { name_to_pmidx, monster_by_pmidx, makemon,
@@ -315,6 +315,9 @@ export function make_hallucinated_state(xtime, mask) {
 // ordinary newsym() cycle repainted them one step late (seed0383).
 export async function redraw_after_hallucination_change() {
     const { swallowed, see_monsters, see_objects, see_traps } = await import('./display.js');
+    /* C ref: potion.c:418-419 — in case we're mimicking an orange (hallucinatory
+       form of mimicking gold) update the mimicking's-over message */
+    if (!Hallucination()) await eatmupdate();
     if (game.u?.uswallow) {
         await swallowed(0);
     } else {
@@ -623,7 +626,7 @@ export async function potionbreathe_hero(obj) {
     case POT_BOOZE:
         if (!Confusion())
             await update_topl(`${Unaware() ? 'You dream that you feel' : 'You feel'} somewhat dizzy.`);
-        make_confused(itimeout_incr(HProp('Confusion'), rnd(5)), false); // rnd(5)
+        await make_confused(itimeout_incr(HProp('Confusion'), rnd(5)), false); // rnd(5)
         break;
     case POT_INVISIBILITY:
         if (!Blind() && !Invis()) {
@@ -798,9 +801,13 @@ async function peffect_oil(otmp) {
     }
     exercise(A_WIS, good_for_you);
 }
-// C ref: mondata.h likes_fire(ptr) — true only for fire-affinity polyforms
-// (fire elemental / red dragon / salamander …); a non-polymorphed hero never is.
-function likes_fire_hero() { return false; }
+// C ref: mondata.h likes_fire(ptr) == fire vortex / flaming sphere / likes_lava
+// (fire elemental, salamander), applied to gy.youmonst (the hero's current form).
+function likes_fire_hero() {
+    const nm = youmonst_data()?.name;
+    return nm === 'fire vortex' || nm === 'flaming sphere'
+        || nm === 'fire elemental' || nm === 'salamander';
+}
 
 // C ref: potion.c peffect_booze — ordinary booze confuses, heals one point,
 // provides a little nutrition, and is deliberately not self-identifying.
@@ -809,7 +816,7 @@ async function peffect_booze(otmp) {
     game.potion_unkn = (game.potion_unkn || 0) + 1;
     await pline(`Ooph!  This tastes like ${otmp.odiluted ? 'watered down ' : ''}${Hallucination() ? 'dandelion wine' : 'liquid fire'}!`);
     if (!otmp.blessed) {
-        make_confused(itimeout_incr(u?.uprops?.Confusion,
+        await make_confused(itimeout_incr(u?.uprops?.Confusion,
                                     d(2 + (u.uhs ?? 1 /* NOT_HUNGRY */), 8)), false);
     }
     if (!otmp.odiluted) await healup(1, 0, false, false);
@@ -839,7 +846,7 @@ async function peffect_confusion(otmp) {
     } else {
         game.potion_nothing = (game.potion_nothing || 0) + 1;
     }
-    make_confused(itimeout_incr(u?.uprops?.Confusion,
+    await make_confused(itimeout_incr(u?.uprops?.Confusion,
                                 rn1(7, 16 - 8 * bcsign(otmp))), false);
 }
 
@@ -1072,9 +1079,13 @@ async function peffect_water(otmp) {
         }
     }
 }
-// C ref: mondata.c mon_hates_blessings(mon) — undead or demon.  The hero is
-// only either while polymorphed, which this port never is when quaffing.
-function mon_hates_blessings_hero() { return false; }
+// C ref: mondata.c mon_hates_blessings(mon) == is_vampshifter(mon) ||
+// hates_blessings(mon->data) == is_undead(ptr) || is_demon(ptr), applied to
+// gy.youmonst (the hero's current form; a vampshifter is never the hero).
+function mon_hates_blessings_hero() {
+    const ptr = youmonst_data();
+    return is_undead_flag(ptr) || is_demon_flag(ptr);
+}
 
 // C ref: potion.c peffect_enlightenment().
 async function peffect_enlightenment(otmp) {
@@ -1697,7 +1708,7 @@ export async function dodip() {
     drink_ok_extra = 0;
     // C: Sprintf(obuf, "your %s", makeplural(body_part(HAND))).  hack.h HAND is
     // 6, not 0 (0 is ARM) — the old literal rendered "your arms".
-    const obuf = is_hands ? `your ${makeplural(body_part(HAND))}` : short_oname(obj, DIP_OBUF_LENLIMIT);
+    const obuf = is_hands ? `your ${makeplural(body_part(HAND))}` : short_oname(obj, obj_doname, thesimpleoname, DIP_OBUF_LENLIMIT);
     const named = verbose ? obuf : shortestname;
 
     if (!menu_requested) {
@@ -1707,11 +1718,6 @@ export async function dodip() {
             const q = `Dip ${named} into the fountain?`;
             if (await y_n(q) === 'y') {
                 if (!is_hands) obj.pickup_prev = 0;
-                // Model C's persistent tty topline: the full y_n query (incl.
-                // "[yn] (n)") stays displayed until the dip's own message, if
-                // any, replaces it.
-                game._pending_message = `${q} [yn] (n)`;
-                game._toplin = 0;
                 await dipfountain(obj);
                 return ECMD_TIME;
             }
@@ -1720,8 +1726,6 @@ export async function dodip() {
             const q = `Dip ${named} into the sink?`;
             if (await y_n(q) === 'y') {
                 if (!is_hands) obj.pickup_prev = 0;
-                game._pending_message = `${q} [yn] (n)`;
-                game._toplin = 0;
                 await dipsink(obj);
                 return ECMD_TIME;
             }

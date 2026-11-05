@@ -1708,9 +1708,15 @@ export async function nhl_gamestate(...args) {
         game.unweapon = unweapon_kept;
         /* memcpy(&u, gmst_ubak, sizeof u): in place, every holder of the hero
            record keeps pointing at it */
+        const youmonst_data = u.data;
         for (const k of Object.keys(u))
             if (!(k in gg.gmst_ubak)) delete u[k];
         Object.assign(u, _clone_data(gg.gmst_ubak));
+        /* gy.youmonst (hence youmonst.data) is not part of `struct u`, so the
+           memcpy leaves it describing whatever form the hero took inside the
+           tutorial, even though u.umonnum is the role's again (C quirk: a hero
+           who polymorphed in the tutorial keeps that form's speed on leaving). */
+        if (youmonst_data !== undefined) u.data = youmonst_data;
         /* C's rank() is computed from u.ulevel on every status redraw; this
            port caches the title in urole.rank.m, so refresh it after the
            in-place struct u restore changed u.ulevel */

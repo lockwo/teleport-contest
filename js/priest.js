@@ -973,11 +973,12 @@ async function adjalign_(n) {
 function livelog_printf_(mask, msg) {
     import('./livelog.js').then((L) => L.livelog_printf(mask, msg));
 }
-// C ref: mkroom.c *in_rooms(x, y, TEMPLE) — nonempty means "inside a temple".
+// C ref: hack.c *in_rooms(x, y, TEMPLE) — nonempty means "inside a temple".
+// A temple subroom's wall ring (and its door) is SHARED with the enclosing
+// room, so only in_rooms()'s neighbour scan resolves it; reading
+// levl[x][y].roomno directly answered "not a temple" for a priest in the door.
 function in_temple_room_(x, y) {
-    const here = game.level?.at(x, y)?.roomno ?? 0;
-    const r = roomAt(here);
-    return !!r && r.rtype === TEMPLE;
+    return in_rooms(x, y, TEMPLE).length > 0;
 }
 // Resolve the do_name.js handles Monnam_()/mon_nam_() prefer, once, without
 // adding a static edge and without a module-evaluation side effect.

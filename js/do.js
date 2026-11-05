@@ -731,6 +731,13 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // inactive */` stamps every monster with the departure turn, so mon_arrive()/
     // getlev's catch-up and dog_move's `mtmp2->mlstmv != svm.moves` test see it.
     await (await import('./dog.js')).update_mlstmv();
+    // C ref: do.c goto_level() -> save.c savelev_core() -> save_timers() /
+    // save_light_sources(RANGE_LEVEL): timer_is_local()/obj_is_local() run for
+    // EVERY pending timer and light, and panic ("Oops...") for an OBJ_FREE
+    // object, which is what tutorial(TRUE) has just left a timed or lit item
+    // in the inventory stash as.  The level store below is this port's
+    // in-memory savelev(), so run the same scan.
+    (await import('./timeout.js')).savelev_timer_scan();
     g._level_store[oldLedger] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
         // C ref: track.c save_track() (from savelev()) — utrack is written to
@@ -773,6 +780,14 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
             if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._level_store[k];
         for (const k of Object.keys(g._visited_levels))
             if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._visited_levels[k];
+    }
+    // C ref: do.c goto_level():1661-1664 — "mark #overview data for all dungeon
+    // branches as uninteresting" when the levels are discarded.
+    if (cant_go_back) {
+        const { remdun_mapseen } = await import('./dungeon.js');
+        for (let l_idx = 0; l_idx < (g.n_dgns | 0); ++l_idx)
+            if (!leaving_tutorial || l_idx === g.tutorial_dnum)
+                remdun_mapseen(l_idx);
     }
     if (cant_go_back) await (await import('./dog.js')).discard_migrations();
     clear_regions();
@@ -1400,7 +1415,7 @@ async function getlev_restore(ledger) {
     for (const mtmp of fmon_order(g.level.monsters)) {
         if (mtmp === g.u?.usteed) continue; // steed kept on list but off map
         if (elapsed > 0)
-            mon_catchup_elapsed_time(mtmp, elapsed);
+            await mon_catchup_elapsed_time(mtmp, elapsed);
         /* update shape-changers in case protection against them is different
            now than when the level was saved */
         const { restore_cham } = await import('./mon.js');
@@ -3362,7 +3377,7 @@ export async function revive_corpse(corpse) {
     const is_uwep = (corpse === game.uwep);
     const chewed = (corpse.oeaten | 0) !== 0;
     // C ref: do.c:2131 corpse_xname(corpse, chewed ? "bite-covered" : NULL, CXN_SINGULAR)
-    const { corpse_xname: corpse_xname_do } = await import('./objnam.js');
+    const { corpse_xname: corpse_xname_do, the: the_obj } = await import('./objnam.js');
     const cname = corpse_xname_do(corpse, chewed ? 'bite-covered' : null, CXN_SINGULAR);
     mcarry = (where === OBJ_MINVENT) ? corpse.ocarry : null;
     /* mcarry is NULL for 'buried' and 'contained' now */
@@ -3409,7 +3424,7 @@ export async function revive_corpse(corpse) {
                                           : DN.Monnam(mtmp)} `
                                 + `rises from the dead${effect}!`);
                 } else {
-                    await pline(`${upstart(the(cname))} disappears${effect}!`);
+                    await pline(`${upstart(the_obj(cname))} disappears${effect}!`);
                 }
             }
             break;

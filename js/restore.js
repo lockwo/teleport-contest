@@ -224,6 +224,7 @@ async function resume_preamble_tail() {
     const u = game.u || (game.u = {});
     game.disp = game.disp || {};
     game.disp.botlx = true;
+    game.botlx = true;  /* disp.botlx: display.js bot()/flush_screen read game.botlx */
     await read_engr_at(u.ux, u.uy); /* subset of pickup() */
     await (await import('./shk.js')).fix_shop_damage();
     await encumber_msg();
@@ -1858,7 +1859,7 @@ export async function getlev(nhfp, pid, lev) {
                 }
                 set_malign(mtmp);
             } else if (elapsed > 0) {
-                mon_catchup_elapsed_time(mtmp, elapsed);
+                await mon_catchup_elapsed_time(mtmp, elapsed);
             }
             /* update shape-changers in case protection against
                them is different now than when the level was saved */

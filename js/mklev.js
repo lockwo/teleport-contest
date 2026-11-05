@@ -57,7 +57,7 @@ import { mk_mplayer } from './mplayer.js';
 import { m_at, newsym, impossible, map_location } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
-import { set_corpsenm, des_object_defaults } from './mkobj.js';
+import { set_corpsenm, des_object_defaults, obj_ice_effects, dealloc_obj } from './mkobj.js';
 import { make_engr_at, des_engraving_at, random_engraving, wipe_engr_at, get_rnd_epitaph,
          make_grave } from './engrave.js';
 import {
@@ -2546,6 +2546,11 @@ function topologize(croom) {
             const loc = game.level.at(x, y);
             if (loc) { loc.edge = true; loc.roomno = loc.roomno ? SHARED : roomno; }
         }
+    // C ref: mklev.c topologize() tail — `for (subindex = 0; subindex <
+    // nsubrooms; subindex++) topologize(croom->sbrooms[subindex])`.  Reached
+    // only for a non-irregular parent that already owns subrooms.
+    for (let subindex = 0; subindex < (croom.nsubrooms | 0); subindex++)
+        topologize(croom.sbrooms[subindex]);
 }
 
 // ============================================================
@@ -2900,8 +2905,31 @@ function generate_stairs_find_room() {
     return g.level.rooms[rn2(g.level.nroom)];
 }
 
-export function mkstairs(x, y, up, croom) {
+// C ref: mkmaze.c set_levltyp() `was_ice && newtyp != ICE`: "frozen corpses
+// resume rotting, no more ice to melt away" -- obj_ice_effects(x, y, TRUE) +
+// spot_stop_timers(MELT_ICE_AWAY) (the live level timers are MELT_ICE_AWAY
+// only).  The Ice themed room arms a melt timer on every one of its squares
+// before the stairs / branch stairs are placed on one of them.
+function stairs_replace_ice(loc, x, y) {
+    if (loc.typ !== ICE) return;
+    obj_ice_effects(x, y, true);
+    const lts = game.level.level_timers;
+    if (!lts) return;
+    const where = (x << 16) | y;
+    for (let i = lts.length - 1; i >= 0; i--)
+        if (lts[i].where === where) lts.splice(i, 1);
+}
+
+export function mkstairs(x, y, up, croom, force = false) {
     const g = game;
+    // C ref: mklev.c mkstairs() `if (force) levl[x][y].typ = ROOM;` -- des-file
+    // stairs at explicit coordinates (sp_lev.c lspo_stair: force = !random
+    // coord) first turn the square into plain floor, even when the dunlev
+    // check below then refuses to place a stair there.
+    if (force) {
+        const floc = g.level.at(x, y);
+        if (floc) floc.typ = ROOM;
+    }
     // C ref: mklev.c:2188 `if (dunlev(&u.uz) == (up ? 1 :
     // dunlevs_in_dungeon(&u.uz))) return;`, before BOTH stairway_add() and
     // set_levltyp(STAIRS).  Without it Mines 1 gets a phantom `<`.
@@ -2913,6 +2941,7 @@ export function mkstairs(x, y, up, croom) {
         return;
     const loc = g.level.at(x, y);
     if (loc) {
+        stairs_replace_ice(loc, x, y); // C ref: set_levltyp(x, y, STAIRS)
         loc.typ = STAIRS;
         loc.ladder = up ? 1 : 2;
     }
@@ -6584,6 +6613,7 @@ export async function place_branch(br, x, y) {
         stairway_add(x, y, goes_up, false, dest || { dnum: 0, dlevel: 0 });
         const loc = g.level?.at(x, y);
         if (loc) {
+            stairs_replace_ice(loc, x, y); // C ref: set_levltyp(x, y, STAIRS)
             loc.typ = STAIRS;
             loc.ladder = goes_up ? LA_UP : LA_DOWN;
         }
@@ -6804,7 +6834,7 @@ function mktrap_victim(trap) {
         otmp = mkobj(cls, false);
         curse(otmp);
         if (kind === PIT && breaktest(otmp)) {
-            // dealloc: object never reaches the floor (matches C dealloc_obj).
+            dealloc_obj(otmp); // C ref: mklev.c mktrap_victim() dealloc_obj(otmp)
         } else {
             place_object(otmp, x, y);
         }

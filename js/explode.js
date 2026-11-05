@@ -364,7 +364,7 @@ export async function explode(x, y, type, dam, olet, expltype) {
     // to the hero is fatal and leaves bones".  Column-major, exactly as C loops.
     const { destroy_items, resist, zap_over_floor, burnarmor, ignite_items }
         = await import('./zap.js');
-    const { Monnam, killed, setmangry } = await import('./uhitm.js');
+    const { Monnam, killed, setmangry, seemimicLocal } = await import('./uhitm.js');
     const shopdamage = { value: false };
     if (dam) {
         for (let i = 0; i < 3; i++)
@@ -388,6 +388,8 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 if (engulfing_u(mtmp)) {
                     await engulfer_explosion_msg(adtyp, olet);
                 } else if (cansee(xx, yy)) {
+                    /* C ref: explode.c:506-507 */
+                    if (mtmp.m_ap_type) seemimicLocal(mtmp);
                     await update_topl(`${Monnam(mtmp)} is caught in the ${str}!`);
                 }
 
@@ -466,6 +468,9 @@ export async function explode(x, y, type, dam, olet, expltype) {
             if (grabbing && dist2(grabxy.x, grabxy.y, x, y) <= 2) damu *= 2;
             if (Upolyd()) u.mh = (u.mh | 0) - damu;
             else u.uhp = (u.uhp | 0) - damu;
+            /* C: disp.botl = TRUE.  game.botl is the flag mattacku()'s
+               per-attack `if (disp.botl) bot()` (mhitu.c:936) reads. */
+            game.botl = true;
             game.disp = game.disp || {};
             game.disp.botl = true;
         }

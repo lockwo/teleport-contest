@@ -82,7 +82,7 @@ import { curr_mon_load, wake_nearto } from './mon.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { builds_up, level_difficulty, surface, earth_sense } from './dungeon.js';
+import { builds_up, level_difficulty, surface, earth_sense, has_ceiling } from './dungeon.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { LEG, VIBRATING_SQUARE, HEADSTONE, WT_ELF, PARANOID_TRAP, MIGR_RANDOM, ROLL, LAUNCH_KNOWN } from './const.js';
 // C ref: dokick.c — the whole ^D command (kick_dumb/kick_ouch/kick_door/
@@ -95,7 +95,7 @@ import { is_art, attacks, bare_artifactname, ART_STING, is_magic_key, autokey } 
 import { lock_action, reset_pick } from './lock.js';
 import { weapon_descr, is_pick } from './weapon.js';
 import { rloco, dotelecmd } from './teleport.js';
-import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value, add_damage } from './shk.js';
+import { costly_spot, subfrombill, onshopbill, addtobill, find_objowner, stolen_value, add_damage, shk_blocking_door, shk_blocking_entry, block_door_feedback } from './shk.js';
 import { in_rooms, shop_keeper, Stealth } from './shkroom.js';
 import { autopick_testobj, container_at, safe_qbuf } from './pickup.js';
 import { is_drawbridge_wall, is_db_wall } from './dbridge.js';
@@ -436,7 +436,14 @@ function u_simple_floortyp(x, y) {
     const loc = game.level?.at(x, y);
     const typ = loc ? loc.typ : STONE;
     const u = game.u;
-    const airborne = !!(Levitation_fu() || Flying_fu());
+    // C ref: hack.c:1835 `u_in_air = Levitation || Flying || !grounded(youmonst.data)`;
+    // mondata.h grounded(): not a flyer (Flying covers a flying polyform), not a
+    // floater (S_EYE/S_LIGHT), not a ceiling clinger under a real ceiling.
+    const hf = youmonst_data_pub();
+    const floater = hf?.mlet === 'e' || hf?.mlet === 'y';
+    const clinger = (mflags1_of(hf) & M1_CLING) !== 0;
+    const airborne = !!(Levitation_fu() || Flying_fu()
+                        || floater || (clinger && has_ceiling(u.uz)));
     if (typ === WATER) return WATER; // wall of water: fly/lev doesn't matter
     if (typ === LAVAWALL) return LAVAWALL; // wall of lava: fly/lev doesn't matter
     if (!airborne) {
@@ -549,29 +556,44 @@ function doorless_door(x, y) {
 
 // C ref: hack.c test_move() lines 1140-1150 and 1208-1214 — a diagonal step
 // (dx && dy) cannot move INTO or OUT of a doorway that still has its door
-// (open/closed/locked/broken-only doesn't count as doorless). NOT PORTED:
-// shk.c block_door()/block_entry() also blocks a DOORLESS shop doorway when
-// the shopkeeper is on post and owed money (or hero carries a digging tool),
-// printing "<Shk> blocks your way!" — needs ESHK (post/door coords, debit/
-// billct/robbed) this port doesn't keep, so only the has-a-door case blocks
-// here. Passes_walls heroes bypass both arms (C's `dx && dy && !Passes_walls`).
-function blocksDiagonalDoor(ux, uy, x, y, dx, dy) {
+// (open/closed/locked/broken-only doesn't count as doorless), nor through a
+// doorless one the shopkeeper guards: `(!doorless_door(x, y) || block_door(x, y))`
+// and `(!doorless_door(ux, uy) || block_entry(x, y))`.  Passes_walls heroes
+// bypass both arms (C's `dx && dy && !Passes_walls`).  The shopkeeper arms
+// publish "<Shk> blocks your way!" through `out.shkp` (the caller prints it
+// with block_door_feedback() at the point C's pline fires), because this gate
+// is synchronous.
+function blocksDiagonalDoor(ux, uy, x, y, dx, dy, out = null) {
     if (!(dx && dy) || hero_passes_walls()) return false;
     // Diagonal move INTO a door with a door present.  Closed/locked doors are
     // *not* rejected here: C's test_move() handles them via the closed_door
     // branch (autoopen) before ever reaching testdiag (hack.c:1075 vs 1140), so
     // only an open/broken-with-frame door blocks a diagonal entry.
     const tgt = game.level?.at(x, y);
-    if (tgt && IS_DOOR(tgt.typ) && !doorless_door(x, y)
-        && !(tgt.doormask & (D_CLOSED | D_LOCKED))) return true;
+    if (tgt && IS_DOOR(tgt.typ) && !(tgt.doormask & (D_CLOSED | D_LOCKED))) {
+        if (!doorless_door(x, y)) return true;
+        const shkp = shk_blocking_door(x, y);
+        if (shkp) {
+            if (out) { out.shkp = shkp; out.into = true; }
+            return true;
+        }
+    }
     // Diagonal move OUT of a doorway with a door present.
     const here = game.level?.at(ux, uy);
-    if (here && IS_DOOR(here.typ) && !doorless_door(ux, uy)) return true;
+    if (here && IS_DOOR(here.typ)) {
+        if (!doorless_door(ux, uy)) return true;
+        const shkp = shk_blocking_entry(x, y);
+        if (shkp) {
+            if (out) out.shkp = shkp;
+            return true;
+        }
+    }
     return false;
 }
 
-async function mention_diagonal_door(x, y) {
-    const into = IS_DOOR(game.level?.at(x, y)?.typ) && !doorless_door(x, y);
+async function mention_diagonal_door(x, y, intoShk = false) {
+    const into = intoShk
+        || (IS_DOOR(game.level?.at(x, y)?.typ) && !doorless_door(x, y));
     if (game.flags?.mention_walls || (into && game.u?.uinwater))
         await pline(`You can't move diagonally ${into ? 'into' : 'out of'} an intact doorway.`);
 }
@@ -896,6 +918,22 @@ export async function rhack(key) {
         // key a canned command left unconsumed (an item action whose command
         // bailed with ECMD_OK before its getobj(), e.g. #throw with no hands)
         // is the NEXT command, read with no parse() and no flush_screen(1).
+        // C ref: cmd.c rhack() `if ((cmdq = cmdq_pop()) != 0) { ...; key =
+        // (cq.typ == CMDQ_KEY) ? cq.key : 0; }` then `if (!key ...) { nhbell();
+        // reset_cmd_vars(TRUE); return; }` — a queued entry that is neither a
+        // key nor an extended command (the direction autounlock's "Kick it?"
+        // queued for a dokick that bailed before its getdir(): "Your load is too
+        // heavy to balance yourself for a kick") is popped as the NEXT command,
+        // which does nothing and clears both queues.  Left in place it ate the
+        // following kick's own canned command.
+        if (!game.in_doagain) {
+            const stale = cmdq_peek(CQ_CANNED);
+            if (stale && stale.typ !== CMDQ_KEY && stale.typ !== CMDQ_EXTCMD) {
+                cmdq_pop(CQ_CANNED);
+                reset_cmd_vars(true);
+                return;
+            }
+        }
         const canned = !game.in_doagain && cmdq_peek(CQ_CANNED)?.typ === CMDQ_KEY
             ? cmdq_pop(CQ_CANNED) : null;
         const replay = game.in_doagain ? cmdq_pop(CQ_REPEAT) : canned;
@@ -1907,6 +1945,13 @@ export async function rhack(key) {
             // C: a PREFIXCMD sets rhack()'s local prefix_seen and re-enters
             // parse() for the follow-up key; that flag dies with this call.
             const savedSeen = game.context._prefix_seen;
+            // C ref: cmd.c rhack():3733-3736 — the run/rush prefix is a PREFIXCMD
+            // recorded on CQ_REPEAT like F/m (clearing it unless it follows
+            // another prefix), so ^A replays "g" + direction, not an older command.
+            if (!game.in_doagain) {
+                if (!savedSeen && !mPrefixSeen) cmdq_of(CQ_REPEAT).length = 0;
+                cmdq_add_key(CQ_REPEAT, origKey);
+            }
             game.context._prefix_seen = true;
             await rhack(0);
             game.context._prefix_seen = savedSeen;
@@ -2063,7 +2108,10 @@ export async function rhack(key) {
             // C ref: cmd.c rhack():3734-3760 -- doextcmd clears CQ_REPEAT, then
             // (ge.ext_tlist) the command it ran is added post-execution and
             // shifted to the front, behind which sit the keys its prompts queued.
+            // midRepeat already holds what the command's prompts queued after
+            // repeatMark; whatever sits below it was queued earlier.
             const mid = cmdq_of(CQ_REPEAT).splice(0);
+            mid.push(...midRepeat);
             if (game._ext_tlist)
                 cmdq_of(CQ_REPEAT).push({ typ: CMDQ_EXTCMD, ec_entry: { ef_txt: game._ext_tlist } }, ...mid);
         } else if (game._itemaction_repeat) {
@@ -2179,7 +2227,16 @@ export async function find_trap(trap) {
     if (Blind()) feel_location(trap.tx, trap.ty); // C: feel_newsym()
     else newsym(trap.tx, trap.ty);
     const loc = game.level?.at(trap.tx, trap.ty);
-    const cleared = Hallucination() || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
+    // C: `Hallucination || levl[x][y].glyph != trap_to_glyph(trap)`.  Without
+    // hero_memory (Planes of Water and Air, mkmaze.c fixup_special) map_trap()
+    // never stores into levl[][].glyph, so it still holds the level's base
+    // element and always differs from the trap's glyph.
+    // A visible region (gas cloud) on the square is drawn by newsym() through
+    // show_region() and returns BEFORE _map_location(), so levl[x][y].glyph
+    // keeps the old memory and differs from the trap's glyph (display.c newsym).
+    const cleared = Hallucination() || !game.level?.flags?.hero_memory
+        || !!loc?.disp_region
+        || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
     if (cleared) {
         // C cls() opens with display_nhwindow(WIN_MESSAGE, FALSE): a pending
         // topline (e.g. a squeaky board's note) pages with --More-- first,
@@ -3789,11 +3846,14 @@ async function domove_core(dx, dy, attemptTracked) {
                 return;
             }
         }
-        if (!displaceu && (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
-            || blocksMove(newx, newy))) {
+        const _bd = { shkp: null };
+        const _blockedDiag = !displaceu
+            && blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy, _bd);
+        if (!displaceu && (_blockedDiag || blocksMove(newx, newy))) {
             feel_refused_step(newx, newy, u.dx, u.dy);
-            if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy))
-                await mention_diagonal_door(newx, newy);
+            if (_bd.shkp) await block_door_feedback(_bd.shkp);
+            if (_blockedDiag)
+                await mention_diagonal_door(newx, newy, !!_bd.into);
             game.context.move = 0;
             nomul(0); // C ref: hack.c:2843-2847 `if (!door_opened) { move = 0; nomul(0); }`
             return;
@@ -4241,13 +4301,15 @@ async function domove_core(dx, dy, attemptTracked) {
         && !blocksMove(newx, newy)
         && bad_rock_hero(u.ux, newy) && bad_rock_hero(newx, u.uy)
         && cant_squeeze_thru_hero() !== 0;
-    if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy)
+    const _bdm = { shkp: null };
+    if (blocksDiagonalDoor(u.ux, u.uy, newx, newy, u.dx, u.dy, _bdm)
         && !_squeezeFirst
         && !IS_OBSTRUCTED(game.level?.at(newx, newy)?.typ ?? STONE)) {
+        if (_bdm.shkp) await block_door_feedback(_bdm.shkp);
         // A refused diagonal out of a doorway still first tests the
         // destination, so a blind hero may feel a wall there.
         feel_refused_step(newx, newy, u.dx, u.dy);
-        await mention_diagonal_door(newx, newy);
+        await mention_diagonal_door(newx, newy, !!_bdm.into);
         game.context.move = 0;
         nomul(0); // C ref: hack.c domove_core() — a failed test_move() ends a run
         return;
@@ -4464,8 +4526,14 @@ async function domove_core(dx, dy, attemptTracked) {
     // own newsym(u.ux, u.uy) (vision.c:850), so there is no second newsym of
     // the new square here.  A second one spent an extra display-rng draw on
     // the object under a hallucinating hero.
-    newsym(oldx, oldy);
-    vision_recalc(1);
+    // C ref: hack.c:2969-2972 — the newsym/vision_recalc pair sits inside
+    // `if (u.ux0 != u.ux || u.uy0 != u.uy)`: a no-op domove (travel with
+    // dx=dy=0) must not rebuild vision, or a blocker-edge square the last real
+    // recalc did not see (a boulder mimic behind a boulder mimic) is drawn early.
+    if (oldx !== u.ux || oldy !== u.uy) {
+        newsym(oldx, oldy);
+        vision_recalc(1);
+    }
     // C printed mention_map's announcements from inside newsym(), i.e. here,
     // before the turn's time/status update; this port queues them (newsym() is
     // synchronous), so print them now rather than at the next key read.
@@ -5140,12 +5208,21 @@ async function dopush(sx, sy, rx, ry, otmp, costly) {
         const _oi = _objs.indexOf(otmp);
         if (_oi >= 0) _objs.splice(_oi, 1);
     }
+    // C ref: hack.c movobj() — after remove_object(): maybe_unhide_at() and
+    // newsym() of the square the object LEAVES (under Hallucination each
+    // newsym draws the display rng), then place_object() and newsym() of the
+    // destination.  dopush() then newsym()s <sx,sy> a second time below.
+    recalc_block_point(sx, sy);
+    {
+        const { maybe_unhide_at } = await import('./monmove.js');
+        await maybe_unhide_at(otmp.ox, otmp.oy);
+    }
+    newsym(otmp.ox, otmp.oy);
     otmp.ox = rx;
     otmp.oy = ry;
     if (_objs) _objs.push(otmp);
     stamp_fobj(otmp);
     recalc_block_point(rx, ry);
-    recalc_block_point(sx, sy);
     newsym(rx, ry);
     if (Blind()) {
         feel_location(rx, ry);
@@ -5818,8 +5895,10 @@ async function domove_swap_with_pet(mtmp, x, y) {
     // C ref: hack.c — the reveal happens with the hero back on their ORIGINAL
     // square so the display doesn't draw them at the destination before a
     // refusal below cancels the swap.
+    u.ux = u.ux0; u.uy = u.uy0;
     mtmp.mundetected = 0;
     if (mtmp.m_ap_type) seemimicLocal(mtmp);
+    u.ux = mtmp.mx; u.uy = mtmp.my; /* resume swapping positions */
 
     const trap = mtmp.mtrapped ? trap_at(mtmp.mx, mtmp.my) : null;
     if (!trap) mtmp.mtrapped = 0;
@@ -5856,7 +5935,7 @@ async function domove_swap_with_pet(mtmp, x, y) {
         // C: feeltrap() reveals the trap on the map first when it wasn't seen.
         const what = trapname(trap.ttyp, false);
         let which = 'that ';
-        if (!trap.tseen) { trap.tseen = 1; newsym(trap.tx, trap.ty); which = `${an(what).slice(0, -what.length)}`; }
+        if (!trap.tseen) { (await import('./trap.js')).feeltrap(trap); which = `${an(what).slice(0, -what.length)}`; }
         await pline(`You stop.  ${YMonnam(mtmp)} can't move out of ${which}${what}.`);
         await handle_tip(TIP_UNTRAP_MON);
         return false;
@@ -6151,9 +6230,65 @@ function cmd_putstr(_win, _attr, _str) {}
 function cmd_getlin(_query, out) { if (out) out.buf = '\x1b'; return; }
 function cmd_nhbell() {}
 function cmd_mark_synch() {}
-// C ref: cmd.c:3517 randomkey() — js/wintty.js keeps the port's copy (iflags
-// .debug_fuzzer is never set here, so the branches guarded by it never run).
-function cmd_randomkey() { return 0x1b; }
+// C ref: cmd.c:3517 randomkey() — the debug fuzzer's random keystroke.
+let randomkey_i = 0;          /* C: static unsigned i */
+let randomkey_last_c = 0;     /* C: static char last_c */
+function cmd_randomkey() {
+    let c;
+
+    /* give ^A and ^P a high probability of being repeated */
+    if ((randomkey_last_c === 0x01 || randomkey_last_c === 0x10)
+        && game.input_state === 'commandInp' && rn2(5))
+        return randomkey_last_c;
+
+    switch (rn2(16)) {
+    default:
+        c = 0x1b;
+        break;
+    case 0:
+        c = 0x0a;
+        break;
+    case 1: case 2: case 3: case 4:
+        c = rn2(0x7e - 0x20 + 1) + 0x20;      /* rn1('~' - ' ' + 1, ' ') */
+        break;
+    case 5:
+        c = rn2(2) ? 0x09 : 0x20;
+        break;
+    case 6:
+        c = rn2(0x7a - 0x61 + 1) + 0x61;      /* rn1('z' - 'a' + 1, 'a') */
+        break;
+    case 7:
+        c = rn2(0x5a - 0x41 + 1) + 0x41;      /* rn1('Z' - 'A' + 1, 'A') */
+        break;
+    case 8: {
+        /* SIZE(extcmdlist) includes C's terminating {0} row */
+        const idx = randomkey_i++ % (extcmdlist.length + 1);
+        c = idx < extcmdlist.length ? (extcmdlist[idx].key & 0xff) : 0;
+        break;
+    }
+    case 9:
+        c = 0x23;
+        break;
+    case 10: case 11: case 12: {
+        const d = rn2(N_DIRS);
+        const m = rn2(7) ? MV_WALK : (!rn2(3) ? MV_RUSH : MV_RUN);
+
+        c = cmd_from_dir(d, m).charCodeAt(0);
+        break;
+    }
+    case 13:
+        c = rn2(0x39 - 0x30 + 1) + 0x30;      /* rn1('9' - '0' + 1, '0') */
+        break;
+    case 14:
+        /* any char, but avoid '\0' because it's used for mouse click */
+        c = rnd(game.iflags?.wc_eight_bit_input ? 255 : 127);
+        break;
+    }
+
+    if (game.input_state === 'commandInp')
+        randomkey_last_c = c;
+    return c;
+}
 // ── gc.Cmd and the Cmd_bind list ───────────────────────────────────────────
 // C ref: func_tab.h struct Cmd_bind + hack.h struct cmd.  The ONE command
 // binding table: a singly linked list of {key, userbind, param, cmd, next}.
@@ -6655,7 +6790,7 @@ const spkeys_binds = [
 // (msghist(): cw->data[]/maxrow/maxcol, filled by remember_topl()).  The
 // Single and combination modes allow ^P to advance history at a wrapped More.
 export async function doprev_message() {
-    const { msghist } = await import('./display.js');
+    const { msghist, is_dec_prefix_msg } = await import('./display.js');
     const { tty_text_window } = await import('./invent.js');
     const h = msghist();
     const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
@@ -6667,7 +6802,7 @@ export async function doprev_message() {
            tty_putmixed(), may put a graphics character on the top line.  A
            recalled message is not mixed, so that leading DEC graphics glyph
            reaches the terminal as a raw high-bit byte and shows as blank. */
-        if (str && Object.values(DEC_TO_UNICODE).includes(str[0]))
+        if (str && (Object.values(DEC_TO_UNICODE).includes(str[0]) || is_dec_prefix_msg(str)))
             str = ' ' + str.slice(1);
         // C redotoplin() calls putsyms(): hard-wrap at CO-1, including the
         // unwrapped query+answer stored by getline.c:81.
@@ -6701,7 +6836,7 @@ export async function doprev_message() {
     const putstr_wrapped = (lines) => {
         const out = [];
         let maxcol = 0;
-        for (const ln of lines) maxcol = Math.max(maxcol, tty_putstr_text(out, ln));
+        for (const ln of lines) maxcol = Math.max(maxcol, tty_putstr_text(out, is_dec_prefix_msg(ln) ? ' ' + ln.slice(1) : ln));
         return { lines: out.map((t) => t.replace(DEC_GLYPH_RE, ' ')), maxcol };
     };
     const step_back = () => {
@@ -7524,7 +7659,15 @@ export async function dolookaround() {
             // symset draws for each corridor flavour (DECgraphics/SYMBOLS= remap
             // '#', so the literal char cannot be tested).
             const cell = cmd_levl(x, y);
+            // glyph_at() must be the corridor cmap itself: a boulder drawn with
+            // the boulder:# option, a sink or a tree shares the '#' character
+            // but is an object / other cmap glyph in C, so it only counts when
+            // gather_locs_interesting() (with its view filter) accepts it.
+            const rg = cell?.remembered_glyph;
             const iscorr = corr_next2u && !!cell && !cell.disp_monster
+                && cmd_typ_at(x, y) === CORR
+                && rg?.objotyp == null && !rg?.pile && !cell.invisMon
+                && !cell.disp_warning && !cell.disp_hstatue
                 && !is_cmap_engraving_at(x, y)
                 && [false, true].some((waslit) => {
                     const g = terrain_glyph({ typ: CORR, waslit }, x, y);

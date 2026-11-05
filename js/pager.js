@@ -937,10 +937,10 @@ import { trapped_chest_at, trapped_door_at } from './detect.js';
 import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          VENOM_CLASS, COIN_CLASS, STATUE, CORPSE, SLIME_MOLD, LEASH,
          mksobj, mkobj, is_treefruit } from './mkobj.js';
-import { monster_by_pmidx } from './makemon.js';
+import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
 import { simpleonames } from './objnam.js';
 import { costly_spot } from './shk.js';
-import { rndmonnam as rndmonnam_dn, mon_pmname as mon_pmname_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename } from './do_name.js';
+import { rndmonnam as rndmonnam_dn, mon_pmname as mon_pmname_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename, Mgender } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { doextlist, cmd_from_func, waterbody_name } from './cmd.js';
 import { rn2 } from './rng.js';
@@ -1162,6 +1162,14 @@ export function pg_glyph_at(x, y) {
     if (remembered?.wall && remembered.ch === sym)
         return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
+}
+// C ref: pager.c do_screen_description() `prefix = encglyph(glyphinfo.glyph)` —
+// putmixed() prints that glyph's ttychar.  A cmap the DECgraphics/curses symset
+// remaps has a high-bit/control ttychar, which the tty only renders through its
+// graphics shift at putmixed() time; a recalled copy (^P) shows it as a blank.
+export function glyph_prefix_is_symset_meta(x, y) {
+    const g = pg_glyph_at(x, y);
+    return g.kind === 'cmap' && (!!g.dec || cmap_symset_remapped(g.cmap));
 }
 // C ref: display.c show_glyph() `a11y.glyph_updates` (mention_map) arm: a spot
 // that was GLYPH_NOTHING/UNEXPLORED (or whose new glyph is furniture), and is not
@@ -1412,7 +1420,7 @@ export function mhidden_description(mon, mhid_flags) {
     } else if (apt === M_AP_MONSTER) {
         if (show_altmon) {
             if (incl_prefix) out += ', masquerading as ';
-            let what = monster_by_pmidx(mon.mappearance)?.name || 'creature';
+            let what = pmname_of_pmidx(mon.mappearance, Mgender(mon));
             if (incl_prefix) what = pg_an(what);
             out += what;
         }
@@ -1456,6 +1464,12 @@ function pg_remembered_glyph(x, y) {
     if (!rg) return { kind: 'unexplored', sym: ' ', x, y };
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym: rg.ch, x, y };
+    // C ref: display.c map_object() under Hallucination — the remembered glyph
+    // (levl[x][y].glyph, which mhidden_description reads) is a random object
+    // glyph, whether it came from a floor object or from a mimic posing as one.
+    if (rg.hallucotyp && !rg.objotyp && !loc.disp_hstatue)
+        return { kind: 'object', obj: null, otyp: rg.hallucotyp,
+                 corpsenm: rg.corpsenm, sym: rg.ch, x, y };
     // C ref: display.c display_monster() M_AP_OBJECT -> map_object(): a seen
     // mimic posing as an object wrote its fake object's glyph into
     // levl[x][y].glyph, so the memory decodes to that object type
@@ -2279,7 +2293,7 @@ export async function do_supplemental_info(name, pm, without_asking) {
     await display_text_window(lines);
 }
 /* mondata.h is_orc(ptr) */
-function pg_is_orc(pm) { return !!pm && pm.mlet === 'o'; }
+function pg_is_orc(pm) { return !!pm && (mflags2_of(pm) & M2_ORC) !== 0; }
 
 // C ref: pager.c:2336 doidtrap() — the '^' #showtrap command.  Trapped doors
 // and chests used to be shown as fake bear traps; they have their own trap

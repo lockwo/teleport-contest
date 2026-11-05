@@ -655,7 +655,15 @@ export async function domonnoise(mtmp) {
         /* FALLTHRU */
     case MS_HUMANOID:
         if (!mtmp.mpeaceful) {
-            pline_msg = 'threatens you.'; /* (In_endgame mplayer: out of scope) */
+            // C ref: sounds.c domonnoise MS_HUMANOID: In_endgame && is_mplayer
+            // -> mplayer_talk(); else "threatens you."
+            const { In_endgame } = await import('./const.js');
+            const { is_mplayer } = await import('./mondata.js');
+            if (In_endgame(game.u?.uz) && is_mplayer(ptr)) {
+                const { mplayer_talk } = await import('./mplayer.js');
+                await mplayer_talk(mtmp);
+            } else
+                pline_msg = 'threatens you.';
             break;
         }
         if (mtmp.mflee) pline_msg = 'wants nothing to do with you.';

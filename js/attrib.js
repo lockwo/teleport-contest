@@ -231,7 +231,13 @@ export async function poisontell(typ, exclaim) {
     let [lead, txt] = POISEFF[typ];
     if (typ === A_STR && acurr_eff(A_STR) === 125) txt = 'innately weaker';
     else if (typ === A_CON && acurr_eff(A_CON) === 25) txt = 'sick inside';
-    const { update_topl } = await import('./display.js');
+    const { update_topl, You_feel } = await import('./display.js');
+    // C ref: attrib.c poisontell() — poiseff[] delivery_func is You_feel for
+    // A_STR/A_CON ("You dream that you feel " while Unaware).
+    if (lead === 'You feel ') {
+        await You_feel(`${txt}${exclaim ? '!' : '.'}`);
+        return;
+    }
     await update_topl(`${lead}${txt}${exclaim ? '!' : '.'}`);
 }
 

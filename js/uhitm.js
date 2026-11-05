@@ -23,17 +23,8 @@ import { ONAME, setONAME } from './const.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
-import { shkname, in_rooms, shop_keeper } from './shkroom.js';
-
-// C ref: shk.c tended_shop(sroom) — shop_keeper(room) still inside his shop.
-// (inhishop() is file-static in shkroom.js; three lines rather than a new
-// cross-file export, since eight ports touch that file.)
-function tended_shop(rno) {
-    const shkp = shop_keeper(rno);
-    if (!shkp) return false;
-    const rmno = game.level?.at(shkp.mx, shkp.my)?.roomno ?? 0;
-    return rmno !== 0 && rmno === shkp.eshk?.shoproom;
-}
+import { shkname, in_rooms } from './shkroom.js';
+import { roomAt } from './roomat.js';
 import { WEP_SDAM, WEP_LDAM } from './weapondmg_data.js';
 import { dmgval, hitval, abon, dbon, weapon_type, is_axe,
          mon_hates_blessings, weapon_hit_bonus_core,
@@ -181,8 +172,11 @@ export async function do_attack(mtmp) {
         // rnd(6) or rn2(6) is rolled at all.
         let inshop = false;
         if (!foo) {
+            // C: `tended_shop(&svr.rooms[*p - ROOMOFFSET])` for each p in
+            // in_rooms(mx, my, SHOPBASE); roomAt() resolves subroom roomnos.
+            const { tended_shop } = await import('./shk.js');
             for (const rno of in_rooms(mtmp.mx, mtmp.my, SHOPBASE))
-                if (tended_shop(rno)) { inshop = true; break; }
+                if (tended_shop(roomAt(rno))) { inshop = true; break; }
         }
 
         if (inshop || foo) {
@@ -403,7 +397,14 @@ async function object_from_map_lite(mtmp) {
 }
 
 async function that_is_a_mimic_message(mtmp) {
-    if (Blind()) return "Wait!  That's a monster!";
+    // C ref: uhitm.c that_is_a_mimic() Blind arm: without telepathy the generic
+    // "a monster"; with it, only a monster-disguised mimic is named (a_monnam),
+    // otherwise there is no message at all (null).
+    if (Blind()) {
+        if (!Blind_telepat()) return "Wait!  That's a monster!";
+        return M_AP_TYPE(mtmp) === M_AP_MONSTER
+            ? "Wait!  That's " + a_monnam_uh(mtmp) + '!' : null;
+    }
 
     let fmtbuf;
     if (M_AP_TYPE(mtmp) === M_AP_FURNITURE) {
@@ -557,7 +558,7 @@ export async function stumble_onto_mimic(mtmp) {
     // seemimic -> newsym repaints the cell immediately here, so revealing
     // before the message shows the true glyph on any --More-- the message
     // raises, where C still shows the disguise.
-    await pline(msg);
+    if (msg !== null) await pline(msg);
     seemimicLocal(mtmp);
     await mimic_grabs_hero(mtmp);
     await wakeupAttack(mtmp, false);
@@ -1542,6 +1543,7 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             const { M_SEEN_ACID } = await import('./const.js');
             if (!Acid_resistance()) {
                 await mdamageu(mon, tmp);
+                if (game.program_state?.gameover) return; /* done() never returns */
                 monstunseesu(M_SEEN_ACID);
             } else {
                 monstseesu(M_SEEN_ACID);
@@ -2531,6 +2533,8 @@ function is_mplayer(mdat) {
     return idx != null && idx >= PM_ARCHEOLOGIST() && idx <= PM_WIZARD();
 }
 export function x_monnam(mtmp, article, _adjective, _suppress, called) {
+    /* C ref: do_name.c x_monnam: if (mtmp == &gy.youmonst) return "you"; */
+    if (mtmp && (mtmp === game.youmonst || mtmp === game.u)) return 'you';
     // C ref: do_name.c:846-859 — at game over the true name is wanted, and an
     // engulfer, the hero's consumer for the moment, always rates "the" and
     // never "invisible".
@@ -2629,6 +2633,8 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
             || mtmp?.data?.pmidx === PM_GHOST(); /* a ghost's name is always at the start */
         if (nameAtStart && (article === 3 || !has_adjectives))
             article = base === 'Wizard of Yendor' ? 1 : 0;
+        else if (((mtmp?.data?.geno ?? 0) & G_UNIQ_XM) !== 0 && article === 2)
+            article = 1;   /* C: G_UNIQ with ARTICLE_A becomes ARTICLE_THE */
         // C ref: do_name.c:1006 — a named GHOST is "<name>'s ghost", never the
         // bare name: christen_monst() puts the dead hero's name on the bones
         // ghost, so "You miss Elara." must read "You miss Elara's ghost."
@@ -2763,7 +2769,7 @@ import { EGG, BOULDER, HEAVY_IRON_BALL, IRON_CHAIN, EXPENSIVE_CAMERA,
          weight } from './mkobj.js';
 import { rnl, rn1 } from './rng.js';
 import { monster_by_pmidx } from './makemon.js';
-import { Adjmonnam, Mgender, y_monnam, some_mon_nam, mhe, mhis } from './do_name.js';
+import { Adjmonnam, Mgender, y_monnam, some_mon_nam, Some_Monnam, mhe, mhis } from './do_name.js';
 import { mdamageu } from './mhitu.js';
 import { troll_baned, resists_poison, resists_blnd_by_arti } from './mondata.js';
 
@@ -3538,11 +3544,9 @@ export async function hmon_hitmon_do_hit(hmd, mon, obj) {
            doesn't pass through and continue to a further target */
         if ((hmd.thrown === HMON_THROWN || hmd.thrown === HMON_KICKED)
             && stone_missile_uh(obj) && passes_rocks(hmd.mdat)) {
-            const { update_topl } = await import('./display.js');
+            const { hit } = await import('./zap.js');
             /* mthrowu.c hit(mshot_xname(obj), mon, " but does no harm.") */
-            await update_topl(`${The_uh(I.xname(obj))} `
-                + `${vtense_uh(I.xname(obj), 'hit')} ${mon_nam(mon)}`
-                + ` but does no harm.`);
+            await hit(I.mshot_xname(obj), mon, ' but does no harm.');
             await wakeupAttack(mon, true);
             hmd.doreturn = true;
             hmd.retval = true;
@@ -3696,9 +3700,10 @@ export async function hmon_hitmon_jousting(hmd, mon, obj) {
 
     if (hmd.jousting < 0) {
         /* (must be either primary or secondary weapon to get here) */
-        game.u.twoweap = false;   /* wield.c set_twoweap(FALSE); untwoweapon()
-                                   * is too verbose here */
-        if (obj === game.uwep) await (await import('./wield.js')).uwepgone(); /* sets gu.unweapon */
+        const W = await import('./wield.js');
+        W.set_twoweap(false);   /* C ref: uhitm.c hmon_hitmon_jousting; untwoweapon()
+                                 * is too verbose here */
+        if (obj === game.uwep) await W.uwepgone(); /* sets gu.unweapon */
         await update_topl(`${highc_uh(I.yname(obj))} shatters on impact!`);
         /* minor side-effect: a broken lance won't split puddings */
         I.useup(obj);
@@ -3923,10 +3928,11 @@ export async function shade_miss(magr, mdef, obj, thrown, verbose) {
     if (verbose
         && ((youdef || cansee(mdef.mx, mdef.my) || sensemon(mdef))
             || (youagr && m_next2u(mdef)))) {
-        const I = await import('./invent.js');
+        const { cxname } = await import('./objnam.js');
         const { update_topl } = await import('./display.js');
         const harmlessly_thru = ' harmlessly through ';
-        const what = (!obj || shade_aware(obj)) ? 'attack' : I.xname(obj);
+        /* C ref: uhitm.c:2035 cxname(obj) (a corpse keeps its species) */
+        const what = (!obj || shade_aware(obj)) ? 'attack' : cxname(obj);
         const target = youdef ? 'you' : mon_nam(mdef);
         if (!thrown) {
             const whose = youagr ? 'Your' : s_suffix(Monnam(magr));
@@ -4151,8 +4157,8 @@ const uhitm_ops = {
     get vis() { return game.vis; },
     Monnam: (mon) => mon === YOUMONST ? 'You' : Monnam(mon),
     mon_nam: (mon) => mon === YOUMONST ? 'you' : mon_nam(mon),
-    Monnam_vis: (mon) => mon === YOUMONST ? 'You' : Monnam(mon),
-    mon_nam_vis: (mon) => mon === YOUMONST ? 'you' : mon_nam(mon),
+    Some_Monnam: (mon) => mon === YOUMONST ? 'You' : Some_Monnam(mon),
+    some_mon_nam: (mon) => mon === YOUMONST ? 'you' : some_mon_nam(mon),
     canseemon: (mon) => mon === YOUMONST ? !Blind() : canseemon(mon),
     canspotmon: (mon) => mon === YOUMONST || canspotmon(mon),
     emit: update_topl,
@@ -5261,13 +5267,14 @@ export async function that_is_a_mimic(mtmp, mimic_flags) {
     /* that_is_a_mimic_message() above builds the whole line: it picks the same
        three fmtbuf variants C does ("That <furniture> actually is %s!",
        "That/Those <object> is/are %s!", "Wait!  That's %s!") and substitutes
-       'what'.  C's Blind_telepat/M_AP_MONSTER branch is absent because
-       set_mimic_sym() never assigns M_AP_MONSTER in this port. */
+       'what'.  C ref: Blind_telepat/M_AP_MONSTER Blind arm is in the helper. */
     let line = await that_is_a_mimic_message(mtmp);
-    if (omit_wait && line.startsWith('Wait!  '))
-        line = line.slice(7);
-    const { update_topl } = await import('./display.js');
-    await update_topl(line);
+    if (line !== null) {
+        if (omit_wait && line.startsWith('Wait!  '))
+            line = line.slice(7);
+        const { update_topl } = await import('./display.js');
+        await update_topl(line);
+    }
     if (reveal_it) seemimicLocal(mtmp);
 }
 

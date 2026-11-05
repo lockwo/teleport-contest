@@ -46,6 +46,7 @@ import { simpleonames } from './objnam.js';
 import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
 import { sticks } from './monattk_data.js';
 import { NOT_HUNGRY } from './const.js';
+import { W_SWAPWEP, W_QUIVER } from './const.js';
 import { W_ARMC, W_ARM, W_ARMU, W_ARMH, W_ARMG, W_ARMF, W_ARMS, W_AMUL, W_TOOL, W_RING, W_RINGL, W_WEP } from './const.js';
 const G_UNIQ = 0x1000; // monflag.h
 import { magic_negation } from './mhitu.js';
@@ -144,9 +145,12 @@ function what_gives_artifact(propidx) {
     for (const o of (game.invent || [])) {
         if (!o.oartifact) continue;
         const art = get_artifact(o);
+        /* C ref: artifact.c what_gives(): E<prop> never has W_SWAPWEP/W_QUIVER
+           bits (the alternate weapon confers nothing unless twoweapon). */
+        const worn = (o.owornmask || 0) & ~(W_QUIVER | (game.u?.twoweap ? 0 : W_SWAPWEP));
         if (art === artilist[ART_NONARTIFACT]) continue;
         if (dtyp && (art.cary.adtyp === dtyp
-                     || (art.defn.adtyp === dtyp && o.owornmask))) return o;
+                     || (art.defn.adtyp === dtyp && worn))) return o;
         /* C ref: artifact.c set_artifact_intrinsic(SPFX_WARN): an artifact with
            an m2 mask (Orcrist, Sting, Grimtooth) grants EWarn_of_mon, one
            without grants EWarning; what_gives() also needs warntype.obj for the
@@ -155,7 +159,7 @@ function what_gives_artifact(propidx) {
         if (spfx === SPFX_WARN && propidx === 32 /*WARN_OF_MON*/
             && (!art.mtype || !game.context?.warntype?.obj)) continue;
         if (spfx && ((art.cspfx & spfx) === spfx
-                     || ((art.spfx & spfx) === spfx && o.owornmask))) return o;
+                     || ((art.spfx & spfx) === spfx && worn))) return o;
         // C ref: artifact.c set_artifact_intrinsic() — Sunsword grants
         // BLND_RES only while wielded, tracked outside the generic spfx table.
         if (propidx === BLND_RES_PROP && o === game.uwep && is_art(o, ART_SUNSWORD))
@@ -283,6 +287,8 @@ function from_what(propidx, hkey) {
                        && !(propidx === POLYMORPH && !((H_prop(propidx) | 0) & FROMOUTSIDE))
                        /* Strangled is the amulet's 6-turn countdown, not an intrinsic */
                        && !(propidx === STRANGLED_PROP && !((H_prop(propidx) | 0) & FROMOUTSIDE))
+                       /* Invulnerable is the intrinsic word (youprop.h); a timeout alone has no FROMOUTSIDE */
+                       && !(propidx === INVULNERABLE && !((H_prop(propidx) | 0) & FROMOUTSIDE))
                        /* purely timed properties have no FROMOUTSIDE source */
                        && !((propidx === BLINDED_PROP || propidx === DEAF_PROP)
                             && !((H_prop(propidx) | 0) & FROMOUTSIDE))) {
@@ -320,12 +326,15 @@ function from_what(propidx, hkey) {
                 buf = ` because of ${bare_artifactname(game.ublindf)}`;
             break;
         case INVIS_PROP:
-            if (game.uarmc?.otyp === MUMMY_WRAPPING_OTYP)
-                buf = ` because of ${ysimple_name(game.uarmc)}`;
+            /* C ref: attrib.c:944 `u.uprops[INVIS].blocked & W_ARMC` */
+            if (worn_blocked(INVIS_PROP) & W_ARMC)
+                buf = ` because of ${ysimple_name(game.uarmc)}`; /* mummy wrapping */
             break;
         case CLAIRVOYANT_PROP:
-            if (game.uarmh?.otyp === CORNUTHAUM_OTYP)
-                buf = ` because of ${ysimple_name(game.uarmh)}`;
+            /* C ref: attrib.c:949 `u.uprops[CLAIRVOYANT].blocked & W_ARMH`: a
+               cornuthaum blocks clairvoyance for everyone but a Wizard */
+            if (worn_blocked(CLAIRVOYANT_PROP) & W_ARMH)
+                buf = ` because of ${ysimple_name(game.uarmh)}`; /* cornuthaum */
             break;
         default:
             break;
@@ -351,7 +360,7 @@ import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          livelog_printf } from './livelog.js';
 import { nhgetch } from './input.js';
 import { can_pray_quiet } from './pray.js';
-import { currency, inv_weight, ysimple_name, is_weptool, worn_extrinsic } from './invent.js';
+import { currency, inv_weight, ysimple_name, is_weptool, worn_extrinsic, worn_blocked } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
 const _discover = () => { const f = game.flags || {}; return !!(f.explore || f.discover || f.playmode === 'explore'); };
 
@@ -395,10 +404,12 @@ function jumpingFromWhat() {
     // "You can jump.", matching bl049's recorded screen).
     return source || (_wizard() && game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
 }
-// C ref: insight.c piousness(showneg, suffix) — alignment-piety adjective
-// ("aligned" suffix), used by attributes_enlightenment().  showneg is TRUE
-// there, but the covered heroes' record is always non-negative.
-function piousness(record) {
+// C ref: insight.c piousness(showneg, suffix) — alignment-piety adjective with
+// an optional suffix ("aligned" in attributes_enlightenment(), the alignment
+// name in ustatusline()).  A negative record with !showneg reads
+// "insufficiently"; the suffix is only appended when showneg is false or the
+// record is non-negative.
+export function piousness(record, showneg = true, suffix = null) {
     let pio;
     if (record >= 20) pio = 'piously';
     else if (record > 13) pio = 'devoutly';
@@ -407,11 +418,16 @@ function piousness(record) {
     else if (record === 3) pio = '';
     else if (record > 0) pio = 'haltingly';
     else if (record === 0) pio = 'nominally';
+    else if (!showneg) pio = 'insufficiently';
     else if (record >= -3) pio = 'strayed';
     else if (record >= -8) pio = 'sinned';
     else pio = 'transgressed';
-    if (record >= 0) return record === 3 ? 'aligned' : `${pio} aligned`;
-    return pio;
+    let buf = pio;
+    if (suffix && (!showneg || record >= 0)) {
+        if (record !== 3) buf += ' ';
+        buf += suffix;
+    }
+    return buf;
 }
 
 // C ref: wield.c empty_handed() — how a weaponless hero is described: gloves
@@ -1132,9 +1148,15 @@ function E_prop(propidx) {
     const key = PROPKEY[propidx];
     return key && (game.u?.[`E${key.startsWith('H') ? key.slice(1) : key}`] | 0) ? 1 : 0;
 }
-// C ref: youprop.h B<Prop> — the `blocked` column, which this port does not
-// model (see the block comment above): always 0.
-function B_prop(_propidx) { return 0; }
+// C ref: youprop.h B<Prop> == u.uprops[prop].blocked.  invent.js models the
+// column that worn.c w_blocks() fills (setworn(): a mummy wrapping blocks INVIS,
+// a non-Wizard's cornuthaum CLAIRVOYANT, the Eyes of the Overworld BLINDED) as
+// worn_blocked(); the other B<Prop> words (BLevitation/BFlying/BStealth set by
+// trap.c and polyself.c) live in u.uprops and are not read here yet.
+function B_prop(propidx) {
+    return (propidx === INVIS || propidx === CLAIRVOYANT || propidx === BLINDED)
+        ? worn_blocked(propidx) : 0;
+}
 // C ref: youprop.h <Prop> == E<Prop> || H<Prop>, minus B<Prop>.
 // C ref: youprop.h FROMFORM bit of u.uprops[propidx].intrinsic, which polyself.js
 // set_uasmon() keeps in u.formprops under the C property name.
@@ -2408,7 +2430,7 @@ export function attributes_enlightenment(_unused_mode, final) {
         you_are(hofe_titles[u.uevent.uhand_of_elbereth - 1], '', final);
     }
 
-    buf = piousness(u.ualign?.record | 0);   /* piousness(TRUE, "aligned") */
+    buf = piousness(u.ualign?.record | 0, true, 'aligned');
     if ((u.ualign?.record | 0) >= 0)
         you_are(buf, '', final);
     else

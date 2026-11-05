@@ -1279,7 +1279,9 @@ function finalize(d) {
             break;
         case OT('STATUE'):
             otmp.corpsenm = d.mntmp;
-            if (ptr.verysmall) otmp.cobj = null; /* no spellbook */
+            /* C ref: objnam.c readobjnam STATUE arm: Has_contents && verysmall(): delete_contents */
+            if (Array.isArray(otmp.cobj) && otmp.cobj.length && (ptr.msize | 0) < 1 /* MZ_SMALL */)
+                otmp.cobj = null; /* no spellbook */
             break;
         case OT('SCALE_MAIL'): {
             /* Dragon mail - depends on the order of objects & dragons. */

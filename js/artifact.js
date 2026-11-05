@@ -34,7 +34,7 @@ import { resist, cancel_monst, destroy_items, ignite_items, Antimagic as Antimag
          probe_monster, flashburn, lightdamage } from './zap.js';
 import { worn_extrinsic, worn_blocked, xname, yname, otense, killer_xname, Hate_silver, getobj, throwit,
          hold_another_object, GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_PROMPT,
-         GETOBJ_ALLOWCNT, dropx, carried, Tobjnam } from './invent.js';
+         GETOBJ_ALLOWCNT, dropx, carried, Tobjnam, obj_extract_self, obfree } from './invent.js';
 import { healmon, is_vampshifter, fmonOrder, migrate_mon, set_ustuck, DEADMONSTER } from './mon.js';
 import { menuHeadAttr } from './menuattr.js';
 import { mon_aligntyp } from './minion.js';
@@ -689,20 +689,12 @@ export function permapoisoned(obj) { return !!obj && is_art(obj, ART_GRIMTOOTH);
 const P_BASIC = 2, P_SKILLED = 3;
 function P_MAX_SKILL(skill) { return hooks.p_max_skill_of(skill); }
 
-// C ref: artifact.c dispose_of_orig_obj().  obj_extract_self()/obfree() are
-// not exported by mkobj.js/invent.js, so the removal is done directly against
-// the two chains an unwanted mk_artifact() argument can be on.
+// C ref: artifact.c dispose_of_orig_obj(): obj_extract_self(obj); obfree(obj, 0).
 export function dispose_of_orig_obj(obj) {
     if (!obj) return;
-    const floor = game.level?.objects;
-    if (Array.isArray(floor)) {
-        const i = floor.indexOf(obj);
-        if (i >= 0) floor.splice(i, 1);
-    }
-    const inv = invent_list();
-    const j = inv.indexOf(obj);
-    if (j >= 0) inv.splice(j, 1);
-    obj.where = OBJ_FREE;
+
+    obj_extract_self(obj);
+    obfree(obj, null);
 }
 
 // C ref: artifact.c mk_artifact().  Two cases: `alignment != A_NONE` makes an
@@ -890,7 +882,7 @@ export function find_artifact(otmp) {
 // leading "The " downcased to "the " so it reads inside a sentence ("because
 // of the Orb of Fate").
 export function bare_artifactname(obj) {
-    if (!obj?.oartifact) return ONAME(obj);
+    if (!obj?.oartifact) return xname(obj);   // C: `else outbuf = xname(obj)`
     const nm = artilist[obj.oartifact].name;
     return nm.startsWith('The ') ? `t${nm.slice(1)}` : nm;
 }

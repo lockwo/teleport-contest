@@ -871,7 +871,7 @@ export async function breamm(mtmp, mattk, mtarg, deps = {}) {
         const { Monnam } = await import('./do_name.js');
         const { pline } = await import('./display.js');
         if (mtmp.mcan) {
-            if (!game.u?.Deaf) {
+            if (!Deaf_hero()) {
                 if (deps.canseemon?.(mtmp)) await pline(`${Monnam(mtmp)} coughs.`);
                 else await You_hear('a cough.');
             }

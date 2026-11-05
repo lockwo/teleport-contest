@@ -124,6 +124,12 @@ export function sync_monster_light_sources() {
         if (ls.type !== LS_MONSTER) continue;
         const m = ls.id;
         if (!m || m === HERO) continue;
+        // C ref: dog.c migrate_to_level() — "don't extinguish a mobile light;
+        // it still exists but has changed from local (monst->mx > 0) to global
+        // (mx==0, not on this level)".  The entry stays on the chain (so
+        // any_light_source() stays true and movemon() keeps asking for a vision
+        // recalc) but get_mon_location() fails for it, so it lights nothing.
+        if (m.mx === 0 && migrating_mons().includes(m)) continue;
         if (DEADMONSTER(m) || !(m.mx > 0) || !live.includes(m)) list.splice(i, 1);
     }
     for (const m of fmon()) {
@@ -1014,6 +1020,10 @@ async function nh_delay_output() { nh_delay_output_tick(); await Promise.resolve
 // registered here and vision.js reads it through gstate.  jsmain.js imports
 // this module for the side effect.
 hooks.emits_light = emits_light;
+hooks.arti_light_radius = arti_light_radius;
+hooks.obj_adjust_light_radius = obj_adjust_light_radius;
+hooks.obj_sheds_light = obj_sheds_light;
+hooks.del_light_source_obj = (obj) => del_light_source(LS_OBJECT, obj);
 hooks.lightsources = (cs_rows) => {
     sync_monster_light_sources();
     do_light_sources(cs_rows);
@@ -1031,6 +1041,44 @@ hooks.beginCandleBurn = (x, y, otmp) => {
     otmp.lamplit = true;
     otmp.age -= turns;
     new_light_source(x, y, candle_light_range(otmp), LS_OBJECT, otmp);
+};
+
+// C ref: timeout.c begin_burn(obj, FALSE) for the fuel-timer lamps, done
+// synchronously for sp_lev.c create_object (`if (o->lit) begin_burn(otmp,
+// FALSE)`), which cannot await.  Oil lamp / brass lantern / potion of oil:
+// the next warning is at the 150/100/50/25 fuel mark, the BURN_OBJECT timer
+// is started and the light source is attached; a magic lamp has no timer.
+// No RNG.  A lit candle goes through hooks.beginCandleBurn.
+hooks.beginLampBurn = (x, y, otmp) => {
+    const age = otmp.age | 0;
+    let radius = 3;
+    let turns;
+    switch (otmp.otyp) {
+    case MAGIC_LAMP():
+        otmp.lamplit = 1;
+        new_light_source(x, y, radius, LS_OBJECT, otmp);
+        return;
+    case POT_OIL():
+        if (!age) return;
+        turns = otmp.odiluted ? Math.floor((3 * age + 2) / 4) : age;
+        radius = 1; /* very dim light */
+        break;
+    case BRASS_LANTERN():
+    case OIL_LAMP():
+        if (!age) return;
+        turns = age > 150 ? age - 150 : age > 100 ? age - 100
+              : age > 50 ? age - 50 : age > 25 ? age - 25 : age;
+        break;
+    default:
+        return;
+    }
+    if (!start_object_timer(turns, BURN_OBJECT, otmp)) {
+        otmp.lamplit = 0;
+        return;
+    }
+    otmp.lamplit = 1;
+    otmp.age -= turns;
+    new_light_source(x, y, radius, LS_OBJECT, otmp);
 };
 
 // C ref: worn.c m_dowear_type() — `if (artifact_light(best) && !best->lamplit)

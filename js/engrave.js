@@ -4,7 +4,7 @@
 //         hacklib.c xcrypt().
 
 import { ceiling } from './dungeon.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE,
          FINGERTIP, GETOBJ_SUGGEST, GETOBJ_DOWNPLAY, GETOBJ_PROMPT,
@@ -24,8 +24,8 @@ import { mflags1_of, M1_ANIMAL, M1_HIDE, M1_CLING, M1_FLY, is_whirly } from './m
 import { attacktype, AT_HUGS, sticks } from './monattk_data.js';
 import { exercise } from './attrib.js';
 import { livelog_printf, LL_CONDUCT } from './livelog.js';
-import { A_WIS, P_RIDING, P_BASIC, Unaware as Unaware_hero } from './const.js';
-import { Levitation_hero, Flying_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { A_WIS, P_RIDING, P_BASIC, Unaware as Unaware_hero, is_ice as is_ice_c } from './const.js';
+import { Levitation_hero, Flying_hero, uteetering_at_seen_pit, uescaped_shaft, Deaf_hero } from './youprop.js';
 import { Blind as isBlind } from './vision.js';
 import { You_see } from './display.js';
 import { mungspaces } from './hacklib.js';
@@ -541,8 +541,10 @@ export async function read_engr_at(x, y) {
     ep.rememberedText = ep.actualText;
     ep.eread = 1;
     ep.erevealed = 1;
-    // C ref: engrave.c:401 `if (svc.context.run > 0) nomul(0);`
-    if ((game.context?.run || 0) > 0) {
+    // C ref: engrave.c:401 `if (svc.context.run > 0) nomul(0);`  The run == 8
+    // a finished travel leaves behind counts (svc_context_run()): reading the
+    // engraving on the stairs after `_ >` ends it and republishes T:.
+    if (svc_context_run() > 0) {
         const { nomul } = await import('./hack.js');
         nomul(0);
     }
@@ -1427,10 +1429,11 @@ export async function engrave_step() {
             // context.engraving.stylus keeps the split-off blade, which addinv()
             // may have merged into another stack and freed, so the next action
             // finds it gone from invent ("You are unable to continue engraving.").
+            // C ref: engrave.c engrave() `hold_another_object(stylus, "You drop one %s!", doname(stylus), NULL)`
+            const { hold_another_object, obj_doname } = await import('./invent.js');
             obj_extract_self(stylus);
-            const oquan = stylus.quan;
-            stylus = addinv(stylus);
-            await prinv(null, stylus, oquan);
+            stylus = await hold_another_object(stylus, 'You drop one %s!',
+                                               obj_doname(stylus), null);
         } else if (dulled && stylus.known) {
             // prinv() -> pline(): the refreshed "b - a -1 dagger" line pages the
             // "gets dull" line above it with --More--.
@@ -1445,8 +1448,16 @@ export async function engrave_step() {
         }
     }
 
-    // C: `if (endc - nextc > space_left) { You("run out of room to write."); }`
-    // BUFSZ leaves 255 characters, which getlin can never exceed here.
+    // C ref: engrave.c engrave(): `space_left = sizeof buf - strlen(buf) - 1`
+    // (BUFSZ 256), buf holding any existing engraving text.
+    const oep = engr_at(u.ux, u.uy);
+    const prevtxt = oep ? (oep.actualText || '') : '';
+    const space_left = 256 - prevtxt.length - 1;
+    if (endc - ctx.nextc > space_left) {
+        await update_topl('You run out of room to write.');
+        endc = ctx.nextc + space_left;
+        truncate = true;
+    }
     if (truncate && endc < ctx.text.length) {
         ctx.text = ctx.text.slice(0, endc);
         await update_topl(`You are only able to write "${ctx.text}".`);
@@ -1454,8 +1465,7 @@ export async function engrave_step() {
         truncate = false;
     }
 
-    const oep = engr_at(u.ux, u.uy);
-    const buf = (oep ? (oep.actualText || '') : '') + ctx.text.slice(ctx.nextc, endc);
+    const buf = prevtxt + ctx.text.slice(ctx.nextc, endc);
     make_engr_at(u.ux, u.uy, buf, null, (g.moves ?? 1) - (g.multi ?? 0), ctx.type);
     const ep = engr_at(u.ux, u.uy);
     if (ep) { ep.eread = 1; ep.erevealed = 1; }
@@ -1544,7 +1554,7 @@ function isConfused() { const u = game.u; return !!(u?.uprops?.Confusion || u?.u
 function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun || u?.formprops?.Stunned); }
 function isHallu() { const u = game.u; return !!(u?.uprops?.Hallucination || u?.uhallu); }
 // C ref: youprop.h Deaf (HDeaf || EDeaf).
-function isDeaf() { const u = game.u; return !!(u?.uprops?.Deaf || u?.Deaf); }
+function isDeaf() { return Deaf_hero(); }
 
 // ===========================================================================
 // engrave.c functions with no caller in js/ yet.  Nothing above this line
@@ -1893,8 +1903,7 @@ export function wipe_engr_at(x, y, cnt, magical = false) {
     const ep = engr_at(x, y);
     if (!ep || ep.engr_type === HEADSTONE || ep.nowipeout) return;
 
-    const loc = game.level?.at(x, y);
-    const on_ice = loc?.typ === ICE;
+    const on_ice = is_ice_c(x, y);
     if (ep.engr_type !== BURN || on_ice || (magical && !rn2(2))) {
         if (ep.engr_type !== DUST && ep.engr_type !== ENGR_BLOOD)
             cnt = rn2(1 + Math.trunc(50 / (cnt + 1))) ? 0 : 1;

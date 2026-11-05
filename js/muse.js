@@ -68,12 +68,12 @@ import { obj_doname, distant_name_pub, xname, makeknown, trycall, hands_obj, bim
     from './invent.js';
 import { observe_object } from './o_init.js';
 import { removed_from_icebox } from './pickup.js';
-import { t_at, maketrap, seetrap, Can_fall_thru, Teleport_control_fu } from './trap.js';
+import { t_at, maketrap, seetrap, Can_fall_thru, Can_dig_down, Teleport_control_fu } from './trap.js';
 import { resists_blnd_u } from './mhitu.js';
 import { mon_has_special, mon_has_amulet } from './monspecial.js';
 import { inhishop } from './shk.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon, is_pool, is_lava, is_ice } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon, is_pool, is_lava, is_ice, xdir, ydir, DIR_ERR } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -385,8 +385,6 @@ function SchroedingersBox(obj) {
 function Sokoban() {
     return game.sokoban_dnum != null && game.u?.uz?.dnum === game.sokoban_dnum;
 }
-// C ref: dungeon.h Can_dig_down(lev) — !level.flags.hardfloor.
-function Can_dig_down(_uz) { return !game.level?.flags?.hardfloor; }
 // C ref: monst.h is_Vlad(mon).
 function is_Vlad(mon) { return mon?.data?.name === 'Vlad the Impaler'; }
 // C ref: dungeon.c:1914 On_W_tower_level(lev) — any of the three Wizard's tower levels.
@@ -1497,13 +1495,15 @@ function hero_behind_chokepoint(mtmp) {
     const dy = sgn(mtmp.my - (mtmp.muy ?? 0));
     const x = (mtmp.mux ?? 0) + dx, y = (mtmp.muy ?? 0) + dy;
 
-    // C rotates the incoming direction two steps left and two steps right
-    // (DIR_LEFT2 / DIR_RIGHT2 of xytodir(dx,dy)) — i.e. the two squares
-    // perpendicular to the approach.  With <dx,dy> a unit vector that is
-    // <-dy,dx> and <dy,-dx>.
-    const c1 = { x: x + -dy, y: y + dx };
-    const c2 = { x: x + dy, y: y + -dx };
-
+    /* C ref: muse.c hero_behind_chokepoint(): xytodir(dx,dy), then DIR_LEFT2
+       (dir+6)%8 and DIR_RIGHT2 (dir+2)%8 (DIR_CLAMP) and dirtocoord() of each. */
+    let dir = DIR_ERR;
+    for (let dd = 0; dd < 8; dd++)
+        if (dx === xdir[dd] && dy === ydir[dd]) { dir = dd; break; }
+    const dir_l = (((dir + 6) % 8) + 8) % 8;
+    const dir_r = (((dir + 2) % 8) + 8) % 8;
+    const c1 = { x: xdir[dir_l] + x, y: ydir[dir_l] + y };
+    const c2 = { x: xdir[dir_r] + x, y: ydir[dir_r] + y };
     if ((!isok(c1.x, c1.y) || !accessible(c1.x, c1.y))
         && (!isok(c2.x, c2.y) || !accessible(c2.x, c2.y)))
         return true;
@@ -1698,9 +1698,10 @@ async function mbhitm(mtmp, otmp, hits_you) {
         mtmp.msleeping = 0;
         if (mtmp.m_ap_type) seemimicLocal(mtmp);
     }
-    let learnit = false;
+    let learnit = false, reveal_invis = false;
     switch (otmp.otyp) {
     case OT().WAN_STRIKING:
+        reveal_invis = true;
         // C ref: muse.c:1609-1651.  An angered shopkeeper zaps this before it
         // melees; skipping it lost the whole rest of the boundary's stream.
         if (hits_you) {
@@ -1730,6 +1731,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
             }
             const { stop_occupation } = await import('./hack.js');
             await stop_occupation();
+            (await import('./hack.js')).nomul(0);  /* C ref: muse.c mbhitm WAN_STRIKING hits_you */
         } else if ((await import('./zap.js')).resists_magm(mtmp)) {
             await shieldeff(mtmp.mx, mtmp.my);
             await update_topl('Boing!');
@@ -1772,6 +1774,11 @@ async function mbhitm(mtmp, otmp, hits_you) {
             } else if (!await tele_restrict(mtmp)) await rloc(mtmp, RLOC_MSG);
         }
         break;
+    case OT().WAN_CANCELLATION:
+    case 402 /* SPE_CANCELLATION */:
+        /* C ref: muse.c mbhitm: cancel_monst(mtmp, otmp, FALSE, TRUE, FALSE) */
+        await (await import('./zap.js')).cancel_monst(mtmp, otmp, false, true, false);
+        break;
     case OT().WAN_UNDEAD_TURNING: {
         const Z = await import('./zap.js');
         if (hits_you) {
@@ -1782,7 +1789,7 @@ async function mbhitm(mtmp, otmp, hits_you) {
             if (await Z.unturn_dead(mtmp)) /* affects mtmp's invent, not mtmp */
                 wake = true;
             if (is_undead_flag(mtmp.data) || is_vampshifter(mtmp)) {
-                wake = true;
+                wake = reveal_invis = true;
                 /* context.bypasses=True: if resist() happens to be fatal,
                    make_corpse() will set obj->bypass on the new corpse */
                 if (game.context) game.context.bypasses = true;
@@ -1799,6 +1806,10 @@ async function mbhitm(mtmp, otmp, hits_you) {
     default:
         break;
     }
+    /* C ref: muse.c mbhitm tail: an unseen target the bolt struck is remembered as 'I' */
+    if (reveal_invis && !hits_you && !DEADMONSTER(mtmp)   /* &youmonst: never dead, always spotted */
+        && cansee(game.bhitpos.x, game.bhitpos.y) && !canspotmon(mtmp))
+        map_invisible(game.bhitpos.x, game.bhitpos.y);
     return 0;
 }
 
@@ -1825,9 +1836,15 @@ async function mbhit(mon, range, obj) {
     const ddx = sgn((mon.mux ?? 0) - mon.mx);
     const ddy = sgn((mon.muy ?? 0) - mon.my);
 
+    game.bhitpos = { x: bx, y: by };           /* gb.bhitpos = mon->mx, mon->my */
     while (range-- > 0) {
         bx += ddx; by += ddy;
-        if (!isok(bx, by)) { bx -= ddx; by -= ddy; break; }
+        game.bhitpos = { x: bx, y: by };       /* gb.bhitpos.x += ddx; ... */
+        if (!isok(bx, by)) {
+            bx -= ddx; by -= ddy;
+            game.bhitpos = { x: bx, y: by };
+            break;
+        }
         if (u_at(bx, by)) {
             await mbhitm(null, obj, true);
             // C's done() does not return.  A monster bolt which kills the hero
@@ -2013,13 +2030,16 @@ export async function use_offensive(mtmp, throw_potion) {
         }
         /* resists_blnd(&youmonst): Blind || Unaware (polyform/artifact
            clauses are not modelled, as in engrave.js). */
+        m_using = true;
         if (!Blind() && !hero_resists_blnd()) {
             await update_topl('You are blinded by the flash of light!');
             const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
             await make_blinded_hero(BlindedTimeout() + rnd(1 + 50), false);
         }
-        /* lightdamage(otmp, TRUE, 5): only affects a light-hating polyform
-           hero, which this port does not model. */
+        /* C ref: muse.c MUSE_CAMERA — lightdamage() hurts a hero polymorphed
+           into a gremlin; m_using is set around the flash. */
+        await (await import('./zap.js')).lightdamage(otmp, true, 5);
+        m_using = false;
         otmp.spe--;
         return 1;
     }
@@ -2511,8 +2531,6 @@ export async function use_misc(mtmp) {
         default:
             break;
         }
-        newsym(mtmp.mx, mtmp.my);
-        newsym(game.u.ux, game.u.uy);
         return 1;
     }
     case 0:
@@ -2932,6 +2950,8 @@ async function muse_unslime(mon, obj, trap, by_you) {
             mon.mx = trap.tx;
             mon.my = trap.ty;
             newsym(ox, oy);
+            /* C ref: muse.c muse_unslime `if (mon->wormno) worm_move(mon)` */
+            if (mon.wormno) await (await import('./worm.js')).worm_move(mon);
             newsym(mon.mx, mon.my);
             if (vis)
                 await update_topl(`${Mnam} ${vtense(null, locomotion(mon.data, 'move'))} ${
@@ -2970,7 +2990,7 @@ async function muse_unslime(mon, obj, trap, by_you) {
         }
         if (vis && !was_lit) {
             set_msg_mon(mon);
-            await update_topl(`${Monnam(mon)} ignites ${an(xname(o))}.`);
+            await update_topl(`${Monnam(mon)} ignites ${(await import('./objnam.js')).ansimpleoname(o)}.`);
             saw_lit = true;
         }
         const { begin_burn, obj_stop_timers } = await import('./timeout.js');
@@ -2979,7 +2999,7 @@ async function muse_unslime(mon, obj, trap, by_you) {
         if (vis) {
             if (!Unaware()) observe_object(o);
             await update_topl(`${saw_lit ? upstart(mhe(mon)) : Monnam(mon)
-                } quaffs a burning ${xname(o)}`);
+                } quaffs a burning ${(await import('./objnam.js')).simpleonames(o)}`);
             makeknown(OT().POT_OIL);
         }
         dmg = d(3, 4);

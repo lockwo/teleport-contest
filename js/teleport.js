@@ -281,6 +281,7 @@ export async function rloc_to_core(mtmp, x, y, rlocflags) {
         const du = distu(x, y);
         const next = (du <= 2) ? ' next to you' : null;
         const nearu = (du <= BOLT_LIM * BOLT_LIM) ? ' close by' : null;
+        (await import('./hack.js')).set_msg_xy(x, y); /* C: set_msg_xy(x, y) */
         mtmp.mstrategy = (mtmp.mstrategy | 0) & ~STRAT_APPEARMSG; /* one chance only */
         if (mtmp === game.u?.ustuck
             && !(game.u.ux === game.u.ux0 && game.u.uy === game.u.uy0)) {

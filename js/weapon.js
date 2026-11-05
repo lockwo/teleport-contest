@@ -837,28 +837,42 @@ export async function show_skills() {
 }
 
 // C ref: weapon.c:747 possibly_unwield(mon, polyspot) — the monster's wielded
-// weapon left its inventory, or the monster can no longer use weapons at all.
-// Returns the object it dropped (null otherwise) so the caller can place it;
-// the flooreffects()/stackobj() tail belongs to the caller's module.
-export async function possibly_unwield(mon, _polyspot) {
+// weapon left its inventory, or the monster can no longer use weapons at all
+// (then it drops the weapon, with message, onto its square).
+export async function possibly_unwield(mon, polyspot) {
     const mw_tmp = mon?.mw || null;
-    if (!mw_tmp) return null;
+    if (!mw_tmp) return;
     const inv = mon.minvent || [];
     if (!inv.includes(mw_tmp)) {   /* stolen or destroyed */
         mon.mw = null;
         mon.weapon_check = 1;      /* NEED_WEAPON */
-        return null;
+        return;
     }
     if (!attacktype_weap(mon.data)) {
         await setmnotwielded(mon, mw_tmp);
         mon.weapon_check = 0;      /* NO_WEAPON_WANTED */
-        const i = inv.indexOf(mw_tmp);
-        if (i >= 0) inv.splice(i, 1);
-        return mw_tmp;             /* caller drops it at mon->mx,my */
+        const [{ cansee }, { update_topl, newsym }, { Monnam }, I, { flooreffects },
+               { place_object }, { bypass_obj }] = await Promise.all([
+            import('./vision.js'), import('./display.js'), import('./do_name.js'),
+            import('./invent.js'), import('./do.js'), import('./mkobj.js'),
+            import('./worn.js')]);
+        /* if we're going to call distant_name(), do so before extract_self */
+        if (cansee(mon.mx, mon.my)) {
+            await update_topl(`${Monnam(mon)} drops ${I.distant_doname(mw_tmp, true)}.`);
+            newsym(mon.mx, mon.my);
+        }
+        I.obj_extract_self(mw_tmp);
+        /* might be dropping object into water or lava */
+        if (!await flooreffects(mw_tmp, mon.mx, mon.my, 'drop')) {
+            if (polyspot)
+                bypass_obj(mw_tmp);
+            place_object(mw_tmp, mon.mx, mon.my);
+            I.stackobj(mw_tmp);
+        }
+        return;
     }
     if (!(mwelded_w(mw_tmp) && mon.weapon_check === 0))
         mon.weapon_check = 1;      /* NEED_WEAPON */
-    return null;
 }
 // C ref: mondata.h attacktype(ptr, AT_WEAP).  AT_WEAP is 254, not 1 — the
 // monattk.h enum runs AT_NONE..AT_BOOM then jumps to the "special" block.

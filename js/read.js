@@ -789,7 +789,7 @@ export async function punish(sobj) {
         // then ball go through flooreffects() (a pool splashes and may rust them)
         // before both land on the hero's square.
         const ballmod = await import('./ball.js');
-        await ballmod.placebc_core();
+        await ballmod.placebc();
         if (Blind()) ballmod.set_bc(1);   // read.c:3059 punish(): set up ball and chain variables
         newsym(u.ux, u.uy);                 // punish()'s own "see ball&chain if can't see self"
     }
@@ -848,7 +848,7 @@ async function chwepon(otmp, amount) {
                 const { HAND } = await import('./const.js');
                 buf = `Your right ${body_part(HAND)} tingles.`;
             }
-            uncurse(uwep);
+            await uncurse(uwep);
             update_inventory();
         } else {
             buf = `Your hands ${amount >= 0 ? 'twitch' : 'itch'}.`;
@@ -868,7 +868,7 @@ async function chwepon(otmp, amount) {
         uwep.otyp = CRYSKNIFE;
         uwep.oerodeproof = 0;
         if (multiple) { uwep.quan = 1; uwep.owt = weight(uwep); }
-        if (uwep.cursed) uncurse(uwep);
+        if (uwep.cursed) await uncurse(uwep);
         if (uwep.unpaid) alter_cost(uwep, 0);
         if (is_scroll) makeknown(otmp.otyp);
         return true;
@@ -913,7 +913,7 @@ async function chwepon(otmp, amount) {
 
     if (amount < 0) await costly_alteration(uwep, COST_DECHNT);
     uwep.spe = (uwep.spe || 0) + amount;
-    if (amount > 0 && uwep.cursed) uncurse(uwep);
+    if (amount > 0 && uwep.cursed) await uncurse(uwep);
     if (amount > 0 && uwep.unpaid) alter_cost(uwep, 0);
 
     // C ref: wield.c:1035 — Magicbane's obscure enchantment clue.
@@ -1253,7 +1253,7 @@ async function seffect_remove_curse(sobj) {
                     if (shop_h2o && (obj.cursed || obj.blessed)) alter_cost(obj, 0);
                 } else if (obj.cursed) {
                     if (shop_h2o) await costly_alteration(obj, COST_UNCURS);
-                    uncurse(obj);
+                    await uncurse(obj);
                     if (obj.bknown && otyp === SCR_REMOVE_CURSE)
                         learnscrolltyp(SCR_REMOVE_CURSE);
                 }
@@ -1271,7 +1271,7 @@ async function seffect_remove_curse(sobj) {
                 blessorcurse(saddle, 2);
                 saddle.bknown = 0;
             } else if (saddle.cursed) {
-                uncurse(saddle);
+                await uncurse(saddle);
                 // like rndcurse(sit.c), the saddle shows the glow
                 if (!Blind()) {
                     await update_topl(`${Yobjnam2(saddle, 'glow')} ${hcolor_wep('amber')}.`);
@@ -1572,8 +1572,10 @@ async function seffect_identify(sobj) {
 
     // C: the scroll (not the spell) is used up before learnscrolltyp()/the
     // empty-invent check.
-    if (is_scroll) useup(sobj);
-
+    if (is_scroll) {
+    useup(sobj);
+    // C ref: read.c seffect_identify — the self-identify block is is_scroll only,
+    // so a confused spell cast still goes on to identify_pack().
     if (confused || (scursed && !already_known)) {
         await update_topl('You identify this as an identify scroll.');
     } else if (!already_known) {
@@ -1589,6 +1591,7 @@ async function seffect_identify(sobj) {
         }
     }
     if (confused || (scursed && !already_known)) return;
+    }
 
     if (game.invent && game.invent.length) {
         let cval = 1;
@@ -1796,7 +1799,8 @@ export async function doread() {
             await pline('You feel the embossed numbers:');
         } else {
             if (game.flags?.verbose !== false) await pline('It reads:');
-            await pline(`"${CARD_MSGS[o_id % (CARD_MSGS.length - 1)]}"`);
+            // C ref: read.c doread CREDIT_CARD — artifact card uses the last entry
+            await pline(`"${scroll.oartifact ? CARD_MSGS[CARD_MSGS.length - 1] : CARD_MSGS[o_id % (CARD_MSGS.length - 1)]}"`);
         }
         await pline(`"${((o_id % 89) + 10)}0${o_id % 4} ${((o_id * 499) % 899999) + 100000}${o_id % 10}1 0${(!(o_id % 3)) ? 1 : 0}${(o_id * 7) % 10}0"${(game.flags?.verbose !== false || Blind()) ? '.' : ''}`);
         bump_literate('became literate by reading a credit card');
@@ -2755,10 +2759,10 @@ export async function recharge(obj, curse_bless) {
                 obj.spe = 0;
             } else if (blessed) {
                 obj.spe = 7; await p_glow2(obj, obj.blessed ? 'blue' : 'light blue');
-                bless(obj);
+                await bless(obj);
             } else if (obj.spe < 7 || obj.cursed) {
                 n = rnd(2); obj.spe = Math.min(obj.spe + n, 7);
-                if (obj.cursed) { await p_glow2(obj, 'amber'); uncurse(obj); }
+                if (obj.cursed) { await p_glow2(obj, 'amber'); await uncurse(obj); }
                 else await p_glow1(obj);
             } else await pline_append(NOTHING_HAPPENS);
         } else if ([HORN_OF_PLENTY, BAG_OF_TRICKS, CAN_OF_GREASE].includes(obj.otyp)) {

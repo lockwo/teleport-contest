@@ -103,6 +103,8 @@ function Doname2(obj) {
 }
 // C ref: objnam.c an(s) / the(s).
 import { an } from './hacklib.js';
+import { livelog_printf, LL_CONDUCT } from './livelog.js';
+import { mon_pmname } from './do_name.js';
 import { the } from './objnam.js';
 import { helm_simple_name } from './do_wear.js';
 // C ref: mondata.h bigmonst(ptr) — msize >= MZ_LARGE (3).
@@ -137,14 +139,12 @@ async function mon_hand_noun(mtmp, otmp) {
     const hand = mbodypart(mtmp, HAND);
     return I.bimanual(otmp) ? makeplural(hand) : hand;
 }
-// C ref: pickup.c pickup_object(obj, count, telekinesis) reduced to the single
-// floor-object case the whip snare uses.  Returns 1 when the object was picked
-// up, 0 when it was not.
+// C ref: apply.c use_whip() `pickup_object(otmp, 1L, TRUE)` — the full
+// telekinesis pickup (pickup.js), not a bare extract-and-hold.
 async function pickup_one_object(otmp) {
     if (!otmp) return 0;
-    I.obj_extract_self(otmp);
-    await I.hold_another_object(otmp, 'You drop %s!', I.doname_invent(otmp), null);
-    return 1;
+    const { pickup_object } = await import('./pickup.js');
+    return await pickup_object(otmp, 1, true);
 }
 // ── ok_to_throw (C ref: dothrow.c:296) ───────────────────────────────────────
 //
@@ -635,6 +635,10 @@ export function initedog(mtmp, everything) {
     }
     if (!((edogp.hungrytime | 0) >= minhungry)) edogp.hungrytime = minhungry;
     const u = game.u;
+    /* C ref: dog.c initedog(): livelog the first pet, but only if the hero did
+       not start with one (the starting pet is made before in_moveloop). */
+    if (u && !(u.uconduct?.pets | 0) && game.program_state?.in_moveloop)
+        livelog_printf(LL_CONDUCT, `obtained ${game.flags?.female ? 'her' : 'his'} first pet (${an(mon_pmname(mtmp))})`);
     if (u) { u.uconduct = u.uconduct || {}; u.uconduct.pets = (u.uconduct.pets | 0) + 1; }
 }
 

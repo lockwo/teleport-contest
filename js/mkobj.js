@@ -18,15 +18,17 @@ import {
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
     COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
     ONAME, has_oname, setONAME, OMONST, Has_contents, ismnum, isok, In_quest,
+    PLNMSG_OBJ_GLOWS,
 } from './const.js';
 import {
     rndmonst_adj, monster_by_pmidx, can_be_hatched, dead_species,
     undead_to_corpse, mon_has_cnutrit, mon_nocorpse, mon_cwt, mon_msize,
     mon_cnutrit, name_to_pmidx,
 } from './makemon.js';
-import { block_point, recalc_block_point } from './vision.js';
+import { block_point, recalc_block_point, Blind, cansee } from './vision.js';
 import { set_tin_variety, SPINACH_TIN, RANDOM_TIN, obj_nutrition, eating_glob } from './eat.js';
 import { is_human_flag, is_dwarf_flag } from './monflags_data.js';
+import { maybe_reset_pick } from './lock.js';
 import { base_oc_cost } from './objcost_data.js';
 
 // artifact.js imports this module, and its top level needs `objects` while this one is still evaluating (steal.js reads it at load),
@@ -1089,22 +1091,49 @@ export function eaten_stat(base, obj) {
 
 function carried(obj) { return obj?.where === OBJ_INVENT; }
 
-// C ref: artifact.c arti_light_radius(obj) — only artifacts light up, and the
-// radius varies with bless/curse state.  Returns 0 for everything mkobj.c can
-// create by itself, which makes maybe_adjust_light() a no-op for them.
+// C ref: light.c arti_light_radius(obj) — light.js owns it (gold dragon scales/
+// mail and artifacts); reached through hooks since light.js imports this module.
 function arti_light_radius(obj) {
-    if (!obj?.oartifact || !obj?.lamplit) return 0;
-    return obj.cursed ? 1 : obj.blessed ? 3 : 2;
+    return hooks.arti_light_radius ? hooks.arti_light_radius(obj) : 0;
 }
 
-// C ref: mkobj.c maybe_adjust_light(obj, old_range) — an artifact light source
-// whose radius changed with its bless/curse state re-registers and reports
-// "shines brighter"/"less brightly".  light.js owns the light-source list, so
-// this records the new radius and leaves the (RNG-free) message to the caller.
+// C ref: mkobj.c maybe_adjust_light(obj, old_range) — a light source whose
+// radius changed with its bless/curse state is re-registered with the new range,
+// then "<Obj> shines brighter / less brightly" is printed.  The pline is async,
+// so when the radius changed this returns the Promise for it (callers that run
+// for the hero `await` bless()/unbless()/curse()/uncurse(), which pass it on).
 export function maybe_adjust_light(obj, old_range) {
-    if (!obj) return;
-    const new_range = arti_light_radius(obj);
-    if (new_range !== old_range) obj.light_radius = new_range;
+    if (!obj) return undefined;
+    const new_range = arti_light_radius(obj), delta = new_range - old_range;
+    if (!delta) return undefined;
+    hooks.obj_adjust_light_radius?.(obj, new_range);
+    return adjust_light_message(obj, delta);
+}
+
+/* simplifying assumptions: hero is wielding or wearing this object; artifacts
+   have to be in use to emit light and monsters' gear won't change bless or
+   curse state */
+async function adjust_light_message(obj, delta) {
+    if (Blind()) return;
+    const { get_obj_location } = await import('./light.js');
+    const loc = get_obj_location(obj, 0);
+    if (!loc) return;
+    const { Yname2, otense } = await import('./invent.js');
+    let buf = '';
+    if (game.last_msg === PLNMSG_OBJ_GLOWS)
+        /* we just saw "The <obj> glows <color>." from dipping */
+        buf = (obj.quan === 1) ? 'It' : 'They';
+    else if (carried(obj) || cansee(loc.x, loc.y))
+        buf = Yname2(obj);
+    if (buf) {
+        /* initial activation says "dimly" if cursed,
+           "brightly" if uncursed, and "brilliantly" if blessed;
+           when changing intensity, using "less brightly" is
+           straightforward for dimming, but we need "brighter"
+           rather than "more brightly" for brightening; ugh */
+        const { pline } = await import('./display.js');
+        await pline(`${buf} ${otense(obj, 'shine')} ${(Math.abs(delta) > 1) ? 'much ' : ''}${(delta > 0) ? 'brighter' : 'less brightly'}.`);
+    }
 }
 
 /*
@@ -1124,7 +1153,7 @@ export function bless(otmp) {
     else if (otmp.otyp === BAG_OF_HOLDING) otmp.owt = weight(otmp);
     else if (otmp.otyp === FIGURINE && otmp.timed)
         stop_object_timer(otmp, FIG_TRANSFORM);
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+    if (otmp.lamplit) return maybe_adjust_light(otmp, old_light);
 }
 
 // C ref: sp_lev.c create_object() — a des.object() with no `eroded`/`greased`
@@ -1146,7 +1175,7 @@ export function unbless(otmp) {
     otmp.blessed = false;
     if (carried(otmp) && confers_luck(otmp)) set_moreluck();
     else if (otmp.otyp === BAG_OF_HOLDING) otmp.owt = weight(otmp);
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+    if (otmp.lamplit) return maybe_adjust_light(otmp, old_light);
 }
 
 // C ref: mkobj.c curse(otmp).  Sync for the object-creation callers.  C's
@@ -1168,7 +1197,7 @@ export function curse(otmp) {
     if (wielded || dropswap || book)
         return curse_with_messages(otmp, old_light, wielded, dropswap, book);
     curse_updates(otmp);
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+    if (otmp.lamplit) return maybe_adjust_light(otmp, old_light);
 }
 
 async function curse_with_messages(otmp, old_light, wielded, dropswap, book) {
@@ -1181,7 +1210,7 @@ async function curse_with_messages(otmp, old_light, wielded, dropswap, book) {
     curse_updates(otmp);
     /* if book hero is reading becomes cursed, interrupt */
     if (book) await (await import('./spell.js')).book_cursed(otmp);
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+    if (otmp.lamplit) await maybe_adjust_light(otmp, old_light);
 }
 
 /* some cursed items need immediate updating */
@@ -1208,7 +1237,7 @@ export function uncurse(otmp) {
     else if (otmp.otyp === BAG_OF_HOLDING) otmp.owt = weight(otmp);
     else if (otmp.otyp === FIGURINE && otmp.timed)
         stop_object_timer(otmp, FIG_TRANSFORM);
-    if (otmp.lamplit) maybe_adjust_light(otmp, old_light);
+    if (otmp.lamplit) return maybe_adjust_light(otmp, old_light);
 }
 
 // C ref: mkobj.c bcsign(otmp) — !!blessed - !!cursed.
@@ -2096,6 +2125,7 @@ function mkbox_cnts(box) {
                 if (tprob <= 0) { oclass = iclass; break; }
             }
             otmp = mkobj(oclass, false);
+            if (!otmp) continue; /* C ref: mkobj.c mkbox_cnts() */
             if (otmp.oclass === COIN_CLASS) {
                 otmp.quan = rnd(level_difficulty() + 2) * rnd(75);
                 otmp.owt = weight(otmp);
@@ -2877,11 +2907,15 @@ export function remove_object(otmp) {
 export function add_to_migration(obj) {
     if (!obj) return;
     obj.no_charge = 0;
-    if (Is_container(obj.otyp) && game.context?.lock?.box === obj)
-        game.context.lock = null;              /* maybe_reset_pick(obj) */
+    /* C ref: mkobj.c add_to_migration: lock picking context is stale if it's for this object */
+    if (Is_container(obj.otyp))
+        maybe_reset_pick(obj);
     obj.where = OBJ_MIGRATING;
     if (!Array.isArray(game.migrating_objs)) game.migrating_objs = [];
-    game.migrating_objs.push(obj);
+    /* C ref: mkobj.c add_to_migration — `obj->nobj = gm.migrating_objs;
+       gm.migrating_objs = obj;` pushes onto the chain HEAD, so obj_delivery()
+       and deliver_obj_to_mon() walk newest-first; the array is head-first. */
+    game.migrating_objs.unshift(obj);
     obj.omigr_from_dnum = game.u?.uz?.dnum ?? 0;
     obj.omigr_from_dlevel = game.u?.uz?.dlevel ?? 0;
 }
@@ -3014,7 +3048,13 @@ export function dealloc_obj(obj) {
        callers that can await run timeout.js obj_stop_timers() first, which
        also removes queued BURN_OBJECT timers and runs their cleanup. */
     if (obj.timed) clear_object_timer(obj);
-    if (obj.lamplit) obj.lamplit = 0;          /* del_light_source() */
+    /* C: if (obj_sheds_light(obj)) { del_light_source(LS_OBJECT, obj_to_any(obj));
+       obj->lamplit = 0; } — light.js registers both through gstate (it imports
+       this module). */
+    if (obj.lamplit) {
+        if (hooks.obj_sheds_light?.(obj)) hooks.del_light_source_obj?.(obj);
+        obj.lamplit = 0;
+    }
     if (game.thrownobj === obj) game.thrownobj = null;
     if (game.gk_kickedobj === obj) game.gk_kickedobj = null;
     if (game.context?.tin?.tin === obj) {
@@ -3423,9 +3463,11 @@ export async function obj_meld(o1ref, o2ref) {
         && ((otmp1.owt | 0) > (otmp2.owt | 0)
             || ((otmp1.owt | 0) === (otmp2.owt | 0) && rn2(2)))) {
         if (isfloor(otmp2)) { ox = otmp2.ox; oy = otmp2.oy; }
+        await (await import('./shk.js')).globby_bill_fixup(otmp1, otmp2); // C ref: mkobj.c obj_absorb()
         result = obj_absorb(o1ref, o2ref);
     } else {
         if (isfloor(otmp1)) { ox = otmp1.ox; oy = otmp1.oy; }
+        await (await import('./shk.js')).globby_bill_fixup(otmp2, otmp1); // C ref: mkobj.c obj_absorb()
         result = obj_absorb(o2ref, o1ref);
     }
     /* callers really ought to take care of this; glob melding is a
@@ -3791,6 +3833,10 @@ export async function hornoplenty(horn, tipping, targetbox) {
             const { addtobill } = await import('./shk.js');
             await addtobill(obj, false, false, !!tipping);
         }
+        /* C ref: mkobj.c hornoplenty — if it ended up on bill, we don't want
+           "(unpaid, N zorkmids)" in its formatted name during next message */
+        const ifl = (game.iflags = game.iflags || {});
+        ifl.suppress_price = (ifl.suppress_price || 0) + 1;
         const u = game.u;
         if (!tipping) {
             const typ = game.level?.at(u.ux, u.uy)?.typ;
@@ -3831,6 +3877,7 @@ export async function hornoplenty(horn, tipping, targetbox) {
                 }
             }
         }
+        ifl.suppress_price--;
         if (horn.dknown) I.makeknown(HORN_OF_PLENTY);
     }
     return objcount;

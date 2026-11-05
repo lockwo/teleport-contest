@@ -542,10 +542,11 @@ async function flush_screen_(mode) {
     const { flush_screen } = await import('./display.js');
     await flush_screen(mode);
 }
-// C ref: display.c docrt_flags(flags) — js/display.js:1725 exports docrt().
-async function docrt_flags_(_flags) {
-    const { docrt } = await import('./display.js');
-    await docrt();
+// C ref: display.c docrt_flags(flags) — display.js docrt_flags() honours
+// docrtRefresh (redraw_map only, no cls) which getpos_refresh() passes.
+async function docrt_flags_(flags) {
+    const { docrt_flags } = await import('./display.js');
+    await docrt_flags(flags);
 }
 
 async function is_valid_travelpt_(x, y) {
