@@ -10,7 +10,7 @@
 // (god_zaps_you's death, dosacrifice's floorfood prompt); everything else,
 // including every discarded RNG draw, runs.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, verbalize } from './display.js';
@@ -318,6 +318,7 @@ export function can_pray_quiet() {
 }
 function _canPraySync() { return __canPrayLast; }
 let __canPrayLast = false;
+register_process_static(() => { __canPrayLast = false; });
 async function can_pray(praying) {
     const gp = praystate();
     const u = game.u;
@@ -581,7 +582,6 @@ async function angrygods(resp_god) {
     default:
         await gods_angry(resp_god);
         await god_zaps_you(resp_god);
-        if (game.program_state?.gameover) return; /* done() never returns */
         break;
     }
     // even though this might not be in response to prayer, set pray timer
@@ -1379,7 +1379,6 @@ async function god_zaps_you(resp_god) {
             monstunseesu(M_SEEN_REFL);
         } else {
             await fry_by_god(resp_god, false);
-            if (game.program_state?.gameover) return; /* done() never returns */
             monstunseesu(M_SEEN_REFL | M_SEEN_ELEC);
         }
     }
@@ -1412,7 +1411,6 @@ async function god_zaps_you(resp_god) {
           || HProp_pr('HDisint_resistance') || HProp_pr('EDisint_resistance')
           || has_innate_pr('HDisint_resistance'))) {
         await fry_by_god(resp_god, true);
-        if (game.program_state?.gameover) return; /* done() never returns */
         monstunseesu(M_SEEN_DISINT);
     } else {
         await update_topl('You bask in its black glow for a minute...');

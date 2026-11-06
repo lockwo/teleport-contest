@@ -4,8 +4,9 @@
 // Life saving restores HP and releases any holder or engulfer before the
 // interrupted turn resumes.
 
+import { NetHackGameOver } from './panic.js';
 import { rawPrintBias, setFinalCursor } from './rawprint.js';
-import { MGIVENNAME } from './const.js';
+import { MGIVENNAME, OBJ_FREE } from './const.js';
 import { setONAME } from './const.js';
 import { game } from './gstate.js';
 import { Goodbye } from './role.js';
@@ -484,6 +485,20 @@ async function done_object_cleanup() {
             }
             game[key] = null;
         }
+        // C ref: end.c:889 — if a Punished hero dies during level change (drag_down()
+        // from falling downstairs), uball and uchain are in limbo; put them back on
+        // the floor.  placebc_core()'s newsym(u.ux, u.uy) draws the hero.
+        if (u.uchain && u.uchain.where === OBJ_FREE) {
+            const { lift_covet_and_placebc, override_restriction } = await import('./ball.js');
+            await lift_covet_and_placebc(override_restriction);
+            // The departing-level frame goto_level() holds is the physical screen
+            // drag_down()'s cls() already blanked; the glyph buffer now holds only
+            // the hero newsym()ed by placebc_core().
+            if (game._screenBlank) {
+                const { thaw_screen_for_level_change } = await import('./display.js');
+                thaw_screen_for_level_change();
+            }
+        }
     } catch { /* cleanup is best-effort; never break the death sequence */ }
 }
 
@@ -844,6 +859,11 @@ async function done(how) {
             // at all (that used to skip this entirely for a 'q' answer).
             await real_death_epilogue(how, wizard || discover, !clean);
         }
+        // C ref: end.c really_done() ends in nh_terminate(): the process is
+        // gone, so nothing after the fatal done() call may run (no extra RNG
+        // draws or messages from the caller).  The outermost moveloop_core()
+        // absorbs the sentinel.
+        throw new NetHackGameOver();
     } else {
         // C ref: end.c:1119-1123 done() — `if (survive)` clears the killer
         // (life saving, or a wizard/explore hero declining "Die?").

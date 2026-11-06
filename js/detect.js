@@ -10,6 +10,7 @@ import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
          object_glyph, corr_glyph_cell, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
 import { engr_at } from './engrave.js';
+import { visible_region_at } from './region.js';
 import { couldsee } from './vision.js';
 import { exercise } from './attrib.js';
 import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
@@ -24,7 +25,7 @@ import { rnd } from './rng.js';
 // Additional imports used only by the translated block at the end of this file.
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
-         Hallucination_u, impossible, warning_of, display_nhwindow_message } from './display.js';
+         Hallucination_u, impossible, warning_of, display_nhwindow_message, female_attr } from './display.js';
 import { Blind, cansee, unblock_point, recalc_block_point, do_clear_area_async } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
@@ -588,7 +589,7 @@ const ALL_CLASSES = MAXOCLASSES + 1;
 // C ref: display.h glyph_at(x,y) — the DISPLAYED glyph.  Returned as a tagged
 // descriptor (see the banner) rather than an int; `kind` is one of
 // 'monster' | 'object' | 'trap' | 'invisible' | 'cmap' | 'unexplored'.
-function glyph_at(x, y, remembered = false) {
+export function glyph_at(x, y, remembered = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return { kind: 'unexplored', x, y };
     // `remembered` answers C's levl[x][y].glyph (what the hero remembers) rather
@@ -611,6 +612,11 @@ function glyph_at(x, y, remembered = false) {
         if (!(og && sym !== '@' && og.ch === sym) && !steed_obj_drawn)
             return { kind: 'monster', mon: null, isyou: true, x, y };
     }
+    /* C ref: display.h statue_to_glyph(): a hallucinated statue is DISPLAYED as a
+       random monster glyph, so glyph_at() reports glyph_is_monster() although no
+       monster stands there (display.js show_bg_glyph records it in disp_hstatue). */
+    if (!remembered && loc.disp_hstatue && !m_at(x, y))
+        return { kind: 'monster', mon: null, x, y };
     const mon = remembered ? null : m_at(x, y);
     // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
     // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
@@ -659,7 +665,10 @@ function glyph_at(x, y, remembered = false) {
     }
     if (!loc.seenv && loc.remembered_glyph == null)
         return { kind: 'unexplored', x, y };
-    return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), x, y };
+    /* C ref: display.c show_region() draws a gas cloud with show_glyph() only, so
+       glyph_at() reports S_cloud/S_poisoncloud there (loc.disp_region). */
+    return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), x, y,
+             gascloud: !remembered && !!loc.disp_region };
 }
 
 // The cmap index a cell's terrain draws as.  C reads it back out of the integer
@@ -886,12 +895,15 @@ export function map_monst(mtmp, showtail) {
     // detected monster re-rolls off the display rng.
     if (Hallucination_u()) mon = monster_by_pmidx(random_monster_disp()) || data;
     const g = { ch: mon.mlet || 'x', color: (mon.mcolor != null) ? mon.mcolor : NO_COLOR };
-    // C ref: wintty.c tty_print_glyph — pet_to_glyph carries MG_PET (drawn with
-    // wc2_petattr when hilite_pet); detected_mon_to_glyph carries MG_DETECT
-    // (ATR_INVERSE when use_inverse).
-    const attr = (mon.mlet === ' ' || !mtmp.mtame)
-        ? ((mon.mlet === ' ' && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0)
-        : (game.flags?.hilite_pet && !Hallucination_u() ? ATR_INVERSE : 0);
+    // C ref: wintty.c tty_print_glyph.  map_monst() picks the glyph class from the
+    // REAL monster (monsym(mtmp->data) == ' ', mtame), only the species is
+    // re-rolled by what_mon() under Hallucination.  detected_mon_to_glyph carries
+    // MG_DETECT (ATR_INVERSE when use_inverse), pet_to_glyph carries MG_PET (drawn
+    // with wc2_petattr when hilite_pet, hallucinating or not), mon_to_glyph only
+    // MG_FEMALE (inverse for `wizard && iflags.wizmgender`).
+    const attr = (data.mlet === ' ')
+        ? (game.flags?.use_inverse !== false ? ATR_INVERSE : 0)
+        : (mtmp.mtame && game.flags?.hilite_pet) ? ATR_INVERSE : female_attr(mtmp.female);
     show_glyph_cell(mtmp.mx, mtmp.my, g.ch, g.color, false, attr);
     /* show_glyph() of a monster glyph: the displayed glyph IS a monster, which
        getpos autodescribe (pager.c do_screen_description) reads back */
@@ -1814,7 +1826,8 @@ export function reveal_terrain_getglyph(x, y, swallowed, default_glyph, which_su
             glyph = remembered;
             was_mon = true;
         }
-        const reg = null;   /* visible_region_at(x, y); regions carry no glyph here */
+        const reg = visible_region_at(x, y);
+        const glyph_is_gascloud = (g) => glyph_is_cmap(g) && !!g.gascloud;
         if (((!keep_objs && glyph_is_object(glyph)) || glyph_is_invisible(glyph))
             && keep_traps && !covers_objects(loc)) {
             const t = d_t_at(x, y);
@@ -1822,11 +1835,23 @@ export function reveal_terrain_getglyph(x, y, swallowed, default_glyph, which_su
                                         sym: trap_glyph(t).ch };
         }
         if ((!keep_objs && glyph_is_object(glyph))
-            || (!keep_traps && glyph_is_trap(glyph))
+            /* we either show both traps and visible regions (trap if both
+               are present at the same spot) or neither traps nor regions */
+            || (!keep_traps && (glyph_is_trap(glyph)
+                                || (reg && glyph_is_gascloud(glyph))))
             || (reg && was_mon)
             || glyph_is_invisible(glyph)) {
             if (!seenv) {
-                glyph = default_glyph;
+                glyph = !reg ? default_glyph : { kind: 'unexplored', x, y };
+            } else if (keep_traps && reg && (glyph_is_gascloud(glyph) || was_mon)) {
+                const t = d_t_at(x, y);
+                /* the region glyph isn't the remembered background glyph or
+                   the current glyph */
+                glyph = (t && t.tseen)
+                    ? { kind: 'trap', trap: t, ttyp: t.ttyp, sym: trap_glyph(t).ch,
+                        cell: trap_glyph(t) }
+                    : { kind: 'cmap', sym: reg.glyph.ch, gascloud: true,
+                        cell: { ch: reg.glyph.ch, color: reg.glyph.color, dec: false } };
             } else if (lastseentyp(x, y) === loc.typ) {
                 glyph = { kind: 'cmap', sym: back_to_glyph(x, y).ch,
                           cell: back_to_glyph(x, y) };

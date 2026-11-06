@@ -6,7 +6,7 @@
 // branch/count logic stays here, on C's line order.
 
 import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
-import { game, hooks, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
@@ -912,6 +912,7 @@ export function check_autopickup_exceptions(obj) {
 /* pickup.c:930 autopick_testobj() — 'costly' is computed once per autopickup
    run (calc_costly on the first object only), exactly as in C. */
 let autopick_costly = false;
+register_process_static(() => { autopick_costly = false; });
 export function autopick_testobj(otmp, calc_costly) {
     const otypes = pickup_types();
 
@@ -1446,7 +1447,7 @@ export async function reverse_loot() {
         if (g_at(x, y)) await pline('Ok, now there is loot here.');
     } else {
         /* find original coffers chest if present, otherwise use nearest */
-        const { fobj } = await import('./dogmove.js');
+        const { fobj } = await import('./mkobj.js');
         let coffers = null, otmp = null;
         for (const o of fobj()) {
             if (o.where !== OBJ_FLOOR || o.otyp !== CHEST) continue;

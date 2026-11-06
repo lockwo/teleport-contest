@@ -462,6 +462,7 @@ function hero_is_pm(name) {
 // floor food; eat_ok(NULL) then answers GETOBJ_EXCLUDE_NONINVENT so getobj
 // says "you don't have anything ELSE to eat".
 let _getobj_else = 0;
+register_process_static(() => { _getobj_else = 0; });
 export function eat_ok(obj) {
     const I = _invent;
     if (!obj)
@@ -2906,7 +2907,6 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             const { done, DIED } = await import('./end.js');
             game._killer_name = `unwisely ate the brain of ${pd.name}`;
             await done(DIED);
-            if (game.program_state?.gameover) return M_ATTK_AGR_DIED_;
             exercise(A_WIS_EAT, false);
             dmg_p.value += xtra_dmg;                 /* Rider takes extra damage */
         } else {
@@ -2940,7 +2940,6 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
                 && (await import('./invent.js')).worn_extrinsic(68 /* LIFESAVED */)) {
                 game._killer_name = 'killed by brainlessness';
                 await done(DIED);
-                if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
                 await pline('Unfortunately your brain is still gone.');
                 if (u.uprops) {
                     u.uprops.Lifesaved = 0;
@@ -2952,7 +2951,6 @@ export async function eat_brains(magr, mdef, visflag, dmg_p) {
             }
             game._killer_name = 'killed by brainlessness';
             await done(DIED);
-            if (game.program_state?.gameover) return M_ATTK_DEF_DIED_;
             abase[A_INT_EAT] = ATTRMIN_INT + 2;
             await (await import('./display.js')).You_feel('like a scarecrow.');
         }

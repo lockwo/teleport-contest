@@ -18,7 +18,7 @@
 // sentinel).  Nothing here tries to improve on that.
 
 import { Wounded_legs_hero, Deaf_hero, Stunned_hero } from './youprop.js';
-import { game, hooks, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { Blind } from './vision.js';
 import {
     ANY_INT, ANY_UINT, ANY_LONG, ANY_ULONG, ANY_STR, ANY_MASK32,
@@ -49,7 +49,7 @@ import { near_capacity, is_sword, bimanual, is_weptool, worn_extrinsic, youmonst
 import { hidden_gold, money_cnt_invent } from './shk.js';
 import { weapon_type, weapon_descr } from './weapon.js';
 import { helm_simple_name } from './do_wear.js';
-import { humanoid } from './monflags_data.js';
+import { humanoid, mflags1_of, M1_FLY } from './monflags_data.js';
 import { sticks } from './monattk_data.js';
 import { endgamelevelname } from './dungeon.js';
 import { depth } from './hacklib.js';
@@ -446,7 +446,10 @@ function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)) && !u
 function Flying() {
     const held = game._statusHold;
     if (held && 'fly' in held) return !!held.fly;
-    return !!(upv('Flying') || worn_extrinsic(49)) && !upv('BFlying');
+    /* C ref: youprop.h Flying includes a flying steed */
+    const u = game.u;
+    return !!(upv('Flying') || worn_extrinsic(49)
+              || (u?.usteed && (mflags1_of(u.usteed.data) & M1_FLY))) && !upv('BFlying');
 }
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return Wounded_legs_hero(); }
@@ -998,6 +1001,9 @@ export const terrain_descr = [
 const cache_avail = [false, false, false];
 const cache_reslt = [false, false, false];
 let cache_nomovemsg = null, cache_multi_reason = null;
+/* C ref: botl.c condtests[] compiled-in enabled/choice (cond_xxx options only
+   ever change them at run time). */
+const condtests_initial = condtests.map((c) => ({ enabled: c.enabled, choice: c.choice }));
 
 /* C ref: botl.c cond_cache_prepA() macro */
 function cond_cache_prepA() {
@@ -2319,6 +2325,27 @@ export function parse_condition(s, sidx) {
    of every currently defined rule; these two don't need to be in 'struct g'. */
 let status_hilite_str = null;
 let status_hilite_str_id = 0;
+/* C ref: botl.c file/global status state (gb/gn/gv/gu/gc, cache_*, oldrndencode,
+   oldgoldsym, status_hilite_str, blinit).  A new process begins with blinit
+   FALSE, so bot_via_windowport() runs init_blstats() and the first status
+   update compares against zeroed BEFORE values, never the previous game's. */
+register_process_static(() => {
+    gb.blstats = [[], []]; gb.blinit = false; gb.bl_hilite_moves = 0;
+    gn.now_or_before_idx = 0; gv.valset.fill(false); gu.update_all = false;
+    gc.cond_hilites.fill(0); gc.condmenu_sortorder = 0;
+    cache_avail.fill(false); cache_reslt.fill(false);
+    cache_nomovemsg = null; cache_multi_reason = null;
+    tty_hl.color.fill(NO_COLOR); tty_hl.attr.fill(0);
+    tty_hl.condbits = 0; tty_hl.colormasks = null;
+    tty_hl.hpbar_percent = 0; tty_hl.hpbar_crit = false;
+    _engine_ready = false; _initalready = false; _transient = null;
+    _oldrndencode = 0; _oldgoldsym = 0;
+    status_hilite_str = null; status_hilite_str_id = 0;
+    condtests.forEach((c, k) => {
+        c.enabled = condtests_initial[k].enabled;
+        c.choice = condtests_initial[k].choice;
+    });
+});
 
 /* C ref: botl.c:3417 */
 export function status_hilite_linestr_add(fld, hl, mask, str) {

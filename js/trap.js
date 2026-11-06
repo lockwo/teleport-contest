@@ -9,7 +9,7 @@ import { has_mgivenname, Trap_Effect_Finished } from './const.js';
 import { count_level_features } from './mklev.js';
 import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
 import { level_difficulty } from './dungeon.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
@@ -365,10 +365,8 @@ export function deltrap(trap) {
 }
 
 // C ref: trap.c delfloortrap(ttmp) — destroy a trap that emanates from the
-// floor (used by gush() to clear a trap before flooding its square).  The
-// u_at() branch is unreachable from gush's only caller (it already skips the
-// hero's own square), so only the monster-occupant bookkeeping applies here.
-export function delfloortrap(ttmp) {
+// floor; frees the hero (reset_utrap) or the monster standing on it.
+export async function delfloortrap(ttmp) {
     if (!ttmp) return false;
     const removable = ttmp.ttyp === SQKY_BOARD || ttmp.ttyp === BEAR_TRAP
         || ttmp.ttyp === LANDMINE || ttmp.ttyp === FIRE_TRAP
@@ -377,8 +375,13 @@ export function delfloortrap(ttmp) {
         || ttmp.ttyp === WEB || ttmp.ttyp === MAGIC_TRAP
         || ttmp.ttyp === ANTI_MAGIC;
     if (!removable) return false;
-    const mtmp = m_at(ttmp.tx, ttmp.ty);
-    if (mtmp) mtmp.mtrapped = 0;
+    if (game.u && ttmp.tx === game.u.ux && ttmp.ty === game.u.uy) {
+        if (game.u.utraptype !== TT_BURIEDBALL)
+            await reset_utrap(true);
+    } else {
+        const mtmp = m_at(ttmp.tx, ttmp.ty);
+        if (mtmp) mtmp.mtrapped = 0;
+    }
     deltrap(ttmp);
     return true;
 }
@@ -1312,6 +1315,7 @@ async function Norep_lava(msg) {
 // varies the "A/Some" vs "Another/More" wording across a water_damage_chain()
 // batch; bracketed there, module state here.
 let acid_ctx = { dkn_boom: 0, unk_boom: 0, ctx_valid: false };
+register_process_static(() => { acid_ctx = { dkn_boom: 0, unk_boom: 0, ctx_valid: false }; });
 async function pot_acid_damage(obj, in_invent, described) {
     const one = (obj.quan || 1) === 1;
     let exploded = false;
@@ -1659,7 +1663,6 @@ async function thitu_named(tlev, dam, name) {
     await update_topl(terse ? `You are hit${exclam(dam)}`
                            : `You are hit by ${onm}${exclam(dam)}`);
     await losehp(dam, name);                     // no RNG
-    if (game.program_state?.gameover) return 1; // losehp()->done() never returns
     await exercise(0 /*A_STR*/, false);                // rn2(2)
     return 1;
 }
@@ -1961,12 +1964,12 @@ export async function heal_legs(how) {
     u.atemp = u.atemp || { a: Array(A_MAX).fill(0) };
     if ((u.atemp.a[A_DEX] || 0) < 0) u.atemp.a[A_DEX]++;
     if (!u.usteed && how !== 2) {
-        // body_part(LEG) == "leg"; both sides wounded -> makeplural -> "legs".
-        const both = ((u.EWounded_legs || 0) & BOTH_SIDES) === BOTH_SIDES;
-        const legs = both ? 'legs' : body_part(LEG);
-        // vtense((char*)0? no — vtense(legs,"feel")): plural subj -> "feel",
-        // singular -> "feels".
-        const feel = both ? 'feel' : 'feels';
+        // C ref: do.c heal_legs(): legs = body_part(LEG); both sides wounded ->
+        // makeplural(legs); Your("%s %s better.", legs, vtense(legs, "feel")).
+        // The body part is form-dependent ("lower pseudopod" for a jelly).
+        let legs = body_part(LEG);
+        if (((u.EWounded_legs || 0) & BOTH_SIDES) === BOTH_SIDES) legs = makeplural(legs);
+        const feel = vtense(legs, 'feel');
         const { update_topl } = await import('./display.js');
         await update_topl(`Your ${legs} ${feel} better.`);
     }
@@ -2701,6 +2704,7 @@ export async function blow_up_landmine(trap) {
 // arm's rn2(3)s or the grounded arm's two rn1(35,41) wounded-leg timers, then
 // blow_up_landmine()'s scatter().
 let landmine_recursive = false;
+register_process_static(() => { landmine_recursive = false; });
 async function trapeffect_landmine(trap, trflags) {
     const u = game.u;
     let damage = rnd(16);
@@ -3751,7 +3755,15 @@ export async function untrap_container(container) {
 export async function untrap(force) {
     const u = game.u;
     const { getdir } = await import('./cmd.js');
-    if (!(await getdir(null))) return 0;
+    if (!(await getdir(null))) {
+        /* C ref: trap.c untrap() `if (!getdir((char *) 0)) return 0;` and
+           dountrap() maps that 0 to ECMD_OK (not ECMD_CANCEL), so rhack() does not
+           reset_cmd_vars(TRUE): CQ_REPEAT keeps the command and the rejected
+           direction key for a later #repeat.  js/cmd.js getdir() flags every failed
+           prompt as a cancel; undo that for this caller. */
+        game.context._getobj_cancelled = false;
+        return 0;
+    }
     const x = (u.ux | 0) + (u.dx | 0), y = (u.uy | 0) + (u.dy | 0);
     if (!isok(x, y)) {
         await pline('The perils lurking there are beyond your grasp.');
@@ -4031,6 +4043,7 @@ async function trapeffect_telep_trap(trap, _trflags) {
 // one-shot that deletes itself and drops the hero INSIDE the vault, which is
 // the only way a normal game reaches a vault at all.
 let in_tele_trap = false;
+register_process_static(() => { in_tele_trap = false; });
 async function tele_trap(trap) {
     if (in_tele_trap) return;
     in_tele_trap = true;
@@ -4569,12 +4582,10 @@ export async function float_down(hmask = 0, emask = 0) {
         /* drown() and lava_effects() supply their own landing messages */
         if (is_pool(u.ux, u.uy) && !Wwalking_fu() && !Swimming_fu() && !u.uinwater)
             no_msg = await drown();
-        if (game.program_state?.gameover) return 1;
         if (is_lava(u.ux, u.uy) && !game._in_lava_effects) {
             await lava_effects();
             no_msg = true;
         }
-        if (game.program_state?.gameover) return 1;
     }
     if (!trap) {
         trap = t_at(u.ux, u.uy);
@@ -4591,7 +4602,6 @@ export async function float_down(hmask = 0, emask = 0) {
                     await pline(Hallucination_fu() ? "Bummer!  You've crashed."
                                                    : 'You fall over.');
                     await losehp(rnd(2), 'dangerous winds', KILLED_BY);
-                    if (game.program_state?.gameover) return 1;
                     if (u.usteed) await dismount_steed_fu(DISMOUNT_FELL);
                     await selftouch('As you fall, you');
                 } else if (u.usteed && (is_floater_fu(u.usteed.data)
@@ -4623,7 +4633,6 @@ export async function float_down(hmask = 0, emask = 0) {
             && !(fallthru && (!Can_fall_thru(u.uz) || u.ustuck))
             && !u.utrap)
             await dotrap(trap, 0);
-        if (game.program_state?.gameover) return 1;
     }
     if (!Is_airlevel(u.uz) && !Is_waterlevel(u.uz) && !u.uswallow
         /* falling through trap door calls goto_level,
@@ -5041,7 +5050,6 @@ export async function drown() {
         const dmg = Maybe_Half_Phys(d(2, 6));
         if (u.mhmax > dmg) u.mhmax -= dmg;
         await losehp(dmg, 'rusting away', KILLED_BY);
-        if (game.program_state?.gameover) return true;
     }
     if (inpool_ok) return false;
 
@@ -5078,7 +5086,6 @@ export async function drown() {
         const { noteleport_level, dotele } = await import('./teleport.js');
         if (!noteleport_level({ data: youmonst_data_pub() })) {
             await dotele(false);
-            if (game.program_state?.gameover) return true;
             if (!is_pool(u.ux, u.uy)) return true;
         } else {
             await update_topl('The attempted teleport spell fails.');
@@ -5086,7 +5093,6 @@ export async function drown() {
     }
     if (u.usteed) {
         await dismount_steed_fu(DISMOUNT_GENERIC);
-        if (game.program_state?.gameover) return true;
         if (!is_pool(u.ux, u.uy)) return true;
     }
     /* if sleeping, wake up now so that we don't crawl out of water
@@ -5150,7 +5156,6 @@ export async function drown() {
         game.killer.name = pool_of_water;
         game._killer_name = formatkiller(BUFSZ, DROWNING, false);
         await done(DROWNING);
-        if (game.program_state?.gameover) return true;
         /* oops, we're still alive.  better get out of the water. */
         if (await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT))
             break; /* successful life-save */
@@ -5322,7 +5327,6 @@ export async function lava_effects() {
                 game._killer_name = 'burned by molten lava';
                 await urgent_topl(`You ${boil_away ? 'boil away' : 'burn to a crisp'}...`);
                 await done(BURNING);
-                if (game.program_state?.gameover) return true;
                 const { safe_teleds } = await import('./teleport.js');
                 if (await safe_teleds(TELEDS_ALLOW_DRAG | TELEDS_TELEPORT))
                     break; /* successful life-save */
@@ -5620,6 +5624,10 @@ let spotloc = { x: 0, y: 0 };
 let spotterrain = STONE;
 let spottrap = null;
 let spottraptyp = NO_TRAP;
+register_process_static(() => {
+    inspoteffects = 0; spotloc = { x: 0, y: 0 }; spotterrain = STONE;
+    spottrap = null; spottraptyp = NO_TRAP;
+});
 export async function spoteffects(pick) {
     const u = game.u;
     if (!u) return;
@@ -5678,7 +5686,6 @@ export async function spoteffects(pick) {
                     spot_trap = null;
                     spot_pick = false;
                 }
-                if (game.program_state?.gameover) return;
             }
             const pit = !!(spot_trap && is_pit_ttyp(spot_trap.ttyp));
             const { pickup_after_move } = await import('./cmd.js');
@@ -5691,9 +5698,15 @@ export async function spoteffects(pick) {
                    trap (again); spottrap prevents that */
                 spottrap = spot_trap;
                 spottraptyp = spot_trap.ttyp;
-                await dotrap(spot_trap, trapflag);
-                spottrap = null;
-                spottraptyp = NO_TRAP;
+                /* C's done() never returns, so a death inside dotrap() ends the
+                   process; here it unwinds, and the next game in this process
+                   must not inherit a stale spottrap (hack.c static). */
+                try {
+                    await dotrap(spot_trap, trapflag);
+                } finally {
+                    spottrap = null;
+                    spottraptyp = NO_TRAP;
+                }
             }
             if (spot_pick && pit) await pickup_after_move(u.ux, u.uy);
         }
@@ -5731,7 +5744,6 @@ export async function spoteffects(pick) {
                     if (Half_physical_damage_hero())
                         damage = Math.trunc((damage + 1) / 2);
                     await (await import('./mhitu.js')).mdamageu(mtmp, damage);
-                    if (game.program_state?.gameover) return;
                 }
             } else if (mtmp.mtame) {
                 await pline(`${Amonnam(mtmp)} jumps near you from the ${ceiling(u.ux, u.uy)}.`);
@@ -5905,7 +5917,8 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
             const { youmonst_data_pub } = await import('./invent.js');
             const dam = dmgval(singleobj, { data: youmonst_data_pub() });
             if (game.multi) await trap_nomul();
-            if (await thitu(9 + (singleobj.spe || 0), Maybe_Half_Phys(dam), singleobj)) {
+            const hit = await thitu(9 + (singleobj.spe || 0), Maybe_Half_Phys(dam), singleobj);
+            if (hit) {
                 const { stop_occupation } = await import('./hack.js');
                 await stop_occupation();
             }

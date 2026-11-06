@@ -1724,6 +1724,7 @@ export function clear_no_charge_pets(shkp) {
 // The snapshot is a C `static`, hence a module-level array here.
 const BEFORE = 0, NOW = 1;
 const credit_snap = [[0, 0, 0], [0, 0, 0]];
+register_process_static(() => { for (const row of credit_snap) row.fill(0); });
 export async function credit_report(shkp, idx, silent) {
     const eshkp = shkp.eshk;
 
@@ -1948,6 +1949,7 @@ export async function make_angry_shk(shkp, _ox, _oy) {
 // port has no `gr` struct; the object below is local to set_repo_loc() and
 // finish_paybill(), which are the only two readers/writers in C as well.
 const repo = { location: { x: 0, y: 0 }, shopkeeper: null };
+register_process_static(() => { repo.location.x = repo.location.y = 0; repo.shopkeeper = null; });
 
 // C ref: shk.c inherits(shkp, numsk, croaked, silently):2577 — does this shk
 // take the dead hero's possessions?  RNG: ONE rn2(2) (the head-shake), and

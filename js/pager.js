@@ -22,7 +22,7 @@ import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
 import { worm_known } from './worm.js';
-import { mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
+import { displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -386,9 +386,20 @@ const NHKF_COUNT_KEY = 0x6e;   // cmd.c spkeys_binds[] NHKF_COUNT == 'n'
 // entries at the cmd_data.js rows this file formats (txt/desc/flags strings).
 const EXTCMD_BY_TXT = new Map(EXTCMD_TABLE.map((e) => [e.txt, e]));
 
+// C ref: cmd.c update_rest_on_space() binds <space> to `restonspace`, a clone
+// of the '.' wait entry with its own ef_desc; keep that description instead of
+// the table row of the same name.
+const RESTONSPACE_ROW = new Map();
 function cmdbind_get(key) {
     const bind = live_cmdbind_get(key);
-    return bind && bind.cmd ? EXTCMD_BY_TXT.get(bind.cmd.ef_txt) : undefined;
+    if (!bind || !bind.cmd) return undefined;
+    const row = EXTCMD_BY_TXT.get(bind.cmd.ef_txt);
+    if (row && row.desc !== bind.cmd.ef_desc) {
+        if (!RESTONSPACE_ROW.has(bind.cmd))
+            RESTONSPACE_ROW.set(bind.cmd, { ...row, desc: bind.cmd.ef_desc });
+        return RESTONSPACE_ROW.get(bind.cmd);
+    }
+    return row;
 }
 
 // key code -> extcmdlist row for every bound key.
@@ -1225,7 +1236,7 @@ function cmap_index_for(loc, x, y) {
         if (dm & D_ISOPEN) return 13;               /* S_vodoor */
         return S_ndoor;
     }
-    if (t === CORR) return loc.disp_color === CLR_WHITE ? S_litcorr : S_corr;
+    if (t === CORR) return displayed_corr_is_lit(loc) ? S_litcorr : S_corr;
     if (t === ROOM) return cansee(x, y) ? S_room : S_darkroom;
     // C ref: display.c back_to_glyph() STAIRS/LADDER cases — a *known branch*
     // staircase/ladder uses the S_br* pair; js/display.js's back_to_glyph()

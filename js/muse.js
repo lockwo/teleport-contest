@@ -23,7 +23,7 @@
 //
 
 import { Half_spell_damage_hero, Antimagic_hero, See_invisible_hero } from './youprop.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { ceiling, ledger_no } from './dungeon.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, depth, s_suffix } from './hacklib.js';
@@ -186,6 +186,13 @@ let m_using = false;
 // mbhitm's WAN_STRIKING miss test reads it: a monster whose wand the hero has
 // never seen work (`!mwandexp`) cannot land its first shot.
 let buzzer = null;
+register_process_static(() => {
+    m.defensive = null; m.has_defense = 0;
+    m.offensive = null; m.has_offense = 0;
+    m.misc = null; m.has_misc = 0;
+    gt.trapx = 0; gt.trapy = 0;
+    m_using = false; buzzer = null;
+});
 
 /* ------------------------------------------------------------------------ *
  * muse.c's #defines.  Note the deliberate collision: MUSE_WAN_TELEPORTATION
@@ -1723,8 +1730,6 @@ async function mbhitm(mtmp, otmp, hits_you) {
                 // the death path and maybe_wail() all live in losehp().
                 const { losehp_do } = await import('./do.js');
                 await losehp_do(tmp, 'wand');
-                /* C's done() does not return: no makeknown() after death */
-                if (game.program_state?.gameover) return;
                 learnit = true;
             } else {
                 await update_topl('The wand misses you.');
@@ -1847,17 +1852,12 @@ async function mbhit(mon, range, obj) {
         }
         if (u_at(bx, by)) {
             await mbhitm(null, obj, true);
-            // C's done() does not return.  A monster bolt which kills the hero
-            // aborts mbhit before it can test or destroy objects behind the
-            // hero (each bhito() may consume RNG).
-            if (game.program_state?.gameover) return;
             range -= 3;
         } else {
             const mtmp = m_at(bx, by);
             if (mtmp) {
                 if (cansee(bx, by) && !canspotmon(mtmp)) map_invisible(bx, by);
                 await mbhitm(mtmp, obj, false);
-                if (game.program_state?.gameover) return;
                 range -= 3;
             }
         }

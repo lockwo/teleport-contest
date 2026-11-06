@@ -353,9 +353,9 @@ const RLOC_MSG = 0x02;
 // C ref: wizard.c:139 M_Wants(mask) == (mtmp->data->mflags3 & (mask)).
 function M_Wants(mtmp, mask) { return (mflags3_of(mdata(mtmp)) & mask) !== 0; }
 // C ref: mkobj.c fobj — every object lying on the level's floor, in chain
-// order (newest placement first; dogmove.js fobj()).  This port keeps one array
+// order (newest placement first; mkobj.js fobj()).  This port keeps one array
 // per level and tags each entry's location.
-import { fobj as fobj_chain } from './dogmove.js';
+import { fobj as fobj_chain } from './mkobj.js';
 function floorObjects() {
     return fobj_chain().filter((o) => o.where === OBJ_FLOOR);
 }

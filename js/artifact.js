@@ -14,7 +14,7 @@
 //     0..12 role index this port usually calls `mnum`.  Role_if()/Race_if()
 //     below do the conversion; do not "simplify" the table to 0..12.
 import { inside_shop } from './shk.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { livelog_printf, LL_ARTIFACT } from './livelog.js';
 import { update_topl, see_monsters_sync, flush_sting_effects, map_invisible, shieldeff, newsym, stairway_at, You_feel } from './display.js';
 import { hcolor } from './do_name.js';
@@ -23,7 +23,7 @@ import { objects, mksobj, weight, base_oc_cost, stamp_fobj, uncurse } from './mk
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { fuzzymatch, simple_typename, cxname, The } from './objnam.js';
 import { align_str } from './role.js';
-import { monster_by_pmidx } from './makemon.js';
+import { monster_by_pmidx, golemhp_js as golemhp } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
 import { isok, s_suffix, depth } from './hacklib.js';
@@ -1667,7 +1667,7 @@ export function monhp_per_lvl(mon) {
     const ptr = mon_data(mon);
     let hp = rnd(8);   /* default is d8 */
     if (is_golem(ptr)) {
-        hp = Math.trunc(golemhp(ptr) / (ptr.mlevel || 1));
+        hp = Math.trunc(golemhp(ptr.pmidx) / (ptr.mlevel || 1));
     } else if ((ptr?.mlevel || 0) > 49) {
         hp = 4 + rnd(4);   /* 5..8 */
     } else if (ptr?.mcls === S_DRAGON && ptr.pmidx >= PM_GRAY_DRAGON) {
@@ -1677,13 +1677,6 @@ export function monhp_per_lvl(mon) {
     }
     return hp;
 }
-// C ref: mkobj.c golemhp() — fixed HP per golem type.
-const GOLEM_HP = {
-    'straw golem': 20, 'paper golem': 20, 'rope golem': 30, 'gold golem': 40,
-    'leather golem': 40, 'wood golem': 50, 'flesh golem': 40, 'clay golem': 50,
-    'stone golem': 60, 'glass golem': 60, 'iron golem': 80,
-};
-function golemhp(ptr) { return GOLEM_HP[ptr?.name] || 20; }
 
 // C ref: artifact.c artifact_hit().  Adds only the artifact's own damage and
 // returns TRUE when it did something special (the caller then suppresses the
@@ -2795,6 +2788,7 @@ export async function untouchable(obj, drop_untouchable) {
 // 0 == don't drop, 1 == drop all, 2 == drop weapon.
 let retouch_nesting = 0;                 /* C: static int nesting */
 let retouch_done = null;                 /* C: obj->bypass bits, cleared on outermost entry/exit */
+register_process_static(() => { retouch_nesting = 0; retouch_done = null; });
 export async function retouch_equipment(dropflag) {
     if (!retouch_nesting++) retouch_done = new Set();
     try {

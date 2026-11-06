@@ -13,7 +13,7 @@ import { Levitation_hero, Flying_hero, Stunned_hero, Stone_resistance_hero, Sick
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, You_feel } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, hold_botl_rank, You_feel } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -913,7 +913,9 @@ export async function polymon(mntmp) {
         status_hold('cha', acurr_eff(A_CHA));
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
+        hold_botl_rank();
         game.flags.female = !!u.mfemale;
+        update_rank(); /* C's bot() derives the title from flags.female */
     }
 
     const ym = u;
@@ -945,7 +947,9 @@ export async function polymon(mntmp) {
     const turnedInto = game.u.umonnum !== mntmp;
     let buf = turnedInto ? '' : 'new ';
     if (dochange) {
+        hold_botl_rank();
         game.flags.female = !game.flags.female;
+        update_rank();
         buf += (is_male_flag(mdatNew) || is_female_flag(mdatNew)) ? '' : (game.flags.female ? 'female ' : 'male ');
     }
     buf += await pmname_of(mdatNew, game.flags.female);
@@ -1189,6 +1193,7 @@ export async function polymon(mntmp) {
 export function change_sex() {
     const u = game.u;
     const ptr = youmonst_data_pub();
+    hold_botl_rank();
     if (!u.Upolyd
         || (!is_male_flag(ptr) && !is_female_flag(ptr) && !is_neuter_flag(ptr)))
         game.flags.female = !game.flags.female;
@@ -1333,7 +1338,9 @@ async function polyman(fmt, arg) {
         u.acurr = { a: (u.macurr.a || []).slice() };
         u.amax = { a: (u.mamax.a || []).slice() };
         u.umonnum = u.umonster;
+        hold_botl_rank();
         game.flags.female = !!u.mfemale;
+        update_rank();
     }
     set_uasmon();
 
@@ -1952,7 +1959,6 @@ export async function polyself(psflags) {
             await pline('You shudder for a moment.');
             const { losehp_do } = await import('./do.js');
             await losehp_do(rnd(30), 'system shock');
-            if (game.program_state?.gameover) return;
             await exercise(A_CON, false);
             return;
         }

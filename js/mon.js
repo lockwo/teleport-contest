@@ -1432,14 +1432,6 @@ async function movemon_pass() {
     // reproduce C's per-monster RNG ordering.
     const snapshot = fmonOrder();
     for (const mtmp of snapshot) {
-        // C ref: mon.c movemon()/done() — when a monster's attack kills the
-        // hero, C's done()->really_done() longjmps out and never returns to
-        // iter_mons_safe(); the remaining monsters never move this turn.  With
-        // no longjmp here, detect the death (program_state.gameover, set by
-        // end.js done()) and stop the pass immediately so we don't fabricate
-        // the next monster's move rolls (seed0030 step-62 death blow: C's next
-        // RNG call is can_make_bones(), not another distfleeck()).
-        if (game.program_state?.gameover) break;
         // C ref: mon.c:1217 movemon_singlemon() — "end monster movement early
         // if hero is flagged to leave the level" (a quest leader's expulsion,
         // a monster-caused level change): somebody_can_move = FALSE and
@@ -2360,6 +2352,12 @@ export async function mon_leaving_level(mon, defer_newsym = false) {
         if (mon.wormno) {
             const { remove_worm } = await import('./worm.js');
             remove_worm(mon);
+            /* worm.js's remove_monster() models "grid slot cleared" for the
+               head square by zeroing mon.mx/my; C's remove_monster() leaves
+               them alone (see below), so restore them and take the head off
+               the monster list the way the non-worm arm does */
+            mon.mx = mx; mon.my = my;
+            remove_monster_at(mx, my);
         } else {
             remove_monster_at(mx, my);
         }
@@ -3103,6 +3101,21 @@ export async function mnexto(mtmp, rlocflags) {
     await rloc_to_core(mtmp, mm.x, mm.y, rlocflags);
 }
 
+// This port's level.monsters array is both the fmon chain and the map, so a monster
+// taken off it (mon_leaving_level) and put back (rloc_to_core pushes) lands at the
+// END; C's remove_monster()/place_monster() never reorder fmon, so move it back to
+// the chain slot `idx` it held.  A monster that left the level (migrated) is not on
+// the array and is left alone.
+function restore_fmon_slot(mon, idx) {
+    const list = game.level?.monsters;
+    if (idx < 0 || !list) return;
+    const at = list.indexOf(mon);
+    if (at >= 0 && at !== idx) {
+        list.splice(at, 1);
+        list.splice(Math.min(idx, list.length), 0, mon);
+    }
+}
+
 // ── mon.c:4031 mnearto() ────────────────────────────────────────────────────
 // Put a monster at (or near) a location.  2 = another monster was moved out of
 // the way, 1 = relocated (also when already there), 0 = failed.  Recurses once
@@ -3138,6 +3151,7 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
                    would shortly trip a sanity check; the caller only knows
                    about mtmp, not othermon */
                 await deal_with_overcrowding(othermon);
+                restore_fmon_slot(othermon, othermon_idx);
             }
             return 0;
         }
@@ -3154,15 +3168,9 @@ export async function mnearto(mtmp, x, y, move_other, rlocflags) {
         /* 'move_other'==FALSE this time: fail rather than recurse */
         if (!await mnearto(othermon, x, y, false, rlocflags))
             await deal_with_overcrowding(othermon);
-        else if (othermon_idx >= 0 && game.level?.monsters) {
-            /* C place_monster(): back on the map, same fmon position */
-            const list = game.level.monsters;
-            const at = list.indexOf(othermon);
-            if (at >= 0 && at !== othermon_idx) {
-                list.splice(at, 1);
-                list.splice(Math.min(othermon_idx, list.length), 0, othermon);
-            }
-        }
+        /* C place_monster()/rloc_to() (elemental_clog's relocation included):
+           back on the map, same fmon position */
+        restore_fmon_slot(othermon, othermon_idx);
     }
 
     return res;
@@ -3286,8 +3294,10 @@ export async function peacefuls_respond(mtmp) {
                             exclaimed = true; /* got a msg from monflee() */
                         }
                     }
-                    if (buf)
+                    if (buf) {
+                        set_msg_mon(mon);
                         await pline(`${buf}${needpunct ? '.' : ''}`);
+                    }
                     if (mon.mtame) {
                         /* mustn't clear mpeaceful as below; perhaps reduce
                            tameness? */
@@ -3399,6 +3409,7 @@ export async function new_were_pub(mon) { await new_were(mon); }
 // more than 40.  The sizing rules are kept so iter_mons_safe() reads as C's.
 let _itermonarr = null;
 let _itermonsiz = 0;
+register_process_static(() => { _itermonarr = null; _itermonsiz = 0; });
 export function alloc_itermonarr(count) {
     /* release when count is 0, bigger than itermonsiz, or much smaller */
     if (!count || count > _itermonsiz || count + 40 < _itermonsiz) {

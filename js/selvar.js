@@ -8,7 +8,7 @@
 // staleness rules decide how many rn2() calls a filter draws.  They are
 // reproduced here verbatim.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { rn2 } from './rng.js';
 import { COLNO, ROWNO, MAX_TYPE, MATCH_WALL, IS_STWALL, isok,
          ROOMOFFSET } from './const.js';
@@ -456,6 +456,7 @@ export function selection_free(sel, freesel) {
 
 // C ref: selvar.c:369 the file-static selection_flood_check_func.
 let selection_flood_check_func = null;
+register_process_static(() => { selection_flood_check_func = null; });
 
 // C ref: selvar.c:372 set_selection_floodfillchk(f).
 export function set_selection_floodfillchk(f) {

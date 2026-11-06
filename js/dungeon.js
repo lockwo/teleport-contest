@@ -1763,40 +1763,52 @@ export async function build_overview_lines(final = 0, how = 0) {
             lines.push({ text: `${bbuf}.`, attr: 0 });
         }
 
-        // C ref: print_mapseen()'s final_resting_place block — always entered
-        // when final>0 (die-here bumps kncnt to 1); the bones-cemetery half of
-        // that loop (other heroes' remains) isn't modeled since no covered
-        // session ever reaches a level that already has bones.
-        if (final === 2 && onHere) {
+        // C ref: dungeon.c print_mapseen() emits both the current death and
+        // known cemetery entries stored on this level's mapseen record.
+        const cemetery = find_mapseen(p)?.final_resting_place;
+        const bones = [];
+        for (let bp = cemetery; bp; bp = bp.next)
+            if (bp.bonesknown || wizard() || final > 0) bones.push(bp);
+        const diedHere = final === 2 && onHere;
+        if (diedHere || bones.length) {
+            let remaining = bones.length + (diedHere ? 1 : 0);
             lines.push({ text: `${OVERVIEW_PREFIX}Final resting place for`, attr: 0 });
-            /* rephrase a few death reasons to work with "you" (C: strsubst) */
-            /* C ref: dungeon.c:3709 formatkiller(.., how, TRUE): this port's
-               parallel killer string already carries the "killed by" prefix;
-               the ", while <multi_reason>" tail is topten.c formatkiller's. */
-            let kbuf = game._killer_name || '';
-            let helpless_done = false;
-            if (!kbuf && game.killer?.name) {
-                /* killers set only on game.killer (explode.c's gas spore
-                   blast, ...): the real topten.c formatkiller() text */
-                const { formatkiller } = await import('./topten.js');
-                kbuf = formatkiller(BUFSZ, how, true);
-                helpless_done = true;
-            } else if (!kbuf) {
-                kbuf = 'died';
+            if (diedHere) {
+                /* rephrase a few death reasons to work with "you" (C: strsubst) */
+                /* C ref: dungeon.c:3709 formatkiller(.., how, TRUE): this port's
+                   parallel killer string already carries the "killed by" prefix;
+                   the ", while <multi_reason>" tail is topten.c formatkiller's. */
+                let kbuf = game._killer_name || '';
+                let helpless_done = false;
+                if (!kbuf && game.killer?.name) {
+                    /* killers set only on game.killer (explode.c's gas spore
+                       blast, ...) use the real topten.c formatkiller() text */
+                    const { formatkiller } = await import('./topten.js');
+                    kbuf = formatkiller(BUFSZ, how, true);
+                    helpless_done = true;
+                } else if (!kbuf) {
+                    kbuf = 'died';
+                }
+                if (!helpless_done && (game.multi ?? 0) < 0) {
+                    const room = BUFSZ - kbuf.length;
+                    const why = game.multi_reason;
+                    if (why && String(why).length + 9 <= room) kbuf += `, while ${why}`;
+                    else if (17 <= room) kbuf += ', while helpless';
+                }
+                const killer = kbuf
+                    .replace(' himself', ' yourself').replace(' herself', ' yourself')
+                    .replace(' his ', ' your ').replace(' her ', ' your ');
+                lines.push({
+                    text: `${OVERVIEW_PREFIX}${OVERVIEW_TAB}you, ${killer}${--remaining ? ',' : '.'}`,
+                    attr: 0,
+                });
             }
-            if (!helpless_done && (game.multi ?? 0) < 0) {
-                const room = BUFSZ - kbuf.length;
-                const why = game.multi_reason;
-                if (why && String(why).length + 9 <= room) kbuf += `, while ${why}`;
-                else if (17 <= room) kbuf += ', while helpless';
+            for (const bp of bones) {
+                lines.push({
+                    text: `${OVERVIEW_PREFIX}${OVERVIEW_TAB}${bp.who}, ${bp.how}${--remaining ? ',' : '.'}`,
+                    attr: 0,
+                });
             }
-            const killer = kbuf
-                .replace(' himself', ' yourself').replace(' herself', ' yourself')
-                .replace(' his ', ' your ').replace(' her ', ' your ');
-            lines.push({
-                text: `${OVERVIEW_PREFIX}${OVERVIEW_TAB}you, ${killer}.`,
-                attr: 0,
-            });
         }
     }
     return lines;
@@ -2761,8 +2773,18 @@ export function load_mapseen(nhfp) {
         load.msrooms[i] = { seen: nhfp?.msrooms?.[i]?.seen | 0,
                             untended: nhfp?.msrooms?.[i]?.untended | 0 };
     }
-    /* UNPORTED: restcemetery(nhfp, &load->final_resting_place) (restore.c) */
-    return load;
+    // C ref: restore.c restcemetery() rebuilds the final_resting_place linked
+    // list from the saved cemetery records.  Keep saved order (newest first).
+    const cemetery = nhfp?.cemetery?.recs || nhfp?.cemetery
+        || nhfp?.recs?.cemetery || nhfp?.recs || {};
+    const cemeteryFlag = cemetery.cemetery_flag ?? cemetery['cemetery-cemetery_flag'];
+    if ((cemeteryFlag | 0) === 0) {
+        const entries = cemetery.bonesinfo || cemetery['cemetery-bonesinfo'] || [];
+        load.final_resting_place = entries.reduceRight((next, entry) => {
+            const record = entry?.recs || entry;
+            return { ...record, next };
+        }, null);
+    }
 }
 
 /* ── dungeon.c:2761 overview_stats ─────────────────────────────────────── */
@@ -3160,17 +3182,17 @@ export async function recalc_mapseen() {
     }
 
     if (game.level?.bonesinfo && !mptr.final_resting_place) {
-        /* clone the bonesinfo so we aren't dependent upon this
-           level being in memory */
-        let bonesaddr = { obj: mptr, key: 'final_resting_place' };
-        bp = game.level.bonesinfo;
-        do {
-            const clone = { ...bp };
-            bonesaddr.obj[bonesaddr.key] = clone;
-            bp = bp.next;
-            bonesaddr = { obj: clone, key: 'next' };
-        } while (bp);
-        bonesaddr.obj[bonesaddr.key] = null;
+        // C stores this as a linked list.  savebones() keeps the port's level
+        // copy as an array, while restored mapseen records use linked nodes.
+        const entries = Array.isArray(game.level.bonesinfo)
+            ? game.level.bonesinfo : (() => {
+                const list = [];
+                for (let entry = game.level.bonesinfo; entry; entry = entry.next)
+                    list.push(entry);
+                return list;
+            })();
+        mptr.final_resting_place = entries.reduceRight(
+            (next, entry) => ({ ...entry, next }), null);
     }
     /* decide which past hero deaths have become known; there's no guarantee of
        either a grave or a ghost, so go by whether the current hero has seen the

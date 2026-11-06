@@ -8,7 +8,7 @@
 // dokick()'s pre-direction refusals matter for a different reason: C returns
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { Fumbling_hero, Wounded_legs_hero, Passes_walls_hero } from './youprop.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } from './const.js';
@@ -969,6 +969,7 @@ async function kick_monster(mon, x, y) {
 // state rather than a game field: container_impact_dmg()'s `frominv` test is
 // the only other reader and it does not need it here.
 let gk_kickedobj = null;
+register_process_static(() => { gk_kickedobj = null; });
 
 // C ref: mkobj.c sobj_at(otyp, x, y).  NOT js/invent.js's sobj_at: that one
 // walks `game.level.objects[x][y]` while place_object() keeps a FLAT array, so

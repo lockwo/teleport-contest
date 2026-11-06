@@ -1,7 +1,7 @@
 // options.js — Parse .nethackrc options.
 // C ref: options.c — handles OPTIONS=, BIND=, etc.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { panic } from './panic.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, putstr } from './windows.js';
 import { nhgetch } from './input.js';
@@ -5816,6 +5816,11 @@ export async function handler_symset(optidx) {
 let opt_initial = false, opt_need_redraw = false, opt_need_glyph_reset = false,
     opt_reset_customcolors = false, opt_reset_customsymbols = false,
     opt_update_basic_palette = false, opt_need_promptstyle = false;
+register_process_static(() => {
+    opt_initial = false; opt_need_redraw = false; opt_need_glyph_reset = false;
+    opt_reset_customcolors = false; opt_reset_customsymbols = false;
+    opt_update_basic_palette = false; opt_need_promptstyle = false;
+});
 
 // C ref: parseoptions()'s third argument -- the accumulator parseNethackrc()
 // builds for a whole config file.  handler_pickup_types() reaches parseoptions()

@@ -13,7 +13,7 @@ import { game, resetGame, reset_process_statics } from './gstate.js';
 import { recorder_ubirthday } from './calendar.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
-import { NetHackPanic } from './panic.js';
+import { NetHackPanic, NetHackGameOver } from './panic.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
 import { flush_screen, warmupBotlStatusFns, remember_topl, yn_prompt_history, key2txt } from './display.js';
@@ -1646,7 +1646,8 @@ export async function runSegment(input) {
     try {
         await nhGame.start();
     } catch (e) {
-        if (!String(e?.message || '').includes('Input queue empty'))
+        if (!(e instanceof NetHackGameOver)
+            && !String(e?.message || '').includes('Input queue empty'))
             throw e;
         startup_exhausted = true;
     }

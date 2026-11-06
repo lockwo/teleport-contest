@@ -40,7 +40,7 @@ import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './con
 import {
     FOOD_CLASS, BALL_CLASS, CHAIN_CLASS, ROCK_CLASS, CORPSE, TIN, nextoid,
     GOLD_PIECE, COIN_CLASS, GEM_CLASS, BOULDER, objects as OBJECTS, is_rider_pm, weight,
-    place_object, eaten_stat, peek_at_iced_corpse_age,
+    place_object, eaten_stat, peek_at_iced_corpse_age, fobj,
 } from './mkobj.js';
 import { may_dig } from './dig.js';
 import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
@@ -297,23 +297,6 @@ function MON_AT(x, y) {
 
 // C ref: rm.h levl[x][y].typ + the object chain at a square.
 function terrainTyp(x, y) { return game.level?.at(x, y)?.typ; }
-
-// All floor objects on the level (C's `fobj` chain).  C inserts each newly
-// placed object at the HEAD of fobj (otmp->nobj = fobj; fobj = otmp), so the
-// chain iterates newest-first.  Our level.objects array is append-ordered
-// (oldest-first), so reverse it to reproduce C's traversal order — in dog_goal
-// the traversal order determines which object's APPORT rn2(8) fires first and
-// how gg.gtyp evolves, so the obj_resists/rn2(8) stream must match C's fobj.
-export function fobj() {
-    const arr = game.level?.objects;
-    if (!arr) return [];
-    // C ref: mkobj.c:2362 place_object() — head insertion into fobj.  The array
-    // is pile-ordered, so order by placement stamp (mkobj.js stamp_fobj); an
-    // unstamped object (level restore) counts as older than any stamped one.
-    const n = arr.length;
-    return arr.map((o, i) => [o.fobj_seq != null ? o.fobj_seq : i - n, o])
-        .sort((a, b) => b[0] - a[0]).map((e) => e[1]);
-}
 
 // Objects at a specific square, in level.objects append order (deepest first).
 function objectsAt(x, y) {

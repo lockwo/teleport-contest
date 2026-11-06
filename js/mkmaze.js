@@ -4,7 +4,7 @@
 // makemaz("") path and, via des.level_init({style="maze"}) and
 // des.mazewalk(), by the .lua special levels (hellfill.lua in particular).
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { has_mgivenname } from './const.js';
 import { setONAME } from './const.js';
 import { dist2 } from './hacklib.js';
@@ -305,6 +305,7 @@ let hero_bubble = null;
 // function-scope static, so it toggles once per call for the whole GAME and is
 // deliberately not reset per level.
 let mb_up = false;
+register_process_static(() => { hero_bubble = null; mb_up = false; });
 
 // C ref: mkmaze.c svb.bbubbles (head) / ge.ebubbles (tail).  save_waterlevel()
 // writes the chain into the LEVEL file, so it rides with game.level exactly as

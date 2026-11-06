@@ -14,7 +14,7 @@
 // turn).  The ball and chain also occupy map squares that trail the hero, so
 // their placement is load-bearing for the rendered map.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { rn2 } from './rng.js';
 import { newsym, object_glyph, You_feel, m_at } from './display.js';
 import { Blind } from './vision.js';
@@ -468,6 +468,7 @@ export const override_restriction = -1;
 // build, so the Placebc()/Unplacebc() macro variants and the two
 // struct breadcrumbs are absent.
 let bcrestriction = 0;
+register_process_static(() => { bcrestriction = 0; });
 
 // C ref: include/onames.h HEAVY_IRON_BALL / IRON_CHAIN (js/apply.js:290).
 const HEAVY_IRON_BALL = 477, IRON_CHAIN = 478;
@@ -866,7 +867,7 @@ export async function drag_down() {
     const u = game.u;
     let forward;
     let dragchance = 3;
-    const { update_topl, topl_more } = await import('./display.js');
+    const { update_topl, topl_more, blank_glyph_cells } = await import('./display.js');
     const { rnd } = await import('./rng.js');
     const { welded } = await import('./invent.js');
 
@@ -893,6 +894,7 @@ export async function drag_down() {
     }
     game._screenBlank = true;
     game._screenBlankStatus = false;
+    blank_glyph_cells(); // C cls(): clear_glyph_buffer()
 
     if (forward) {
         if (rn2(6)) {
@@ -900,7 +902,6 @@ export async function drag_down() {
             await losehp_do(Maybe_Half_Phys(rnd(6)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
-            if (game.program_state?.gameover) return; /* C: done() never returns */
             await litter();
         }
     } else {
@@ -909,7 +910,6 @@ export async function drag_down() {
             await update_topl('The iron ball smacks into you!');
             await losehp_do(Maybe_Half_Phys(rnd(20)), 'iron ball collision',
                             KILLED_BY_AN);
-            if (game.program_state?.gameover) return; /* C: done() never returns */
             const { exercise } = await import('./attrib.js');
             await exercise(A_STR, false);
             dragchance -= 2;
@@ -919,7 +919,6 @@ export async function drag_down() {
             await losehp_do(Maybe_Half_Phys(rnd(3)),
                             'dragged downstairs by an iron ball',
                             NO_KILLER_PREFIX);
-            if (game.program_state?.gameover) return; /* C: done() never returns */
             const { exercise } = await import('./attrib.js');
             await exercise(A_STR, false);
             await litter();

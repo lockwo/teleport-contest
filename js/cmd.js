@@ -7,7 +7,7 @@
 
 import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft, Fumbling_hero } from './youprop.js';
 import { worm_cross } from './worm.js';
-import { game, hooks, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { nhgetch } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
 import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
@@ -26,8 +26,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          obj_extract_self, youmonst_data_pub, carried_weight } from './invent.js';
 import { makeplural } from './plural.js';
 import { WEAPON_CLASS, SCROLL_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
-         disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object } from './mkobj.js';
-import { fobj } from './dogmove.js';
+         disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object, fobj } from './mkobj.js';
 import { doeat } from './eat.js';
 import { doapply } from './apply.js';
 import { dodrink } from './potion.js';
@@ -351,6 +350,29 @@ export function getpos_walkdir(key) {
     return (d >= 0 && d < N_DIRS) ? { dx: xdir[d], dy: ydir[d] } : null;
 }
 
+// C ref: cmd.c movecmd(sym, mode) side effects as getpos() drives it:
+// `movecmd(c, MV_WALK)`, then (when that answers 0) `movecmd(c, MV_RUSH)` and
+// `movecmd(c, MV_RUN)`.  A key bound to a direction (or '<'/'>') loads
+// u.dx/u.dy/u.dz from the table; any other key only clears u.dz.  The values
+// outlive the getpos() call: gather_locs()' GFILTER_AREA floodfill seeds from
+// u.ux+u.dx, u.uy+u.dy when the hero stands in a doorway.
+export function getpos_movecmd_effects(key) {
+    const u = game.u;
+    if (!u) return;
+    const Cmd = numpad_cmd();
+    for (const mode of [MV_WALK, MV_RUSH, MV_RUN]) {
+        const d = movecmd_dir(Cmd, key, mode);
+        if (d >= 0) {
+            u.dx = xdir[d];
+            u.dy = ydir[d];
+            u.dz = zdir[d];
+            if (!u.dz) return;
+        } else {
+            u.dz = 0;
+        }
+    }
+}
+
 // C ref: getpos.c `movecmd(c, MV_RUSH) || movecmd(c, MV_RUN)` — either mode
 // triggers the SAME rush/moveskip behavior in getpos(), so this checks both
 // (this also covers the default keymap's Ctrl-<dirchar> rush keys and capital
@@ -448,7 +470,7 @@ function u_simple_floortyp(x, y) {
     if (typ === LAVAWALL) return LAVAWALL; // wall of lava: fly/lev doesn't matter
     if (!airborne) {
         if (isPoolTerrain(x, y)) return POOL;
-        if (IS_LAVA(typ)) return LAVAPOOL;
+        if (is_lava(x, y)) return LAVAPOOL;
     }
     return ROOM;
 }
@@ -510,11 +532,10 @@ async function swim_move_danger(x, y) {
     const confused = (u.uprops?.Confusion || 0) > 0;
     const seenv = loc ? (loc.seenv || 0) : 0;
     const pool = isPoolTerrain(x, y);
-    const lava = IS_LAVA(typ);
+    const lava = is_lava(x, y); // C ref: dbridge.c is_lava(): a raised drawbridge over lava counts
     if (newtyp !== u_simple_floortyp(u.ux, u.uy) && !stunned && !confused && seenv
         && (pool || lava || liquidWall)) {
-        const curTyp = game.level?.at(u.ux, u.uy)?.typ ?? STONE;
-        if ((pool && !Known_wwalking()) || (lava && !Known_lwalking() && !IS_LAVA(curTyp))
+        if ((pool && !Known_wwalking()) || (lava && !Known_lwalking() && !is_lava(u.ux, u.uy))
             || liquidWall) {
             if (game.context?.nopick) {
                 game.context.tips = (game.context.tips || 0) | (1 << TIP_SWIM);
@@ -651,7 +672,7 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy,
         if (t && t.tseen && t.ttyp !== VIBRATING_SQUARE) return false;
         const loc = game.level?.at(x, y);
         const typ = loc ? loc.typ : STONE;
-        if ((loc?.seenv || 0) && (isPoolTerrain(x, y) || IS_LAVA(typ))
+        if ((loc?.seenv || 0) && (isPoolTerrain(x, y) || is_lava(x, y))
             && (IS_WATERWALL(typ) || typ === LAVAWALL
                 || !(Levitation_fu() || Flying_fu())))
             return false;
@@ -713,12 +734,12 @@ function avoid_moving_on_liquid(x, y) {
     const in_air = !!(Levitation_fu() || Flying_fu());
     const run = game.context?.run || 0;
     if ((typ === hereTyp
-         || (run < 2 && (!IS_LAVA(typ) || in_air))
+         || (run < 2 && (!is_lava(x, y) || in_air))
          || game.context?.travel)
         && (in_air || Known_lwalking() || (isPoolTerrain(x, y) && Known_wwalking()))
         && !(typ === WATER || typ === LAVAWALL))
         return false; // liquid is safe to traverse
-    if ((isPoolTerrain(x, y) || IS_LAVA(typ)) && (loc?.seenv || 0))
+    if ((isPoolTerrain(x, y) || is_lava(x, y)) && (loc?.seenv || 0))
         return true;
     return false;
 }
@@ -2079,7 +2100,10 @@ export async function rhack(key) {
     // here, so js/invent.js getobj() flags a cancelled pick (every caller
     // propagates a null pick straight up as its own cancel) via
     // game.context._getobj_cancelled; consume it once per command.
-    const getobjCancelled = !!game.context._getobj_cancelled;
+    // A nested getobj() can decline without cancelling its timed caller
+    // (apply.c doapply() keeps ECMD_TIME when tinning finds no corpse).
+    // Only a no-time result lets that null pick cancel the command itself.
+    const getobjCancelled = !!game.context._getobj_cancelled && !game.context.move;
     game.context._getobj_cancelled = false;
     if (badCommand || !repeatName || getobjCancelled) {
         cmdq_of(CQ_REPEAT).length = 0;
@@ -2234,8 +2258,11 @@ export async function find_trap(trap) {
     // A visible region (gas cloud) on the square is drawn by newsym() through
     // show_region() and returns BEFORE _map_location(), so levl[x][y].glyph
     // keeps the old memory and differs from the trap's glyph (display.c newsym).
+    // A blind hero whose map memory of the square is an 'I' with a monster still
+    // there: feel_location() returns early (display.c:764) so levl[x][y].glyph is
+    // still the invisible-monster glyph, not the trap's.
     const cleared = Hallucination() || !game.level?.flags?.hero_memory
-        || !!loc?.disp_region
+        || !!loc?.disp_region || !!loc?.invisMon
         || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
     if (cleared) {
         // C cls() opens with display_nhwindow(WIN_MESSAGE, FALSE): a pending
@@ -2249,10 +2276,13 @@ export async function find_trap(trap) {
         show_glyph_cell(trap.tx, trap.ty, tg.ch, tg.color, tg.dec);
         // C: map_trap(trap, 1) also stamps the square's map memory with the trap,
         // which is what docrt() repaints for a blind hero (nothing is in sight to
-        // newsym() the object back on top).
+        // newsym() the object back on top).  levl[x][y].glyph is replaced, so a
+        // remembered 'I' is gone: the next search's mfind0() then finds the
+        // still-unseen monster again ("You feel an unseen monster!").
         if (game.level?.flags?.hero_memory && loc) {
             loc.remembered_glyph = { ch: tg.ch, color: tg.color, decgfx: tg.dec };
             loc.mapped_trap_ttyp = trap.ttyp;
+            loc.invisMon = false;
         }
         const u = game.u;
         if (u?.ux > 0) {
@@ -2613,6 +2643,12 @@ async function getdir_answer(key, s) {
         const qbuf = `desired location, then type '${String.fromCharCode(NHKF_GETPOS_PICK_Q)}'`
             + ` for left click, '${String.fromCharCode(NHKF_GETPOS_PICK)}' for right`;
         const verbose = game.flags?.verbose !== false;
+        // C ref: getpos.c:853-854 — getpos() places the cursor at its starting
+        // square and flushes before reading. getpos_inner() leaves that initial
+        // frame to its caller, so mirror those operations on this call path.
+        await flush_screen(0);
+        const disp = game.nhDisplay;
+        if (disp?.setCursor) disp.setCursor(u.ux - 1, u.uy + 1);
         const cc = await getpos(qbuf, u.ux, u.uy, null, /*force=*/true, verbose);
         if (!cc) {
             u.dx = 0; u.dy = 0; u.dz = 0;
@@ -2938,6 +2974,7 @@ function canned_kick_queued() {
 // canned kick runs inside THIS port rhack() call, so rhack()'s own epilogue
 // must know it was the kick that ran (canned_kick_ran).
 let canned_kick_ran = false;
+register_process_static(() => { canned_kick_ran = false; });
 async function run_canned_kick() {
     if (!canned_kick_queued()) return false;
     cmdq_pop(CQ_CANNED);
@@ -3934,6 +3971,7 @@ async function domove_core(dx, dy, attemptTracked) {
         see_nearby_objects();
         await earth_sense();
         await reset_occupations(); // hack.c:2936
+        run_stop_at_dest_terrain(newx, newy); // hack.c:2937-2942 (also after a refused swap)
         // C ref: hack.c:2945 — the same tread-disturbs-zombies call closes the
         // swap/displace path too (even when the swap was refused).
         hero_tread_disturbs_zombies();
@@ -3965,7 +4003,6 @@ async function domove_core(dx, dy, attemptTracked) {
         // (seed2600-wizard-custom-binds step 10).
         if (u.umoved) {
             await spoteffects(pickup_after_move);
-            if (game.program_state?.gameover) return;
             // C ref: hack.c domove() — a pet swap leaves domove_core() through
             // the same tail as any other successful step (u.ux0 != u.ux sets
             // DOMOVE_WALK in gd.domove_succeeded), so domove() still smudges the
@@ -4421,16 +4458,12 @@ async function domove_core(dx, dy, attemptTracked) {
             await pline('The Sokoban walls resist your ability.');
         } else if (game.flags?.mention_walls) {
             const tgt = game.level?.at(newx, newy);
-            const t = tgt ? tgt.typ : STONE;
-            // C ref: display.c back_to_glyph() — SCORR/STONE are S_stone, TREE
-            // is S_tree, and a wall (or the SDOOR hiding in one) reads as the
-            // wall only once seenv is set.  defsym.h gives S_tree the
-            // explanation "tree", so an() makes it "a tree".
-            const buf = (t === STONE || t === SCORR) ? 'solid stone'
-                      : (t === TREE) ? 'a tree'
-                       : (IS_WALL(t) || t === SDOOR)
-                           ? (wall_shows_as_stone(tgt) ? 'solid stone' : 'a wall')
-                      : null;
+            // C ref: hack.c test_move(): sym = glyph_to_cmap(back_to_glyph(x, y));
+            // S_stone -> "solid stone", else an(defsyms[sym].explanation).  An
+            // arboreal level's STONE is S_tree (back_to_glyph), so "a tree".
+            const sym = back_to_cmap(tgt, newx, newy);
+            const buf = sym === S_stone ? 'solid stone'
+                      : an(DEFSYM_EXPLANATION[sym]);
             // C test_move() calls pline_dir(), whose vpline() appends to an
             // unacknowledged message from the same command (for example, a
             // pet-swap line followed by the wall hit at the end of a run).
@@ -4513,6 +4546,7 @@ async function domove_core(dx, dy, attemptTracked) {
     see_nearby_objects();
     await earth_sense(); // u_on_newpos() tail, dungeon.c:1600
     await reset_occupations(); // hack.c:2936
+    run_stop_at_dest_terrain(newx, newy); // hack.c:2937-2942
 
     // C ref: hack.c:2945 — your tread on the ground may disturb the slumber of
     // nearby (buried) zombies.
@@ -4564,10 +4598,6 @@ async function domove_core(dx, dy, attemptTracked) {
     // no-op domove (travel's dx=dy=0 when no path/guess progress exists) must
     // not re-run pickup()/read_engr_at() on the hero's own square.
     if (movedBeforeSpot) await spoteffects(pickup_after_move);
-    // C ref: end.c really_done() longjmps out; if spoteffects() (e.g.
-    // lava_effects()) just ended the game, none of domove()'s post-move work
-    // (engraving smudge) runs.
-    if (game.program_state?.gameover) return;
     // C ref: cmd.c rhack() DOMOVE_WALK arm — `domove(); return;`: a walk never
     // restores svc.context.move after domove(), so a lifesaved death during
     // spoteffects() (end.c savelife() sets context.move = 0) leaves the hero's
@@ -4839,7 +4869,7 @@ async function trapmove(x, y) {
         // though the hero stays put — u_calc_moveamt() reads it.
         if (game.flags?.verbose !== false)
             await Norep_topl(predicament_msg('stuck in the lava'));
-        if (!IS_LAVA(game.level?.at(x, y)?.typ ?? STONE)) {
+        if (!is_lava(x, y)) {
             u.utrap--;
             if ((u.utrap & 0xff) === 0) {
                 u.utrap = 0;
@@ -5673,9 +5703,8 @@ export async function pickup_after_move(x, y) {
     // The same disjunct covers a pool/lava square (reachable here only by
     // Levitation/Flying/Wwalking): `(is_pool(u.ux,u.uy) && !Underwater) ||
     // is_lava(u.ux,u.uy)`.
-    const hereLoc = game.level?.at?.(x, y);
     if (ctx.nopick || !objAt || (isPoolTerrain(x, y) && !game.u?.uinwater)
-        || (hereLoc && IS_LAVA(hereLoc.typ))) {
+        || is_lava(x, y)) {
         if (mentionDecor) await decor();
         await read_engr_at(x, y);
         return;
@@ -5881,6 +5910,19 @@ async function hero_check_leash() {
     const u = game.u;
     if (!(game.invent || []).some((o) => (o.leashmon | 0) !== 0)) return;
     await (await import('./apply.js')).check_leash(u.ux0, u.uy0);
+}
+
+// C ref: hack.c:2937-2942 domove_core() — `if (svc.context.run) { if (svc.context.run < 8)
+// if (IS_DOOR(tmpr->typ) || IS_OBSTRUCTED(tmpr->typ) || IS_FURNITURE(tmpr->typ)) nomul(0); }`
+// where tmpr is the DESTINATION square, whether or not the hero got there: a rush
+// whose pet-swap was refused ("You stop.  Your kitten doesn't want to swap places.")
+// onto stairs/door/altar ends right here.
+function run_stop_at_dest_terrain(x, y) {
+    const c = game.context;
+    if (!c.run || c.run >= 8) return;
+    const typ = game.level?.at(x, y)?.typ;
+    if (typ === undefined) return;
+    if (IS_DOOR(typ) || IS_OBSTRUCTED(typ) || IS_FURNITURE(typ)) nomul(0);
 }
 
 // C ref: hack.c domove_swap_with_pet(mtmp, x, y) — swap the hero and a tame
@@ -6233,6 +6275,7 @@ function cmd_mark_synch() {}
 // C ref: cmd.c:3517 randomkey() — the debug fuzzer's random keystroke.
 let randomkey_i = 0;          /* C: static unsigned i */
 let randomkey_last_c = 0;     /* C: static char last_c */
+register_process_static(() => { randomkey_i = 0; randomkey_last_c = 0; });
 function cmd_randomkey() {
     let c;
 
@@ -6898,6 +6941,7 @@ export async function doprev_message() {
 // C ref: cmd.c:172 — count down by decrementing multi.  timed_occ_fn is set by
 // set_occupation() when it was given a non-zero xtime.
 let timed_occ_fn = null;
+register_process_static(() => { timed_occ_fn = null; });
 
 export function timed_occupation() {
     timed_occ_fn();

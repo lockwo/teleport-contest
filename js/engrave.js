@@ -333,8 +333,11 @@ export function wipeout_text(engr, cnt, seed = 0) {
                 nxt = rn2(lth);
                 use_rubout = rn2(4);
             } else {
+                // C ref: engrave.c wipeout_text() — `seed` is unsigned, so the
+                // product wraps at 2^32 before the modulus.
+                seed >>>= 0;
                 nxt = seed % lth;
-                seed *= 31;
+                seed = Math.imul(seed, 31) >>> 0;
                 seed %= (BUFSZ - 1);
                 use_rubout = seed & 3;
             }
@@ -354,7 +357,7 @@ export function wipeout_text(engr, cnt, seed = 0) {
                         if (!seed) {
                             j = rn2(wipeto.length);
                         } else {
-                            seed *= 31;
+                            seed = Math.imul(seed, 31) >>> 0;
                             seed %= (BUFSZ - 1);
                             j = seed % wipeto.length;
                         }

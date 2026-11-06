@@ -1933,7 +1933,8 @@ export async function doread() {
         }
     }
 
-    if (!(await seffects(scroll))) {
+    const seffects_result = await seffects(scroll);
+    if (!seffects_result) {
         if (!objects[otyp]?.oc_name_known) {
             if (game.known) {
                 // C ref: read.c doread -> learnscroll -> learnscrolltyp():
@@ -2109,12 +2110,6 @@ function greatest_erosion_read(otmp) {
 // C ref: read.c:89 erode_obj_text(otmp, buf) — a worn or burnt shirt/apron has
 // characters rubbed out of its slogan.  wipeout_text()'s SEEDED form draws no
 // RNG: the `o_id ^ (unsigned) ubirthday` seed makes one object's damage stable.
-//
-// GOTCHA: engrave.js's wipeout_text() advances the seed as `seed *= 31; seed %=
-// (BUFSZ - 1)` in JS number arithmetic, while C wraps the unsigned product at
-// 2^32 BEFORE the modulus.  Every other caller passes seed 0 (the RNG path), so
-// this is the first call site where the difference is reachable; the wiped
-// characters can differ from C's for a heavily eroded shirt.
 export function erode_obj_text(otmp, buf) {
     const erosion = greatest_erosion_read(otmp);
     if (erosion)

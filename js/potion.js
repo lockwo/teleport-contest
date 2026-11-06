@@ -10,7 +10,7 @@
 // potion_dip() (the carried-potion dip).  Where C's call would draw, the roll is
 // spent in place; where it would not, only the framing message is emitted.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
@@ -770,6 +770,7 @@ import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
 // "You have nothing to drink." to "You have nothing else to drink.", so it is a
 // rendered-text input, not bookkeeping.
 let drink_ok_extra = 0;
+register_process_static(() => { drink_ok_extra = 0; });
 function drink_ok(obj) {
     if (!obj)
         return drink_ok_extra ? GETOBJ_EXCLUDE_NONINVENT : GETOBJ_EXCLUDE;
@@ -953,7 +954,6 @@ async function peffect_sickness(otmp) {
                 await losehp(rnd(10) + 5 * (otmp.cursed ? 1 : 0), contaminant, kfmt);
             else
                 await losehp(1 + rn2(2), contaminant, kfmt);
-            if (game.program_state?.gameover) return; /* losehp()->done() never returns */
             await exercise(A_CON, false);
         }
     }
@@ -1505,10 +1505,6 @@ export async function dopotion(otmp) {
     const retval = await peffects(otmp);
     if (retval >= 0)
         return retval ? ECMD_TIME : ECMD_OK;
-    /* C ref: a potion that kills the hero (losehp()->done()) never returns to
-       dopotion(), so no discovery/exercise/useup follows the death. */
-    if (game.program_state?.gameover)
-        return ECMD_TIME;
 
     if (game.potion_nothing) {
         game.potion_unkn = (game.potion_unkn || 0) + 1;

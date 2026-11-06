@@ -412,6 +412,16 @@ async function that_is_a_mimic_message(mtmp) {
         const furn = defsyms[mtmp.mappearance]?.explanation || FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
         fmtbuf = `That ${furn} actually is %s!`;
     } else if (M_AP_TYPE(mtmp) === M_AP_OBJECT) {
+        // C ref: uhitm.c that_is_a_mimic(): the "That <object> is %s!" format is
+        // used only when glyph_at(x, y) -- what the hero has DISPLAYED there -- is
+        // an object glyph.  A disguised mimic the hero was never shown (a dark or
+        // unremembered spot, still displaying the corridor/floor) keeps the default
+        // "Wait!  That's %s!" and creates no stand-in object (no next_ident draw).
+        const { glyph_at } = await import('./detect.js');
+        if (glyph_at(mtmp.mx, mtmp.my).kind !== 'object') {
+            fmtbuf = "Wait!  That's %s!";
+            return fmtbuf.replace('%s', mimic_reveal_what(mtmp));
+        }
         const otyp = mtmp.mappearance;
         const otmp = await object_from_map_lite(mtmp);
         const otmp_name = (otyp && otyp !== STRANGE_OBJECT
@@ -1543,7 +1553,6 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
             const { M_SEEN_ACID } = await import('./const.js');
             if (!Acid_resistance()) {
                 await mdamageu(mon, tmp);
-                if (game.program_state?.gameover) return; /* done() never returns */
                 monstunseesu(M_SEEN_ACID);
             } else {
                 monstseesu(M_SEEN_ACID);
@@ -1651,7 +1660,6 @@ export async function passive(mon, weapon, mhit, malive, aatyp, wep_was_destroye
                 monstunseesu(M_SEEN_COLD);
                 await pline('You are suddenly very cold!');
                 await mdamageu(mon, tmp);
-                if (game.program_state?.gameover) break; /* done() never returns */
                 /* monster gets stronger with your heat! */
                 healmon(mon, Math.trunc((tmp + rn2(2)) / 2), Math.trunc((tmp + 1) / 2));
                 if (mon.mhpmax > (mon.m_lev + 1) * 8) {
@@ -1940,6 +1948,14 @@ export async function killed(mon, opts) {
     }
 
     if (!skipCorpseBlock && !stoned && !level_specific_nocorpse(mon.data)) {
+        // C ref: mon.c:3578 xkilled() `#ifdef MAIL_STRUCTURES if (mdat ==
+        // &mons[PM_MAIL_DAEMON]) stackobj(mksobj_at(SCR_MAIL, x, y, FALSE,
+        // FALSE));` -- a slain mail daemon leaves a scroll of mail, before the
+        // accessible()-gated treasure drop and corpse.
+        if (mon.data?.pmidx === name_to_pmidx('mail daemon')) {
+            const { stackobj } = await import('./invent.js');
+            stackobj(mksobj_at(364 /* SCR_MAIL */, x, y, false, false));
+        }
         // C ref: mon.c:3583 `if (accessible(x, y) || is_pool(x, y))` gates the
         // WHOLE treasure-drop + corpse_chance block: a monster killed over lava
         // (inaccessible, not a pool) draws no rn2(6) treasure roll and no
@@ -2013,7 +2029,6 @@ export async function killed(mon, opts) {
         let leaves_corpse = false;
         if (accessible) {
             leaves_corpse = !wasinside && await corpse_chance(mon, null, false);
-            if (game.program_state?.gameover) return; /* done() never returns */
         }
         if (leaves_corpse) {
             // C ref: mon.c:3619 — a zombie-polyd, bare-handed hero's kill

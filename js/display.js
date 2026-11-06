@@ -4,7 +4,7 @@
 import { has_innate } from './exper.js';
 import { mimic_obj_corpsenm } from './const.js';
 import { Blind_telepat, Detect_monsters_hero, Deaf_hero, See_invisible_hero } from './youprop.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { SYMBOL_BYTES } from './symset-data.js';
 import { cansee, couldsee, Blind, Infravision, vision_recalc,
@@ -45,9 +45,9 @@ import {
 } from './terminal.js';
 import { monster_by_pmidx, infravisible, pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { recalc_telepat_range } from './worn.js';
-import { mindless, mflags2_of } from './monflags_data.js';
+import { mindless, mflags2_of, mflags1_of, M1_FLY } from './monflags_data.js';
 import { random_monster, random_object, rn2_on_display_rng, NUMMONS } from './disprng.js';
-import { objects } from './mkobj.js';
+import { objects, fobj } from './mkobj.js';
 import { engr_at, can_reach_floor } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { visible_region_at, show_region } from './region.js';
@@ -1724,6 +1724,18 @@ const GP_CMAP_DEFSYMS = [
     { name: 'S_expl_bc', ch: '-' },               // 103
     { name: 'S_expl_br', ch: '/' },               // 104
 ];
+// defsym.h cmap index of each GP_CMAP_DEFSYMS entry: 17, 18, 21 and 24 stand
+// alone (S_room/S_darkroom/S_corr/S_litcorr between them are never matched),
+// then S_upstair (25) onward is contiguous.
+const GP_CMAP_SIDX = [17, 18, 21, 24];
+for (let i = GP_CMAP_SIDX.length; i < GP_CMAP_DEFSYMS.length; i++)
+    GP_CMAP_SIDX.push(25 + i - 4);
+// C ref: getpos.c `matching[glyph_to_cmap(glyph_at(tx, ty))]` for a furniture
+// mimic currently drawn at (tx, ty): its mappearance IS the cmap index shown.
+function gp_furniture_mimic_matches(mon, ch) {
+    const i = GP_CMAP_SIDX.indexOf(mon.mappearance | 0);
+    return i >= 0 && GP_CMAP_DEFSYMS[i].ch === ch;
+}
 const GP_FEATURE_SYMS = new Set(GP_CMAP_DEFSYMS.map((e) => e.ch));
 export function getpos_is_feature_sym(ch) { return GP_FEATURE_SYMS.has(ch); }
 
@@ -1767,6 +1779,11 @@ export function getpos_find_feature(ch, cx, cy) {
         // to SVALL) into gbuf for every square, so getpos matches unexplored terrain.
         const terrainFull = ((game.iflags?.terrainmode || 0) & 0x10 /* TER_FULL */) !== 0;
         if (!loc || !(terrainFull || loc.seenv || loc.remembered_glyph)) return false;
+        // C ref: getpos.c:1075 first looks at glyph_at(): a visible mimic posing
+        // as furniture (staircase, altar, ...) is a cmap glyph that matches.
+        const seen = m_at(tx, ty);
+        if (seen && M_AP_TYPE(seen) === M_AP_FURNITURE && seen.mappearance != null
+            && canseemon_shared(seen) && gp_furniture_mimic_matches(seen, ch)) return true;
         const tg = terrain_glyph(loc, tx, ty);
         // C ref: getpos.c matches defsyms[sidx].sym, the compile-time default
         // symbol — never the live symset's rendering.  A `dec: true` result
@@ -2034,11 +2051,12 @@ export async function flush_sting_effects() {
 }
 
 // C ref: display.c see_objects() — newsym() every square whose top floor
-// object is this one.  fobj is prepend-ordered like fmon (see see_monsters).
+// object is this one, walking the fobj chain.  fobj is prepend-ordered by
+// placement (mkobj.js fobj()), NOT by pile order: a hallucinating hero's cell
+// draws display-rng picks in this order (seed d308-gd87 step 894: two corpses
+// placed in a kill sequence, the later one landing under a boulder's pile slot).
 export function see_objects() {
-    const objs = game.level?.objects || [];
-    for (let i = objs.length - 1; i >= 0; i--) {
-        const obj = objs[i];
+    for (const obj of fobj()) {
         if (!obj || obj.where !== OBJ_FLOOR) continue;
         if (vobj_at(obj.ox, obj.oy) === obj) newsym(obj.ox, obj.oy);
     }
@@ -2397,6 +2415,9 @@ function feel_location_terrain(x, y) {
     // square overwrites levl[x][y].glyph, so a remembered 'I' for a monster
     // that has since moved away is forgotten (C display.c feel_location).
     loc.invisMon = false;
+    // C ref: display.c _map_location(x, y, 1) -> map_object(): a generic object the
+    // hero can see within neardist (e.g. searching through a gas cloud) is observed.
+    maybe_observe_near_object(x, y);
     const bg = background_glyph(loc, x, y);
     if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
     show_bg_glyph(x, y, bg);
@@ -3349,7 +3370,8 @@ function _botConditions() {
     const wornExtrinsic = (prop) => ((u.uprops_extrinsic || {})[prop] | 0);
     const flyHeld = status_held('fly', null);
     if (flyHeld === true
-        || (flyHeld !== false && (u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)) && !u.uprops?.BFlying)) out.push('Fly');
+        || (flyHeld !== false && (u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)
+            || (u.usteed && (mflags1_of(u.usteed.data) & M1_FLY))) && !u.uprops?.BFlying)) out.push('Fly');
     // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.
     // potion.js set_hallucination() writes the timer to four aliases at once.
     const halluTime = (u.uprops?.Hallucination || 0) || (u.uprops?.HHallucination || 0)
@@ -4060,6 +4082,7 @@ export function putStatusRow(display, which, row, cut = null) {
 // window's offy, one row sooner than the sweep itself reaches a status row
 // (the loop is y < ymax): game._statusSweepBotlx records that for the dismissal.
 export function status_sweep(xcut, lastRow) {
+    game._sweepLastRow = lastRow;
     const rows = game.nhDisplay?.rows ?? 24;
     const cuts = (game._statusCuts ??= {});
     for (let r = rows - StatusRows(); r < rows && r <= lastRow + 1; r++)
@@ -4364,7 +4387,9 @@ export function render_map_to_grid() {
     _syncClipping();
     // _screenBlank: ball.c drag_down()'s cls() cleared the physical screen and
     // no docrt() has repainted it (e.g. the hero died inside drag_down()), so a
-    // corner window drawn now sits over a blank map.
+    // corner window drawn now sits over a blank map.  (The glyph buffer is blank
+    // too, apart from the hero placebc() newsym()s; _screenBlankCorner draws that
+    // once the window is dismissed.)
     for (let y = 0; game._screenBlank !== true && y < ROWNO; y++) {
         const sy = _mapRowOnScreen(y);
         if (sy < 0) continue;
@@ -4454,11 +4479,16 @@ function _buildScreenOutput() {
         // screen and goto_level's docrt() has not flushed yet, so the frames in
         // between show only the topline (no map, no status).
         const msgRows = mlines.length;
-        for (let y = 0; game._screenBlank !== true && y < ROWNO; y++) {
+        // A corner menu dismissed over that blank screen (docorner()) has
+        // row_refresh()ed the glyph buffer back over its rows from its left edge.
+        const blankCorner = game._screenBlank === true ? game._screenBlankCorner : null;
+        for (let y = 0; (game._screenBlank !== true || blankCorner) && y < ROWNO; y++) {
             const sy = _mapRowOnScreen(y);
             if (sy < 0 || sy < msgRows) continue;
+            if (blankCorner && sy > blankCorner.lastRow + 1) continue;
             for (let x = 1; x < COLNO; x++) {
                 if (clipping && (x <= clipx || x >= clipxmax)) continue;
+                if (blankCorner && x - 1 - clipx < blankCorner.cutCol) continue;
                 const loc = _displayed_loc(x, y);
                 if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
@@ -4473,8 +4503,10 @@ function _buildScreenOutput() {
                 const l = game.level.at(x, y);
                 if (l) l._gchg = false;
             }
-        } else if (game._screenBlankStatus)
+        } else if (game._screenBlankStatus) {
             renderStatusLines(display, game._screenBlankStatus);
+            if (blankCorner) apply_status_cuts(display, null, blankCorner.cuts);
+        }
         // Cursor at hero
         if (game.u?.ux > 0)
             display.setCursor(game.u.ux - 1 - clipx, game.u.uy + 1 - clipy);
@@ -4537,8 +4569,10 @@ function status_field_spans(cells) {
         if (first < 0) first = m.index;
         spans.push({ key: m[1], s: m.index, e: m.index + m[0].length });
     }
+    // C ref: botl.c bot_via_windowport() pads the title to 30 columns, so the
+    // title field (and tty_putstatusfield()'s rewrite) runs up to the first attribute's blank.
     if (first >= 0)
-        spans.unshift({ key: 'title', s: 0, e: text.slice(0, first).replace(/\s+$/, '').length });
+        spans.unshift({ key: 'title', s: 0, e: first });
     return spans;
 }
 function status_dirty_ranges(prevCells, cells) {
@@ -4733,6 +4767,13 @@ export async function cls_flush_messages() {
 // later flush_screen() shows only what was drawn since.  This port's third
 // screen is the per-cell loc.disp_* (what _buildScreenOutput paints), so it is
 // blanked here too; remembered glyphs (levl[x][y].glyph) are untouched.
+export function blank_glyph_cells() {
+    clear_glyph_buffer();
+    if (game.level)
+        for (let y = 0; y < ROWNO; y++)
+            for (let x = 1; x < COLNO; x++)
+                show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+}
 export async function cls() {
     game._statusSnap = null;
     await cls_flush_messages();
@@ -4742,11 +4783,7 @@ export async function cls() {
     const display = game?.nhDisplay;
     if (display?.clearScreen) display.clearScreen();
     game._pending_message = '';
-    clear_glyph_buffer();
-    if (game.level)
-        for (let y = 0; y < ROWNO; y++)
-            for (let x = 1; x < COLNO; x++)
-                show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+    blank_glyph_cells();
     blank_terminal_snapshot();
 }
 
@@ -4794,6 +4831,17 @@ export function hold_botl_xl() {
     const u = game.u;
     if (!u || game.botl || game.botlx) return;
     status_hold('xl', u.ulevel || 1);
+    status_hold('rank', game.urole?.rank?.m || game.urole?.name?.m || 'Adventurer');
+}
+
+// C ref: polyself.c polymon()/polyman()/change_sex() flip flags.female without setting
+// disp.botl, so a pline before the next bot() still shows the title the last bot()
+// published (rank() reads flags.female only when bot() runs).  This port caches the
+// title in urole.rank.m (exper.js update_rank): call just before the flip + update_rank();
+// nothing is held when a pending bot() would publish the new title anyway.
+export function hold_botl_rank() {
+    const u = game.u;
+    if (!u || game.botl || game.botlx) return;
     status_hold('rank', game.urole?.rank?.m || game.urole?.name?.m || 'Adventurer');
 }
 
@@ -6901,6 +6949,14 @@ export async function under_water(mode) {
 // C ref: display.c:1445 under_ground(mode) — very restricted display; you can
 // only see yourself.
 let _ug_dela = false;
+/* C ref: display.c / topl.c file statics (tglyph, under_water's lastx/lasty/dela,
+   under_ground's dela, snapshot_mesgs, getmsghistory's nxtidx, putmsghistory's
+   initd): compiled-in values at process start. */
+register_process_static(() => {
+    _tglyph = null;
+    _uw_lastx = 0; _uw_lasty = 0; _uw_dela = false; _ug_dela = false;
+    snapshot_mesgs = null; getmsghistory_nxtidx = 0; putmsghistory_initd = false;
+});
 export async function under_ground(mode) {
     /* swallowing has a higher precedence than under ground */
     if (game.u?.uswallow)
@@ -7047,6 +7103,8 @@ export async function docrt_flags(refresh_flags) {
         /* status */
         if (!game.disp) game.disp = {};
         game.disp.botlx = true; /* force a redraw of the bottom lines */
+        game.botlx = true;      /* the port's flush_screen()/bot() read this mirror */
+        game._statusSnap = null;
         /* note: the caller still has to call bot() to actually redraw status */
     }
     game.program_state.in_docrt = false;
@@ -7344,6 +7402,18 @@ export function corr_glyph_cell(litcorr) {
     return useDECgraphics('S_corr') && !useDECgraphics('S_pool')
         ? { ch: 'a', color: litcorr ? CLR_WHITE : NO_COLOR, dec: true }
         : { ch: '#', color: litcorr ? CLR_WHITE : NO_COLOR, dec: false };
+}
+
+// C ref: pager.c do_screen_description() reads the DISPLAYED glyph, so a CORR
+// square is "lit corridor" iff its glyph is S_litcorr.  S_litcorr is the
+// CLR_WHITE twin of S_corr, but disp_color is folded to NO_COLOR when the
+// color option is off (display.c reset_glyphmap), so the identity is read from
+// the remembered glyph's raw colour, which tracks lev->glyph (remember_bg
+// stores it unfolded; newsym's out-of-sight re-darkening rewrites it).
+export function displayed_corr_is_lit(loc) {
+    const rg = loc.remembered_glyph;
+    const c = rg && !rg.pile && !rg.objotyp ? rg.color : loc.disp_color;
+    return c === CLR_WHITE;
 }
 
 export function back_to_glyph(x, y) {

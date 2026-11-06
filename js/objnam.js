@@ -16,7 +16,7 @@ import { lowc, strchr, vowels, genders, nextobuf, releaseobuf,
          setobuf, cur_obuf, makeplural, makesingular } from './plural.js';
 import { ONAME, has_oname, setONAME } from './const.js';
 import { rn2 } from './rng.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { panic } from './panic.js';
 import { s_suffix, just_an, strncmp, strncmpi, strcmpi } from './hacklib.js';
 import {
@@ -586,6 +586,7 @@ function Role_if(pm) {
 /* objnam.c gd.distantname — non-zero while distant_name() formats a far object,
    which suppresses xname_flags()'s observe_object(). */
 let gd_distantname = 0;
+register_process_static(() => { gd_distantname = 0; });
 
 // ── objclass field accessors ──────────────────────────────────────────────
 function oc_charged(otyp) { return !!(objects[otyp]?.flags & F_CHARGED); }
@@ -1252,6 +1253,7 @@ function hawaiian_motif(obj) { return rd_hawaiian_motif(obj); }
 
 /* objnam.c gx.xnamep — start of the obuf xname()/corpse_xname() is filling. */
 const gx = { xnamep: null };
+register_process_static(() => { gx.xnamep = null; });
 
 // xname_flags(): the core object formatter.  C ref: objnam.c:580.
 // The obuf/PREFIX split (buf = obuf + PREFIX, so doname_base() can strprepend

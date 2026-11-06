@@ -14,14 +14,14 @@
 // capture sees the final post-run state with the exact cumulative RNG.
 
 import { Detect_monsters_hero, Passes_walls_hero, See_invisible_hero } from './youprop.js';
-import { game, hooks, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { lock_action } from './lock.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
 import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
-import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
+import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE, is_pool_or_lava, is_pool } from './const.js';
@@ -30,7 +30,7 @@ import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, glyph_prefix_is_symset_meta } from './pager.js';
 import { fruit_from_name } from './objnam.js';
-import { def_monsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
+import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          inventoryArray, is_pick, ansimpleoname,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
@@ -76,7 +76,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts } from './display.js';
+import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -525,25 +525,6 @@ export function run_stop_for_monster_at(x, y) {
 }
 
 
-// C ref: hack.c domove_core() tail — after a run move onto a door /
-// obstruction / furniture (when run < 8), nomul(0) so the run ends after this
-// step (its once-per-turn work still runs, then the loop stops).
-function runOntoStopTerrain() {
-    const u = game.u;
-    const c = game.context;
-    if (!c.run || c.run >= 8) return false;
-    // C: this tail sits after the u.utrap/trapmove() early return, so a hero who
-    // only struggled (or was refused) in place never reaches it.
-    if (u.ux === u.ux0 && u.uy === u.uy0) return false;
-    const loc = game.level?.at(u.ux, u.uy);
-    if (!loc) return false;
-    if (IS_DOOR(loc.typ) || IS_OBSTRUCTED(loc.typ) || IS_FURNITURE(loc.typ)) {
-        nomul(0);
-        return true;
-    }
-    return false;
-}
-
 // Run the per-turn machinery for the step that just elapsed.  C: the top of
 // allmain.c moveloop_core() runs this when svc.context.move is set.
 async function takeTurn() {
@@ -598,7 +579,7 @@ async function run_movement(run) {
         if (!c.move) { spent_free = true; break; }  // blocked move: no turn, stop running
 
         // The move happened: run its once-per-turn machinery.
-        runOntoStopTerrain();          // may set game.multi = 0 (door etc.)
+        // (the door/furniture stop, C hack.c:2937-2942, runs inside domove())
         await takeTurn();
 
         if (game.multi <= 0) {
@@ -1815,7 +1796,7 @@ function terrain_description(x, y, full = false) {
     // C ref: do_screen_description() dispatches on the DISPLAYED glyph: back_to_glyph()
     // picks S_litcorr for `waslit || flags.lit_corridor` (drawn CLR_WHITE), and a
     // remembered lit corridor re-darkens to S_corr out of sight (newsym).
-    if (typ === CORR) return loc.disp_color === CLR_WHITE ? 'lit corridor' : 'corridor';
+    if (typ === CORR) return displayed_corr_is_lit(loc) ? 'lit corridor' : 'corridor';
     if (typ === ROOM) {
         // C ref: display.c back_to_glyph() gives every ROOM square S_room;
         // newsym():1086 rewrites it to S_darkroom out-of-sight when
@@ -2083,6 +2064,7 @@ function walk_path(sx, sy, dx0, dy0, check) {
 // C ref: apply.c gj.jumping_is_magic — set by jump() so get_valid_jump_position()
 // (a getpos callback with no magic argument) knows which rule set applies.
 let jumping_is_magic = 0;
+register_process_static(() => { jumping_is_magic = 0; });
 export function set_jumping_is_magic(magic) { jumping_is_magic = magic; }
 // C ref: apply.c enum jump_trajectory.
 const jAny = 0, jHorz = 1, jVert = 2, jDiag = 3;
@@ -2639,6 +2621,11 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
              ? rndmonnam_dn().name   /* lookat(): "'monster' must actually be a statue" */
              : (mtmp && canspotmon(mtmp) && shown?.disp_monster)
              ? look_at_monster(mtmp, x, y, false).buf
+             /* C: glyph_at() of a visible furniture mimic is its cmap glyph, so
+                pager.c do_screen_description() names defsyms[].explanation */
+             : (mtmp && M_AP_TYPE(mtmp) === M_AP_FURNITURE && mtmp.mappearance != null
+                && canspotmon(mtmp) && defsyms[mtmp.mappearance | 0])
+             ? defsyms[mtmp.mappearance | 0].explanation
              : (warnlev >= 1 && def_warnsyms[warnlev]) ? def_warnsyms[warnlev].desc
              : (unseen_creature_desc(x, y, terrainMode)
                 || ((tmode & 0x04) && look_at_object_here(x, y, true))
@@ -2874,6 +2861,8 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // number_pad (or swap_yz, etc.) rc is honored instead of always
         // accepting the default hjklyubn keymap.
         const kk = getpos_key(k);
+        // C getpos.c: pick_chars are tested before movecmd() ever runs.
+        if (!'.,;:'.includes(ch)) getpos_movecmd_effects(kk);
         const walkDir = getpos_walkdir(kk);
         const dir = (walkDir && !rushrun) ? null : (walkDir || getpos_rushdir(kk));
         if (walkDir && !rushrun) {
@@ -2920,7 +2909,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // existing glyph buffer that flush_screen already does, so the only
         // observable half is the goal message it re-shows.
         if (redraw_cmd(k)) { /* ^R, or ^L under number_pad */
-            if (getpos_has_hilitefunc()) await getpos_refresh();
+            await getpos_refresh();
             showGoal = true;
             continue;
         }
@@ -2930,6 +2919,11 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             // second is true only when the caller registered a painter.
             await getpos_help(force, goalText, goalText === WHAT_IS_A_LOCATION,
                               !!validfn, getpos_has_hilitefunc());
+            /* C ref: getpos.c:949 `if (c == NHKF_GETPOS_HELP) getpos_help();
+               getpos_refresh();` -- docrt_flags(docrtRefresh) re-sends the map
+               and sets disp.botlx, so the status lines the help window's
+               dismissal left stale are rewritten by the next bot(). */
+            await getpos_refresh();
             showGoal = true;
             continue;
         }
@@ -3218,7 +3212,7 @@ export async function reveal_terrain(which_subset) {
         await pline('You are too disoriented for this.');
         return;
     }
-    const { reveal_terrain_getglyph, unconstrain_map, map_redisplay } = await import('./detect.js');
+    const { reveal_terrain_getglyph, unconstrain_map, map_redisplay, glyph_at } = await import('./detect.js');
     const keep_mons = (which_subset & 0x08 /* TER_MON */) !== 0; /* not used by C either */
     /* C ref: detect.c reveal_terrain() — swallowed is read before unconstrain_map() */
     const swallowed = u?.uswallow;
@@ -3251,6 +3245,25 @@ export async function reveal_terrain(which_subset) {
                 // which cloud bubbles never write: unexplored (blank)
                 if (isHero || m_at(x, y)) {
                     show_glyph_cell(x, y, ' ', NO_COLOR, false);
+                    continue;
+                }
+            }
+            // C ref: detect.c reveal_terrain_getglyph() -- a visible region (gas
+            // cloud) either survives with the traps (the displayed cloud glyph),
+            // or replaces a stripped monster/cloud glyph with the region's glyph
+            // (traps kept) or the terrain beneath it.
+            if (visible_region_at(x, y)) {
+                const ga = glyph_at(x, y);
+                const gas = ga.kind === 'cmap' && !!ga.gascloud;
+                if (gas && keep_traps) {
+                    show_glyph_cell(x, y, loc.disp_ch, loc.disp_color, false);
+                    continue;
+                }
+                if (gas || ga.kind === 'monster') {
+                    const dg = { kind: 'cmap', sym: ' ', cell: { ch: ' ', color: NO_COLOR, dec: false } };
+                    const g = reveal_terrain_getglyph(x, y, swallowed, dg, which_subset);
+                    const gc = g.cell || dg.cell;
+                    show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
                     continue;
                 }
             }
@@ -3335,10 +3348,11 @@ export async function reveal_terrain(which_subset) {
                 continue;
             }
             // C ref: detect.c reveal_terrain_getglyph() — a remembered blank
-            // (S_stone, or S_darkroom shown as nothing without dark_room) is
-            // not a monster/object/trap glyph, so it is kept even when a
-            // monster stands on the square.
-            if (rg && rg.ch === ' ' && rg.objotyp == null) {
+            // (S_stone) is not a monster/object/trap glyph, so it is kept even
+            // when a monster stands on the square.  S_darkroom shown as nothing
+            // without dark_room (rg.darkroom) is not kept: the closing "dirty
+            // hack" turns it into S_room.
+            if (rg && rg.ch === ' ' && rg.objotyp == null && !rg.darkroom) {
                 show_glyph_cell(x, y, ' ', rg.color, false);
                 continue;
             }
@@ -3459,6 +3473,7 @@ export async function monster_detect(otmp, mclass) {
     const swallowed = u?.uswallow;                  // before unconstrain_map()
     // C ref: display.c cls() — flush a pending topline before wiping the map.
     await cls_flush_messages();
+    game.botlx = true; /* C ref: display.c cls() `disp.botlx = TRUE`: status repaints at the next flush_screen */
     for (let x = 1; x < COLNO; x++)
         for (let y = 0; y < ROWNO; y++)
             show_glyph_cell(x, y, ' ', NO_COLOR, false);
@@ -4093,6 +4108,7 @@ async function wrap_text_lines(lines) {
 // (offx 0) and paged every rows-1 lines.  Reads the dismiss key(s) via nhgetch
 // (each drawn state is a recorded frame), then redraws the map underneath.
 let dbase_cuts = null;
+register_process_static(() => { dbase_cuts = null; });
 async function display_dbase_window(lines, forceFull = false) {
     // C ref: wintty.c tty_display_nhwindow() — a text window first pages an
     // unacknowledged topline (the farlook description) with --More--.

@@ -44,6 +44,7 @@ import {
 import { inhishop, costly_spot, find_objowner, onshopbill, stolen_value, make_angry_shk } from './shk.js';
 import { search_special, somexyspace } from './mkroom.js';
 import { inhistemple } from './priest.js';
+import { sengr_at } from './engrave.js';
 
 // C ref: include/hack.h — rloc() flags.  (js/const.js carries an older copy of
 // these names with different values; the ones here are this C build's.)
@@ -573,7 +574,7 @@ export function goodpos_onscary(x, y, mptr) {
     if (Inhell_() || In_endgame_()) return false;
     /* creatures who don't (or can't) fear a written Elbereth */
     if (mptr.pmidx === PM_MINOTAUR_TP || !haseyes_(mptr)) return false;
-    return sengr_at_('Elbereth', x, y, true) ? true : false;
+    return sengr_at('Elbereth', x, y, true) ? true : false;
 }
 
 // C ref: teleport.c:577 collect_coords(ccc, cx, cy, maxradius, cc_flags,
@@ -1444,16 +1445,6 @@ function sobj_at_(otyp, x, y) {
         if (o.where === OBJ_FLOOR && o.ox === x && o.oy === y && o.otyp === otyp)
             return o;
     return null;
-}
-// C ref: engrave.c sengr_at(str, x, y, strict).
-function sengr_at_(s, x, y, strict) {
-    const ep = (game.level?.engravings ?? []).find(
-        (e) => e.engr_x === x && e.engr_y === y);
-    if (!ep || ep.engr_type === 1 || (ep.engr_time | 0) > (game.moves | 0))
-        return null;
-    const text = ep.actualText || '';
-    return strict ? (text.toLowerCase() === String(s).toLowerCase() ? ep : null)
-                  : (text.toLowerCase().includes(String(s).toLowerCase()) ? ep : null);
 }
 // C ref: dungeon.c In_hell/In_endgame/In_tutorial/On_W_tower_level/
 // Is_stronghold/Is_botlevel/depth/on_level — mostly private in js/dungeon.js.

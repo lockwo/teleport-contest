@@ -18,7 +18,7 @@ import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying
 // already carry the leading space that C's `Sprintf(" %s%s%s%s.", …)` prepends.
 
 import { dxdy_to_dist_descr } from './getpos.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { s_suffix, just_an, strcmpi } from './hacklib.js';
 import { roles, align_gname, align_str } from './role.js';
 import {
@@ -889,6 +889,10 @@ export const insight_windows = [];
 export const insight_dumplog = [];
 const _wins = new Map();
 let _nextwin = 1;
+register_process_static(() => {
+    insight_windows.length = 0; insight_dumplog.length = 0; _wins.clear();
+    _nextwin = 1; ge.en_win = WIN_ERR; ge.en_via_menu = false;
+});
 
 function create_nhwindow(type) {
     const id = _nextwin++;

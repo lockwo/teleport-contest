@@ -8,7 +8,7 @@ import { defended } from './artifact.js';
 import { nomul } from './hack.js';
 import { MENU_TRADITIONAL, EYE } from './const.js';
 import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
@@ -599,9 +599,6 @@ async function applySpell(otyp, atme, pseudo, role_skill, spell) {
                                       (otyp === SPE_CONE_OF_COLD) ? EXPL_FROSTY
                                                                   : EXPL_FIERY);
                     }
-                    /* C's done() does not return once the game is over */
-                    if (game.program_state?.gameover)
-                        break;
                     u.dx = cc.x + rnd(3) - 2;
                     u.dy = cc.y + rnd(3) - 2;
                     if (!isok(u.dx, u.dy) || !cansee(u.dx, u.dy)
@@ -1935,6 +1932,10 @@ export const NOOP_SPELL = 0, HIDE_SPELL = 1, ADD_SPELL = 2,
 // C ref: spell.c:1709 `static struct tport_hideaway save_tport`.
 const save_tport = { savespell: { sp_id: NO_SPELL, sp_lev: 0, sp_know: 0 },
                      tport_indx: 0 };
+register_process_static(() => {
+    save_tport.savespell = { sp_id: NO_SPELL, sp_lev: 0, sp_know: 0 };
+    save_tport.tport_indx = 0;
+});
 
 // C ref: spell.c:1706 tport_spell(what) — add/hide/remove/unhide teleport-away
 // on behalf of dotelecmd() so wizard-mode ^T can honour a menu choice.

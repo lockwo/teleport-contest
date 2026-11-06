@@ -18,7 +18,7 @@ import { useupf, youmonst_data_pub } from './invent.js';
 import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool } from './const.js';
 import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
-import { xname_flags } from './objnam.js';
+import { xname_flags, the } from './objnam.js';
 import { mon_nam, Monnam, mhis } from './do_name.js';
 import { humanoid } from './monflags_data.js';
 import { sticks } from './monattk_data.js';
@@ -49,9 +49,8 @@ function make_confused_sit(xtime) {
 // C ref: potion.c Half_physical_damage — the contest heroes lack it.
 function Half_physical_damage() { return Half_physical_damage_hero(); }
 
-// C ref: objnam.c:1290 the(str) — an already-capitalised name is a proper noun
-// and takes no article.
-function the(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
+// C ref: objnam.c the() is imported from objnam.js (the local copy treated
+// every capitalised name, e.g. "Hawaiian shirt", as a proper noun).
 
 // C ref: sit.c:453 dosit() `You("sit on %s.", the(xname(obj)))`.  Reading
 // objects[otyp].name here instead leaked the true type of an unidentified

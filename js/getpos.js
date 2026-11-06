@@ -25,7 +25,7 @@
 // readchar, hence a capture) and what the autodescribe line says, so the string
 // assembly order below is the load-bearing part.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { isok } from './hacklib.js';
 import {
     COLNO, ROWNO, DOOR, SDOOR, SCORR, STONE, ROOM, CORR, IRONBARS, TREE,
@@ -568,6 +568,17 @@ function selection_force_newsyms_(sel) {
             if (selection_getpoint(x, y, sel)) newsym(x, y);
 }
 let selection_flood_check_func = null;
+/* C ref: getpos.c file statics (getpos_hilitefunc/getpos_getvalid/getpos_hilite_state/
+   gloc_filter_*) and the goodpos tmp_at bookkeeping all start at their
+   compiled-in values in a fresh process; a segment that ends inside getpos()
+   would otherwise hand its hilite/filter state to the next game. */
+register_process_static(() => {
+    getpos_hilitefunc = null; getpos_getvalid = null;
+    getpos_hilite_state = HiliteNormalMap; defaultHiliteState = HiliteNormalMap;
+    goodpos_saved = null;
+    gloc_filter_map = null; gloc_filter_floodfill_match_glyph = -1;
+    selection_flood_check_func = null;
+});
 function set_selection_floodfillchk_(f) { selection_flood_check_func = f; }
 function selection_floodfill_(ov, x, y, diagonals) {
     const tmp = selection_new();

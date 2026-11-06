@@ -30,7 +30,8 @@ import { Is_special, ledger_no } from './dungeon.js';
 import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
          Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED, ONAME, has_oname, OMONST,
-         DEFUNCT_MONSTER, NON_PM, MGIVENNAME, setMGIVENNAME, has_mgivenname } from './const.js';
+         DEFUNCT_MONSTER, NON_PM, MGIVENNAME, setMGIVENNAME, has_mgivenname,
+         STAIRS, BR_STAIR, BR_NO_END1, BR_NO_END2, BR_PORTAL } from './const.js';
 import { roomAt } from './roomat.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of, is_undead_flag,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
@@ -290,6 +291,12 @@ export async function getbones() {
             game.in_mklev = was_mklev;
         }
 
+        // C ref: restore.c:1231-1297 getlev() `if (ghostly)` — after the monster
+        // loop: re-point the branch staircase / portal of a bones level at THIS
+        // game's branch (the dead hero's dungeon layout may differ), and give a
+        // Medusa..Castle maze level without a downstair one.
+        await bones_ghostly_fixup();
+
         // C ref: bones.c getbones(): a bones monster whose species is extinct or
         // genocided here carries the DEFUNCT_MONSTER cookie (restore.c getlev
         // propagate()); "Removing defunct monster" -> mongone().
@@ -311,6 +318,68 @@ export async function getbones() {
         return false;
     } finally {
         if (atStartup) delete game._screenBlank;
+    }
+}
+
+// C ref: restore.c:1231-1297 getlev() `if (ghostly)` stairway/branch fixups.
+// A bones level carries the stairway/portal destinations of the game that died
+// on it.  The same Mines level 1 hangs off Dlvl 2 in one game and Dlvl 3 in the
+// next, so the branch stair (dlevel 1 of the branch dungeon) must lead to the
+// CURRENT game's branch end, not the dead hero's.
+async function bones_ghostly_fixup() {
+    const g = game;
+    const uz = g.u.uz;
+    const same_level = (a, b) => a && b && a.dnum === b.dnum && a.dlevel === b.dlevel;
+
+    let stway = g.stairs;
+    while (stway) {
+        if (!stway.isladder && !stway.up && stway.tolev.dnum === uz.dnum)
+            break;
+        stway = stway.next;
+    }
+
+    const lev = ledger_no(uz);
+    if (lev > ledger_no(g.medusa_level) && lev < ledger_no(g.stronghold_level) && !stway) {
+        const dest = { dnum: uz.dnum, dlevel: uz.dlevel + 1 };
+        const { mazexy } = await import('./mkmaze.js');
+        const cc = mazexy();
+        // stairway_add(cc.x, cc.y, FALSE, FALSE, &dest) (module-private in mklev.js)
+        g.stairs = { sx: cc.x, sy: cc.y, up: false, isladder: false, tolev: dest, next: g.stairs };
+        const loc = g.level.at(cc.x, cc.y);
+        if (loc) { loc.typ = STAIRS; loc.ladder = 2; }
+        g.level.dnstair = { x: cc.x, y: cc.y };
+    }
+
+    const br = Is_branchlev(uz);
+    if (br && uz.dlevel === 1) {
+        const ltmp = same_level(uz, br.end1) ? br.end2 : br.end1;
+        switch (br.type) {
+        case BR_STAIR:
+        case BR_NO_END1:
+        case BR_NO_END2:
+            stway = g.stairs;
+            while (stway) {
+                if (stway.tolev.dnum !== uz.dnum)
+                    break;
+                stway = stway.next;
+            }
+            if (stway)
+                stway.tolev = { dnum: ltmp.dnum, dlevel: ltmp.dlevel };
+            break;
+        case BR_PORTAL: { /* max of 1 portal per level */
+            const trap = (g.level.traps || []).find((t) => t.ttyp === MAGIC_PORTAL);
+            if (!trap)
+                throw new Error('getlev: need portal but none found'); // C: panic()
+            trap.dst = { dnum: ltmp.dnum, dlevel: ltmp.dlevel };
+            break;
+        }
+        }
+    } else if (!br) {
+        /* Remove any dangling portals. */
+        const { deltrap } = await import('./trap.js');
+        for (const trap of [...(g.level.traps || [])])
+            if (trap.ttyp === MAGIC_PORTAL)
+                deltrap(trap);
     }
 }
 
@@ -344,6 +413,37 @@ async function bones_getlev(blob) {
     // backtrack roll.  goto_level() already ran initrack() on departure, so a
     // bones blob written before this field existed simply keeps the empty ring.
     rest_track(bundle.track);
+
+    // C ref: restore.c:262-267 restobjchn() "Ghost levels get object age shifted
+    // from old player's clock to new player's clock" (not for lamps/candles,
+    // whose age is relative, nor for the contents of an ice box), :1144
+    // restore_timers(RANGE_LEVEL, elapsed) which moves every local timer's
+    // deadline the same way for a bones file, and :172 the shop damage list.
+    // elapsed = svm.moves - svo.omoves; a corpse left by the dead hero keeps the
+    // age it had when they died instead of looking as old as the dead game's
+    // timestamp (or newborn), so dogfood()'s rotted-corpse test sees the right age.
+    {
+        const { age_is_relative } = await import('./restore.js');
+        const { ICE_BOX, requeue_level_timers } = await import('./mkobj.js');
+        const elapsed = (game.moves | 0) - ((bundle.omoves ?? game.moves) | 0);
+        if (elapsed) {
+            const shift = (o, frozen) => {
+                if (!o) return;
+                if (!frozen && !age_is_relative(o)) o.age = (o.age | 0) + elapsed;
+                if (o.timed && o.timer) o.timer.when += elapsed;
+                if (Array.isArray(o.cobj)) for (const c of o.cobj) shift(c, o.otyp === ICE_BOX);
+            };
+            for (const o of level.objects || []) shift(o, false);
+            for (const o of level.buriedobjlist || []) shift(o, false);
+            for (const m of level.monsters || [])
+                for (const o of m.minvent || []) shift(o, false);
+            for (const lt of level.level_timers || []) lt.when += elapsed;
+            for (let d = level.damagelist; d; d = d.next) d.when = (d.when | 0) + elapsed;
+        }
+        /* C ref: restore.c getlev() -> restore_timers(RANGE_LEVEL): the bones level's
+           timers come back through insert_timer(), so equal-deadline ties reverse. */
+        requeue_level_timers(level);
+    }
 
     // restobjchn(): one next_ident() per object, recursing into cobj first —
     // C restores container contents inside the container's loop iteration
@@ -680,6 +780,10 @@ export async function savebones(how = 0, corpse = null) {
                         const i = mons_list.indexOf(m);
                         if (i >= 0) mons_list.splice(i, 1);
                     }
+                // C ref: bones.c:444 dmonsfree() -- dead monsters still linked in
+                // fmon (killed this turn) are discarded and never reach the file.
+                g.level.monsters = mons_list.filter((m) => !DEADMONSTER(m) || m.isgd);
+                if (g.iflags) g.iflags.purge_monsters = 0;
             }
         }
 
@@ -701,9 +805,15 @@ export async function savebones(how = 0, corpse = null) {
         const hooks = {
             curse: (o) => { if (o && o.oclass !== 12 /* COIN_CLASS: curse() no-op */) { o.cursed = 1; o.blessed = 0; } },
             toFloor: (o) => { if (o) { o.owornmask = 0; place_object(o, x, y); } },
-            toMon: (m, o) => { if (o) (m.minvent = m.minvent || []).push(o); },
+            // C ref: bones.c drop_upon_death() `add_to_minv(mtmp, otmp)` (mkobj.c:2648):
+            // merge into an identical carried stack, else PREPEND (newest-first chain),
+            // and the item becomes where == OBJ_MINVENT / ocarry == mtmp (left as
+            // OBJ_INVENT, obj_extract_self() could never unlink it, so relobj() in
+            // mondead looped forever).  The chain order decides the floor pile's top
+            // glyph when the arisen monster is killed and relobj() drops it.
+            toMon: (m, o) => { if (o) add_to_minv(m, o); },
         };
-        const { makemon, monster_by_pmidx, mongets } = await import('./makemon.js');
+        const { makemon, monster_by_pmidx, mongets, add_to_minv } = await import('./makemon.js');
         const { MM_NONAME, NO_MINVENT, NON_PM, LOW_PM } = await import('./const.js');
         const { S_MUMMY } = await import('./symbols.js');
         const { christen_monst } = await import('./do_name.js');
@@ -851,6 +961,8 @@ export async function savebones(how = 0, corpse = null) {
                     loc.disp_ch = ' ';
                     loc.disp_warning = false;
                     loc.disp_monster = false;
+                    // glyph = GLYPH_UNEXPLORED also drops a remembered 'I'
+                    loc.invisMon = false;
                 }
             }
         }
@@ -906,7 +1018,7 @@ export async function savebones(how = 0, corpse = null) {
         const { serializeGameState } = await import('./save.js');
         const { save_track } = await import('./track.js');
         storage.setItem(key, serializeGameState({
-            level: g.level, stairs: g.stairs, track: save_track(),
+            level: g.level, stairs: g.stairs, track: save_track(), omoves: g.moves ?? 0,
         }));
     } catch { /* bones write is best-effort; never break the death sequence */ }
 }

@@ -12,7 +12,7 @@
 // port's C-index-ordered table maps those slots onto existing hero fields while
 // preserving timeout bits beside any persistent-source flags.
 
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero, Deaf_hero } from './youprop.js';
 import { panic as _panic } from './panic.js';
 import { NO_COLOR } from './terminal.js';
@@ -2201,6 +2201,7 @@ export async function do_storms() {
 // their creation, cancellation and rescheduling must stay in that model.
 let timer_base = null;      /* C: gt.timer_base */
 let timer_id = 1;           /* C: svt.timer_id */
+register_process_static(() => { timer_base = null; timer_id = 1; });
 
 // C ref: win/tty/wintty.c create_nhwindow/putstr/display_nhwindow/
 // destroy_nhwindow.  The timeout report is a corner text window: render its

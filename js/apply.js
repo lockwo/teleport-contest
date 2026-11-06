@@ -1127,7 +1127,6 @@ async function do_break_wand(obj) {
     // effects below (C's comment, verbatim).
     await A.explodemod.explode(obj.ox, obj.oy, -(obj.otyp), rnd(dmg),
                                WAND_CLASS, EXPL_MAGICAL);
-    if (game.program_state?.gameover) return ECMD_TIME; /* done() never returns */
     A.zap.zapsetup(); /* prepare for potential feedback from polymorph */
 
     // This makes it hit the hero last, so the hero sees the action first.
@@ -1194,7 +1193,6 @@ async function do_break_wand(obj) {
                 await A.zap.losehp(A.zap.Maybe_Half_Phys(damage),
                     `killed ${him}self by breaking a wand`, NO_KILLER_PREFIX);
             }
-            if (game.program_state?.gameover) return ECMD_TIME; /* losehp()->done() never returns */
             game.botl = true; /* blindness */
         }
     }
@@ -1889,9 +1887,12 @@ async function pole_target_name(x, y) {
 // C ref: defsyms[glyph_to_cmap(glyph)].explanation for the DISPLAYED terrain glyph
 // (null when the glyph is not a map-feature glyph).
 async function pole_cmap_name(x, y) {
-    const { glyph_to_cmap } = await import('./glyphs.js');
+    const { pg_glyph_at } = await import('./pager.js');
     const { defsyms, MAXPCHARS } = await import('./symbols.js');
-    const cm = glyph_to_cmap(_display.glyph_at(x, y));
+    /* this port's live display is the cell model: pager.js pg_glyph_at() is its
+       glyph_at(), and a map-feature glyph carries the defsyms[] index */
+    const glyph = pg_glyph_at(x, y);
+    const cm = glyph.kind === 'cmap' ? glyph.cmap : -1;
     return (cm >= 0 && cm < MAXPCHARS && defsyms[cm]) ? defsyms[cm].explanation : null;
 }
 
@@ -4756,7 +4757,6 @@ export async function broken_wand_explode(obj, dmg, expltype) {
     const A = await ap_load();
     await A.explodemod.explode(game.u.ux, game.u.uy, -(obj.otyp), dmg,
                                WAND_CLASS, expltype);
-    if (game.program_state?.gameover) return; /* done() never returns */
     A.invent.makeknown(obj.otyp); /* explode describes the effect */
     await discard_broken_wand();
 }

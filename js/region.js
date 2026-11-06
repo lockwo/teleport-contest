@@ -200,8 +200,6 @@ export async function run_regions() {
         if (reg.insideF !== INSIDE_GAS_CLOUD) continue;
         if (reg.heroInside) {
             await inside_gas_cloud(reg, null);
-            /* C: done() never returns when the hero dies in the cloud. */
-            if (game.program_state?.gameover) return;
         }
         for (let j = 0; j < reg.monsters.length; j++) {
             const mtmp = reg.monsters[j];

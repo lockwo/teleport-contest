@@ -26,7 +26,7 @@
 
 import { Half_physical_damage_hero, Antimagic_hero, Unchanging_hero, Passes_walls_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
 import { setONAME, Unaware } from './const.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { PLNMSG_HIDE_UNDER, is_pool } from './const.js';
 import { s_suffix, an } from './hacklib.js';
 import { hitval, possibly_unwield } from './weapon.js';
@@ -77,6 +77,7 @@ let gv_vis = false;
 // C ref: mhitm.c:372 gs.skipdrin — a mind flayer that finds a headless target
 // skips its remaining AT_TENT/AD_DRIN attacks this move.
 let gs_skipdrin = false;
+register_process_static(() => { gv_vis = false; gs_skipdrin = false; });
 
 // ── monster-combat message rendering ─────────────────────────────────────────
 // C ref: mhitm.c hitmm()/missmm() + mon.c monkilled().  These emit the "The X

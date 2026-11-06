@@ -2168,6 +2168,10 @@ async function use_container(box, more_containers) {
         game._toplin = 0;
         let deselected = false;
         let c = 'q';
+        /* C ref: wintty.c process_menu_window() `counting`/`count`: a nonzero digit
+           starts a count, and ESC while counting only abandons the count
+           (`case '\033': if (!counting) { ...cancel }`, else only stop count). */
+        let counting = false, cnt = 0;
         for (;;) { // repeats iff ':' (look inside) gets chosen
             render_in_or_out_menu(box, outmaybe, inokay, used !== 0, !!more_containers,
                                   deselected);
@@ -2180,8 +2184,13 @@ async function use_container(box, more_containers) {
                    then runs the key through map_menu_cmd() */
                 if (mapped_menu_cmds().includes(ch)) ch = map_menu_cmd(ch);
                 if (respsel.includes(ch)) break;
+                if (ch === '\x1b' && counting) { counting = false; cnt = 0; continue; }
                 if (ch === '\x1b' || ch === '\n' || ch === '\r' || ch === ' ') break;
-                if (ch >= '0' && ch <= '9') continue;        // count prefix: no redraw
+                if (ch >= '0' && ch <= '9') {                // count prefix: no redraw
+                    cnt = cnt * 10 + (ch.charCodeAt(0) - 48);
+                    if (cnt !== 0) counting = true;          // leading zeros are ignored
+                    continue;
+                }
                 if (ch === '-' || ch === '\\') {             // deselect the default
                     if (!deselected) { deselected = true; break; }
                     continue;
@@ -2189,6 +2198,7 @@ async function use_container(box, more_containers) {
                 if (MENU_CMDS.includes(ch)) continue;       // no-op on a 1-page PICK_ONE
                 // not in resp: tty_nhbell() and read the next key
             }
+            counting = false; cnt = 0;                       // any other key ends the count
             if (ch === '-' || ch === '\\') continue;         // redraw with '-' marker
             if (ch === sel[1]) { // ':' look inside
                 if (!box.cknown) used = 1; // gaining info costs a turn
@@ -3679,6 +3689,7 @@ const HANDLERS = {
     kick: dokick,
     known: dodiscovered,
     knownclass: doclassdisco,
+    lookatmap: lookatmap_herecmd,
     look: itemaction_time(dolook), // blind #look spends a move (invent ECMD_TIME 3)
     options: dosetSimple,
     optionsfull: doset,
@@ -4324,7 +4335,7 @@ async function doherecmdmenu() {
     // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"
     // only when the square does not show the ordinary hero glyph.
     // (the hero glyph is not drawn when !canspotself(): invisible w/o see invisible)
-    if (u?.Upolyd || u?.usteed || !canspotself()) push(nextCh(), 'Look at map symbol');
+    if (u?.Upolyd || u?.usteed || !canspotself()) push(nextCh(), 'Look at map symbol', 'lookatmap');
 
     // C ref: cmd.c:4880 — K==0 falls through to a move/travel, never a menu.
     if (!items.length) return 0;
@@ -4358,6 +4369,15 @@ async function doherecmdmenu() {
        repeats the chosen command, not #herecmdmenu. */
     game._ext_tlist = picked.cmd;
     return await fn();
+}
+
+// C ref: cmd.c:4819 act_on_act() MCMD_LOOK_AT: `gc.clicklook_cc.x = u.ux + dx;
+// ... cmdq_add_ec(CQ_CANNED, doclicklook)` -- dx,dy are 0 for the hero's own
+// square.  doclicklook() -> auto_describe() puts the description on the top line.
+async function lookatmap_herecmd() {
+    const { doclicklook } = await import('./cmd.js');
+    game.clicklook_cc = { x: game.u.ux, y: game.u.uy };
+    return await doclicklook();
 }
 
 // C ref: trap.c t_at(x, y).
@@ -4690,7 +4710,6 @@ async function wiz_intrinsic() {
         if ((it.propId === 'WWALKING' || it.propId === 'LEVITATION' || it.propId === 'FLYING')
             && u.uinwater) {
             await (await import('./trap.js')).pooleffects(false);
-            if (game.program_state?.gameover) return 0;
         }
     }
     await wiz_intrinsic_docrt();

@@ -30,7 +30,7 @@ import {
     ACH_NOVL, ACH_MINE, ACH_TOWN, ACH_SHOP, ACH_TMPL, ACH_SOKO, ACH_BGRM,
     ACH_TUNE, ACH_RNK1, ACH_RNK8,
 } from './const.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { depth } from './hacklib.js';
 import { roles, genders, aligns, str2role, str2race } from './role.js';
 import { rank_of } from './exper.js';
@@ -329,6 +329,9 @@ const WIN_ERR = -1;
 const ATR_NONE = 0, ATR_BOLD = 4;
 let toptenwin = WIN_ERR;
 export const tt_output = [];
+register_process_static(() => {
+    final_fpos = 0; tt_head = null; toptenwin = WIN_ERR; tt_output.length = 0;
+});
 
 export function set_toptenwin(win) { toptenwin = (win === undefined) ? WIN_ERR : win; }
 

@@ -6,7 +6,7 @@
 
 import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero } from './youprop.js';
 import { ROLE_PM_BASE } from './const.js';
-import { NetHackPanic } from './panic.js';
+import { NetHackPanic, NetHackGameOver } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
@@ -1117,16 +1117,8 @@ export async function moveloop_turn() {
         do {
             monscanmove = await movemon();
             if (g.u.umovement >= NORMAL_SPEED) break; // hero's turn again
-            if (g.program_state?.gameover) break;      // hero died mid-movemon
         } while (monscanmove);
         g.context.mon_moving = false;
-
-        // C ref: allmain.c moveloop_core()/done() — if a monster's move killed
-        // the hero, C longjmps out of moveloop_core() through really_done() and
-        // never runs the once-per-turn block (mcalcdistress/maybe_generate_
-        // rnd_mon/regen_hp/...).  Bail out here so those turn-tail RNG calls are
-        // not fabricated after the death (moveloop() sees gameover and stops).
-        if (g.program_state?.gameover) break;
 
         // C ref: allmain.c moveloop_core():220 — mvl_wtcap = near_capacity();
         // recomputed after the monster-movement loop (monster actions can change
@@ -1189,17 +1181,12 @@ export async function moveloop_turn() {
             if (g.u.uprops?.Glib)
                 await (await import('./do_wear.js')).glibr();
             await nh_timeout();
-            // C ref: done() never returns (really_done -> nh_terminate), so a
-            // fatal timeout (sickness, stoning, strangulation, sliming) ends the
-            // turn block here; no further once-per-turn draws are made.
-            if (g.program_state?.gameover) break;
 
             // C ref: allmain.c moveloop_core():274 — run_regions() ages every
             // active gas-cloud region and fires its per-turn inside-effect for
             // the hero/monsters it currently contains, right after nh_timeout()
             // and before the ublesscnt countdown.
             await run_regions();
-            if (g.program_state?.gameover) break;
 
             // C ref: allmain.c moveloop_core() — once-per-turn "if (u.ublesscnt)
             // u.ublesscnt--;" (the prayer timeout countdown), between run_regions
@@ -1293,7 +1280,6 @@ export async function moveloop_turn() {
                             await you_were();
                         }
                         g.context.mvl_change = 0;
-                        if (g.program_state?.gameover) break;   // system shock done() never returns
                     }
                 }
             }
@@ -1326,7 +1312,6 @@ export async function moveloop_turn() {
             await do_storms();
             game._hunger_msgs = [];
             await gethungry();
-            if (g.program_state?.gameover) break;   // starvation done() never returns
             const hungerMsgs = game._hunger_msgs;
             game._hunger_msgs = null;
             if (hungerMsgs.faintDuration !== undefined) {
@@ -1435,20 +1420,22 @@ export async function moveloop_turn() {
                         await deferred_goto();
                     }
                 }
+                // nh_timeout() predicted from multi < -1 (_helpless_at_timeout) that
+                // the hero stays helpless through the next iteration, which is what
+                // lets the next timeout see umoved reset by allmain.c:513.  A death
+                // later in this turn-end (run_regions -> savelife's `multi = -1`)
+                // makes ++multi free the hero instead, so the prediction is void and
+                // the hero's next action keeps its own umoved through the next turn.
+                if ((g.multi ?? 0) >= 0) g._helpless_at_timeout = false;
             }
         }
     } while (g.u.umovement < NORMAL_SPEED);
-
-    // C ref: allmain.c moveloop_core() — done() never returns, so a death in
-    // the monster-movement loop skips the hero-took-time tail below (the
-    // clairvoyance rn1(31,15) reload, sink_into_lava/pooleffects, under_water).
-    if (g.program_state?.gameover) return;
 
     /* C ref: allmain.c:396 — moves*8 + n for n == 1..7 */
     g.hero_seq = ((g.hero_seq ?? ((g.moves | 0) << 3)) | 0) + 1;
 
     // C ref: allmain.c:403 — monster actions and timeouts can change the load.
-    if (!g.program_state?.gameover) await encumber_msg();
+    await encumber_msg();
     // C ref: allmain.c:406 — expire temporary status highlights.
     if (g.iflags?.hilite_delta) {
         const { status_eval_next_unhilite } = await import('./botl.js');
@@ -2002,16 +1989,32 @@ export async function end_turn_callbacks() {
     await (await import('./nhlua.js')).tutorial_turn();
 }
 
-// C ref: allmain.c moveloop_core()
+// C ref: end.c done() -> really_done() -> nh_terminate(): once the hero has
+// really died the process exits, so nothing after the fatal call runs.  done()
+// throws NetHackGameOver after the endgame display; the outermost
+// moveloop_core() absorbs it, leaving program_state.gameover set (the guard at
+// the top of moveloop_core_body() makes every later call a no-op), so
+// every caller (runSegment, moveloop, index.html, the playability runner)
+// just sees a normal return.  A nested call (nh.doturn from Lua) lets it pass.
+let moveloop_core_depth = 0;
 export async function moveloop_core() {
+    moveloop_core_depth++;
+    try {
+        await moveloop_core_body();
+    } catch (e) {
+        if (!(e instanceof NetHackGameOver) || moveloop_core_depth > 1) throw e;
+    } finally {
+        moveloop_core_depth--;
+    }
+}
+
+// C ref: allmain.c moveloop_core()
+async function moveloop_core_body() {
     const g = game;
-    // C ref: end.c really_done() never returns to moveloop_core() (it longjmps
-    // out via done1()/exit_nhwindows()).  With no longjmp here, the hero dying
-    // from her OWN command (e.g. domove() -> spoteffects() -> lava_effects())
-    // leaves g._pendingTurn/g.context.move set from the fatal command; without
-    // this guard the runner's next moveloop_core() call would run moveloop_turn()
-    // (monster moves, encumber_msg, ...) over a corpse, fabricating RNG really_
-    // done() never reaches.  Matches moveloop()'s own post-death stop.
+    // C ref: end.c really_done() ends the process, so no moveloop_core() runs
+    // after the hero's death.  The driver keeps calling this after the
+    // outermost wrapper absorbed NetHackGameOver; those calls must do nothing
+    // (not run moveloop_turn() over a corpse).
     if (g.program_state?.gameover) return;
     flush_group_newsyms();      // backstop: leaders whose arrival line never ran
     // C ref: allmain.c:194 — `if (svc.context.bypasses) clear_bypasses();`
@@ -2045,13 +2048,6 @@ export async function moveloop_core() {
         g._pendingTurn = false;
         await moveloop_turn();
     }
-
-    // C ref: end.c really_done() never returns to moveloop_core() (it ends in
-    // nh_terminate()).  A monster that killed the hero during moveloop_turn()
-    // must not fall through to the redraw / command read below: the recorded
-    // session stops at the key that finished the game, so the keys still queued
-    // after it were never delivered to NetHack.
-    if (g.program_state?.gameover) return;
 
     // C ref: allmain.c:432 — once-per-player-input reset of the split-stack context.
     clear_splitobjs();
@@ -2105,8 +2101,13 @@ export async function moveloop_core() {
     // A helpless hero (multi < 0: asleep, paralysed) reads no key, so parse()
     // is never reached either; only plines and runmode_delay_output()'s
     // every-7th-turn flush repaint the map until the hero can act again.
+    // The occupation arm (allmain.c:485) returns before rhack()/parse(), so an
+    // occupation turn never flushes either: the pet's moves from a dig/eat turn
+    // stay unflushed until a pline (a trap found mid-dig raises its --More--
+    // over the PREVIOUS frame's pet position).
     if (!((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run)
-        && (g.multi ?? 0) >= 0)
+        && (g.multi ?? 0) >= 0
+        && !(await import('./hack.js')).occupation_active())
         await flush_screen(1);
 
     // C ref: allmain.c moveloop_core():513 — `u.umoved = FALSE;` is set BEFORE

@@ -422,7 +422,6 @@ export async function dismount_steed(reason) {
         if (!have_spot) { cc = landing_spot(reason, 1); have_spot = !!cc; }
         if (!ulev && !ufly) {
             await losehp_do(Maybe_Half_Phys(rn1(10, 10)), 'riding accident', KILLED_BY_AN);
-            if (game.program_state?.gameover) return; /* C: losehp()->done() never returns */
             await set_wounded_legs(BOTH_SIDES, (u.HWounded_legs || 0) + rn1(5, 5));
             repair_leg_damage = false;
         }

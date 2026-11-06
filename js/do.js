@@ -974,7 +974,6 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         // the stream (after mklev()/placement, before losedogs()).
         if (fell_downstairs && Punished_do()) {
             await drag_down();
-            if (game.program_state?.gameover) return; /* C: done() never returns */
             if (!(await import('./invent.js')).welded(game.u?.uball)) {
                 const { ballrelease } = await import('./ball.js');
                 await ballrelease(false);
@@ -1083,6 +1082,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
         game._toplin = 0;
     }
     delete game._screenBlank;
+    delete game._screenBlankCorner;
     thaw_screen_for_level_change();
     await docrt();
     await flush_screen(-1);
@@ -1345,6 +1345,17 @@ async function getlev_restore(ledger) {
     if (!store) return; // level was never actually left (shouldn't happen)
     g.level = store.level;
     g.stairs = store.stairs;
+    /* C ref: restore.c:955 rest_stairs() — savelev() writes gs.stairs head to
+       tail and every record is read back through stairway_add(), which
+       PREPENDS, so each save/restore cycle reverses the list.  Order matters:
+       stairway_find_type_dir() (wizard.c choose_stairs: a covetous monster's
+       hole-up spot) returns the FIRST match, i.e. the Sokoban/branch up stairs
+       on a fresh level but the ordinary up stairs once the level is reloaded. */
+    {
+        let rev = null;
+        for (let st = g.stairs, nxt; st; st = nxt) { nxt = st.next; st.next = rev; rev = st; }
+        g.stairs = rev;
+    }
     g.fmon = g.level.monsters;
     restore_doorindex(g.level); /* getlev(): doorindex recomputed from the last room */
     reverse_trap_chain(g.level); /* getlev(): ftrap rebuilt by prepending */
@@ -1792,9 +1803,6 @@ export async function level_tele(readLevel, immediate = false) {
         u.uz = { dnum: 0, dlevel: (newlev <= -10) ? -10 : 0 }; /* heaven or surface */
         const { done, DIED: DEATH } = await import('./end.js');
         await done(DEATH);
-        // C's done(DIED) terminates on an accepted death; only a life-saved or
-        // debug-mode survivor reaches the surface escape.
-        if (game.program_state?.gameover) return;
         escape_by_flying = 'find yourself back on the surface';
         u.uz = lsav; /* restore u.uz so escape code works */
     }
@@ -1862,7 +1870,6 @@ async function go_to_nowhere() {
     set_tele_killer('committed suicide');
     const { done, DIED: DEATH } = await import('./end.js');
     await done(DEATH);
-    if (game.program_state?.gameover) return;
     await pline('An energized cloud of dust begins to coalesce.');
     await pline(`Your body rematerializes${(game.invent || []).length
         ? ', and you gather up all your possessions' : ''}.`);
@@ -2468,7 +2475,7 @@ export async function boulder_hits_pool(otmp, rx, ry, pushing) {
 
             if (ttmp) {
                 const T = await import('./trap.js');
-                T.delfloortrap(ttmp);
+                await T.delfloortrap(ttmp);
             }
             const DIG = await import('./dig.js');
             await DIG.bury_objs(rx, ry);
@@ -2645,7 +2652,7 @@ export async function flooreffects(obj, x, y, verb) {
            mondied -> mondead -> m_detach -> fill_pit.  A pit in ice turns that
            ice into floor, so no special ice handling is needed here. */
         if ((t = t_at(x, y)) != null) {
-            T.delfloortrap(t);
+            await T.delfloortrap(t);
             if (game.u.utrap && u_at(x, y)) set_utrap(0, 0);
         }
         await I.useupf(obj, 1);

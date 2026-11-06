@@ -520,8 +520,6 @@ export async function explode(x, y, type, dam, olet, expltype) {
                 // snapshot until done() redraws them.
                 const { done } = await import('./end.js');
                 await done(adtyp === AD_FIRE ? BURNING : DIED);
-                // done() never returns once the hero actually dies.
-                if (game.program_state?.gameover) return;
             }
         }
         const { exercise } = await import('./attrib.js');

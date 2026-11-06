@@ -13,7 +13,7 @@
 // of dat/tut-1.lua, so both the PRNG stream AND the resulting placed features
 // match the recorded C session.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, VWALL, HWALL, DBWALL, TREE, SDOOR, POOL, MOAT, WATER,
@@ -71,6 +71,7 @@ const OFF = 3;
 // (3,3) (OFF); tut-2's 14x8 map centers at sp_lev.c's xstart/ystart =
 // 2 + (78-2-14)/2 = 33 and 2 + (20-2-8)/2 = 7 (both odd, so not bumped).
 let ORG_X = OFF, ORG_Y = OFF;
+register_process_static(() => { ORG_X = OFF; ORG_Y = OFF; });
 
 // C ref: sp_lev.c splev_chr2typ — map char -> terrain type.
 function chr2typ(ch) {
@@ -163,6 +164,7 @@ function engrave(cx, cy, type, text) {
 
 // C ref: dat/tut-1.lua tut_key()/tut_key_help().
 let tut_ctrl_key = null;
+register_process_static(() => { tut_ctrl_key = null; });
 function tutKey(command) {
     const key = cmd_from_ecname(command);
     const ctrl = /^\^([A-Z])$/.exec(key);

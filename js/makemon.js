@@ -1,4 +1,5 @@
 import { discover_object, observe_object } from './o_init.js';
+import { Flying_hero } from './youprop.js';
 // makemon.js - Monster creation.
 // C ref: makemon.c - rndmonst_adj, rndmonst, mkclass, mkclass_aligned,
 //        makemon, newmonhp, m_initweap.
@@ -3244,6 +3245,12 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
     } else if ((mvflags(mdat.pmidx) & G_GENOD) !== 0) {
         return 0;
     }
+    if (mtmp === game.u?.usteed) {
+        /* C ref: youprop.h Flying counts a flying steed; the status line keeps
+           the old Fly state until the next bot(), past the change message's --More-- */
+        const { status_hold } = await import('./display.js');
+        status_hold('fly', Flying_hero());
+    }
     const changed = apply_newcham(mtmp, mdat, olddata);
     if (changed && mtmp.mleashed) {
         /* C ref: mon.c:5387 — a form that can't be leashed slips its leash */
@@ -3978,8 +3985,17 @@ export function flush_group_newsyms(only = null) {
     const q = game._pendingGrpNewsym;
     if (!q?.length) return;
     game._pendingGrpNewsym = only ? q.filter((m) => m !== only) : [];
-    for (const m of (only ? q.filter((x) => x === only) : q))
-        if (m.mx) hooks.newsym?.(m.mx, m.my);
+    for (const m of (only ? q.filter((x) => x === only) : q)) {
+        if (!m.mx) continue;
+        // A group member's deferred newsym must see the peacefulness it had inside
+        // its own makemon() (m_initgrp resets it to hostile only afterwards).
+        const dispPeaceful = m._grpNewsymPeaceful;
+        delete m._grpNewsymPeaceful;
+        if (dispPeaceful === undefined) { hooks.newsym?.(m.mx, m.my); continue; }
+        const real = m.mpeaceful;
+        m.mpeaceful = dispPeaceful;
+        try { hooks.newsym?.(m.mx, m.my); } finally { m.mpeaceful = real; }
+    }
 }
 
 // ── In-game random spawn: makemon((permonst*)0, 0, 0, NO_MM_FLAGS) ──────────
@@ -4129,6 +4145,12 @@ function m_initgrp(mtmp, x, y, n, mmflags) {
                 finally { _mmGroupMember = false; }
                 if (mon) {
                     placeOnLevel(mon, spot.x, spot.y);
+                    // C ref: makemon.c m_initgrp "Undo the second peace_minded()
+                    // check": the member's own makemon() newsym (1473) already ran
+                    // with the peacefulness makemon() rolled, so a member that rolled
+                    // peaceful is not drawn as a warning glyph until its square is
+                    // next redrawn.  Remember that state for the deferred newsym.
+                    mon._grpNewsymPeaceful = !!mon.mpeaceful;
                     mon.mpeaceful = false;
                     set_malign(mon);
                     // C: each member's own makemon() tail prints its arrival

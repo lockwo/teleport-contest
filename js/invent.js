@@ -6,7 +6,7 @@
 // the JS port; those call sites are represented by local TODO stubs or by
 // conservative no-op behavior so downstream porters have a stable 1:1 map.
 
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { menu_ctx } from './windows.js';
 import { panic } from './panic.js';
 import { ONAME, has_oname, setONAME } from './const.js';
@@ -335,6 +335,10 @@ let perminv_flags = 0;
 let in_perm_invent_toggled = false;
 let wri_info = {};
 let safeq_xprn_ctx = { let: '\0', dot: false };
+register_process_static(() => {
+    perminv_flags = 0; in_perm_invent_toggled = false; wri_info = {};
+    safeq_xprn_ctx = { let: '\0', dot: false };
+});
 
 // TODO(invent-port): replace these local shims as their owning C files land.
 function impossible(...args) { if (game.debugImpossible) console.warn('impossible:', ...args); }
@@ -2033,6 +2037,21 @@ function paintMenuLineBody(display, x, y, line, isMenu = false) {
             line.bodyStyle.color, line.bodyStyle.attr);
 }
 
+// C ref: wintty.c tty_display_nhwindow(NHW_MENU) corner (offx > 0) branch only
+// calls tty_clear_nhwindow(WIN_MESSAGE), which wipes the top line only when
+// toplin != EMPTY.  A stale line (toplin already EMPTY, see
+// display_nhwindow_message) therefore stays on screen to the left of the menu.
+function snapshotStaleTopline(display) {
+    return game._toplinStale && game._toplinStale === game._pending_message
+        && display.grid?.[0] ? display.grid[0].map((cell) => ({ ...cell })) : null;
+}
+function restoreStaleTopline(display, snap) {
+    if (!snap) return;
+    for (let c = 0; c < snap.length; c++)
+        display.setCell(c, 0, snap[c].ch, snap[c].color, snap[c].attr | 0,
+                        !!snap[c]._fl?.dec, !!snap[c]._fl?.dark);
+}
+
 // The body of renderMenuScreen, over a FLAT list of { text, attr } lines — for
 // menus whose leading lines are add_menu_str()s (ATR_NONE) rather than
 // add_menu_heading()s (e.g. #wizidentify's "Debug Identify" title).
@@ -2055,8 +2074,10 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
             ? (display.rows ?? 24) - StatusRows() : -1;
         const keep = sharedRow >= 0 && display.grid?.[sharedRow]
             ? display.grid[sharedRow].map((cell) => ({ ...cell })) : null;
+        const staleTop = snapshotStaleTopline(display);
         display.clearScreen();
         render_map_to_grid();
+        restoreStaleTopline(display, staleTop);
         if (keep)
             for (let c = 0; c < keep.length; c++)
                 display.setCell(c, sharedRow, keep[c].ch, keep[c].color, keep[c].attr | 0,
@@ -2720,6 +2741,24 @@ export async function dismiss_invent_screen(textWindow = false) {
     // glyphs on every menu dismissal and desynchronised the display stream
     // (and with it every later hallucinated colour) from C's.
     if (!(game._menuOffx > 0)) await docrt();
+    // docorner() while drag_down()'s cls() left the screen blank (hero died in
+    // transit): the glyph buffer is row_refresh()ed over the vacated corner.
+    // flush_screen(-1) postponement: a hero who died inside goto_level() (stairs
+    // fall) never reaches its closing toggle, so after a full-screen window's
+    // docrt() cls() the physical screen stays blank for good.
+    if (game._staleFrame && !(game._menuOffx > 0)) {
+        game._screenBlank = true;
+        game._screenBlankStatus = false;
+    }
+    if (game._screenBlank === true && !(game._menuOffx > 0)) {
+        // docrt()/cls() of a full-screen window: goto_level()'s flush_screen(-1)
+        // is still postponing every flush (the hero died before its closing
+        // toggle), so neither the map nor bot() repaints; the status stays blank.
+        delete game._screenBlankCorner;
+        game._statusClsBlank = true;
+        game.botlx = true;
+    } else if (game._screenBlank === true)
+        game._screenBlankCorner = { cutCol: Math.max(0, game._menuOffx - 1), lastRow: game._sweepLastRow ?? 0, cuts: carriedCuts };
     // wintty.c tty_dismiss_nhwindow(): the bot() BL_RESET that follows docrt()
     // repaints every status field over the shared map row (menu path only:
     // select_menu() runs it under gb.bot_disabled).  An NHW_TEXT window has
@@ -5554,6 +5593,11 @@ async function run_dress_occupation(delay, msg, afternmv) {
     g.nomovemsg = msg || '';
     g.afternmv = afternmv || null;
     if (g.u && g.u.umovement == null) g.u.umovement = 12; // NORMAL_SPEED
+    // C ref: cmd.c rhack() epilogue — `if ((res & ECMD_TIME) && func != dokick)
+    // gk.kickedloc = 0` runs when the wear/take-off command returns, BEFORE
+    // moveloop_core() moves any monster; the dressing turns run inline here, so
+    // reset it now or pets keep avoiding the square the hero kicked.
+    g.kickedloc = { x: 0, y: 0 };
     let guard = 0;
     // C ref: allmain.c:380 — `++gm.multi` runs at the end of each elapsed
     // turn.  A moveloop_turn() may only spend leftover monster movement, so
@@ -11323,12 +11367,14 @@ function renderItemActionsMenu(otmp, entries) {
     const textx = offx + 1;
     game._menuOffx = offx;
 
+    const staleTop = snapshotStaleTopline(display);
     display.clearScreen();
     render_map_to_grid();
     // C ref: process_menu_window `if (!cw->offx) term_clear_screen()` — a
     // full-width menu (an annotated object's title is cut off at cols - 2, so
     // maxcol == cols and offx is 0) wipes the map and the status window.
     if (offx === 0) display.clearScreen();
+    else restoreStaleTopline(display, staleTop);
     // C ref: process_menu_window's cl_end() blanks [offx, cols) on every menu row
     // (the leading-space column included); the map shows through only to the LEFT.
     // A tall menu reaches the status rows too: C clears [offx, cols) on EVERY
@@ -11462,7 +11508,17 @@ async function itemactions(otmp, getDir) {
 // queue so the command's getobj() consumes it before any further player keys
 // (the cmdq_add_key equivalent).
 async function itemactions_dispatch(otmp, act, getDir) {
-    const res = await itemactions_run(otmp, act, getDir);
+    // C ref: itemactions() only PUSHES the command on CQ_CANNED and returns, so when
+    // the menu was opened by a ^A replay of 'i' (do_repeat sets gi.in_doagain around
+    // that one rhack()), the queued command runs in a later rhack() with in_doagain
+    // already clear: its getobj()/getdir() prompt and read the player instead of
+    // popping the (empty) CQ_REPEAT.  This port runs the action inline, so clear the
+    // flag for its duration.
+    const was_doagain = game.in_doagain;
+    game.in_doagain = false;
+    let res;
+    try { res = await itemactions_run(otmp, act, getDir); }
+    finally { game.in_doagain = was_doagain; }
     // C ref: cmd.c rhack() epilogue, run for the queued command as its own rhack():
     // ECMD_CANCEL/ECMD_FAIL -> reset_cmd_vars(TRUE) clears CQ_CANNED; ECMD_OK without
     // time clears it only while gm.multi < 0.  A key the command never consumed
@@ -11500,8 +11556,10 @@ async function itemactions_run(otmp, act, getDir) {
     };
     switch (act) {
     case IA_NAME_OBJ:
-        seedInvlet();
-        await name_inventory_object();
+        // C ref: iactions.c itemactions_pushkeys() preselects the chosen object
+        // for docallcmd('i').  The menu already selected `otmp`, so run only
+        // do_oname() instead of reopening getobj() and asking a second time.
+        await do_oname(otmp);
         return ECMD_OK;
     case IA_NAME_OTYP:
         seedInvlet();
@@ -11857,7 +11915,13 @@ export async function display_inventory_interactive(lets = null, force_invmenu =
     /* C ref: wintty.c tty_display_nhwindow() NHW_MENU — a pending topline
        (TOPLINE_NEED_MORE, e.g. query_classes()'s "You have no s's." before
        a typed 'i' shows the inventory) is paged with --More-- first. */
+    /* This call only stands in for the NEED_MORE arm; unlike the real
+       display_nhwindow(WIN_MESSAGE, FALSE) it must not turn an acknowledged
+       (NON_EMPTY) line into a stale one, since tty_clear_nhwindow() in the
+       NHW_MENU path still wipes that. */
+    const staleBefore = game._toplinStale;
     await display_nhwindow_message();
+    game._toplinStale = staleBefore;
     /* C ref: invent.c display_pickinv():3345-3363 — with force_invmenu and a
        reply wanted (every caller of this function passes want_reply TRUE) the
        menu ends with a "Special" heading and a '*' (list everything) or '?'

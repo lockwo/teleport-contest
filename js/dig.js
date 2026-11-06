@@ -1920,7 +1920,7 @@ export async function liquid_flow(x, y, typ, ttmp, fillmsg) {
 
     if (ttmp) {
         const { delfloortrap } = await import('./trap.js');
-        delfloortrap(ttmp);              /* will untrap monster if one is here */
+        await delfloortrap(ttmp);        /* will untrap monster if one is here */
     }
     /* if any objects were frozen here, they're released now */
     const { obj_ice_effects } = await import('./mkobj.js');
@@ -2018,7 +2018,7 @@ export async function dighole(pit_only, by_magic, cc) {
                Final outcome: no hole, no boulder. */
             await pline('KADOOM!  The boulder falls in!');
             await wake_nearby(false);
-            if (ttmp) delfloortrap(ttmp);
+            if (ttmp) await delfloortrap(ttmp);
         }
         const { delobj_core } = await import('./invent.js');
         delobj_core(boulder_here);
@@ -2657,7 +2657,8 @@ export async function bury_objs(x, y) {
     const { del_engr_at } = await import('./engrave.js');
     del_engr_at(x, y);
     newsym(x, y);
-    /* C: maybe_unhide_at(x, y) — js/monmove.js:1910, unexported */
+    const { maybe_unhide_at } = await import('./monmove.js');
+    await maybe_unhide_at(x, y);
 
     if (costly && loss) {
         const { pline } = await import('./display.js');

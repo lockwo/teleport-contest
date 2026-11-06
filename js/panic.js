@@ -18,6 +18,17 @@ export class NetHackPanic extends Error {
     }
 }
 
+// C ref: end.c done()/really_done() ends in nh_terminate(): the process exits
+// and no code after the fatal done() call runs.  done() throws this once the
+// hero has really died (after the tombstone/topten display, bones, etc.); the
+// outermost moveloop_core() absorbs it.  NEVER catch it in game code.
+export class NetHackGameOver extends Error {
+    constructor() {
+        super('game over');
+        this.name = 'NetHackGameOver';
+    }
+}
+
 export function panic(msg) {
     const ps = (game.program_state = game.program_state || {});
     /* avoid loops - this should never happen */

@@ -1621,11 +1621,14 @@ export function get_sortdisco(opts, cnf) {
 // and yn primitives (y_n, js/display.js; yn_function, js/extcmd-handlers.js)
 // that every other interactive command in the port already uses.
 
-// C ref: wintty.c tty_destroy_nhwindow -> erase_menu_or_text(): closing a menu
-// or text window docrt()s the map back underneath it.
-async function destroy_nhwindow(_win) {
+// C ref: wintty.c tty_destroy_nhwindow -> tty_dismiss_nhwindow() ->
+// erase_menu_or_text(): closing a menu or text window docrt()s the map back
+// underneath it.  An NHW_TEXT window has no select_menu() bot_disabled bracket,
+// so flush_screen()'s bot() runs before the map glyphs overwrite the shared
+// status row (dismiss_invent_screen's textWindow case).
+async function destroy_nhwindow(win) {
     const inv = await import('./invent.js');
-    await inv.dismiss_invent_screen();
+    await inv.dismiss_invent_screen(win?.type === NHW_TEXT);
 }
 
 // C ref: wintty.c process_text_window() paging — (rows-1) content lines per

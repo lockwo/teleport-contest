@@ -40,7 +40,7 @@ import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
 import { encumber_msg, xname, useup, uwep_unweapon } from './invent.js';
 import { change_luck } from './attrib.js';
 import { read_engr_at } from './engrave.js';
-import { run_object_timers, place_object, next_ident, newoextra, newomonst,
+import { run_object_timers, requeue_level_timers, requeue_global_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
          SLIME_MOLD, ICE_BOX, POT_OIL, TALLOW_CANDLE, WAX_CANDLE,
          BRASS_LANTERN, OIL_LAMP, CANDELABRUM_OF_INVOCATION,
@@ -273,6 +273,82 @@ async function restore_preamble_messages() {
     }
 }
 
+/* C ref: save.c savegamestate()/savelev() write only the `sv*` state groups
+   (moves, context, flags, u, killers, timers, invent, migrating chains, mvitals,
+   dungeon, spl_book, artifacts, oracles, fruit, names, msghistory, gamelog, lua
+   data) plus the level files.  Every other decl.h instance global (ga..gz), every
+   file-scope `static` and the tty/window/option state is NOT in the file: a
+   restoring process starts those at their compiled-in decl.c value (zero / NULL /
+   FALSE, or whatever initoptions() and the rc file just set).  This port keeps
+   them as keys on `game`, and dorestore() Object.assign()s the whole blob over
+   it, so each key listed here would otherwise leak the saving process's value.
+
+   Each listed key goes back to what the fresh `game` held before the splice
+   (rc-derived options), or is deleted when the fresh game never had it, i.e.
+   the state of a process that has not touched it yet.  Keys that C does save
+   (u, context, flags, moves, mvitals, killer, svp, dungeon topology, levels, ...)
+   and JS-only mirrors of saved state (context_ident, _pendingTurn, ...) are
+   deliberately absent.  Display/status caches are included: the restoring
+   process's tty has never drawn anything. */
+const UNSAVED_GLOBALS = [
+    /* process / option state (rc re-read by the restoring process) */
+    'program_state', 'a11y', 'keybind', 'menu_cmd_alias', 'symset', 'roguesymset',
+    'symoverride', 'apelist', 'preferred_pet', 'plnamelen', 'wsettings',
+    '_winStop', '_winNoStop', '_yn_need_more', '_startup_selected_character',
+    /* gc./gd./ge./gf. */
+    '_cmdq_repeat', '_cmdq_canned', 'last_command_count', 'domove_attempting',
+    'did_dig_msg', 'current_wand', 'clicklook_cc', 'item_action_in_progress',
+    '_itemaction_repeat', 'corpsenm_digested', 'dfr_pre_msg', 'dfr_post_msg',
+    'followmsg', 'far_noise', 'noisetime',
+    /* gb./gg./gh./gi./gk./gl. */
+    'bhitpos', 'initial_don', 'in_mklev', 'in_mk_themerooms', 'in_doagain',
+    'kickedloc', 'gk_kickedobj', 'known', 'last_hider', 'last_msg', 'lev_message',
+    'launchplace', 'objs_deleted', 'uinit_nocreate',
+    /* gm./gn./go. */
+    'made_branch', 'marcher', 'mtarget', 'mswallower', 'mentioned_water',
+    'mesg_given', 'mkot_trap_warn_count', 'mkcorpstat_norevive', 'multi_reason',
+    'nomovemsg', 'notonhead', 'afternmv', 'obj_zapped', 'occtime',
+    'override_confirmation', 'm_shot',
+    /* gp./gs./gt./gu./gv./gw./gx./gy./gz. */
+    'petname_used', 'potion_nothing', 'potion_unkn', 'poly_zapped', 'smeq',
+    'spl_sortmode', 'spl_orderindx', 'sortlootmode', 'stealoid', 'stealmid',
+    'thrownobj', 'tbx', 'tby', 'trapinfo', 'travelmap', 'this_type', 'this_title',
+    'twohits', 'vault_x', 'vault_y', 'vamp_rise_msg', 'wasinwater',
+    'warn_obj_cnt', 'were_changes', 'xlock', 'zap_oseen', 'zombify', 'at_ladder',
+    'skipdrin', 'disintegested', 'themeroom_failed', 'gate_str', 'yn_number',
+    '_wailmsg',
+    /* NOT reset: _utrack/_utcnt/_utpnt (track.c statics).  Resetting them made
+       c296-gm156-arc-hum-save2 diverge (m_move rn2(24) vs rn2(28)): the recording
+       matches the saved track, cause not yet found. */
+    /* file statics and the port's own occupation/transient slots */
+    '_bldrpushtime', '_bldrpush_oid',
+    '_pickup_encumbrance', '_helpless_at_timeout', '_end_turn_cb_ran',
+    '_parse_cleared_topl', '_picklock_box', '_travel_unsure', '_travel_leftover',
+    '_touch_blasted', '_ext_tlist', '_goto_familiar', '_dowhatdoes_once',
+    '_search_occupation', '_engrave_occupation', '_wait_occupation',
+    '_takeoff_occupation', '_eat_occupation', '_study_occupation',
+    '_dig_occupation', 'occupation', 'occupation_txt', '_prayer',
+    'in_steed_dismounting', '_dressing_obj', '_dressing_off', '_did_nothing_flag',
+    '_invmenu_esc', '_cmdqAbandonRetry',
+    /* tty status / top-line / menu caches (wintty.c, botl.c statics; disp.*) */
+    'disp', 'botl', 'botlx', 'time_botl', 'input_state', '_getposFrameValid',
+    '_statusSnap', '_terrainStatusWipe', '_statusDocrt', '_toplinStale',
+    '_toplinSoft', '_toplAcked', '_toplPromptMsg', '_toplPromptFull',
+    '_statusPrevCells', '_shownMoves', '_ttyStatus', '_botlHpShown', '_botlLast',
+    '_statusFinalx', '_statusPrevArr', '_statusCuts', '_statusSweepBotlx',
+    '_menuTruncCarry', '_menuOffx', '_ttyClipping', '_botl_blanked',
+    '_sweepLastRow', '_getlin_rows', '_pubSig', '_decPrefixMsgs', '_ttyPolyFields',
+    '_pendingGrpNewsym', '_dismissMore',
+];
+
+/* `fresh` is a shallow copy of `game` taken before the blob was spliced in. */
+function reset_unsaved_globals(fresh) {
+    for (const k of UNSAVED_GLOBALS) {
+        if (Object.prototype.hasOwnProperty.call(fresh, k)) game[k] = fresh[k];
+        else delete game[k];
+    }
+}
+
 // C ref: restore.c dorecover() + unixmain.c restore_saved_game(), followed by
 // allmain.c moveloop_preamble(resuming=TRUE).  Returns true when a game was
 // restored (so start() skips newgame()).
@@ -309,7 +385,9 @@ export async function dorestore() {
     const keepCoreCtx = game.coreCtx;
     const keepIflags = game.iflags;
     const keepSeed = game.currentSeed;
+    const fresh = { ...game };
     Object.assign(game, saved);
+    reset_unsaved_globals(fresh);
     game.nhDisplay = keepDisplay;
     game._preNhgetchHook = keepHook;
     game.datetime = keepDatetime;
@@ -454,6 +532,13 @@ export async function dorestore() {
        docrt()'s vision_recalc(2) + vision_recalc(0), so the restore itself
        never newsym()s (draws display rng) a cell. */
     game.vision_full_recalc = 1;
+
+    // C ref: restore.c getlev() -> timeout.c restore_timers(RANGE_LEVEL) — the
+    // level's timers come back through insert_timer(), which puts each BEFORE any
+    // equal-timeout entry, so ties that were saved newest-first fire oldest-first
+    // in the restored game (the same reversal a level revisit applies).
+    requeue_global_timers(); // restgamestate() restores RANGE_GLOBAL first ...
+    requeue_level_timers();  // ... then getlev() the level, whose ties land ahead of them
 
     // C ref: restore.c dorecover() — run_timers(), "expire all timers that have
     // gone off while away", between vision_reset() and docrt().  The blob
@@ -610,7 +695,7 @@ function Is_IceBox(o) { return o?.otyp === ICE_BOX; }
 // js/pickup.js's private copies: both of those include MAGIC_LAMP (which the
 // macro's comment says it deliberately excludes) and drop POT_OIL.  Transcribed
 // from the header, because restobjchn()'s bones age shift keys on it.
-function age_is_relative(otmp) {
+export function age_is_relative(otmp) {
     return otmp.otyp === BRASS_LANTERN || otmp.otyp === OIL_LAMP
         || otmp.otyp === CANDELABRUM_OF_INVOCATION
         || otmp.otyp === TALLOW_CANDLE || otmp.otyp === WAX_CANDLE

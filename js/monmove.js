@@ -4987,7 +4987,15 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
         }
         // forcehit roll on every non-hero square crossed (mthrowu.c:798).
         const forcehit = !rn2(5);
-        if (!range || await flightcheck(bx, by, forcehit)) {
+        if (!range || await flightcheck(bx, by, forcehit)
+            /* MT_FLIGHTCHECK(FALSE, ..): `!pre && IS_SINK(bhitpos)` */
+            || terrainTyp(bx, by) === SINK) {
+            // C ref: mthrowu.c:804-813 — a missile stopped by a sink "drops"
+            // ("plops" while hallucinating) onto it; the potion path has no
+            // multishot volley, so no "misses." arm.
+            if (singleobj && range > 0 && cansee(bx, by)
+                && terrainTyp(bx, by) === SINK)
+                await update_topl(`${The_mm(mshot_xname(singleobj))} ${otense(singleobj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
             if (singleobj) await drop_thrown_missile(mon, singleobj, bx, by, 0);
             // C ref: mthrowu.c:824-828 — the shared post-loop tmp_at(bhitpos) /
             // tmp_at(DISP_END) draws then restores the landing square, which is
@@ -5212,6 +5220,7 @@ function corpse_flesh_petrifies(corpsenm) {
 const CORPSE_OTYP = 265, GAUNTLETS_OF_POWER_OTYP = 161, A_CON_HV = 4; // mkobj.js OBJECT_DATA rows / attrib.h
 // C ref: decl.h gm.mhitu_dieroll — mattacku()'s to-hit roll, read by hitmu().
 let mhitu_dieroll = 0;
+register_process_static(() => { mhitu_dieroll = 0; });
 const EGG_OTYP = 266, TIN_OTYP = 296; // mkobj.js OBJECT_DATA rows (not individually exported)
 function mstoning_obj(otmp) {
     if (otmp.otyp !== CORPSE && otmp.otyp !== EGG_OTYP && otmp.otyp !== TIN_OTYP) return false;
@@ -6447,9 +6456,6 @@ export async function mattacku(mtmp, mdat) {
         default:
             break;
         }
-        // C's done() longjmps out of mattacku.  Do not publish status or run
-        // the sleeping-hero roll after a fatal attack.
-        if (game.program_state?.gameover) return 0;
         // C ref: mhitu.c mattacku(): publish dirty status after each attack.
         // A pixel-only snapshot leaves botl pending and republishes T: too late.
         if (game.botl && u.uhp !== -1) await bot();
@@ -7114,8 +7120,6 @@ export async function thitu(tlev, dam, otmp) {
     // killer_xname() never carries mshot_xname()'s "the Nth " volley prefix.
     const { losehp_do } = await import('./do.js');
     await losehp_do(dam, mv_killer_xname(otmp), 1 /* KILLED_BY */);
-    /* C's done() does not return: no exercise() after the hero dies */
-    if (game.program_state?.gameover) return 1;
     await exercise(0 /*A_STR*/, false);
     return 1;
 }
@@ -7640,9 +7644,6 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
                     await make_stoned(5, null, 1 /* KILLED_BY */, '');
                 }
             }
-            // C ref: thitu()/poisoned() -> done() never returns once the hero has
-            // died (really_done() exits), so no drop_throw()/forcehit draws follow.
-            if (game.program_state?.gameover) return;
             await stop_occupation();
             if (hitu) {
                 if (tethered_weapon) break;     // ready for return journey
@@ -8050,6 +8051,7 @@ function mon_hates_silver(mon) { return mon_hates_silver_mon(mon); }
 // set gp.propellor (mirrored here as _propellor) to the launcher that fires it
 // (&hands_obj == HANDS_OBJ when the missile needs no launcher).  Draws NO rng.
 let _propellor = null; // C: gp.propellor
+register_process_static(() => { _propellor = null; });
 export function select_rwep(mtmp) {
     const ptr = mtmp.data;
     const mcls = permonst_of(ptr)?.mcls;
@@ -8434,8 +8436,6 @@ async function thrwmu(mtmp, mdat) {
     ms.n = multishot;
     for (ms.i = 1; ms.i <= ms.n; ms.i++) {
         await m_throw_at_hero(mtmp, mdat, mtmp.mx, mtmp.my, sgn(tbx), sgn(tby), dm, otmp);
-        // C: thitu() -> done() never returns, so a volley that killed the hero is over.
-        if (game.program_state?.gameover) return;
         if (DEADMONSTER(mtmp)) break;
     }
     game.m_shot = { o: 0, n: 0, i: 0, s: false };
@@ -8522,9 +8522,6 @@ async function hitmu(mtmp, mdat, mattk) {
         const { mhitu_ops } = await import('./mhitu.js');
         mhm.dieroll = mhitu_dieroll;
         await mhitm_adtyping(mtmp, mattk, YOUMONST, mhm, mhitu_ops());
-    }
-    if (game.program_state?.gameover) {
-        return mhm.hitflags; /* C: a fatal poisoned()/losehp()'s done() never returns */
     }
 
     // mhitu.c:1193 — knockback (AD_PHYS claw/kick/butt/weap only; the rn2(3) and

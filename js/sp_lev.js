@@ -1359,6 +1359,12 @@ function create_storeroom(croom) {
                 // object (M_AP_OBJECT) — no further RNG.  Mark it so the renderer
                 // shows a "(" (chest) glyph rather than the mimic letter.
                 if (mtmp) {
+                    // C ref: sp_lev.c create_monster():2125 `mtmp->female = m->female`
+                    // -- the table form without `female=` leaves tmpmons.female at
+                    // BOOL_RANDOM, which lspo_monster():3355 turns into 0, so the
+                    // makemon() gender roll is overwritten (all storeroom mimics are
+                    // male; their corpses stack).
+                    mtmp.female = 0;
                     mtmp.m_ap_type = M_AP_OBJECT;
                     mtmp.mappearance = CHEST;
                 }

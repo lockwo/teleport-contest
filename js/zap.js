@@ -3,7 +3,7 @@
 // the gameplay sessions are ported here.
 
 import { Half_physical_damage_hero, Half_spell_damage_hero, Stunned_hero, Drain_resistance_hero, Antimagic_hero, Unchanging_hero, Levitation_hero } from './youprop.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { ok_to_quest } from './questok.js';
 import { s_suffix } from './hacklib.js';
@@ -2555,10 +2555,16 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
     // C's tmp_at(DISP_BEAM) keeps one saved entry per call (revisited cells
     // after a bounce are newsym'd again, TMP_AT_MAX_GLYPHS cap).
     const visited = [];
-    const drawBeam = (x, y) => {
+    const drawBeam = async (x, y) => {
+        /* C ref: display.c tmp_at(x, y) default case: a full saved[] list shows nothing */
+        if (visited.length >= COLNO * 2) return;
         // C: zapdir_to_glyph(), updated by DISP_CHANGE after each bounce.
         show_beam_cell(x, y, dx, dy, hdmgtype);
-        if (visited.length < COLNO * 2) visited.push([x, y]);
+        visited.push([x, y]);
+        /* C ref: tmp_at() `show_glyph(); flush_screen(0);`: the physical screen gets
+           the beam cell (and the pending status line) now, while the matching erase
+           in DISP_END only touches the glyph buffer until the next flush. */
+        await flush_screen(0);
     };
 
     // C's `buzzmonst:` label, shared by a monster in the beam's path and by a
@@ -2643,6 +2649,8 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
         return false;
     };
 
+    /* C ref: tmp_at(DISP_BEAM, glyph) flushes the buffered glyphs before the first step */
+    await flush_screen(0);
     while (range-- > 0) {
         lsx = sx; sx += dx;
         lsy = sy; sy += dy;
@@ -2658,7 +2666,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                 if (mon && !canspotmon(mon)) map_invisible(sx, sy);
                 else if (!mon) unmap_invisible_zap(sx, sy);
                 if (ZAP_POS(typ) || (isok(lsx, lsy) && cansee(lsx, lsy)))
-                    drawBeam(sx, sy);
+                    await drawBeam(sx, sy);
                 nh_delay_output_tick(); /* C: nh_delay_output(); wait a little */
             }
 
@@ -2709,7 +2717,6 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                              * hallucination */
                             await zhitu(type, nd, flash_killer(type), sx, sy);
                             monstunseesu(M_SEEN_REFL);
-                            if (game.program_state?.gameover) return;
                         }
                     } else if (!Blind()) {
                         await update_topl(`${flash_The(fltyp)} whizzes by you!`);
@@ -2804,7 +2811,7 @@ export async function zap_over_floor(x, y, type, shopdamage = null,
             /* a burning web is too flimsy to notice if you can't see it */
             if (see_it)
                 await Norep_zap('A web bursts into flames!');
-            trapmod.delfloortrap(t); t = null;
+            await trapmod.delfloortrap(t); t = null;
             if (see_it)
                 newsym(x, y);
         }
@@ -4669,9 +4676,7 @@ export async function zapyourself(obj, ordinary) {
         break;
     }
     // C ref: zap.c zapyourself() tail — discover the wand type if its effect
-    // was observable and the wand itself has been seen.  C's done() never
-    // returns (polyself() death, lethal damage), so nothing runs after it.
-    if (game.program_state?.gameover) return damage;
+    // was observable and the wand itself has been seen.
     if (learn_it) learnwand(obj);
     return damage;
 }
@@ -6707,6 +6712,7 @@ const MAX_WISH_HISTORY_Z = 20;
 const DEBUG_BUILD_Z = true; /* patchlevel.h:36 defines DEBUG for this build (the recorded session shows the wish-history menu) */
 const wish_history = new Array(MAX_WISH_HISTORY_Z).fill(null);
 let wish_history_idx = 0;
+register_process_static(() => { wish_history.fill(null); wish_history_idx = 0; });
 
 /* C ref: zap.c makewish() tests `wish_history[0]` (slot 0 filled == history non-empty). */
 export function wish_history_first() { return wish_history[0]; }

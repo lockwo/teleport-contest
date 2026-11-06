@@ -1032,7 +1032,7 @@ export async function mhitm_ad_curs(magr, mattk, mdef, mhm, ops) {
 // AD_PHYS's poisoned-weapon arm; not subject to cancellation or the 1/8 roll.
 async function mhitm_really_poison(magr, mattk, mdef, mhm, ops) {
     if (ops.vis && ops.canspotmon(magr))
-        await ops.emit(`${ops.Monnam(magr)}'s ${mpoisons_subj(magr, mattk)} was poisoned!`);
+        await ops.emit(`${s_suffix(ops.Monnam(magr))} ${mpoisons_subj(magr, mattk)} was poisoned!`);
     if (resists_poison(ops, mdef)) {
         if (ops.vis && ops.canspotmon(mdef) && ops.canspotmon(magr))
             await ops.emit(`The poison doesn't seem to affect ${ops.mon_nam(mdef)}.`);
@@ -1111,10 +1111,6 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
         await eat_brains(magr, mdef, true, damage);
         mhm.damage = damage.value;
         if (lifeSaved && !which_armor(mdef, W_AMUL)) ops.set_skipdrin();
-        if (game.program_state?.gameover) {
-            mhm.done = true;
-            mhm.hitflags = M_ATTK_AGR_DIED;
-        }
         return;
     }
     if (is_hero(mdef)) {
@@ -1136,19 +1132,11 @@ export async function mhitm_ad_drin(magr, mattk, mdef, mhm, ops) {
         const { Maybe_Half_Phys_do } = await import('./do.js');
         await ops.mdamageu(magr, Maybe_Half_Phys_do(mhm.damage));
         mhm.damage = 0;
-        if (game.program_state?.gameover) {
-            mhm.done = true;
-            return;
-        }
         if (!game.uarmh || game.uarmh.otyp !== 94 /* DUNCE_CAP */) {
             const { eat_brains } = await import('./eat.js');
             const oldmort = game.u.umortality | 0;
             const result = await eat_brains(magr, mdef, true, null);
             if ((game.u.umortality | 0) > oldmort) ops.set_skipdrin();
-            if (game.program_state?.gameover) {
-                mhm.done = true;
-                return;
-            }
             if (result === M_ATTK_MISS) return;
         }
         const { adjattrib } = await import('./attrib.js');

@@ -1492,7 +1492,7 @@ export function clear_object_timer(obj) {
 // come back in the REVERSE of their saved order.  Our timers live on the objects
 // of the level kept in the per-ledger store, so a revisit re-issues their tids
 // in saved order: later tid == nearer the head == fires first among ties.
-export function requeue_level_timers() {
+export function requeue_level_timers(level = game.level) {
     const timers = [];
     const scan = (list) => {
         if (!Array.isArray(list)) return;
@@ -1501,11 +1501,36 @@ export function requeue_level_timers() {
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
-    scan(game.level?.objects);
-    scan(game.level?.buriedobjlist);
-    for (const mon of (Array.isArray(game.level?.monsters) ? game.level.monsters : []))
+    scan(level?.objects);
+    scan(level?.buriedobjlist);
+    for (const mon of (Array.isArray(level?.monsters) ? level.monsters : []))
         scan(mon.minvent);
-    for (const lt of (game.level?.level_timers || [])) timers.push(lt);
+    for (const lt of (level?.level_timers || [])) timers.push(lt);
+    timers.sort((a, b) => a.when - b.when || (b.tid ?? 0) - (a.tid ?? 0));
+    for (const t of timers)
+        t.tid = game._object_timer_id = (game._object_timer_id ?? 0) + 1;
+}
+
+// C ref: timeout.c restgamestate() -> restore_timers(RANGE_GLOBAL): the timers
+// of what the hero carries (and of migrating objects/monsters' packs) come back
+// through insert_timer() as well, so their equal-deadline ties reverse like the
+// level's.  dorecover() restores them BEFORE the level, so the level's timers
+// (requeued after this) end up ahead of them in the queue.
+export function requeue_global_timers() {
+    const timers = [];
+    const scan = (list) => {
+        if (!Array.isArray(list)) return;
+        for (const o of list) {
+            if (o.timed && o.timer) timers.push(o.timer);
+            if (Array.isArray(o.cobj)) scan(o.cobj);
+        }
+    };
+    scan(game.invent);
+    scan(game.migrating_objs);
+    for (const mon of (Array.isArray(game.migrating_mons) ? game.migrating_mons : []))
+        scan(mon.minvent);
+    for (const mon of (Array.isArray(game.mydogs) ? game.mydogs : []))
+        scan(mon.minvent);
     timers.sort((a, b) => a.when - b.when || (b.tid ?? 0) - (a.tid ?? 0));
     for (const t of timers)
         t.tid = game._object_timer_id = (game._object_timer_id ?? 0) + 1;
@@ -1529,6 +1554,7 @@ export async function run_object_timers() {
                     || o.timer.action === REVIVE_MON
                     || o.timer.action === ZOMBIFY_MON
                     || o.timer.action === HATCH_EGG
+                    || o.timer.action === FIG_TRANSFORM
                     || o.timer.action === BURN_OBJECT))
                 due.push({ obj: o, timer: o.timer });
             if (Array.isArray(o.cobj)) scan(o.cobj);
@@ -1596,6 +1622,11 @@ export async function run_object_timers() {
         case BURN_OBJECT: {
             const { burn_object } = await import('./timeout.js');
             await burn_object({ a_obj: obj }, timer.when);
+            break;
+        }
+        case FIG_TRANSFORM: {
+            const { fig_transform } = await import('./apply.js');
+            await fig_transform({ a_obj: obj }, timer.when);
             break;
         }
         }
@@ -1987,9 +2018,25 @@ export function weight(otmp) {
 // C ref: mkobj.c:2362 `otmp->nobj = fobj; fobj = otmp` — the floor chain always
 // grows at its head, however the pile order places the object (a non-boulder
 // lands UNDER boulders in its pile).  Our one array can only carry one of the
-// two orders, so each placement is stamped and dogmove's fobj() walk sorts by it.
+// two orders, so each placement is stamped and fobj() below sorts by it.
 let _fobj_seq = 0;
 export function stamp_fobj(otmp) { otmp.fobj_seq = ++_fobj_seq; }
+
+// All floor objects on the level (C's `fobj` chain, rm.h `fobj` == svl.level.objlist),
+// newest placement first: C inserts each newly placed object at the HEAD of fobj
+// (otmp->nobj = fobj; fobj = otmp).  The level.objects array is pile-ordered
+// (a non-boulder slides under boulders), so order by placement stamp
+// (stamp_fobj); an unstamped object (level restore) counts as older than any
+// stamped one.  Callers: dog_goal (the traversal order decides which object's
+// APPORT rn2(8) fires first), see_objects (which hallucinated cell draws its
+// display-rng pick first), the Wizard's item hunt, etc.
+export function fobj() {
+    const arr = game.level?.objects;
+    if (!arr) return [];
+    const n = arr.length;
+    return arr.map((o, i) => [o.fobj_seq != null ? o.fobj_seq : i - n, o])
+        .sort((a, b) => b[0] - a[0]).map((e) => e[1]);
+}
 // C ref: do.c:893 obj_no_longer_held(), reached from place_object() before the
 // object joins the floor chain: an ordinary crysknife reverts to a worm tooth
 // (a fixed one only 10% of the time, the single RNG draw), contents first.
