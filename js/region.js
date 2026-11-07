@@ -16,9 +16,9 @@
 import { game } from './gstate.js';
 import { PLNMSG_ENVELOPED_IN_GAS, LUNG, EYE } from './const.js';
 import { makeplural } from './plural.js';
-import { rn2, rn1, rnd } from './rng.js';
+import { rn2, rn1, rnd, d } from './rng.js';
 import { isok, ACCESSIBLE, IS_POOL, IS_LAVA, COLNO, ROWNO, NHF_BONESFILE,
-         M_SEEN_POISON, TELEDS_TELEPORT, Is_waterlevel, POISON_RES, FM_FMON } from './const.js';
+         M_SEEN_POISON, TELEDS_NO_FLAGS, Is_waterlevel, POISON_RES, FM_FMON } from './const.js';
 import { cansee, block_point, unblock_point, does_block, Blind } from './vision.js';
 // js/monflags_data.js is a generated LEAF module (no imports of its own), so
 // naming it here cannot create an import cycle or a TDZ edge.
@@ -1043,13 +1043,13 @@ export async function region_safety() {
     if (n > 1 || (n === 1 && !r)) {
         /* multiple overlapping cloud regions or non-expiring one */
         const { safe_teleds } = await import('./teleport.js');
-        await safe_teleds(TELEDS_TELEPORT);
+        await safe_teleds(TELEDS_NO_FLAGS);
         /* maybe there's no safe place available; must get hero out of danger
            or prayer's "fix all troubles" result will get stuck in a loop */
         if (region_danger()) {
             const p = (game.u.uprops = game.u.uprops || {});
             /* set_itimeout(&HMagical_breathing, d(4,4) + 4) */
-            p.HMagical_breathing = (rnd(4) + rnd(4) + rnd(4) + rnd(4)) + 4;
+            p.HMagical_breathing = d(4, 4) + 4;
             /* not already Breathless or wouldn't be in region danger */
             await You_feel('able to breathe.');
         }

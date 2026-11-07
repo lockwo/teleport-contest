@@ -2233,10 +2233,11 @@ export async function find_misc(mtmp) {
     return !!m.has_misc;
 }
 
-// C ref: worn.c wearing_iron_shoes(mon).
+// C ref: trap.c:1098 wearing_iron_shoes(mtmp) -- boots whose material is IRON
+// (iron shoes AND kicking boots), not just the object named "iron shoes".
 function wearing_iron_shoes(mon) {
     const boots = which_armor(mon, W_ARMF);
-    return !!boots && OBJECTS[boots.otyp]?.name === 'iron shoes';
+    return !!boots && OBJECTS[boots.otyp]?.material === 11 /* IRON */;
 }
 
 // C ref: muse.c:2249 — dragon armor supplies the form without a random pick.

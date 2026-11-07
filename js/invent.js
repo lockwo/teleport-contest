@@ -15,7 +15,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -1811,7 +1811,7 @@ function corner_menu_destroyed() {
     if (status_cuts_snapshot() || status_sweep_reached()) status_sweep_botlx();
 }
 
-function putStatusLines(display, bandStart = null, menuLastRow = -1) {
+function putStatusLines(display, bandStart = null, menuLastRow = -1, sweepLastRow = menuLastRow) {
     // A full-width menu (bandStart 0) ran term_clear_screen() and wiped the
     // status window; it is not redrawn here, but the dismissal cutoff below is
     // still recorded for the next corner window.
@@ -1828,7 +1828,7 @@ function putStatusLines(display, bandStart = null, menuLastRow = -1) {
     // full (a 21-entry menu already reaches the first status row of a two-line
     // window).  A short overlay drawn right after inherits that already-wrecked
     // status instead of a fresh recompute, so remember the cutoff per row.
-    if (bandStart != null) status_sweep(Math.max(0, bandStart - 1), menuLastRow);
+    if (bandStart != null) status_sweep(Math.max(0, bandStart - 1), sweepLastRow);
 }
 
 // C ref: invent.c display_pickinv():3146 `if (!flags.invlet_constant)
@@ -1872,7 +1872,7 @@ function inventoryRows(lets = null, ofilter = null, wantReply = false) {
             // cell form, object_glyph() when not hallucinating).
             const og = flash_obj_glyph(obj);
             group.push(`${obj.invlet || obj_to_let(obj)} - ${doname_invent(obj)}`);
-            group.syms.push(og ? { ch: og.ch, color: og.color } : null);
+            group.syms.push(menu_glyph_sym(og));
         }
         rows.push(group);
         return rows;
@@ -1889,7 +1889,7 @@ function inventoryRows(lets = null, ofilter = null, wantReply = false) {
         const row = [let_to_name(oclass, false, wantReply && !!game.iflags?.menu_head_objsym),
                      ...items.map((obj) => {
             const og = flash_obj_glyph(obj);
-            syms.push(og ? { ch: og.ch, color: og.color } : null);
+            syms.push(menu_glyph_sym(og));
             const letter = obj.invlet || obj_to_let(obj);
             return `${letter} - ${doname_invent(obj)}`;
         })];
@@ -2201,7 +2201,11 @@ export async function tty_text_window(lines, maxcol = null) {
         for (const t of lines)
             display.putstr(offx ? offx + 1 : 0, row++,
                 t.slice(0, cols - 1 - (offx ? offx + 1 : 0)), NO_COLOR, 0);
-        putStatusLines(display, offx, lastRow);
+        // C ref: erase_menu_or_text() docorner(offx, maxrow + 1): a text window's
+        // maxrow is its line count, which is the --More-- row, so the dismissal
+        // sweep reaches rows 0..lines.length, one row less than a menu's
+        // `(end)` row convention (status_sweep reaches lastRow + 1).
+        putStatusLines(display, offx, lastRow, lastRow - 1);
         apply_status_cuts(display, { col: offx, lastRow }, carriedCuts);
         status_cuts_restore(carriedCuts);
         display.putstr(offx + 1, lastRow, '--More--', NO_COLOR, 0);
@@ -2344,7 +2348,13 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             continue;
         }
         if (hit) {
-            if (how === PICK_NONE) continue;
+            if (how === PICK_NONE) {
+                /* C ref: wintty.c process_menu_window() default: PICK_NONE rings the
+                   bell and breaks; the loop top then drops the pending count. */
+                count = 0;
+                counting = false;
+                continue;
+            }
             hit.item.selected = counting ? count > 0 : !hit.item.selected;
             hit.item.count = counting ? count : -1;
             count = 0;
@@ -6771,6 +6781,10 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
     // they redraw rolls a fresh random_object() off the display RNG.  A
     // tethered weapon's DISP_END is left to throwit() (flash is returned).
     const flash = tmp_at_flash(obj, tethered);
+    // C ref: display.c tmp_at() DISP_FLASH/DISP_TETHER start ends in
+    // flush_screen(0), which runs bot(): a status change made before the flight
+    // (freeinv() of thrown gold) is published at the current `moves`.
+    await flush_screen(0);
     let end_flash = !tethered;
     let stuck = false;
     let mon_in_path = false; /* bhit() hit a monster at x,y (not a shkcatch) */
@@ -7496,9 +7510,8 @@ async function throw_obj(obj, getDir, shotlimit = 0) {
     return unsplit_stack(res);
 }
 
-// C ref: objnam.c the(str) / the(xname(obj)).
-function the_str(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
-function the_name_of(obj) { return the_str(xname(obj)); }
+// C ref: objnam.c the(xname(obj)).
+function the_name_of(obj) { return on_the(xname(obj)); }
 // C ref: onames.h HEAVY_IRON_BALL (js/mkobj.js OBJECT_DATA otyp).
 const HEAVY_IRON_BALL_OTYP = 477;
 // C ref: mextra.h dogfood enum — thitmonst()'s pet arm accepts ACCFOOD or better.
@@ -9394,7 +9407,7 @@ export async function query_objlist_menu(qstr, olist, qflags, how, allow) {
             items.push({ selector, desc: doname_with_price(curr), obj: curr,
                          selected: false, count: -1,
                          gselector: def_oc_syms[curr.oclass]?.sym,
-                         sym: og ? { ch: og.ch, color: og.color } : null,
+                         sym: menu_glyph_sym(og),
                          skipinvert: false });
             plan.push({ item: items[items.length - 1] });
             first = false;
@@ -10064,11 +10077,12 @@ const LOST_DROPPED = 2;      /* obj.h:483 (3 is LOST_STOLEN) */
 export async function pick_one_obj(obj, count = 0) {
     const quan = count || obj.quan || 1;
     if (!Blind_for_wear()) observe_object(obj); // C pickup.c:1817 guards with !Blind
-    // C ref: pickup.c pick_obj():1907 — a shop-floor item is billed BEFORE
+    // C ref: pickup.c pick_obj():1907 — a shop-floor item (never the chained
+    // iron ball: `otmp != uball`) is billed BEFORE
     // addinv(), so the merge that addinv() may do can see obj->unpaid.  This is
     // where the "For you, ...; only N zorkmids for this <item>." quote (and its
     // rn2(4)) comes from, and what makes doname() read "(unpaid, N zorkmids)".
-    const robshop = !game.u?.uswallow && costly_spot(obj.ox, obj.oy);
+    const robshop = !game.u?.uswallow && obj !== game.u?.uball && costly_spot(obj.ox, obj.oy);
     const fromfloor = obj.where === OBJ_FLOOR;
     const pick_ox = obj.ox, pick_oy = obj.oy;
     // C ref: pickup.c pick_obj() `obj_extract_self(otmp)` -- otmp is on the floor
@@ -10561,7 +10575,7 @@ export async function askchain(objchn, olets, allflag, fn, ckfn, mx, word) {
                     await yn_pending_more();
                     sym = await y_n(qbuf,
                         (takeoff || ident || (otmp.quan | 0) < 2) ? ynaqchars : ynNaqchars,
-                        'n');
+                        'n', false);
                 } else {
                     sym = 'y';
                 }
@@ -11474,6 +11488,7 @@ async function itemactions(otmp, getDir) {
                 && pmatchi(`*${reply}*`, `${e.accel} - ${e.label}`));
             if (!hit) continue;
             await dismiss_invent_screen();
+            itemactions_botlx_repaint();
             return await itemactions_dispatch(otmp, hit.act, getDir);
         }
         // Return/Enter commits with nothing selected -> cancel.  C ref
@@ -11488,17 +11503,22 @@ async function itemactions(otmp, getDir) {
         // C: the menu is torn down (erase_menu_or_text) and moveloop's
         // flush_screen()/bot() runs before the canned command executes.
         await dismiss_invent_screen();
-        if (status_cuts_snapshot()) {
-            // docorner() left disp.botlx pending; the moveloop bot() repaints
-            // every status row in full before the canned command runs.
-            const display = game.nhDisplay;
-            if (StatusRows() > 2) putStatusRow(display, 0, display.rows - 3, null);
-            putStatusRow(display, 1, 22, null);
-            putStatusRow(display, 2, 23, null);
-            game._statusCuts = null;
-        }
+        itemactions_botlx_repaint();
         return await itemactions_dispatch(otmp, chosen.act, getDir);
     }
+}
+
+// C ref: wintty.c docorner() left disp.botlx pending (its sweep reached the
+// status window while select_menu() held bot_disabled); the moveloop bot() of
+// the NEW moveloop_core() iteration that runs the queued canned command repaints
+// every status row in full before that command executes.
+function itemactions_botlx_repaint() {
+    if (!status_cuts_snapshot()) return;
+    const display = game.nhDisplay;
+    if (StatusRows() > 2) putStatusRow(display, 0, display.rows - 3, null);
+    putStatusRow(display, 1, 22, null);
+    putStatusRow(display, 2, 23, null);
+    game._statusCuts = null;
 }
 
 // C ref: iactions.c itemactions_pushkeys(otmp, act) — push the chosen action's
@@ -11566,19 +11586,24 @@ async function itemactions_run(otmp, act, getDir) {
         await call_inventory_object();
         return ECMD_OK;
     case IA_DROP_OBJ:
+        await recordRepeat('dodrop');
         seedInvlet();
         return (await dodrop()) ? ECMD_TIME : ECMD_OK;
     case IA_THROW_OBJ:
+        await recordRepeat('dothrow');
         seedInvlet();
         return await dothrow(getDir ?? (await import('./cmd.js')).getdir);
     case IA_WIELD_OBJ:
+        await recordRepeat('dowield');
         seedInvlet();
         return await dowield();
     case IA_WEAR_OBJ: // 'P' put-on routes through dowear (unified wear/put-on)
+        await recordRepeat('dowear');
         seedInvlet();
         return await dowear();
     case IA_READ_OBJ: {
         // C ref: itemactions_pushkeys IA_READ_OBJ -> cmdq_add_ec(doread).
+        await recordRepeat('doread');
         seedInvlet();
         const rd = await import('./read.js');
         return ((await rd.doread()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
@@ -11586,9 +11611,14 @@ async function itemactions_run(otmp, act, getDir) {
     case IA_ENGRAVE_OBJ: {
         // doengrave lives in engrave.js; load it on demand.  It reads the
         // stylus via getobj, which consumes the pre-seeded invlet.
+        await recordRepeat('doengrave');
         seedInvlet();
         const eng = await import('./engrave.js');
-        return (await eng.doengrave()) === 1 ? ECMD_TIME : ECMD_OK;
+        // C: engrave.c doengrave() returns ECMD_FAIL/ECMD_CANCEL (u_can_engrave
+        // refusal, cancelled getobj); rhack() then reset_cmd_vars(TRUE) clears
+        // CQ_CANNED, which holds the invlet seeded above.
+        const er = await eng.doengrave();
+        return er === 1 ? ECMD_TIME : (er & (ECMD_FAIL | ECMD_CANCEL)) ? er : ECMD_OK;
     }
     case IA_TWOWEAPON: {
         // C ref: itemactions_pushkeys IA_TWOWEAPON -> cmdq_add_ec(dotwoweapon).
@@ -11598,6 +11628,7 @@ async function itemactions_run(otmp, act, getDir) {
     case IA_INVOKE_OBJ: {
         // C ref: itemactions_pushkeys IA_INVOKE_OBJ -> cmdq_add_ec(doinvoke)
         // with the object's invlet pushed ahead of it for getobj().
+        await recordRepeat('doinvoke');
         seedInvlet();
         const { doinvoke } = await import('./artifact.js');
         return ((await doinvoke()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
@@ -11625,6 +11656,7 @@ async function itemactions_run(otmp, act, getDir) {
         return ECMD_OK; /* donull */
     }
     case IA_APPLY_OBJ: {
+        await recordRepeat('doapply');
         seedInvlet();
         const { doapply } = await import('./apply.js');
         return (await doapply()) & ECMD_TIME ? ECMD_TIME : ECMD_OK;
@@ -11647,11 +11679,13 @@ async function itemactions_run(otmp, act, getDir) {
     case IA_FIRE_OBJ:
         return await dofire(getDir ?? (await import('./cmd.js')).getdir);
     case IA_SACRIFICE: {
+        await recordRepeat('dosacrifice');
         seedInvlet();
         const { dosacrifice } = await import('./pray.js');
         return (await dosacrifice()) === 1 ? ECMD_TIME : ECMD_OK;
     }
     case IA_BUY_OBJ:
+        await recordRepeat('dopay');
         seedInvlet();
         return (await dopay()) === ECMD_TIME ? ECMD_TIME : ECMD_OK;
     case IA_QUAFF_OBJ: {
@@ -11664,9 +11698,11 @@ async function itemactions_run(otmp, act, getDir) {
         finally { iflags.menu_requested = false; }
     }
     case IA_QUIVER_OBJ:
+        await recordRepeat('dowieldquiver');
         seedInvlet();
         return (await dowieldquiver()) === ECMD_TIME ? ECMD_TIME : ECMD_OK;
     case IA_RUB_OBJ: {
+        await recordRepeat('dorub');
         seedInvlet();
         const { dorub } = await import('./apply.js');
         return (await dorub()) & ECMD_TIME ? ECMD_TIME : ECMD_OK;
@@ -11686,6 +11722,7 @@ async function itemactions_run(otmp, act, getDir) {
     case IA_SWAPWEAPON:
         return (await doswapweapon()) === ECMD_TIME ? ECMD_TIME : ECMD_OK;
     case IA_ZAP_OBJ: {
+        await recordRepeat('dozap');
         seedInvlet();
         const { dozap } = await import('./zap.js');
         return ((await dozap()) & ECMD_TIME) ? ECMD_TIME : ECMD_OK;
@@ -11712,7 +11749,10 @@ async function search_inventory_menu(rows, byLet) {
     const pattern = `*${reply}*`;
     for (const [, ...items] of rows) {
         for (const text of items) {
-            const obj = byLet.get(text[0]);
+            /* the in-use listing's "- - bare hands" row is selectable too (its
+               identifier is non-zero), but names no inventory object. */
+            const obj = byLet.get(text[0])
+                ?? (text[0] === HANDS_SYM && text.startsWith(`${HANDS_SYM} - `) ? HANDS_SYM : undefined);
             if (obj && pmatchi(pattern, text)) return obj;
         }
     }
@@ -11810,6 +11850,13 @@ async function select_inventory_menu(rows, byLet) {
         if (ch === ':') {
             const cursor = game.nhDisplay?.getCursor?.();
             const picked = await search_inventory_menu(rows, byLet);
+            if (picked === HANDS_SYM && !byLet.get(HANDS_SYM)) {
+                /* display_inventory() returns '-', which dispinv_with_action()
+                   matches against no invlet: the menu just closes. */
+                game._invmenu_esc = false;
+                await dismiss_invent_screen();
+                return null;
+            }
             if (picked) {
                 await inventory_menu_dismissed();
                 return picked;
@@ -12671,6 +12718,16 @@ function decor_waterbody_name(ltyp) {
 // re-announced on the next consecutive step (furniture is exempt from that
 // de-duplication, matching IS_FURNITURE).  Returns TRUE like the C routine.
 export async function describe_decor() {
+    /* C ref: pickup.c describe_decor() — avoid "You are back on floor." then
+       "You trip over <object>." / "You slip off the ice." when Fumbling's
+       periodic timeout is about to kick in (hero steps off ice): defer the
+       terrain message until nh_timeout()'s FUMBLING case has run. */
+    if (((game.u?.HFumbling || 0) & TIMEOUT) === 1
+        && !game.iflags?.defer_decor && !game._decor_fumble_override) {
+        const { deferred_decor } = await import('./pickup.js');
+        await deferred_decor(true);
+        return false;
+    }
     const x = game.u?.ux, y = game.u?.uy;
     const loc = game.level?.at?.(x, y);
     // C SURFACE_AT(x,y): the surface terrain; == levl[][].typ off a drawbridge
@@ -12775,6 +12832,9 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     // C ref: invent.c look_here():4117 — skip 'dfeature' when the caller already
     // showed it via describe_decor() (pickup.c check_here() sets this).
     const skip_dfeature = (lookhere_flags & LOOKHERE_SKIP_DFEATURE) !== 0;
+    /* C keeps dfeature itself and only suppresses its mention (skip_dfeature);
+       the Blind branch below still inspects the full feature name. */
+    const dfeature_full = dfeature;
     if (skip_dfeature) dfeature = null;
     // C ref: invent.c look_here():4122-4161 — engulfed: look at the engulfer's
     // stomach contents instead of the floor.
@@ -12829,7 +12889,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     // C ref: invent.c:4185-4217 — unreachable objects aren't felt or inspected.
     if (Blind_for_wear()) {
         const { can_reach_floor } = await import('./engrave.js');
-        if (dfeature && dfeature.startsWith('altar ')) {
+        if (dfeature_full && dfeature_full.startsWith('altar ')) {
             await update_topl('You try to feel what is here.');
         } else if ((game.level?.at?.(x, y)?.typ) === ICE) {
             // C ref: invent.c:4191 — describe_decor()/force_decor() handles ice;
@@ -12845,7 +12905,7 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
                 : !can_reach_floor(true) ? 'lying beneath you'
                 : `lying here on the ${surf}`;
             await update_topl(`You try to feel what is ${where}.`);
-            if (dfeature && !drift && dfeature === surf) dfeature = null;
+            if (dfeature_full && !drift && dfeature_full === surf) dfeature = null;
         }
         const trap = trap_at_hero();
         if (!can_reach_floor(!!(trap && is_pit(trap.ttyp)))) {

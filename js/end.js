@@ -12,7 +12,7 @@ import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night, getnow, yyyymmdd } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, Is_astralevel, PLNMSG_OK_DONT_DIE } from './const.js';
+import { G_GENOD, G_EXTINCT, G_NOCORPSE, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, Is_astralevel, PLNMSG_OK_DONT_DIE } from './const.js';
 
 // C ref: end.c:1536 -- " on dungeon level N" is omitted in the endgame and in
 // single-level branches (Fort Ludios); the quest reports its own dunlev(), not
@@ -413,6 +413,13 @@ async function make_hero_corpse_and_grave(how) {
         return null;
     if ((game.u?.ugrave_arise ?? NON_PM) !== NON_PM)
         return null;
+    // C: `!(svm.mvitals[u.umonnum].mvflags & G_NOCORPSE)`.  C seeds mvflags
+    // from mons[].geno & G_NOCORPSE (allmain.c), so a hero dying polymorphed
+    // into a nocorpse form (wererat, undead) leaves no corpse or grave.
+    const { mon_nocorpse } = await import('./makemon.js');
+    if ((((game.mvitals?.[game.u?.umonnum]?.mvflags | 0) & G_NOCORPSE) !== 0)
+        || (game.u?.Upolyd && mon_nocorpse(game.u.umonnum)))
+        return null;
     try {
         const u = game.u;
         const x = u?.ux, y = u?.uy;
@@ -424,8 +431,7 @@ async function make_hero_corpse_and_grave(how) {
         // C: `int mnum = !Upolyd ? gu.urace.mnum : u.umonnum;`  Resolve the
         // race's monster by name (mons[] carries "human"/"elf"/"dwarf"/
         // "gnome"/"orc" as the player-race entries).
-        const raceName = hero_race_name();
-        const mnum = name_to_pmidx(raceName);
+        const mnum = u.Upolyd ? u.umonnum : name_to_pmidx(hero_race_name());
         const corpse = mkcorpstat(CORPSE, null, mnum ?? null, x, y,
                                   CORPSTAT_INIT);
         const plname = game.plname || game.u?.uname || 'Hero';
@@ -572,8 +578,9 @@ async function done(how) {
     // in the other order let the zeroed HP reach the endgame screens.
     if (!(how === QUIT && stopprint)) {
         game.botlx = true; // end.c:1045 `disp.botlx = TRUE; bot();`
+        game._botlxKeepScreen = true; // no window covered the status rows
         d.freeze_botl();
-        await d.bot();
+        try { await d.bot(); } finally { delete game._botlxKeepScreen; }
     }
     if (how < PANICKED
         && (u.uhp !== 0 || (u.Upolyd && u.mh !== 0))) {
@@ -628,10 +635,11 @@ async function done(how) {
     const wizard = is_wizard();
     const discover = is_discover();
     if (!survive && (wizard || discover) && how <= GENOCIDED) {
-        // tty_yn_function pages a pending line unless WIN_STOP survived the
-        // preceding update_topl().  A long ESC-suppressed combat line leaves
-        // STOP set for "You die...", which the prompt then replaces directly.
-        game._yn_need_more = !game._winStop;
+        // C ref: topl.c tty_yn_function() — `if (toplin == TOPLINE_NEED_MORE &&
+        // !(flags & WIN_STOP)) more();`.  game._yn_need_more already carries the
+        // NEED_MORE state pline() left behind, so a hero killed with nothing
+        // pending (slimed_to_death() right after a dismissed --More--) gets the
+        // "Die?" prompt directly, with no empty --More-- first.
         // C ref: end.c:1112 paranoid_query(ParanoidDie, "Die?") — with
         // paranoid_confirmation:die the answer is typed ("yes"), else a y/n.
         let ans;
@@ -639,7 +647,7 @@ async function done(how) {
             const { paranoid_ynq } = await import('./eat.js');
             ans = (await paranoid_ynq(true, 'Die?', false));
         } else {
-            ans = await d.y_n('Die?', 'yn\x1b', 'n');
+            ans = await d.y_n('Die?', 'yn\x1b', 'n', false); /* paranoid_ynq(): addcmdq FALSE */
         }
         if (ans !== 'y') {
             // "OK, so you don't die." (update_topl so it concatenates with the
@@ -846,7 +854,7 @@ async function done(how) {
                 // is off by default, so this is a plain yn() defaulting to 'n';
                 // 'n' skips the bones file but the game still ends.
                 let save_bones = true;
-                if (wizard) save_bones = (await d.y_n('Save bones?', 'yn', 'n')) === 'y';
+                if (wizard) save_bones = (await d.y_n('Save bones?', 'yn', 'n', false)) === 'y'; /* paranoid_ynq(): FALSE */
                 if (save_bones) {
                     const { savebones } = await import('./bones.js');
                     await savebones(how, corpse || game._death_corpse || null);
@@ -1460,7 +1468,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     printLine('', false);              // C: HUP topten_print("") before the list
     if (tt.notbeaten) { printLine(tt.notbeaten, false); printLine('', false); }
     if (tt.banner) { printLine(tt.banner, false); printLine('', false); }
-    printLine(topten_outheader(COLNO), false);
+    if (!tt.skip_scores) printLine(topten_outheader(COLNO), false);
     for (const e of tt.shown) {
         if (e.blank) { printLine('', false); continue; }
         for (const l of topten_outentry(e.rank, e.entry, e.so, COLNO))
@@ -1492,8 +1500,6 @@ const RECORD_KEY = 'nethack.record';
 // every segment of a session runs as the same uid, so the "same person" half of
 // the PERSMAX test is always TRUE and only the role filecode distinguishes.
 const PERSMAX = 3, ENTRYMAX = 100, POINTSMIN = 1;
-// options.c:7170-7172 defaults.
-const END_TOP = 3, END_AROUND = 2, END_OWN = false;
 
 function topten_record_read() {
     const storage = game.storage;
@@ -1564,9 +1570,13 @@ function topten_list(t0) {
     if (rank0 === 0) rank0 = rank1;
     if (rank0 <= 0) rank0 = rank;
 
-    // skip_scores is FALSE with the default end_top=3.
+    // C ref: topten.c:843 skip_scores; flags.end_top/end_around/end_own come
+    // from the scores option (options.js optfn_scores, defaults 3/2/false).
+    const END_TOP = game.flags?.end_top ?? 3, END_AROUND = game.flags?.end_around ?? 2,
+          END_OWN = game.flags?.end_own ?? false;
+    const skip_scores = !END_TOP && !END_AROUND && !END_OWN;
     const shown = [];
-    for (let i = 0; i < list.length; i++) {
+    for (let i = 0; i < list.length && !skip_scores; i++) {
         const r = i + 1;
         if (!(r <= END_TOP
               || (r >= rank0 - END_AROUND && r <= rank0 + END_AROUND)
@@ -1583,7 +1593,7 @@ function topten_list(t0) {
     // C: "if (rank0 >= rank) outentry(0, t0, TRUE)" — this game's entry did not
     // make the list (or fell past its end), so it is appended rankless.
     if (rank0 >= rank) shown.push({ rank: 0, entry: t0, so: true });
-    return { list, shown, banner, notbeaten, flg };
+    return { list, shown, banner, notbeaten, flg, skip_scores };
 }
 
 // C ref: topten.c outheader() — the column header line, padded so "Hp [max]"

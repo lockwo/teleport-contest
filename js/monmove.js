@@ -3145,7 +3145,11 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         const ledger = tolevel.dlevel
             + (game.dungeons?.[tolevel.dnum]?.ledger_start | 0);
         await migrate_to_level(mtmp, ledger, MIGR_RANDOM, null);
-        newsym(trap.tx, trap.ty);
+        // C ref: teleport.c mlevel_tele_trap() returns Trap_Moved_Mon straight after
+        // migrate_to_level(); no further newsym(trap) (mon_leaving_level already
+        // redrew the square).  An extra one re-rolled a hallucinating hero's
+        // display-rng object glyph there (d353-gd44 step 390).  Same for the
+        // LEVEL_TELEP and MAGIC_PORTAL arms below.
         return Trap_Moved_Mon;
     }
     case LEVEL_TELEP: {
@@ -3178,7 +3182,6 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         if (!control_teleport_flag(mtmp.data)) mtmp.mconf = 1;
         await migrate_to_level(mtmp, tolevel.dlevel
             + (game.dungeons[tolevel.dnum].ledger_start | 0), MIGR_RANDOM, null);
-        newsym(trap.tx, trap.ty);
         return Trap_Moved_Mon;
     }
     case MAGIC_PORTAL: {
@@ -3217,7 +3220,6 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         const ledger = trap.dst.dlevel
             + (game.dungeons?.[trap.dst.dnum]?.ledger_start | 0);
         await migrate_to_level(mtmp, ledger, MIGR_PORTAL, null);
-        newsym(trap.tx, trap.ty);
         return Trap_Moved_Mon;
     }
     case SLP_GAS_TRAP: {
@@ -4726,7 +4728,9 @@ async function phase_four(mtmp, mdat, status, inrange, nearby, scared, panicattk
     // out-of-sight cusser drew an rn2(5) C never draws; and mons[] carries no
     // .msound field in our table, so the test could never be true at all.  Both
     // now come from the generated MSOUND table + the real enum value.
-    if (inrange && msound_of(mdat) === MS_CUSS && !mtmp.mpeaceful
+    /* C: mtmp->data->msound, live — a shapeshifter that changed form during its
+       own attacks (mattacku) cusses as the NEW form */
+    if (inrange && msound_of(mtmp.data) === MS_CUSS && !mtmp.mpeaceful
         && couldsee(mtmp.mx, mtmp.my) && !mtmp.minvis && !rn2(5)) {
         await cuss(mtmp);
     }
@@ -4931,17 +4935,25 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
     // (obj->oclass) is always truthy for a potion; potions are never tethered.
     const fglyph = (singleobj.oclass ? flash_obj_glyph(singleobj) : null);
     let fx = -1, fy = -1; // last flashed cell (-1 = none drawn yet)
-    const flash_at = (x, y) => {
+    // C ref: display.c tmp_at(x, y) DISP_FLASH + mthrowu.c nh_delay_output():
+    // newsym the previous flash square, draw the glyph on a cansee() square, then
+    // flush_screen(0) -- which, with m_throw()'s "slips as ..." / "hurls ..." line
+    // still unacknowledged, is what pages that --More-- over the drawn flash.
+    const flash_at = async (x, y) => {
+        nh_delay_output_tick();
         if (!fglyph) return;
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } // restore previous square
         if (!cansee(x, y)) return;                     // unseen: no flash drawn
         show_glyph_cell(x, y, fglyph.ch, fglyph.color, fglyph.dec);
         fx = x; fy = y;
+        await flush_screen(0);
     };
     const flash_end = () => { if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
     let bx = sx, by = sy;
+    game.bhitpos = { x: bx, y: by };   // C ref: mthrowu.c:589-590
     while (range-- > 0) {
         bx += dx; by += dy;
+        game.bhitpos = { x: bx, y: by };   // C ref: mthrowu.c:674-675
         // C ref: mthrowu.c m_throw():676 — at the top of each step, once the
         // missile occupies bhitpos, observe_object(singleobj) fires when that
         // square is in sight (cansee), setting obj->dknown.  The hero's own
@@ -4960,7 +4972,7 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
             /* C ref: mthrowu.c:679-683 — passes harmlessly through a shade */
         } else if (inpath) {
             if (await ohitmon(inpath, singleobj, range, true, bx, by, mon)) {
-                flash_at(bx, by);
+                await flash_at(bx, by);
                 flash_end();
                 m_useup_thrown(mon, otmp, singleobj);
                 return;
@@ -4973,14 +4985,14 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
                 // loop reaches the trailing tmp_at(bhitpos): it newsyms the
                 // previous flash square and flashes the hero's, which tmp_at
                 // DISP_END then newsyms (display RNG draws while Hallucinating).
-                flash_at(bx, by);
+                await flash_at(bx, by);
                 flash_end();
                 m_useup_thrown(mon, otmp, singleobj);
                 return;
             }
             const { potionhit_hero } = await import('./potion.js');
             await potionhit_hero(singleobj, 2 /*POTHIT_MONST_THROW*/);
-            flash_at(bx, by);   // C ref: mthrowu.c m_throw() trailing tmp_at(bhitpos)
+            await flash_at(bx, by);   // C ref: mthrowu.c m_throw() trailing tmp_at(bhitpos)
             flash_end();
             m_useup_thrown(mon, otmp, singleobj);
             return;
@@ -5000,13 +5012,13 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
             // C ref: mthrowu.c:824-828 — the shared post-loop tmp_at(bhitpos) /
             // tmp_at(DISP_END) draws then restores the landing square, which is
             // what reveals the potion that just settled there.
-            flash_at(bx, by);
+            await flash_at(bx, by);
             flash_end();
             return;
         }
         // C ref: mthrowu.c:824 — tmp_at(bhitpos) only fires on a non-terminal
         // iteration (the loop breaks before it once `!range`).
-        if (range > 0) flash_at(bx, by);
+        if (range > 0) await flash_at(bx, by);
     }
     // reached end of range without crossing the hero's square: the potion
     // shatters where it lands (potionhit on empty ground — no hero RNG).  Not
@@ -6245,17 +6257,20 @@ export async function mattacku(mtmp, mdat) {
         if (offended !== 0) return (offended === 1) ? 1 : 0;
     }
 
-    const atks = mon_attacks(mdat);
+    // C ref mhitu.c:769 mattacku(): the loop runs over all NATTK slots and
+    // getmattk() reads mtmp->data->mattk[i] each time, so a form change
+    // mid-sequence (a shapeshifter reverting under a stoning passive) swaps in
+    // the NEW form's remaining attacks.
     let skipnonmagc = false;
     let j = 0;  /* C: mattacku()'s function-scope to-hit roll; AT_ENGL keeps the previous one when mspec_used skips the roll */
     // C ref mhitu.c:769 — sum[] holds each attack's M_ATTK_* result; the AT_HUGS
     // case and the end-of-iteration AGR_DIED/AGR_DONE tests both read it.
-    const sum = atks.map(() => M_ATTK_MISS);
+    const sum = new Array(NATTK).fill(M_ATTK_MISS);
     game.skipdrin = false;
     // C ref mhitu.c:771-784 — per-attack recalc of range2/foundyou after a
     // prior attack (e.g. knockback) moved the hero.
     const firstfoundyou = foundyou;
-    for (let i = 0; i < atks.length; i++) {
+    for (let i = 0; i < NATTK; i++) {
         // C ref mhitu.c:771 — a counterattack against attack [i-1] may have
         // killed the aggressor.
         if (DEADMONSTER(mtmp)) return 1;
@@ -6315,7 +6330,7 @@ export async function mattacku(mtmp, mdat) {
                             continue;
                         // C ref mhitu.c:810 — thick_skinned(hero) blocks a kick.
                         if (mattk.aatyp !== AT_KICK || !thick_skinned_hero()) {
-                            sum[i] = await hitmu(mtmp, mdat, mattk); // mhitu.c:812
+                            sum[i] = await hitmu(mtmp, mtmp.data, mattk); // mhitu.c:812
                         }
                     } else {
                         // mhitu.c:814 — missmu(mtmp, tmp==j, mattk).
@@ -6337,7 +6352,7 @@ export async function mattacku(mtmp, mdat) {
             if ((!range2 && i >= 2 && sum[i - 1] && sum[i - 2])
                 || mtmp === game.u?.ustuck) {
                 if (!await (await import('./mhitm.js')).failed_grab(mtmp, YOUMONST, mattk))
-                    sum[i] = await hitmu(mtmp, mdat, mattk);   // mhitu.c:827
+                    sum[i] = await hitmu(mtmp, mtmp.data, mattk);   // mhitu.c:827
             }
             break;
         }
@@ -6371,7 +6386,7 @@ export async function mattacku(mtmp, mdat) {
                 }
                 j = mhitu_dieroll = rnd(20 + i); // mhitu.c:912
                 if (tmp > j) {
-                    sum[i] = await hitmu(mtmp, mdat, mattk);
+                    sum[i] = await hitmu(mtmp, mtmp.data, mattk);
                 } else {
                     await missmu(mtmp, tmp === j, mattk);
                 }
@@ -6474,12 +6489,6 @@ export async function mattacku(mtmp, mdat) {
         if (sum[i] & M_ATTK_AGR_DIED) return 1;   // mhitu.c:945 attacker dead
         if (sum[i] & M_ATTK_AGR_DONE) return 0;   // mhitu.c:947 attacker teleported
     }
-    // C ref: mhitu.c:771 — mattacku() loops over all NATTK slots and tests
-    // DEADMONSTER(mtmp) at the top of each, so a monster with fewer than NATTK
-    // attacks that died during its last attack (a thrown missile that set off
-    // a gas spore, a counterattack) is still reported dead (return 1) via the
-    // first empty slot.  mon_attacks() is trimmed to the real attacks.
-    if (atks.length < NATTK && DEADMONSTER(mtmp)) return 1;
     return 0;
 }
 
@@ -7521,8 +7530,14 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         blindinc = 0;
     };
     let bx = sx, by = sy;
+    // C ref: mthrowu.c:589-590 `gb.bhitpos.x = x; gb.bhitpos.y = y;` then the
+    // per-step `singleobj->ox = gb.bhitpos.x += dx` at :674-675: erode_obj() reads
+    // gb.bhitpos for visobj, so passive_obj() on a missile that landed on an
+    // unseen target's square must not see a stale (hero-square) position.
+    game.bhitpos = { x: bx, y: by };
     while (range-- > 0) {
         bx += dx; by += dy;
+        game.bhitpos = { x: bx, y: by };
         // C ref: mthrowu.c m_throw():676-677 — as soon as the missile occupies
         // a visible square, observe_object(singleobj) fires (dknown + the type
         // marked "encountered", feeding the '\' discoveries list) regardless of
@@ -7743,8 +7758,11 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
                 await pline(`${Tobjnam(otmp, 'return')} to ${s_suffix(mon_nam(magr))} ${mbodypart(magr, HAND)}!`);
                 mtoss_do_not_annoy = game.moves | 0;
             }
-            const { mpickobj } = await import('./makemon.js');
-            mpickobj(magr, otmp);                         /* add_to_minv() */
+            /* C ref: mthrowu.c:889 — add_to_minv(), NOT mpickobj(): the returning
+               weapon never leaves the monster's hand, so the hero's knowledge
+               of it (bknown from "welds itself") must survive. */
+            const { add_to_minv } = await import('./makemon.js');
+            add_to_minv(magr, otmp);
             if (tethered_weapon) {
                 magr.mw = otmp;
                 otmp.owornmask = (otmp.owornmask | 0) | W_WEP_MM;

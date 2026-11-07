@@ -16,7 +16,7 @@ import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf, youmonst_data_pub } from './invent.js';
 import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool } from './const.js';
-import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS } from './monflags_data.js';
+import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags, the } from './objnam.js';
 import { mon_nam, Monnam, mhis } from './do_name.js';
@@ -234,8 +234,7 @@ function is_vampire_form() { return youmonst_data_pub()?.mlet === 'V'; }   // is
 // C ref: mondata.h eggs_in_water(ptr).
 function eggs_in_water(ptr) {
     const f = mflags1_of(ptr);
-    return (f & M1_OVIPAROUS) !== 0 && (f & M1_SWIM) !== 0 && (f & M1_FLY) === 0
-        && ptr?.mlet !== 'e' && (f & M1_AMPHIBIOUS) === 0 && (f & M1_BREATHLESS) === 0;
+    return (f & M1_OVIPAROUS) !== 0 && ptr?.mlet === ';' /* S_EEL */ && (f & M1_SWIM) !== 0;
 }
 
 // ---- object-class predicates ----------------------------------------------

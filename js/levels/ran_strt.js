@@ -3,7 +3,7 @@
 
 import { ROOM, TREE } from '../const.js';
 import { game } from '../gstate.js';
-import { CHEST } from '../mkobj.js';
+import { CHEST, weight } from '../mkobj.js';
 import {
     quest_create_monster, quest_create_object, quest_drop_default_invent, quest_end_moninvent,
     quest_place_stair, quest_region_light, quest_replace_terrain,
@@ -87,7 +87,7 @@ export async function makemaz_ran_strt() {
         quest_create_object(134 /*LEATHER_ARMOR*/, null, null, 4, orion);
         quest_create_object(86 /*YUMI*/, null, null, 4, orion);
         const ya = quest_create_object(22 /*YA*/, null, null, 4, orion);
-        if (ya) ya.quan = 50;
+        if (ya) { ya.quan = 50; ya.owt = weight(ya); } // sp_lev.c:2298-2300
         quest_end_moninvent(orion);
         quest_create_object(CHEST, 20, 10, null, null);
         const hunters = [[19, 9], [20, 9], [21, 9], [19, 10],

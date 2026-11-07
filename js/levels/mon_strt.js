@@ -3,6 +3,7 @@
 
 import { ALTAR, ROOM, TREE } from '../const.js';
 import { game } from '../gstate.js';
+import { weight } from '../mkobj.js';
 import { rnd } from '../rng.js';
 import { maketrap } from '../trap.js';
 import {
@@ -10,7 +11,7 @@ import {
     quest_create_monster_at, quest_create_object, quest_drop_default_invent, quest_end_moninvent,
     quest_floodfill_match, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door,
-    splev_object_at,
+    splev_create_monster, splev_object_at,
     reset_xystart_size,
 } from '../sp_lev.js';
 import {
@@ -110,23 +111,28 @@ export async function makemaz_mon_strt() {
         quest_non_diggable(18, 3, 55, 16);
         for (let i = 0; i < 2; i++) {
             const c = quest_rndcoord(spacelocs);
-            if (c) { await maketrap(c.x, c.y, DART_TRAP); rnd(4); }
+            // C ref: nhlsel.c l_selection_rndcoord() returns {x=-1,y=-1} for an
+            // empty selection; create_trap() then picks a random location.
+            if (!c) { await quest_trap(DART_TRAP); continue; }
+            await maketrap(c.x, c.y, DART_TRAP); rnd(4);
         }
         for (let i = 0; i < 4; i++) await quest_trap();
         for (let i = 0; i < 8; i++) {
             const c = quest_rndcoord(spacelocs);
-            if (c) quest_create_monster_at('earth elemental', c.x, c.y, null);
+            if (!c) { splev_create_monster({ name: 'earth elemental' }); continue; }
+            quest_create_monster_at('earth elemental', c.x, c.y, null);
         }
         for (let i = 0; i < 4; i++) {
             const c = quest_rndcoord(spacelocs);
-            if (c) quest_create_monster_at('xorn', c.x, c.y, null);
+            if (!c) { splev_create_monster({ name: 'xorn' }); continue; }
+            quest_create_monster_at('xorn', c.x, c.y, null);
         }
         // C ref: sp_lev.c lspo_object:3676 — id="tin" with montype="spinach"
         // leaves corpsenm at NON_PM and sets spe = 1 (that IS a spinach tin).
         const tin = splev_object_at({ otyp: 296 /*TIN*/ }, 29, 9);
-        if (tin) { tin.spe = 1; tin.quan = 2; }
+        if (tin) { tin.spe = 1; tin.quan = 2; tin.owt = weight(tin); } // sp_lev.c:2298-2300
         const rations = splev_object_at({ otyp: 293 /*FOOD_RATION*/ }, 46, 4);
-        if (rations) rations.quan = 4;
+        if (rations) { rations.quan = 4; rations.owt = weight(rations); }
     } finally {
         g._quest_gen = false;
         g._full_mon_gen = false;

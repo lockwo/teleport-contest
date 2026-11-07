@@ -10,7 +10,7 @@ import { setONAME } from './const.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { pline, update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, level_difficulty } from './dungeon.js';
-import { water_damage, t_at, delfloortrap } from './trap.js';
+import { water_damage, water_damage_chain, t_at, delfloortrap } from './trap.js';
 import { curse, uncurse, bless, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
     mkgold, rnd_class, DILITHIUM_CRYSTAL, LUCKSTONE, BOULDER } from './mkobj.js';
 import { exercise, acurr_eff, poison_strdmg, adjattrib } from './attrib.js';
@@ -650,7 +650,9 @@ async function gush(x, y, poolcnt) {
     // and every erosion roll landed on the wrong object.
     const here = (game.level?.objects || []).filter(
         (o) => o.where === OBJ_FLOOR && o.ox === x && o.oy === y).reverse();
-    for (const obj of here) await water_damage(obj, null, false);
+    // water_damage_chain() loads the pile's (now POOL) square into bhitpos, so
+    // erode_obj() finds the rusting unseen (visobj requires !is_pool).
+    await water_damage_chain(here, true);
 
     const mtmp = m_at(x, y);
     if (mtmp) {

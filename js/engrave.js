@@ -11,7 +11,7 @@ import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE
          GRAVE, ROOM, TT_PIT, is_pit, is_hole, COLNO, ROWNO, IS_GRAVE,
          IS_ALTAR, IS_WALL, IS_DOOR, SDOOR, STONE, IS_FOUNTAIN, IS_AIR,
          ACCESSIBLE, CLOUD, DRAWBRIDGE_DOWN, DRAWBRIDGE_UP, isok,
-         Is_airlevel, Is_waterlevel, ECMD_OK,
+         Is_airlevel, Is_waterlevel, ECMD_OK, ECMD_FAIL, ECMD_CANCEL,
     is_pool, is_lava, is_pool_or_lava } from './const.js';
 import { RUMORS_B64, ENGRAVE_B64 } from './rumors_data.js';
 import { EPITAPH_B64 } from './epitaph_data.js';
@@ -986,7 +986,7 @@ async function u_can_engrave() {
 export async function doengrave() {
     const u = game.u;
 
-    if (!await u_can_engrave()) return 0; // ECMD_FAIL
+    if (!await u_can_engrave()) return ECMD_FAIL;
 
     // Lazy imports (see note at top of file) to avoid the display.js<->engrave.js
     // static-import cycle.
@@ -1038,7 +1038,7 @@ export async function doengrave() {
 
     // getobj("write with", stylus_ok, GETOBJ_PROMPT): otmp == hands_obj for '-'.
     const otmp = await getobj('write with', stylus_ok, GETOBJ_PROMPT);
-    if (!otmp) return 0; // ECMD_CANCEL ("Never mind." already shown)
+    if (!otmp) return ECMD_CANCEL; // ("Never mind." already shown)
 
     if (otmp === hands_obj) {
         de.writer = `your ${body_part(FINGERTIP)}`;
@@ -1186,8 +1186,10 @@ export async function doengrave() {
         } else if (de.type === de.oep.engr_type
                    && (!blind || de.oep.engr_type === BURN
                        || de.oep.engr_type === ENGRAVE)) {
+            // C ref: engrave.c doengrave():1120 passes addcmdq=TRUE so ^A (do-again)
+            // replays the saved answer instead of asking again.
             c = await yn_function('Do you want to add to the current engraving?',
-                                  'ynq', 'y');
+                                  'ynq', 'y', true);
             if (c === 'q') { await pline('Never mind.'); await maybe_newsym(de); return de.ret; }
         }
 

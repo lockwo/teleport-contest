@@ -1453,7 +1453,7 @@ export async function doclassdisco() {
     case 'a':
         /* note: this will work all the time for menustyle traditional
            but requires at least one artifact discovery for other styles */
-        if (game.wizard
+        if ((game.flags?.debug || game.wizard) /* C: wizard == flags.debug */
             && await disco_y_n('Dump information about all artifacts?') === 'y') {
             for (const row of arti.dump_artifact_info()) putstr(tmpwin, 0, row);
             ct = uniq_objs.length; /* NROFARTIFACTS: non-zero is what matters */
@@ -1670,9 +1670,9 @@ async function disco_y_n(query) {
     const { y_n } = await import('./display.js');
     return await y_n(query);
 }
-async function disco_yn_function(query, resp, def, _allow_esc) {
+async function disco_yn_function(query, resp, def, addcmdq) {
     const { yn_function } = await import('./extcmd-handlers.js');
-    return await yn_function(query, resp, def);
+    return await yn_function(query, resp, def, addcmdq);
 }
 // C ref: options.c flags.menu_style — js/pickup.js:896 menu_style() converts
 // the letter the port stores into the flag.h enum.

@@ -370,8 +370,7 @@ function mimic_reveal_what(mtmp) {
 // rolling rnd(2) regardless of the FALSE init arg. This roll is NOT optional:
 // skipping it desyncs every later RNG draw (a previous, reverted attempt hit
 // this). The temp object is never placed/listed, matching C's dealloc_obj().
-async function object_from_map_lite(mtmp) {
-    const otyp = mtmp.mappearance;
+async function object_from_map_lite(mtmp, otyp = mtmp.mappearance) {
     // C ref: pager.c:306-311 — a mimic posing as this very type here makes
     // object_from_map() drop any REAL object it found (`otmp = 0`), so a
     // stand-in is always fabricated for a disguised mimic.
@@ -422,8 +421,12 @@ async function that_is_a_mimic_message(mtmp) {
             fmtbuf = "Wait!  That's %s!";
             return fmtbuf.replace('%s', mimic_reveal_what(mtmp));
         }
-        const otyp = mtmp.mappearance;
-        const otmp = await object_from_map_lite(mtmp);
+        // C: object_from_map(glyph_at(x, y)) names the DISPLAYED object glyph, which
+        // under Hallucination is a random object, not the disguise's own type.
+        const { pg_glyph_at } = await import('./pager.js');
+        const dg = pg_glyph_at(mtmp.mx, mtmp.my);
+        const otyp = (dg.kind === 'object' && dg.otyp != null) ? dg.otyp : mtmp.mappearance;
+        const otmp = await object_from_map_lite(mtmp, otyp);
         const otmp_name = (otyp && otyp !== STRANGE_OBJECT
                            && !mimic_disguise_collapses_to_strange(otyp))
             ? simpleonames(otmp) : 'strange object';

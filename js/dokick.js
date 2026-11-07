@@ -9,6 +9,7 @@
 // ECMD_FAIL *before* getdir(), so the direction key becomes the next command.
 
 import { game, hooks, register_process_static } from './gstate.js';
+import { cvt_sdoor_to_door } from './detect.js';
 import { Fumbling_hero, Wounded_legs_hero, Passes_walls_hero } from './youprop.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } from './const.js';
@@ -155,17 +156,6 @@ async function angry_guards(silent) {
 // C ref: monmove.c mon_yells(mon, shout) — monmove.js owns the faithful port.
 async function mon_yells(mtmp, msg) {
     await (await import('./monmove.js')).mon_yells(mtmp, msg);
-}
-
-// C ref: mklev.c cvt_sdoor_to_door(lev) — an exposed secret door becomes an
-// ordinary (closed) door.  WM_MASK (rm.h) is the low wall-mode bits stored in
-// doormask for an SDOOR; strip them, then mark the door closed unless locked.
-const WM_MASK = 0x07;
-function cvt_sdoor_to_door(lev) {
-    let newmask = lev.doormask & ~WM_MASK;
-    if (!(newmask & D_LOCKED)) newmask |= D_CLOSED;
-    lev.typ = DOOR;
-    lev.doormask = newmask;
 }
 
 

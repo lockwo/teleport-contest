@@ -32,9 +32,8 @@ import {
     ROOMOFFSET, VAULT, VAULT_GUARD_TIME, FCSIZ, GD_EATGOLD, GD_DESTROYGOLD,
     SV0, SV1, SV7, SVALL, COULD_SEE, IN_SIGHT, A_LAWFUL, NEED_HTH_WEAPON,
     EGD, u_at, Upolyd, OBJ_FLOOR, OBJ_INVENT, MELT_ICE_AWAY } from './const.js';
-import { ATR_INVERSE } from './terminal.js';
 import {
-    newsym, update_topl, pline, m_at, background_glyph, show_glyph_cell, map_invisible, You_hear, verbalize } from './display.js';
+    newsym, update_topl, pline, m_at, map_location, map_invisible, You_hear, verbalize } from './display.js';
 import { cansee, couldsee, block_point, unblock_point, recalc_block_point, Blind } from './vision.js';
 import { Monnam, mon_nam, canspotmon, setmangry } from './uhitm.js';
 import { noit_Monnam, noit_mon_nam, Some_Monnam } from './do_name.js';
@@ -183,21 +182,6 @@ function mpickgold(mtmp) {
     obj_extract_self(gold);
     add_to_minv(mtmp, gold);
     if (cansee(mtmp.mx, mtmp.my)) newsym(mtmp.mx, mtmp.my);
-}
-
-// C ref: display.c map_location(x, y, show) -> _map_location: draw and
-// remember the topmost thing at <x,y>, bypassing vision.  vault.c calls it
-// with show=1 as each corridor square reverts.
-function map_location(x, y, show) {
-    const loc = levl_at(x, y);
-    if (!loc) return;
-    const bg = background_glyph(loc, x, y);
-    loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, pile: !!bg.pile, wall: !!bg.wall };
-    if (show) {
-        const attr = (bg.pile && game.flags?.hilite_pile
-            && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
-        show_glyph_cell(x, y, bg.ch, bg.color, bg.dec, attr);
-    }
 }
 
 // C ref: display.c seenv_matrix[3][3] + unset_seenv(lev, x0, y0, x1, y1).

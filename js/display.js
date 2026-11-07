@@ -225,10 +225,14 @@ function random_obj_glyph() {
         return { ch: oc_sym(FOOD_CLASS), color: mon?.mcolor ?? NO_COLOR, dec: false, hallucotyp: otyp };
     }
     const o = objects[otyp];
+    // C ref: display.c reset_glyphmap GLYPH_OBJ branch — a random object that
+    // lands on BOULDER is drawn with showsyms[SYM_BOULDER] (the `boulder:`
+    // option / symset entry), exactly like a real boulder.
+    const bsym = (otyp === BOULDER_OTYP) ? symOverrideChar('S_boulder') : null;
     // C ref: display.c reset_glyphmap GLYPH_OBJ branch — sym from
     // objects[otyp].oc_class, colour from obj_color(otyp) with no dknown/
     // generic-object filtering (random_object never returns a generic).
-    return { ch: oc_sym(o?.oc_class) || oc_sym(1), dec: false, hallucotyp: otyp,
+    return { ch: bsym || oc_sym(o?.oc_class) || oc_sym(1), dec: false, hallucotyp: otyp,
              color: (o?.oc_color != null) ? o.oc_color : NO_COLOR };
 }
 
@@ -484,6 +488,9 @@ function show_bg_glyph(x, y, bg) {
     if (loc) {
         loc.disp_hstatue = !!bg.hstatue;
         loc.disp_trap = !!bg.trap;
+        /* the DISPLAYED glyph is an object glyph (gbuf), whether or not the
+           level keeps hero memory (Plane of Water: hero_memory off) */
+        loc.disp_objotyp = bg.objotyp || 0;
     }
 }
 
@@ -546,9 +553,12 @@ function monster_glyph(mon, reveal = false) {
             if (mon.mappearance !== STATUE_OTYP) return random_obj_glyph();
             /* display_monster() map_object(): obj_to_glyph -> statue_to_glyph,
                then the hero_memory arm remembers a hallucinated STATUE as a
-               second, independently drawn random object */
+               second, independently drawn random object (`levl[x][y].glyph =
+               random_obj_to_glyph()`), while the monster glyph is only what is
+               shown.  `mem` carries that remembered glyph, as background_glyph()
+               does for a real statue. */
             const sg = halluc_statue_glyph();
-            if (game.level?.flags?.hero_memory) random_obj_glyph();
+            if (game.level?.flags?.hero_memory) sg.mem = random_obj_glyph();
             return sg;
         }
         return halluc_mon_glyph();
@@ -1033,6 +1043,9 @@ function wall_cmap_color() {
     // symset's IBMgraphics/curses/DECgraphics/Enhanced blocks; a session with
     // no `symset:` option keeps the gray defaults (NO_COLOR).
     if (!/^(dec|ibm|curses|enhanced)/i.test(String(game.symset || ''))) return NO_COLOR;
+    // C ref: glyphs.c apply_customizations() `if (iflags.customcolors && ...)` and
+    // reset_customcolors() — with the option off the G_ colours are cleared.
+    if (game.flags?.customcolors === false || game.iflags?.customcolors === false) return NO_COLOR;
     if (game.mines_dnum != null && uz.dnum === game.mines_dnum) return CLR_BROWN;
     if (In_hell(uz)) return CLR_RED;
     if (Is_knox_level(uz)) return CLR_YELLOW;
@@ -1125,6 +1138,18 @@ export function symOverrideChar(name, keepCtl = false) {
     const ch = byte & 0x7f;
     /* keepCtl: the caller models C's untouched cell (see NUL_CELL) */
     return ch < 32 ? (keepCtl ? NUL_CELL : ' ') : String.fromCharCode(ch);
+}
+// C ref: symbols.c gs.showsyms[] under a meta-bit symset (IBMGraphics): the
+// real symbol byte (>= 0x80) that pager.c do_screen_description() compares
+// against, while symOverrideChar() models only the stripped 7-bit char the
+// recorder's terminal shows.  Null when the symset gives none (or a SYMBOLS=
+// override / Rogue set replaces it).
+export function symsetHighByte(name) {
+    if (rogue_symset()) return null;
+    if (game.symoverride?.[name]) return null;
+    const set = String(game.symset || '').toLowerCase();
+    const byte = SYMBOL_BYTES[set]?.[name];
+    return (byte != null && byte >= 0x80) ? byte : null;
 }
 // A control-byte symbol (e.g. \x01 S_human, \x0f S_coin) writes nothing on the
 // recorder's terminal: the cell keeps whatever it showed before.
@@ -1508,6 +1533,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.disp_monster = false;
     loc.disp_hstatue = false;
     loc.disp_trap = false;
+    loc.disp_objotyp = 0;
     loc.disp_region = false;
     loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
@@ -1535,6 +1561,14 @@ function has_color_or_default(color) {
     if (rogue_symset() || game.iflags?.use_color === false) return NO_COLOR;
     if (color === CLR_BLACK || color === CLR_GRAY) return NO_COLOR;
     return color;
+}
+
+// C ref: wintty.c process_menu_window() — a menu item's object symbol is
+// glyphinfo.gm.sym.color, i.e. the glyphmap color AFTER reset_glyphmap()'s
+// "no color defined, or rogue level w/o PC graphics" strip.  `og` is a cell from
+// object_glyph()/flash_obj_glyph(); returns {ch, color} or null.
+export function menu_glyph_sym(og) {
+    return og ? { ch: og.ch, color: has_color_or_default(og.color) } : null;
 }
 
 // C ref: include/engrave.h spot_shows_engravings(x,y) — an engraving is only
@@ -1614,8 +1648,8 @@ const trap_defsym = {
 export function trap_glyph(trap) {
     const d = trap_defsym[trap.ttyp];
     // Unknown ttyp: fall back to the arrow-trap sym/color (defsyms[] default).
-    if (!d) return { ch: '^', color: CLR_CYAN, dec: false, trap: true };
-    return { ch: d.ch, color: d.color, dec: false, trap: true };
+    if (!d) return { ch: '^', color: CLR_CYAN, dec: false, trap: true, ttyp: trap.ttyp };
+    return { ch: d.ch, color: d.color, dec: false, trap: true, ttyp: trap.ttyp };
 }
 
 // C ref: getpos.c getpos() else-branch — the matching[] build loop.  For every
@@ -2223,8 +2257,9 @@ export async function swallowed(first) {
 // (background_glyph hands that back as bg.mem).
 function remember_bg(loc, bg) {
     const m = bg.mem || bg;
-    // levl[x][y].glyph is overwritten, so a detect/trap-reveal stamp is stale.
-    loc.mapped_trap_ttyp = 0;
+    // levl[x][y].glyph is overwritten, so a detect/trap-reveal stamp is stale
+    // (unless the new glyph IS a trap glyph: map_trap() stamps its ttyp).
+    loc.mapped_trap_ttyp = (!bg.mem && bg.trap && bg.ttyp) ? bg.ttyp : 0;
     loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr, female: !!m.female,
                              objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp, corpsenm: m.corpsenm,
                              /* the remembered glyph is a wall cmap glyph (S_vwall..S_trwall) */
@@ -2278,7 +2313,10 @@ export function map_location(x, y, show = false) {
     if (!loc) return;
     if (show) maybe_observe_near_object(x, y);   // _map_location(x, y, 1) -> map_object()
     const bg = background_glyph(loc, x, y);
-    if (game.level?.flags?.hero_memory) remember_bg(loc, bg);
+    if (game.level?.flags?.hero_memory) {
+        loc.invisMon = false; /* levl[x][y].glyph is overwritten, 'I' included */
+        remember_bg(loc, bg);
+    }
     update_lastseentyp(x, y);
     if (show) {
         show_bg_glyph(x, y, bg);
@@ -2430,8 +2468,13 @@ function feel_location_terrain(x, y) {
         const rg = loc.remembered_glyph, floor = terrain_glyph(loc, x, y);
         if (rg && rg.ch === floor.ch && !!rg.decgfx === !!floor.dec
             && rg.color === floor.color && !rg.pile && !rg.bwEngr) {
-            if (game.flags?.dark_room) rg.darkroom = true;
-            else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+            // C ref: display.c reglyph_darkroom() — S_darkroom's symbol aliases S_room
+            // only with `dark_room && use_color`, else it is the blank "nothing" symbol
+            // (newsym's S_darkroom arm below does the same for remembered floor).
+            if (game.flags?.dark_room) {
+                if (game.iflags?.use_color) rg.darkroom = true;
+                else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false, darkroom: true };
+            } else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
             darkroom_shown = true;
             // C: show_glyph(x, y, lev->glyph = S_darkroom / S_stone) draws the new glyph
             const m = loc.remembered_glyph;
@@ -2513,7 +2556,7 @@ function display_sensed_monster(x, y, mon, see_it) {
 // newsym_core() and the announcement is queued (newsym() is synchronous; the
 // queue drains before the next topline message or key read, as notice_mon's).
 const DISP_FIELDS = ['disp_ch', 'disp_color', 'disp_decgfx', 'disp_attr', 'disp_dark',
-                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap', 'disp_region'];
+                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap', 'disp_objotyp', 'disp_region'];
 function snapDisp(loc) {
     const s = {};
     for (const f of DISP_FIELDS) s[f] = loc[f];
@@ -2763,10 +2806,12 @@ function newsym_core(x, y) {
             // written just above.  Without this a shop's disguised mimics
             // reverted to bare floor the moment the hero left the level and came
             // back, losing one remembered cell per mimic for the rest of the game.
-            if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon))
-                loc.remembered_glyph = { ch: mg.ch, color: mg.color, decgfx: mg.dec,
-                    objotyp: (mg.hallucotyp != null || M_AP_TYPE(mon) !== M_AP_OBJECT) ? 0 : (mon.mappearance | 0),
-                    hallucotyp: mg.hallucotyp, corpsenm: mg.corpsenm };
+            if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon)) {
+                const mm = mg.mem || mg;
+                loc.remembered_glyph = { ch: mm.ch, color: mm.color, decgfx: mm.dec,
+                    objotyp: (mg.mem || mm.hallucotyp != null || M_AP_TYPE(mon) !== M_AP_OBJECT) ? 0 : (mon.mappearance | 0),
+                    hallucotyp: mm.hallucotyp, corpsenm: mm.corpsenm };
+            }
             // Detection reveals a mimic but preserves its visible disguise in map memory.
             if (detected && see_it && M_AP_TYPE(mon) !== M_AP_NOTHING)
                 mg = monster_glyph(mon, true);
@@ -2779,6 +2824,11 @@ function newsym_core(x, y) {
                              && game.flags?.use_inverse !== false) ? ATR_INVERSE : 0;
             show_glyph_cell(x, y, mg.ch, mg.color, mg.dec, petAttr || detAttr);
             loc.disp_monster = detected || mimic_sensed(mon) || !mimics_an_object(mon);
+            /* display_monster() M_AP_OBJECT arm: map_object() shows the disguise,
+               an object glyph in gbuf even when hero_memory (no remembering) is off */
+            if (see_it && !detected && !mimic_sensed(mon) && M_AP_TYPE(mon) === M_AP_OBJECT
+                && !mg.mem && mg.hallucotyp == null)
+                loc.disp_objotyp = mon.mappearance | 0;
             /* display_monster(): `mon->meverseen = 1` once drawn as itself */
             if (M_AP_TYPE(mon) === M_AP_NOTHING || mimic_sensed(mon)) mon.meverseen = 1;
         } else if (mon && mon_warning(mon) && !worm_tail) {
@@ -3109,7 +3159,8 @@ export function hero_glyph() {
 // wizmgender female mark applies.  display.h display_self() is an unconditional
 // show_glyph(u.ux, u.uy, ...): an engulfed hero is drawn too.
 export function show_monster_and_self(mon) {
-    const mg = monster_glyph(mon);
+    // mon_to_glyph() is the species glyph: a disguise (m_ap_type) is ignored.
+    const mg = monster_glyph(mon, true);
     show_glyph_cell(mon.mx, mon.my, mg.ch, mg.color, mg.dec, female_attr(mg.female));
     const u = game.u;
     if (u?.ux > 0) {
@@ -3816,7 +3867,11 @@ function _ttyRenderStatus(c) {
     const w = _cloneTtyWin(st.win);
     const { now, before, dat, finalx } = w;
     const hpbar = !!game.flags?.hitpointbar;
-    if (force) for (const r of w.phys) r.fill(null);
+    /* C ref: tty_status_update(BL_RESET) only forces every field to be
+       re-rendered; it never blanks the status rows.  The blanking here models a
+       menu/text window having obliterated them, which done()'s botlx does not. */
+    const keepPhys = commit ? commit.keepPhys : !!game._botlxKeepScreen;
+    if (force && !keepPhys) for (const r of w.phys) r.fill(null);
 
     /* tty_status_update(): every field whose value, color or attribute
        changed since the last flush is dirty. */
@@ -4905,11 +4960,16 @@ function msgtype_suppressed(msg) {
 // glyph prefix is a symset-remapped (high-bit) cmap char.  The history ring keeps the
 // decoded char, so the messages that carried one are tagged by their first 30
 // characters, and ^P (not a putmixed() caller) shows that prefix as a blank.
-export function note_dec_prefix_msg(text) {
-    (game._decPrefixMsgs ||= new Set()).add(String(text).slice(0, 30));
+// `cell` is what the recalled copy shows in the prefix column: blank for a DECgraphics
+// high-bit code, U+FFFD for an IBMGraphics byte (>= 0x80, invalid UTF-8 on its own).
+export function note_dec_prefix_msg(text, cell = ' ') {
+    (game._decPrefixMsgs ||= new Map()).set(String(text).slice(0, 30), cell);
 }
 export function is_dec_prefix_msg(text) {
     return !!text && !!game._decPrefixMsgs?.has(String(text).slice(0, 30));
+}
+export function dec_prefix_cell(text) {
+    return game._decPrefixMsgs?.get(String(text).slice(0, 30)) ?? ' ';
 }
 
 // ── tty message history ring ──
@@ -5488,7 +5548,7 @@ async function botl_flush(direct = false) {
         delete game._botlFrozen;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
-    game._ttyCommit = { force: botlxForce };
+    game._ttyCommit = { force: botlxForce, keepPhys: !!game._botlxKeepScreen };
     try {
         bot_snapshot(direct);
     } finally {
@@ -5768,50 +5828,69 @@ function visctrl_char(c) {
     return out;
 }
 
+// C ref: cmd.c yn_function() addcmdq arm, shared by y_n() and the prompts that
+// read their own key (pager.js dowhatdoes, questpgr.js is_pure).  Pops CQ_REPEAT
+// while #repeat replays, else CQ_CANNED.  Returns the answer, or null when
+// nothing usable is queued and the player must be asked.  A non-key entry
+// clears CQ_CANNED and answers ESC.  C sets `addcmdq = FALSE` once a queue
+// entry answered, so the queued answer is NOT re-saved on CQ_REPEAT.
+export async function yn_cmdq_answer(resp, def) {
+    const { cmdq_pop, cmdq_clear } = await import('./invent.js');
+    const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_USER_INPUT } = await import('./const.js');
+    const cq = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
+    if (!cq || cq.typ === CMDQ_USER_INPUT) return null;
+    let res = '\x1b';
+    if (cq.typ === CMDQ_KEY) res = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
+    else cmdq_clear(CQ_CANNED);
+    // C ref: cmd.c yn_function():5565-5585 — "should not happen but cq.key
+    // has been observed to not obey 'resp'" (a queued key whose letter was
+    // re-assigned since it was queued, or a non-key queue entry answered
+    // ESC): impossible() and answer `def ? def : ESC`.  The TEMP code around
+    // it sets iflags.debug_fuzzer = fuzzer_impossible_continue while the
+    // messages are printed, so tty more() returns at once (no --More--
+    // key is read) and the report lines overwrite one another.
+    if (resp && res && !resp.includes(res)) {
+        const altres = (def && def !== '\0') ? def : '\x1b';
+        if (!game.in_doagain || game.flags?.debug) {
+            const iflags = game.iflags || (game.iflags = {});
+            const fuzzing = iflags.debug_fuzzer;
+            iflags.debug_fuzzer = 2; /* fuzzer_impossible_continue */
+            try {
+                await impossible(`yn_function() returned '${visctrl_char(res)}'; using '${visctrl_char(altres)}' instead`);
+            } finally {
+                iflags.debug_fuzzer = fuzzing;
+            }
+        }
+        res = altres;
+    }
+    return res;
+}
+
+// C ref: cmd.c yn_function() tail `if (addcmdq) cmdq_add_key(CQ_REPEAT, res)`:
+// remember a player-typed answer so ^A (do-again) replays it.
+export async function yn_cmdq_save(res) {
+    const { cmdq_add_key } = await import('./invent.js');
+    const { CQ_REPEAT } = await import('./const.js');
+    cmdq_add_key(CQ_REPEAT, res);
+}
+
+// C ref: hack.h `#define y_n(query) yn_function(query, ynchars, 'n', TRUE)` (and
+// ynq/ynaq/nyaq/nyNaq/ynNaq): addcmdq defaults TRUE so a caller that is a plain
+// C y_n()/ynq() needs no 4th argument.  A C call spelled with an explicit FALSE
+// (paranoid_ynq's y/n arms, getobj's nyaq bypass) must pass false.
 // C ref: topl.c tty_yn_function / hack.h y_n.  Render a yes/no prompt and read
 // a valid response.  When a top-line message is still pending acknowledgment
 // (needMore), show "--More--" first (capturing that as its own step) before the
 // prompt.  resp lists the allowed letters (an embedded ESC marks hidden,
 // always-acceptable choices); def is returned on space/return/ESC.
-export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = false) {
+export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
     // C ref: cmd.c yn_function(): `if (addcmdq && (cmdq = cmdq_pop()) != 0)` — a
-    // queued key (herecmdmenu's canned 'y') answers without drawing the prompt;
-    // any other queued entry clears CQ_CANNED and answers ESC.  The answer is
-    // saved on CQ_REPEAT for #repeat.
+    // queued key (herecmdmenu's canned 'y') answers without drawing the prompt.
     if (addcmdq) {
-        const { cmdq_pop, cmdq_clear, cmdq_add_key } = await import('./invent.js');
-        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_USER_INPUT } = await import('./const.js');
-        const cq = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
-        if (cq && cq.typ !== CMDQ_USER_INPUT) {
-            let res = '\x1b';
-            if (cq.typ === CMDQ_KEY) res = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
-            else cmdq_clear(CQ_CANNED);
-            cmdq_add_key(CQ_REPEAT, res);
-            // C ref: cmd.c yn_function():5565-5585 — "should not happen but cq.key
-            // has been observed to not obey 'resp'" (a queued key whose letter was
-            // re-assigned since it was queued, or a non-key queue entry answered
-            // ESC): impossible() and answer `def ? def : ESC`.  The TEMP code around
-            // it sets iflags.debug_fuzzer = fuzzer_impossible_continue while the
-            // messages are printed, so tty more() returns at once (no --More--
-            // key is read) and the report lines overwrite one another.
-            if (resp && res && !resp.includes(res)) {
-                const altres = (def && def !== '\0') ? def : '\x1b';
-                if (!game.in_doagain || game.flags?.debug) {
-                    const iflags = game.iflags || (game.iflags = {});
-                    const fuzzing = iflags.debug_fuzzer;
-                    iflags.debug_fuzzer = 2; /* fuzzer_impossible_continue */
-                    try {
-                        await impossible(`yn_function() returned '${visctrl_char(res)}'; using '${visctrl_char(altres)}' instead`);
-                    } finally {
-                        iflags.debug_fuzzer = fuzzing;
-                    }
-                }
-                res = altres;
-            }
-            return res;
-        }
+        const queued = await yn_cmdq_answer(resp, def);
+        if (queued !== null) return queued;
         const res = await y_n(query, resp, def, false);
-        cmdq_add_key(CQ_REPEAT, res);
+        await yn_cmdq_save(res);
         return res;
     }
     game.yn_number = 0;
@@ -6566,8 +6645,10 @@ function clear_invisible_memory(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc?.invisMon) return;
     unmap_object(x, y);
-    if (cansee(x, y) && vobj_at(x, y))
-        remember_bg(loc, background_glyph(loc, x, y));
+    // C ref: display.c:491 show_mon_or_warn(): map_object(o, FALSE), which keeps
+    // a covered (underwater) floor object in memory; map_background would not.
+    const o = cansee(x, y) ? vobj_at(x, y) : null;
+    if (o) map_object(o, false);
 }
 
 // C ref: display.c:482 show_mon_or_warn(x, y, monglyph) — put something on the
@@ -7200,6 +7281,53 @@ export function reglyph_remembered_darkroom() {
             if (loc.waslit) delete loc.remembered_glyph.darkroom;
             else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
         }
+}
+
+// C ref: symbols.c reset_symbols()/assign_graphics() + display.c reset_glyphmap(
+// gm_symchange), glyphs.c reset_customcolors() — remembered map glyphs are glyph
+// NUMBERS in C, so loading a different symset (or toggling `customcolors`)
+// re-renders every remembered square at the next docrt().  This port keeps
+// remembered squares as rendered cells, so each remembered terrain cell that the
+// OLD symset / customcolors state drew is re-rendered under the NEW one.  Cells
+// holding objects, piles or engravings are independent of both.
+export function reglyph_remembered_terrain(rogue, oldName, oldCustomColors = true) {
+    const key = rogue ? 'roguesymset' : 'symset';
+    const newName = game[key];
+    game.flags = game.flags || {};
+    const newCustomColors = game.flags.customcolors;
+    if (oldName === newName && (oldCustomColors !== false) === (newCustomColors !== false)) return;
+    const variants = (loc, x, y) => {
+        const v = [terrain_glyph(loc, x, y)];
+        if (loc.typ === DOOR)
+            for (const m of [D_NODOOR, D_ISOPEN, D_CLOSED, D_BROKEN])
+                v.push(terrain_glyph({ ...loc, doormask: m }, x, y));
+        else if (loc.typ === CORR)
+            v.push(corr_glyph_cell(false), corr_glyph_cell(true));
+        else if (loc.typ === SDOOR || (loc.typ >= VWALL && loc.typ <= TRWALL))
+            for (let idx = S_vwall; idx <= S_trwall; idx++) v.push(wall_cmap_glyph(idx));
+        return v;
+    };
+    const levels = [game.level];
+    for (const e of Object.values(game._level_store || {})) levels.push(e?.level);
+    for (const lvl of new Set(levels)) {
+        if (!lvl?.at) continue;
+        for (let x = 1; x < COLNO; x++)
+            for (let y = 0; y < ROWNO; y++) {
+                const loc = lvl.at(x, y);
+                const rg = loc?.remembered_glyph;
+                if (!rg || rg.objotyp || rg.pile || rg.bwEngr || rg.hallucotyp != null) continue;
+                game[key] = oldName;
+                game.flags.customcolors = oldCustomColors;
+                const olds = variants(loc, x, y);
+                game[key] = newName;
+                game.flags.customcolors = newCustomColors;
+                const i = olds.findIndex((g) => g.ch === rg.ch && !!g.dec === !!rg.decgfx
+                                                && g.color === rg.color);
+                if (i < 0) continue;
+                const g = variants(loc, x, y)[i];
+                loc.remembered_glyph = { ...rg, ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall };
+            }
+    }
 }
 
 // C ref: display.c:1877 show_glyph(x, y, glyph) — store the glyph in the 3rd

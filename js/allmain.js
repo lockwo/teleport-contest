@@ -230,6 +230,11 @@ export async function newgame() {
     // 1345 / idx 35947). u_init_role()'s own `if (umonnum == null)` guard
     // makes its later assignment a no-op once this has already run.
     g.u.umonnum = g.u.umonster = ROLE_PM_BASE + gameRoleMnum();
+    // C ref: u_init.c:993 set_uasmon() right after umonnum = umonster = urole.mnum.
+    // The role's player-monster form carries mresists (Barbarian/Healer MR_POISON,
+    // Valkyrie MR_COLD, ...), so the FROMFORM bits (u.formprops) exist from turn 1
+    // and survive sit.c attrcurse()'s `H... &= ~INTRINSIC`.
+    (await import('./polyself.js')).set_uasmon(false);
 
     // Real mklev generates the level with correct room positions
     // Structural phase consumes RNG for rooms/corridors/doors/stairs

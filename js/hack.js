@@ -24,11 +24,11 @@ import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as t
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON, PICK_ONE, is_pool_or_lava, is_pool } from './const.js';
+import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR } from './const.js';
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, glyph_prefix_is_symset_meta } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -36,7 +36,7 @@ import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
-import { Invis, m_everyturn_effect, can_ooze_hero } from './monmove.js';
+import { Invis, m_everyturn_effect, can_ooze_hero, passes_bars } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
@@ -787,23 +787,45 @@ function test_move_trav(ux, uy, dx, dy, mode) {
     const typ = tmpr ? tmpr.typ : STONE;
 
     if (IS_OBSTRUCTED(typ) || typ === IRONBARS) {
-        // Passes_walls+may_passwall, Underwater, passes_bars, a rock-eating
-        // tunneller and flags.autodig are the only escapes; none is reachable
-        // without an intrinsic/polyform this port never grants, and each of the
-        // remaining arms returns FALSE for a non-DO_MOVE mode anyway.
-        if (!Passes_walls() && !(typ !== IRONBARS && hero_tunnels_unpicked())) return false;
-    } else if (IS_DOOR(typ)) {
-        // C: Passes_walls / can_ooze / a rock-eating tunneller walk straight
-        // through and fall into the testdiag block; everyone else `goto
-        // testdiag`s for TEST_TRAV/TEST_TRAP (so travel may route through a
-        // door it will have to open) and returns FALSE for the other modes.
-        if (closed_door(x, y) && !Passes_walls()
-            && mode !== TEST_TRAV && mode !== TEST_TRAP)
+        // C ref: hack.c:1011-1066 — the escapes are Passes_walls+may_passwall,
+        // iron bars for a Passes_walls/passes_bars() form (an amorphous green
+        // slime or fog cloud flows between the bars), and a rock-eating
+        // tunneller without a pick.  Underwater and flags.autodig return FALSE
+        // here (the autodig arm only digs for DO_MOVE), as does everything else
+        // for a non-DO_MOVE mode.
+        const may_passwall = !(IS_STWALL(typ)
+                               && (((tmpr?.wall_info | 0) & 0x10 /* W_NONPASSWALL */) !== 0));
+        if (Passes_walls() && may_passwall) {
+            /* do nothing */
+        } else if (game.u?.uinwater) {
             return false;
-        /* testdiag: */
+        } else if (typ === IRONBARS) {
+            if (!(Passes_walls() || passes_bars(youmonst_data()))) return false;
+        } else if (!hero_tunnels_unpicked()) {
+            return false;
+        }
+    } else if (IS_DOOR(typ)) {
+        // C ref: hack.c:1074-1136.  A closed door is walked through by a
+        // Passes_walls / can_ooze / rock-eating-tunneller form, which skips the
+        // `testdiag` diagonal check entirely; Underwater refuses; everyone else
+        // `goto testdiag`s for TEST_TRAV/TEST_TRAP (so travel may route through
+        // a door it will have to open) and returns FALSE for the other modes.
+        // An open or doorless door goes straight to testdiag.
+        let testdiag = true;
+        if (closed_door(x, y)) {
+            if (Passes_walls() || can_ooze_hero(youmonst_data())) {
+                testdiag = false;
+            } else if (game.u?.uinwater) {
+                return false;
+            } else if (hero_tunnels_unpicked()) {
+                testdiag = false;
+            } else if (mode !== TEST_TRAV && mode !== TEST_TRAP) {
+                return false;
+            }
+        }
         // block_door() (a shopkeeper on their post while the hero owes money)
         // needs ESHK state this port does not keep.
-        if (dx && dy && !Passes_walls() && !doorless_door(x, y))
+        if (testdiag && dx && dy && !Passes_walls() && !doorless_door(x, y))
             return false;
     }
 
@@ -1776,14 +1798,28 @@ function terrain_description(x, y, full = false) {
     // `which_subset & TER_TRP`; otherwise the browsed glyph is the background.
     { const _tm = game.iflags?.terrainmode | 0;
       const _t = (!_tm || (_tm & TER_TRP)) ? t_at_hk(x, y) : null;
-      if (_t && _t.tseen) return trap_explanation_hk(_t.ttyp); }
+      if (_t && _t.tseen) return trap_explanation_hk(_t.ttyp);
+      /* C: glyph_at() is the REMEMBERED trap glyph even after the trap is gone
+         (a boulder filled the pit while the hero was blind); map_trap() stamps
+         its ttyp so the description follows the glyph, not the live ftrap chain. */
+      if (!_t && (!_tm || (_tm & TER_TRP)) && loc.mapped_trap_ttyp
+          && loc.remembered_glyph?.ch === loc.disp_ch)
+          return trap_explanation_hk(loc.mapped_trap_ttyp); }
     // C ref: defsym.h rows 21/24 — a revealed engraving is DISPLAYED as
     // S_engroom/S_engrcorr, whose explanation is "engraving", so
     // do_screen_description() reports that rather than the floor/corridor
     // underneath.  Ranked below a seen trap and above the bare terrain, matching
     // display.c _map_location's object > trap > engraving > background order
     // (objects and monsters are resolved by the caller).
-    if (is_cmap_engraving_at(x, y)) return 'engraving';
+    // C ref: detect.c reveal_terrain_getglyph(): the glyph browsed is the
+    // REMEMBERED one (glyph_at()).  Only when that is an object glyph or the
+    // remembered-unseen-monster 'I' (both dropped by the terrain subset) does
+    // it become back_to_glyph(), which knows nothing of engravings.  An object
+    // the hero never saw (no remembered object glyph) leaves the remembered
+    // engraving glyph in place.
+    { const _rg = loc.remembered_glyph;
+      const _objShown = _rg && (_rg.objotyp != null || _rg.hallucotyp != null || _rg.pile);
+      if (is_cmap_engraving_at(x, y) && !_objShown && !loc.invisMon) return 'engraving'; }
     // C ref: display.c back_to_glyph() DBWALL -> S_vcdbridge/S_hcdbridge.
     if (typ === 12 /*DBWALL*/) return 'raised drawbridge';
     if (IS_WALL(typ)) return 'wall';
@@ -2246,7 +2282,10 @@ function gloc_glyph_covered(x, y, loc, mtmp) {
     if (((game.iflags?.terrainmode || 0) & 0x10 /* TER_FULL */) !== 0) return false;
     if (mtmp && canspotmon(mtmp)) return true;
     if (loc.invisMon || loc.disp_warning) return true;
-    if (look_at_object_here(x, y)) return true;
+    // C reads glyph_at() (the displayed glyph): an object the hero has not seen
+    // (remembered glyph is still the dark room) leaves the cmap glyph in place.
+    const dobj = vobj_at(x, y);
+    if (dobj && !covers_objects(loc) && object_glyph(dobj)?.ch === loc.disp_ch) return true;
     // a remembered object glyph (e.g. a boulder since moved or destroyed) is
     // still what glyph_at() reports until the square is seen again
     const rg = loc.remembered_glyph;
@@ -2293,24 +2332,6 @@ function gloc_remembers_stone(loc) {
 // index >> 1 is the GLOC_* class.
 const GLOC_KEYS = 'mMoOdDxXaAzZ';
 export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false) {
-    // A detection browse paints only the sensed monsters on a blank map, so the
-    // glyph at every other spot is unexplored and matches no class.
-    if (detectMode) {
-        // gold/object detection browses a map whose DISPLAYED glyphs include the
-        // detected objects (detect.c map_object() + browse_map()), so the object
-        // and 'anything interesting' classes match those remembered object glyphs.
-        const dloc = game.level?.at(x, y);
-        const drem = dloc?.remembered_glyph;
-        const objShown = !!(drem?.objotyp && drem.ch === dloc.disp_ch);
-        if (gloc === GLOC_OBJS)
-            return objShown && (!!drem.pile || (drem.objotyp !== 475 /*BOULDER*/
-                                                && drem.objotyp !== 474 /*ROCK*/));
-        // glyph_is_monster(glyph_at()): only a monster actually DRAWN counts; a
-        // mimic or gold-carrier shown as the sensed object is not (disp_monster).
-        const dmon = !!dloc?.disp_monster && !!m_at(x, y);
-        return (gloc === GLOC_MONS || gloc === GLOC_INTERESTING || gloc === GLOC_VALID)
-               && (dmon || (gloc !== GLOC_MONS && objShown));
-    }
     // C ref: getpos.c:444 — the '"'/travel filters restrict the scan before any
     // gloc-specific test runs.  #lookaround sets GFILTER_VIEW for its per-cell
     // scan, so a remembered-but-currently-unseen feature must NOT be reported.
@@ -2320,6 +2341,30 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         && !gloc_same_area(x - 1, y) && !gloc_same_area(x, y - 1)
         && !gloc_same_area(x + 1, y) && !gloc_same_area(x, y + 1))
         return false;
+    // A detection browse paints only the sensed monsters on a blank map, so the
+    // glyph at every other spot is unexplored and matches no class.
+    if (detectMode) {
+        // gold/object detection browses a map whose DISPLAYED glyphs include the
+        // detected objects (detect.c map_object() + browse_map()), so the object
+        // and 'anything interesting' classes match those remembered object glyphs.
+        const dloc = game.level?.at(x, y);
+        const drem = dloc?.remembered_glyph;
+        // A hallucinated object is a random object glyph (hallucotyp): still
+        // glyph_is_object(), excluded only when the draw was BOULDER or ROCK.
+        const hotyp = drem?.objotyp ? drem.objotyp : drem?.hallucotyp;
+        const objShown = !!(hotyp && drem.ch === dloc.disp_ch);
+        if (gloc === GLOC_OBJS)
+            return objShown && (!!drem.pile || (hotyp !== 475 /*BOULDER*/
+                                                && hotyp !== 474 /*ROCK*/));
+        // glyph_is_monster(glyph_at()): only a monster actually DRAWN counts; a
+        // mimic or gold-carrier shown as the sensed object is not (disp_monster).
+        const dmon = !!dloc?.disp_monster && !!m_at(x, y);
+        // getpos.c:455: GLOC_MONS skips the long worm tail glyph ('~'), while
+        // GLOC_VALID/GLOC_INTERESTING (no getvalid) keep it.
+        if (gloc === GLOC_MONS) return dmon && dloc.disp_ch !== '~';
+        return (gloc === GLOC_INTERESTING || gloc === GLOC_VALID)
+               && (dmon || objShown);
+    }
     const loc = game.level?.at(x, y);
     if (!loc) return false;
     // C ref: getpos.c:444 glyph_at(x,y) while swallowed: swallowed() cls()es the
@@ -2363,8 +2408,10 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // object jump names it); one shown by monster detection is drawn as
         // the monster glyph itself, so it counts here.
         if (loc.disp_hstatue && !mtmp) return loc.disp_ch !== '~';
-        return !!(mtmp && canspotmon(mtmp) && loc.disp_monster
-            && loc.disp_ch !== '~');
+        // C ref: getpos.c gather_locs_interesting() tests glyph_is_monster(glyph_at()),
+        // the DISPLAYED glyph: a monster still drawn from an earlier sighting counts
+        // even when the hero can no longer spot it (no canspotmon()).
+        return !!(loc.disp_monster && loc.disp_ch !== '~');
     case GLOC_OBJS:
         // a hallucinated statue is displayed as a MONSTER glyph (display.h statue_to_glyph)
         if (loc.disp_hstatue && !mtmp) return false;
@@ -2397,9 +2444,12 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     case GLOC_EXPLORE:
         // C tests glyph_is_cmap(glyph_at()): a displayed monster, remembered
         // 'I', warning, object, seen trap or engraving glyph is not a cmap
-        // door/room/corridor symbol.
+        // door/room/corridor symbol.  Neither is a remembered WALL glyph on a
+        // square that has since become floor (an umber hulk's tunnel, a dug
+        // wall) out of the hero's sight.
         return explored && !stoneGlyph
             && (isDoorSym || loc.typ === ROOM || loc.typ === CORR)
+            && !(loc.typ !== DOOR && loc.remembered_glyph?.wall)
             && !gloc_glyph_covered(x, y, loc, mtmp)
             && !is_cmap_engraving_at(x, y)
             && (gloc_unexplored(x + 1, y) || gloc_unexplored(x - 1, y)
@@ -2411,7 +2461,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     default:
         if (isDoorSym) return true;
         if (loc.disp_hstatue && !mtmp) return true;
-        if (mtmp && canspotmon(mtmp) && loc.disp_monster) return true;
+        if (loc.disp_monster) return true;
         // Warning and remembered invisible glyphs are interesting, but
         // neither is a monster target for GLOC_MONS.
         if (showMonsters && (loc.invisMon || loc.disp_warning)) return true;
@@ -2565,7 +2615,14 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
     // || (iflags.terrainmode & TER_MON))`: an object/gold detection browse
     // (TER_DETECT|TER_OBJ) describes what is DRAWN on the hero's square, not the hero.
     const tm0 = gp_iflags().terrainmode | 0;
-    if (u && x === u.ux && y === u.uy && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
+    // C ref: pager.c lookat():665-667 — `&& !(iflags.save_uswallow && glyph ==
+    // mon_to_glyph(u.ustuck, ...))`: a monster-detection browse of an engulfed
+    // hero shows the engulfer's glyph on the hero's square and describes THAT.
+    const engulferShown = !!(gp_iflags().save_uswallow && u?.ustuck
+                             && game.level?.at(x, y)?.disp_monster
+                             && m_at(x, y) === u.ustuck);
+    if (u && x === u.ux && y === u.uy && !engulferShown
+        && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
         desc = self_lookat();
     } else if (u && x === u.ux && y === u.uy && !terrainMode && tm0 && canspotself()
                && game.level?.at(x, y)?.disp_ch === hero_glyph().ch
@@ -2582,7 +2639,10 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         const fm = { s: '' };
         do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
         desc = fm.s || 'unreconnoitered';
-    } else if (detectMode) {
+    } else if (detectMode && !(u && x === u.ux && y === u.uy)) {
+        // C ref: detect.c object_detect() newsym(u.ux,u.uy) repaints the hero's
+        // own square (floor when the hero cannot be seen), so it is described
+        // like ordinary terrain below.
         // C ref: pager.c do_screen_description() via 'need_to_look' once a
         // monster's class symbol matches: falls through to look_at_monster()
         // for the full tame/peaceful-prefixed identity (a named/peaceful
@@ -2594,7 +2654,8 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         /* do_screen_description() reads the DISPLAYED glyph: a monster that
            was not drawn (gold/object detection, hallucination) is not there */
         const mtmp = dl?.disp_monster ? m_at(x, y) : null;
-        const objShown = !!(dl?.remembered_glyph?.objotyp && dl.remembered_glyph.ch === dl.disp_ch);
+        const drg = dl?.remembered_glyph;
+        const objShown = !!((drg?.objotyp || drg?.hallucotyp) && drg.ch === dl.disp_ch);
         desc = mtmp ? look_at_monster(mtmp, x, y, false).buf
              : (objShown && look_at_object_here(x, y, true)) || 'unexplored area';
     } else {
@@ -2619,7 +2680,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
              : fm.s ? fm.s
              : (shown?.disp_hstatue && !mtmp)
              ? rndmonnam_dn().name   /* lookat(): "'monster' must actually be a statue" */
-             : (mtmp && canspotmon(mtmp) && shown?.disp_monster)
+             : (mtmp && shown?.disp_monster)   /* lookat(): glyph_is_monster -> look_at_monster ("it" if unspotted) */
              ? look_at_monster(mtmp, x, y, false).buf
              /* C: glyph_at() of a visible furniture mimic is its cmap glyph, so
                 pager.c do_screen_description() names defsyms[].explanation */
@@ -2706,6 +2767,18 @@ export async function getpos_menu(ccp, gloc, validfn = null, detectMode = false,
 async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
     const u = game.u;
     let cx = startx, cy = starty;
+    // C ref: getpos.c:815 -- "temporary? if we have a queued direction, return the
+    // adjacent spot in that direction": a CMDQ_DIR entry (herecmdmenu's name-a-monster)
+    // answers the whole getpos; any other entry clears CQ_CANNED and cancels.
+    if (!game.in_doagain) {
+        const { cmdq_pop, cmdq_clear } = await import('./invent.js');
+        const cq = cmdq_pop(CQ_CANNED);
+        if (cq) {
+            if (cq.typ === CMDQ_DIR && !cq.dirz) return { x: u.ux + cq.dirx, y: u.uy + cq.diry };
+            cmdq_clear(CQ_CANNED);
+            return null;
+        }
+    }
 
     // C getpos.c:838 handle_tip(TIP_GETPOS): in verbose mode a "Please move the
     // cursor to ..." topline is still pending (NEED_MORE) when getpos starts.
@@ -2817,7 +2890,21 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // at the top-level command read (parse() already routes through
         // this same input_state/readchar_core pairing).
         game.input_state = 'getposInp';
-        let k = await readchar_core({});
+        // C ref: getpos.c:871 `if ((cmdq = cmdq_pop()) != 0)` -- a queued KEY stands in
+        // for the keystroke; any other entry clears CQ_CANNED and cancels (result -1).
+        // The key is saved on CQ_REPEAT only when iflags.remember_getpos (and not ^A).
+        let k;
+        {
+            const { cmdq_pop, cmdq_clear, cmdq_add_key } = await import('./invent.js');
+            const cq = cmdq_pop(game.in_doagain ? CQ_REPEAT : CQ_CANNED);
+            if (cq) {
+                if (cq.typ !== CMDQ_KEY) { cmdq_clear(CQ_CANNED); return null; }
+                k = typeof cq.key === 'number' ? cq.key : String(cq.key).charCodeAt(0);
+            } else {
+                k = await readchar_core({});
+                if (gp_iflags().remember_getpos && !game.in_doagain) cmdq_add_key(CQ_REPEAT, k);
+            }
+        }
         let ch = String.fromCharCode(k);
         // C topl.c — reading a key acknowledges any pending NEED_MORE topline,
         // so subsequent autodescribe plines overwrite without a new --More--.
@@ -3093,7 +3180,7 @@ export async function do_farlook() {
     // as '/' ("<sym>        <class> (<lookat>)"), monsters included.
     const picked = look_pick_description(cc.x, cc.y);
     const desc = picked.text;
-    if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(desc);
+    if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(desc, glyph_prefix_cell(cc.x, cc.y));
     // C ref: pager.c:1919 `putmixed(WIN_MESSAGE, 0, out_str)` — tty routes that
     // through update_topl(), so a description too wide for one row wraps and
     // blocks on --More-- before do_look returns.
@@ -3331,7 +3418,11 @@ export async function reveal_terrain(which_subset) {
             // C ref: detect.c reveal_terrain_getglyph() — levl[][].glyph at a spot
             // marked with the invisible-monster glyph is that glyph, not the
             // engraving, so the stripped 'I' becomes plain back_to_glyph() terrain.
-            if (is_cmap_engraving_at(x, y) && !vobj_at(x, y) && !loc.invisMon
+            // Likewise a REMEMBERED object (whether or not it still lies there)
+            // is an object glyph that gets stripped to the terrain, not the
+            // engraving beneath it.
+            if (is_cmap_engraving_at(x, y) && !loc.invisMon
+                && !(rg && (rg.objotyp != null || rg.pile))
                 && !t_at_hk(x, y)?.tseen) {
                 const eg = engraving_glyph(loc);
                 show_glyph_cell(x, y, eg.ch, eg.color, eg.dec, bg_attr(eg));
@@ -3838,7 +3929,11 @@ function look_pick_description(x, y) {
     const wallShown = look_prefix_char(loc) !== ' '
         && (IS_WALL(typ) || (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch));
     if (wallShown && (!loc.disp_decgfx || loc.disp_ch === 'x')) {
-        if (Is_rogue_level(game.u?.uz)) { /* doors are '+' there: '-' / '|' share with fewer cmap rows */
+        // A meta-bit symset (IBMgraphics) gives walls high-byte ttychars that collide
+        // with the swallow block only through S_sw_ml/S_sw_mr (== S_vwall), so the
+        // ASCII-wide collision list below does not apply: the full port compares real bytes.
+        if (Is_rogue_level(game.u?.uz) /* doors are '+' there: '-' / '|' share with fewer cmap rows */
+            || (!loc.disp_decgfx && glyph_prefix_is_symset_meta(x, y))) {
             const text = { s: '' }, firstmatch = { s: '' };
             const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
             return { text: text.s, firstmatch: firstmatch.s, found };
@@ -4460,7 +4555,7 @@ async function do_look_all(nearby, do_mons) {
             const loc = game.level?.at(x, y);
             let lookbuf = '', sym = '';
             if (do_mons) {
-                if (x === u.ux && y === u.uy && canspotself()) {
+                if (x === u.ux && y === u.uy && canspotself() && !loc?.disp_region) {
                     // canspotself: hero visible on their own square (an unseen
                     // hero's square shows terrain, so glyph_is_monster() fails).
                     lookbuf = self_lookat();
@@ -4711,7 +4806,7 @@ export async function do_look_full() {
         // data.base) fires its own --More-- via y_n.  Otherwise the NEED_MORE
         // line is flushed with --More-- by the next loop's "Pick..." or exit.
         const { text, firstmatch } = look_pick_description(cc.x, cc.y);
-        if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(text);
+        if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(text, glyph_prefix_cell(cc.x, cc.y));
         // C ref: pager.c:1919 putmixed(WIN_MESSAGE, ...) -> update_topl(): a
         // description that wraps onto a second row blocks on its own --More--
         // right here (redotoplin()), and an ESC there sets WIN_STOP, which
@@ -5062,13 +5157,8 @@ export async function notice_all_mons(reset) {
     }
 
     if (arr.length) {
-        // C ref: topl.c more() — the FIRST notice can't share the top line
-        // with whatever text is already pending there (the game-start
-        // welcome line, or ordinary topline text mid-game) — matching
-        // moveloop_preamble_messages()'s identical pattern, page it with its
-        // own --More-- before printing anything.  A no-op when nothing is
-        // pending, so this is safe for every notice_all_mons() call site.
-        await topl_more();
+        // C: tty update_topl() decides itself whether the pending line fits
+        // on one row with the notice or must be paged with --More--.
         arr.sort(notice_mons_cmp);
         for (const mtmp of arr)
             await notice_mon(mtmp);

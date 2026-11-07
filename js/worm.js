@@ -657,6 +657,10 @@ export function detect_wsegs(worm, use_detection_glyph) {
 
     while (curr !== lev.wheads[worm.wormno]) {
         show_glyph_cell(curr.wx, curr.wy, ch, color, false, attr);
+        /* show_glyph() of a monster glyph: getpos's gather_locs/autodescribe
+           read the DISPLAYED glyph back (getpos.c gather_locs_interesting) */
+        const dl = game.level?.at(curr.wx, curr.wy);
+        if (dl) dl.disp_monster = true;
         curr = curr.nseg;
     }
 }

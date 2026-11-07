@@ -68,6 +68,7 @@ import { mhitm_adtyping, YOUMONST, paralyze_monst, stagger, golemeffects } from 
 import { getmattk, could_seduce, mtrapped_in_pit } from './mhitu.js';
 import { find_mac } from './worn.js';
 import { Monnam, mon_nam, Some_Monnam, some_mon_nam, noname_monnam, a_monnam, mhis, mhe, YMonnam, hliquid } from './do_name.js';
+import { finish_meating } from './dogmove.js';
 import { M_AP_TYPE, M_AP_MONSTER } from './const.js';
 
 // C ref: mhitm.c:358 gv.vis — latched ONCE per mattackm() call, before the
@@ -357,7 +358,7 @@ export async function thrwmmDeps() {
     const { polymon } = await import('./polyself.js');
     const { KILLED_BY } = await import('./const.js');
 
-    const { flash_obj_glyph, show_glyph_cell } = await import('./display.js');
+    const { flash_obj_glyph, show_glyph_cell, flush_screen } = await import('./display.js');
     const flash = { glyph: null, x: -1, y: -1 };
 
     return {
@@ -480,12 +481,17 @@ export async function thrwmmDeps() {
             flash.glyph = tethered ? null : flash_obj_glyph(obj);
             flash.x = flash.y = -1;
         },
-        tmp_at_step: (x, y) => {
+        tmp_at_step: async (x, y) => {
             if (!flash.glyph) return;
             if (flash.x >= 0) { newsym(flash.x, flash.y); flash.x = flash.y = -1; }
             if (!cansee(x, y)) return;
             show_glyph_cell(x, y, flash.glyph.ch, flash.glyph.color, flash.glyph.dec);
             flash.x = x; flash.y = y;
+            // C ref: display.c:1292 tmp_at() `flush_screen(0)`: with an unseen
+            // topline message pending (thitu's "You are hit by ..."), the
+            // flush's display_nhwindow(WIN_MAP) forces the --More-- here, with
+            // the flash still drawn on the hero's square.
+            await flush_screen(0);
         },
         tmp_at_end: () => {
             if (flash.x >= 0) newsym(flash.x, flash.y);
@@ -551,6 +557,17 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
 
     mdef.mhp -= damage;
     if (mdef.mhp < 1) {
+        // C ref: mhitm.c:1075-1079 -- "see gulpmm()": the engulfer is standing on
+        // the swallowed defender's square, so put the (dying) defender back on the
+        // map there before monkilled() runs.  The engulfer stays off the map until
+        // gulpmm() re-places it, so a newsym() in between (mon_givit's message flush,
+        // relobj()) draws the dropped objects, not the engulfer.
+        if (m_at(mdef.mx, mdef.my) === magr) {
+            mm_remove_monster(mdef.mx, mdef.my);
+            mdef.mhp = 1;       /* otherwise place_monster will complain */
+            mm_place_monster(mdef, mdef.mx, mdef.my);
+            mdef.mhp = 0;
+        }
         // C ref: mhitm.c:1083 — a zombie's bare touch/claw/bite kill makes the
         // victim's corpse start a ZOMBIFY_MON timer (start_corpse_timeout()'s
         // rn1(15, 5)) instead of the ordinary rot draw.
@@ -1118,14 +1135,16 @@ export async function mdisplacem(magr, mdef, quietly) {
         return M_ATTK_MISS;
 
     // C: mhitm.c:205-215 — the displaced defender stops hiding/mimicking, wakes
-    // and drops its wait strategy; finish_meating() clears meating.
+    // and drops its wait strategy; finish_meating() clears meating and, for any
+    // non-mimic still wearing a disguise (the Wizard's clone posing as another
+    // monster, M_AP_MONSTER), resets it to M_AP_NOTHING with a newsym().
     if (mdef.mundetected) mdef.mundetected = 0;
     if (M_AP_TYPE(mdef) !== M_AP_NOTHING && M_AP_TYPE(mdef) !== M_AP_MONSTER) {   // seemimic(mdef)
         seemimicLocal(mdef);
     }
     mdef.msleeping = 0;
     mdef.mstrategy = (mdef.mstrategy || 0) & ~STRAT_WAITMASK;
-    if (mdef.meating) mdef.meating = 0;
+    finish_meating(mdef);
 
     const vis = gv_vis = (mm_can_spot_mon(magr) && mm_can_spot_mon(mdef));
 
@@ -2014,7 +2033,11 @@ async function shieldeff_mm(x, y) {
     const { shieldeff } = await import('./display.js');
     await shieldeff(x, y);
 }
-async function shieldeff_mon_mm(mon) { await shieldeff_mm(mon.mx, mon.my); }
+// C ref: mon.c:6058 shieldeff_mon(): the flash plus "<Mon> resists!" when the square is seen.
+async function shieldeff_mon_mm(mon) {
+    const { shieldeff_mon } = await import('./mon.js');
+    await shieldeff_mon(mon);
+}
 // C ref: mondata.h:82 can_teleport(ptr) — M1_TPORT.
 function can_teleport_mm(ptr) { return (mflags1_of(ptr) & M1_TPORT) !== 0; }
 

@@ -858,7 +858,10 @@ export async function possibly_unwield(mon, polyspot) {
             import('./worn.js')]);
         /* if we're going to call distant_name(), do so before extract_self */
         if (cansee(mon.mx, mon.my)) {
-            await update_topl(`${Monnam(mon)} drops ${I.distant_doname(mw_tmp, true)}.`);
+            /* C: distant_name(obj, doname) — a nearby, seen weapon is observed
+               (dknown set) while being named; only a far one stays unseen */
+            await update_topl(`${Monnam(mon)} drops ${I.distant_doname(mw_tmp,
+                I.distant_far(mw_tmp, mon.mx, mon.my))}.`);
             newsym(mon.mx, mon.my);
         }
         I.obj_extract_self(mw_tmp);

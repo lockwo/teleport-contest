@@ -130,7 +130,10 @@ export function sync_monster_light_sources() {
         // any_light_source() stays true and movemon() keeps asking for a vision
         // recalc) but get_mon_location() fails for it, so it lights nothing.
         if (m.mx === 0 && migrating_mons().includes(m)) continue;
-        if (DEADMONSTER(m) || !(m.mx > 0) || !live.includes(m)) list.splice(i, 1);
+        // C ref: light.c get_mon_location() does not test DEADMONSTER: a monster
+        // killed this move (mhp 0, still on fmon) keeps lighting until m_detach()'s
+        // del_light_source() drops it, and that call is what sets vision_full_recalc.
+        if (!(m.mx > 0) || !live.includes(m)) list.splice(i, 1);
     }
     for (const m of fmon()) {
         if (DEADMONSTER(m) || !(m.mx > 0)) continue;

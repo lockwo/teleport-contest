@@ -26,7 +26,7 @@ import { suit_simple_name, adj_abon, any_worn_armor_ok } from './do_wear.js';
 import { costly_alteration, alter_cost } from './shk.js';
 import { exercise, change_luck } from './attrib.js';
 import { discover_object } from './o_init.js';
-import { do_mapping, strange_feeling } from './detect.js';
+import { do_mapping, strange_feeling, cvt_sdoor_to_door } from './detect.js';
 import { study_book } from './spell.js';
 import { erode_obj, obj_erode_type, Teleport_control_fu } from './trap.js';
 import { find_ac } from './u_init.js';
@@ -100,7 +100,6 @@ const POT_WATER = 322;
 
 const WT_IRON_BALL_INCR = 160;   // C ref: include/obj.h WT_IRON_BALL_INCR
 const ALL_SPELLS = 2;            // C ref: read.c forget() howmuch bit
-const WM_MASK = 0x07;            // C ref: rm.h WM_MASK (wall mode bits in an SDOOR's doormask)
 const PM_ACID_BLOB = 6, PM_YELLOW_LIGHT = 118, PM_BLACK_LIGHT = 119;
 // C ref: hack.h makemon() flags.
 const NO_MINVENT = 0x00000001, MM_EDOG = 0x00000800, MM_NOMSG = 0x00020000;
@@ -421,16 +420,6 @@ async function seffect_magic_mapping(sobj) {
         if (game._statusHold) delete game._statusHold.conf;
         await pline_append("Unfortunately, you can't grasp the details.");
     }
-}
-
-// C ref: detect.c cvt_sdoor_to_door(lev) — a secret door, once exposed, becomes
-// an ordinary (closed) door; WM_MASK is the wall-mode bits an SDOOR keeps in
-// doormask.  (dig.js has the same private copy.)
-function cvt_sdoor_to_door(lev) {
-    let newmask = lev.doormask & ~WM_MASK;
-    if (!(newmask & D_LOCKED)) newmask |= D_CLOSED;
-    lev.typ = DOOR;
-    lev.doormask = newmask;
 }
 
 // C ref: read.c seffect_light().  The non-confused half also runs lightdamage()
@@ -2370,10 +2359,25 @@ export async function do_stinking_cloud(sobj, mention_stinking) {
 
     await pline_append(`Where do you want to center the ${
         mention_stinking ? 'stinking ' : ''}cloud?`);
-    const { getpos } = await import('./hack.js');
+    const { getpos, getpos_render, jump_hilite_first_cursor } = await import('./hack.js');
+    const verbose = game.flags?.verbose !== false;
+    if (!verbose) {
+        // C ref: getpos.c getpos() opening `curs(WIN_MAP, cx, cy);
+        // flush_screen(0)`.  With flags.verbose set, getpos()'s own "(For
+        // instructions type a '?')" pline draws the frame (hack.js getpos_inner
+        // renders it and parks the cursor on the hero), so only the quiet path
+        // leaves this to the caller.  The prompt above is drawn here, and
+        // getpos_sethilite(display_stinking_cloud_positions, can_center_cloud)
+        // has marked every centerable cell gnew, so the opening flush redraws
+        // them row-major and leaves the tty cursor one past the last one (not on
+        // the hero), as #jump/#apply-polearm model with jump_hilite_first_cursor.
+        await getpos_render(game._pending_message, u.ux, u.uy);
+        const hc = jump_hilite_first_cursor(can_center_cloud, 6, false);
+        if (hc && game.nhDisplay?.setCursor) game.nhDisplay.setCursor(hc[0], hc[1]);
+    }
     const pos = await getpos('the desired position', u.ux, u.uy,
                              can_center_cloud, /*force=*/true,
-                             game.flags?.verbose !== false, false, false,
+                             verbose, false, false,
                              display_stinking_cloud_positions);
     if (!pos) {                        /* getpos() < 0 */
         await pline_append(NEVER_MIND);

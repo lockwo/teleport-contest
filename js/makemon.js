@@ -57,7 +57,7 @@ import {
 // declarations from here — a cycle that resolves cleanly because both sides are
 // hoisted `function` declarations used only at call time, never at module init.
 import { t_at as t_at_local, in_town } from './mkroom.js';
-import { does_block, block_point, unblock_point, is_lightblocker_mappear } from './vision.js';
+import { does_block, block_point, unblock_point, is_lightblocker_mappear, Blind } from './vision.js';
 import { ARM_BONUS, m_dowear, which_armor } from './worn.js';
 import {
     mflags2_of, mflags3_of, msound_of,
@@ -4062,7 +4062,8 @@ function makemon_rnd_goodpos(ptr, gpflags) {
         // there is no first pass at all, so a level-generation placement never
         // skips a visible square here either.
         const xofs = nx, yofs = ny;
-        for (let bl = game.in_mklev ? 1 : 0; bl < 2 && !good; bl++) {
+        for (let bl = (game.in_mklev || Blind()) ? 1 : 0; bl < 2 && !good; bl++) {
+            if (!bl) gpflags &= ~GP_CHECKSCARY; /* perhaps should be a 3rd pass */
             for (let dx = 0; dx < COLNO && !good; dx++) {
                 for (let dy = 0; dy < ROWNO && !good; dy++) {
                     // C ref: makemon.c:1107-1108 — leave the last scanned
@@ -4267,6 +4268,11 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
         for (const m of members)
             await makemon_appears_msg(m, m.mx, m.my, mmflags | MM_NOGRP);
     }
+    // C ref: a group member's own makemon() tail (newsym, arrival line, dochugw)
+    // runs INSIDE m_initgrp's makemon() call, i.e. before m_initgrp resets
+    // mon->mpeaceful to FALSE; take the rolled value before flush_group_newsyms()
+    // consumes it so dochugw() below judges the member as C did.
+    const rolledPeaceful = mtmp._grpNewsymPeaceful;
     flush_group_newsyms(mtmp);          // the leader's own makemon.c:1473 newsym
     await makemon_appears_line(mtmp, x, y, mmflags);
     // C ref: makemon.c:1503 — "if discernable and a threat, stop fiddling while
@@ -4275,7 +4281,9 @@ export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     const H = await import('./hack.js');
     if (H.occupation_active()) {
         const { dochugw } = await import('./monmove.js');
-        await dochugw(mtmp, false);
+        const real = mtmp.mpeaceful;
+        if (rolledPeaceful !== undefined) mtmp.mpeaceful = rolledPeaceful;
+        try { await dochugw(mtmp, false); } finally { if (rolledPeaceful !== undefined) mtmp.mpeaceful = real; }
     }
 }
 async function makemon_appears_line(mtmp, x, y, mmflags = 0) {

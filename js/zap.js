@@ -1557,7 +1557,8 @@ export async function bhitm(mtmp, otmp) {
         } else if (resists_magm(mtmp)) {
             /* magic resistance protects from polymorph traps, so make
                it guard against involuntary polymorph attacks too... */
-            await shieldeff(mtmp.mx, mtmp.my);
+            const { shieldeff_mon } = await import('./mon.js');
+            await shieldeff_mon(mtmp); /* C ref: zap.c bhitm() shieldeff_mon(): "It resists!" */
         } else if (!(await resist(mtmp, otmp.oclass, 0, false))) {
             const polyspot = (otyp !== POT_POLYMORPH),
                   give_msg = (!Hallucination()
@@ -1851,7 +1852,8 @@ export async function bhitm(mtmp, otmp) {
         if (otyp === SPE_DRAIN_LIFE)
             dmg = spell_damage_bonus(dmg);
         if (await resists_drli_z(mtmp)) {
-            await shieldeff(mtmp.mx, mtmp.my);
+            const { shieldeff_mon } = await import('./mon.js');
+            await shieldeff_mon(mtmp); /* C ref: zap.c bhitm() SPE_DRAIN_LIFE shieldeff_mon() */
         } else if (!(await resist(mtmp, otmp.oclass, dmg, false))
                    && !DEADMONSTER(mtmp)) {
             mtmp.mhp = (mtmp.mhp || 0) - dmg;
@@ -2701,6 +2703,10 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                 } else {
                     if (!forcemiss && await zap_hit(u.uac | 0, 0)) {
                         range -= 2;
+                        // C ref: zap.c:4964 pline_dir(xytodir(-dx, -dy), ...): the
+                        // message is about the square the ray came from, which
+                        // accessiblemsg turns into a "(south): " prefix.
+                        (await import('./hack.js')).set_msg_xy(u.ux - dx, u.uy - dy);
                         await update_topl(`${flash_The(fltyp)} hits you!`);
                         if (await ureflects(null, null)) {
                             if (!Blind())

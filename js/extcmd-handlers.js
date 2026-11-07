@@ -402,15 +402,17 @@ function draw_getlin(query, shown, cursorCol, cursorAt = null) {
 // with an optional completion hook; each keystroke is its own captured screen
 // frame.  Returns the typed string, or "\x1b" if escaped from an empty buffer.
 export async function hooked_tty_getlin(query, hook) {
-    // C ref: windows.c getlin() -- the plain (unhooked) prompt first drains
-    // CQ_CANNED: queued KEYs become the answer (a '\n' ends it) and show as
+    // C ref: windows.c getlin() -- the plain (unhooked) prompt first drains the
+    // command queue (cmdq_pop(): CQ_REPEAT while ^A replays, else CQ_CANNED):
+    // queued KEYs become the answer (a '\n' ends it) and show as
     // "query answer" without a prompt; the first non-KEY entry it pops is
     // discarded and ends the drain.
-    if (!hook && !game.in_doagain) {
+    if (!hook) {
         const { cmdq_pop } = await import('./invent.js');
-        const { CQ_CANNED, CMDQ_KEY } = await import('./const.js');
+        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY } = await import('./const.js');
+        const q = game.in_doagain ? CQ_REPEAT : CQ_CANNED;
         let answer = '', got = false, cq;
-        while ((cq = cmdq_pop(CQ_CANNED))) {
+        while ((cq = cmdq_pop(q))) {
             if (cq.typ !== CMDQ_KEY) break;
             got = true;
             if (cq.key === 10) break;
@@ -1657,6 +1659,20 @@ async function donamelevel() {
 // C ref: do_name.c docallcmd.  Present the name/call menu, read a single
 // PICK_ONE selection (ESC/space cancels), then dispatch the sub-action.
 export async function docallcmd() {
+    // C ref: do_name.c:511 `if ((cmdq = cmdq_pop()) != 0) { ch = cq.key (KEY) else
+    // cmdq_clear(CQ_CANNED); goto docallcmd; }` -- a queued answer (herecmdmenu /
+    // itemactions push 'm', 'i', 'o') skips the menu; a non-key entry leaves ch 0.
+    let ch;
+    const queued = await (async () => {
+        const { cmdq_pop, cmdq_clear } = await import('./invent.js');
+        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY } = await import('./const.js');
+        const cq = cmdq_pop(game.in_doagain ? CQ_REPEAT : CQ_CANNED);
+        if (!cq) return false;
+        if (cq.typ === CMDQ_KEY) ch = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
+        else { cmdq_clear(CQ_CANNED); ch = 'q'; }
+        return true;
+    })();
+    if (!queued) {
     const abc = !!game.flags?.lootabc;
     // C: inventory branches are only present when the pack is non-empty.
     const haveInvent = (game.invent || game.gi?.invent || []).length > 0;
@@ -1682,13 +1698,12 @@ export async function docallcmd() {
        dismissal, so a status window an earlier menu's docrt() blanked stays blank */
     const old_bot_disabled = game.bot_disabled;
     game.bot_disabled = true;
-    let ch;
     try {
         const committed = await select_command_menu(entries, { how: PICK_ONE });
         ch = committed ? entries.find(entry => entry.item?.selected)?.item.value : 'q';
         await dismiss_invent_screen();
     } finally { game.bot_disabled = old_bot_disabled; }
-
+    }
     switch (ch) {
     case 'q':
     default:
@@ -2128,7 +2143,7 @@ async function use_container(box, more_containers) {
         if (xbuf) pbuf += '\x1b' + xbuf;
         for (;;) { // repeats iff '?' or ':' gets chosen
             const qbuf = loot_prompt_text(box, outmaybe);
-            const c = await yn_function(qbuf, pbuf, more_containers ? 'n' : 'q');
+            const c = await yn_function(qbuf, pbuf, more_containers ? 'n' : 'q', true);
             if (c === '?') {
                 await explain_container_prompt(!!more_containers);
             } else if (c === ':') {
@@ -3216,7 +3231,7 @@ async function doforce() {
         /* C ref: lock.c doforce() safe_qbuf(qbuf, "There is ", " here; force its lock?", otmp, doname, ansimpleoname, "a box") */
         const qbuf = safe_qbuf('There is ', ' here; force its lock?', box, obj_doname, ansimpleoname, 'a box');
         box.lknown = 1;   /* set before ynq(), so 'n'/'q' still learns it */
-        const c = await yn_function(qbuf, 'ynq', 'q');
+        const c = await yn_function(qbuf, 'ynq', 'q', true);
         if (c === 'q') return 0;
         if (c === 'n') continue;
         // update_topl (not plain pline) so the message is left in NEED_MORE
@@ -4745,12 +4760,36 @@ function reset_multi_no_time() {
     if ((game.multi | 0) < 0) game.multi = 0;
 }
 
+// C ref: cmd.c rhack():3762-3773 — a PREFIXCMD run through doextcmd() marks
+// prefix_seen and loops back to read ANOTHER command (got_prefix_input),
+// which a non-movement key then refuses with "The 'F' prefix should be
+// followed by a movement command." (3717-3722).  The F/g/G keys do this
+// inline in cmd.js rhack(); the #fight/#run/#rush/#reqmenu spellings only
+// armed the flag and let the next key run as an ordinary command.  A #repeat
+// replay of such an entry (CQ_REPEAT holds the prefix's ec, then the command
+// key) loops the same way, popping the next queued entry.
+async function prefix_got_input(txt, res) {
+    const armed = (txt === 'fight' && game.context.forcefight)
+        || ((txt === 'run' || txt === 'rush') && game.context.run_prefix)
+        || (txt === 'reqmenu' && game.iflags?.menu_requested);
+    if (!armed || res === 1) return false;
+    const { rhack } = await import('./cmd.js');
+    game.context.move = 0;
+    game.multi = 0;
+    const savedSeen = game.context._prefix_seen;
+    game.context._prefix_seen = true;
+    await rhack(0);
+    game.context._prefix_seen = savedSeen;
+    return true;
+}
+
 // C ref: cmd.c rhack() do_cmdq_extcmd -- a CMDQ_EXTCMD entry (queued by an
 // earlier doextcmd() for #repeat) runs its command directly, no '#' prompt.
 export async function run_extcmd_txt(txt) {
     const fn = HANDLERS[txt];
     let res = 0;
     if (fn) res = await fn();
+    if (await prefix_got_input(txt, res)) return res;
     game.context.move = res === 1 ? 1 : 0;
     if (res !== 1) reset_multi_no_time();
     return res;
@@ -4801,25 +4840,7 @@ export async function doextcmd() {
         }
         if (fn !== doextlist) break;
     }
-    // C ref: cmd.c rhack():3762-3773 — a PREFIXCMD run through doextcmd() marks
-    // prefix_seen and loops back to read ANOTHER command (got_prefix_input),
-    // which a non-movement key then refuses with "The 'F' prefix should be
-    // followed by a movement command." (3717-3722).  The F/g/G keys do this
-    // inline in cmd.js rhack(); the #fight/#run/#rush/#reqmenu spellings only
-    // armed the flag and let the next key run as an ordinary command.
-    const armed = (lastTxt === 'fight' && game.context.forcefight)
-        || ((lastTxt === 'run' || lastTxt === 'rush') && game.context.run_prefix)
-        || (lastTxt === 'reqmenu' && game.iflags?.menu_requested);
-    if (armed && res !== 1) {
-        const { rhack } = await import('./cmd.js');
-        game.context.move = 0;
-        game.multi = 0;
-        const savedSeen = game.context._prefix_seen;
-        game.context._prefix_seen = true;
-        await rhack(0);
-        game.context._prefix_seen = savedSeen;
-        return res;
-    }
+    if (await prefix_got_input(lastTxt, res)) return res;
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
     game.context.move = res === 1 ? 1 : 0;

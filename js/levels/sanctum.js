@@ -16,7 +16,7 @@ import { rn2 } from '../rng.js';
 import {
     TEMPLE_RTYPE, splev_find_montype, VLY_S_LICH, VLY_S_VAMPIRE, bigrm_load_map, bigrm_wallification, flip_level,
     lspo_door_relative, quest_level_init_solidfill, quest_place_stair, quest_set_door,
-    remove_boundary_syms, map_cleanup, shuffle, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
+    remove_boundary_syms, map_cleanup, reset_xystart_size, shuffle, splev_map_reset, vly_abs, vly_altar, vly_flip_dndest, vly_flip_updest, vly_monster_class,
     vly_non_diggable, vly_object, vly_region, vly_teleport_region, vly_trap,
 } from '../sp_lev.js';
 
@@ -128,6 +128,13 @@ const SANCTUM_HORDE = [
 // Entry point.  C ref: makemaz("sanctum") -> load_special("sanctum.lua").
 export async function makemaz_sanctum() {
     const g = game;
+    splev_map_reset();                 // C: load_special() memsets SpLev_Map
+    // C: load_special() sp_lev.c:6373 sp_level_coder_init() ->
+    // reset_xystart_size().  The pre-map des.non_passwall(39,0,41,0) below is
+    // converted with the CODER's origin (1,0), not the previous special
+    // level's leftover map offset (which flagged the wrong wall squares and so
+    // changed mfndpos()'s wall-walker candidate count on this level).
+    reset_xystart_size();
     // load_special -> nhlib.lua top-level shuffle(align): rn2(3), rn2(2).
     shuffle(['law', 'neutral', 'chaos']);
     // des.level_init({ style="solidfill", fg=" " }) — rn2(2) + fill STONE.

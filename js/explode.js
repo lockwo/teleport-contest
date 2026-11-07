@@ -24,7 +24,7 @@ import {
 import {
     AD_PHYS, AD_MAGM, AD_FIRE, AD_COLD, AD_DISN, AD_ELEC, AD_DRST,
     AD_ACID, AD_SPC2, AD_SPEL, AD_DREN, AD_ENCH, AD_DRDX, AD_DRCO, AD_DISE,
-    AD_PEST, AD_RBRE,
+    AD_PEST, AD_RBRE, AD_DGST, AT_ENGL, attacktype_fordmg,
     sticks,
 } from './monattk_data.js';
 import { m_at, newsym, update_topl, map_invisible, unmap_object, Hallucination_u, You_hear } from './display.js';
@@ -151,8 +151,9 @@ async function engulfer_explosion_msg(adtyp, olet) {
     const { Monnam } = await import('./uhitm.js');
     const eng = game.u?.ustuck;
     const p = mdata(eng);
-    // C ref: mondata.h digests(ptr) — AT_ENGL attack.
-    const digest = (p?.mattk || []).some((a) => a && a[0] === 11 /* AT_ENGL */);
+    // C ref: mondata.h digests(ptr) == dmgtype_fromattack(ptr, AD_DGST, AT_ENGL)
+    // (purple worm); an AT_ENGL slot with any other damage type does not count.
+    const digest = !!attacktype_fordmg(p, AT_ENGL, AD_DGST);
     let adj;
     if (digest) {
         switch (adtyp) {

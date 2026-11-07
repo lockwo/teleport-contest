@@ -965,14 +965,6 @@ export async function rhack(key) {
         // of reading fresh input.  do_repeat() itself set up CQ_REPEAT's
         // dispatch-epilogue recording (see the bottom of this function) and
         // already restores the queue afterward so a second ^A repeats again.
-        // C ref: cmd.c rhack() `cq.typ == CMDQ_EXTCMD ... goto do_cmdq_extcmd` --
-        // a queued extended command (#repeat of a '#'-typed command) runs
-        // directly.
-        if (replay && replay.typ === CMDQ_EXTCMD && replay.ec_entry) {
-            const { run_extcmd_txt } = await import('./extcmd-handlers.js');
-            await run_extcmd_txt(replay.ec_entry.ef_txt);
-            return;
-        }
         key = replay ? replay.key : await nhgetch();
         // C ref: cmd.c readchar_core() ALTMETA arm — with rc `altmeta` on, a
         // bare ESC read at the START of a fresh top-level command combines
@@ -1014,6 +1006,14 @@ export async function rhack(key) {
         if (replay && !canned && game._parse_cleared_topl) {
             await flush_screen(1);
             game.nhDisplay?.setCursor?.(0, 0);
+        }
+        // C ref: cmd.c rhack() `cq.typ == CMDQ_EXTCMD ... goto do_cmdq_extcmd` --
+        // a queued extended command (#repeat of a '#'-typed command) runs
+        // directly.
+        if (replay && replay.typ === CMDQ_EXTCMD && replay.ec_entry) {
+            const { run_extcmd_txt } = await import('./extcmd-handlers.js');
+            await run_extcmd_txt(replay.ec_entry.ef_txt);
+            return;
         }
 
         // C ref: cmd.c parse(): `if (!Cmd.num_pad || (foo = readchar()) ==
@@ -1537,6 +1537,9 @@ export async function rhack(key) {
         // control character, so the recorded screen shows it as blank) instead
         // of C's "Unavailable command 'wizdetect'."  wiz_detect() already
         // gates on wizard()/unavail() itself (js/wizcmds.js), so just call it.
+        // C ref: cmd.c rhack() !can_do_extcmd(tlist) -> reset_cmd_vars(TRUE):
+        // a refused WIZMODECMD clears CQ_REPEAT (a following ^A has nothing to repeat).
+        if (!game.flags?.debug) game.context._getobj_cancelled = true;
         await wiz_detect();
         game.context.move = 0;
     } else if (key === 9) { // ^I — wizard-mode identify (wizcmds.c wiz_identify)
@@ -1547,6 +1550,7 @@ export async function rhack(key) {
             await wiz_identify();
         } else {
             await pline(`Unavailable command 'wizidentify'.`);
+            game.context._getobj_cancelled = true; /* can_do_extcmd() FALSE: reset_cmd_vars(TRUE) */
         }
         game.context.move = 0;
     } else if (key === 7) { // ^G — wizard-mode create monster (wizcmds.c wiz_genesis)
@@ -1564,6 +1568,7 @@ export async function rhack(key) {
             // unbound key produces.  Different string, same zero game time.
             game.context.move = 0;
             await pline(`Unavailable command 'wizgenesis'.`);
+            game.context._getobj_cancelled = true; /* can_do_extcmd() FALSE: reset_cmd_vars(TRUE) */
         }
     } else if (key === 6) { // ^F — wizard-mode magic mapping (wizcmds.c wiz_map)
         // C ref: cmd.c:1982 { C('f'), "wizmap", ..., IFBURIED | WIZMODECMD }.
@@ -1574,6 +1579,7 @@ export async function rhack(key) {
             await wiz_map_extcmd();
         } else {
             await pline(`Unavailable command 'wizmap'.`);
+            game.context._getobj_cancelled = true; /* can_do_extcmd() FALSE: reset_cmd_vars(TRUE) */
         }
         game.context.move = 0;
     } else if (key === 20) { // ^T — teleport (cmd.c dotelecmd -> teleport.c)
@@ -1604,6 +1610,7 @@ export async function rhack(key) {
         } else {
             game.context.move = 0;
             await pline(`Unavailable command 'wizlevelport'.`);
+            game.context._getobj_cancelled = true; /* can_do_extcmd() FALSE: reset_cmd_vars(TRUE) */
         }
     } else if (key === 23) { // ^W — wizard-mode wish (cmd.c C('w') -> wiz_wish)
         // C ref: cmd.c:2000 { C('w'), "wizwish", ..., WIZMODECMD }.  Same missing
@@ -1614,6 +1621,7 @@ export async function rhack(key) {
             await wiz_wish();
         } else {
             await pline(`Unavailable command 'wizwish'.`);
+            game.context._getobj_cancelled = true; /* can_do_extcmd() FALSE: reset_cmd_vars(TRUE) */
         }
         game.context.move = 0;
     } else if (key === 26) { // ^Z — suspend (cmd.c dosuspend_core)
@@ -1813,7 +1821,11 @@ export async function rhack(key) {
         // (doswapweapon) before firing.  ECMD_TIME (3) when a missile is launched
         // and a turn elapses; the recorded session cancels at the direction
         // prompt so no time passes.
-        game.context.move = ((await dofire(getdir)) & ECMD_TIME) ? 1 : 0;
+        // C ref: cmd.c rhack() `(res & (ECMD_CANCEL | ECMD_FAIL)) != 0` ->
+        // reset_cmd_vars(TRUE): a cancelled/failed #fire clears CQ_REPEAT.
+        const fireRes = await dofire(getdir);
+        if (fireRes & (ECMD_CANCEL | ECMD_FAIL)) game.context._getobj_cancelled = true;
+        game.context.move = (fireRes & ECMD_TIME) ? 1 : 0;
     } else if (ch === '_') {
         // C ref: cmd.c — '_' (#travel) move toward a chosen map location.  The
         // recorded session cancels at the destination prompt (ESC), so no turn
@@ -2032,7 +2044,10 @@ export async function rhack(key) {
         // A counted walk's later steps are C's moveloop_core context.mv arm
         // (allmain.c:523-526): domove() called directly with
         // domove_attempting already 0, so no smudge/bubble nudge.
-        if (game.context.forcefight) game.context.run = svc_context_run();
+        // C ref: cmd.c set_move_cmd() `if (!gd.domove_attempting && !u.dz) svc.context.run = run;` -- a
+        // plain walk replaces any run left live by an earlier command (a travel's run == 8 that an F-prefixed
+        // dig kept, see above), while an F prefix left domove_attempting set, so its step keeps the run.
+        game.context.run = game.context.forcefight ? svc_context_run() : 0;
         await domove(DIR_DX[ch], DIR_DY[ch], !countRepeat);
         game.iflags && (game.iflags.menu_requested = false);
         // C ref: cmd.c rhack() DOMOVE_WALK branch — forcefight is cleared right
@@ -2146,6 +2161,10 @@ export async function rhack(key) {
         } else if (repeatName !== 'do_repeat' && !isPrefixCmd) {
             if (!game.context._prefix_seen && !mPrefixSeen) cmdq_of(CQ_REPEAT).length = 0;
             cmdq_add_key(CQ_REPEAT, origKey);
+            cmdq_of(CQ_REPEAT).push(...midRepeat);
+        } else if (isPrefixCmd) {
+            // C ref: cmd.c rhack():3733-3737 — a PREFIXCMD ('m') recorded itself on
+            // CQ_REPEAT above (after repeatMark); keep it so ^A replays "m" + cmd.
             cmdq_of(CQ_REPEAT).push(...midRepeat);
         }
     }
@@ -3726,7 +3745,10 @@ async function domove_core(dx, dy, attemptTracked) {
     // bump/attack block) — attacking an engulfer from inside needs uhitm's
     // swallowed path, which this port does not model.
     const redirected = impaired_movement(u.ux + dx, u.uy + dy);
-    if (!redirected) { nomul(0); return; } // C: impaired_movement() tries > 50 -> nomul(0); return TRUE
+    // C: rhack()/parse() armed svc.context.move before domove(); the early
+    // `return` after nomul(0) leaves it set, so the failed attempt still
+    // costs the turn (monsters move, timeouts run).
+    if (!redirected) { nomul(0); game.context.move = 1; return; } // C: impaired_movement() tries > 50 -> nomul(0); return TRUE
     let newx = redirected.x, newy = redirected.y;
 
     // C ref: hack.c:2751 `if (water_turbulence(&x, &y)) return;` — "turbulence
@@ -3781,7 +3803,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // early return leaves it set, so a failed escape costs a move.
     if (!offedge && await escape_from_sticky_mon(newx, newy)) { game.context.move = 1; return; }
 
-    const mtmp = m_at(newx, newy);
+    let mtmp = m_at(newx, newy);
 
     // C ref: hack.c:2765 — while running/rushing, a spottable monster that is
     // not is_safemon() stops the hero here, BEFORE the bump/attack handling and
@@ -3937,6 +3959,9 @@ async function domove_core(dx, dy, attemptTracked) {
         }
         const { in_out_region } = await import('./region.js');
         if (!in_out_region(newx, newy)) return;
+        // C ref: hack.c:2865 — re-fetch after the move attempt because a leprechaun
+        // can leave the target square while evading the attack.
+        mtmp = m_at(newx, newy);
         game.context.move = 1;
         // C ref: domove_core tentatively advances the hero, then swaps with a
         // safe pet at the destination.
@@ -6833,7 +6858,7 @@ const spkeys_binds = [
 // (msghist(): cw->data[]/maxrow/maxcol, filled by remember_topl()).  The
 // Single and combination modes allow ^P to advance history at a wrapped More.
 export async function doprev_message() {
-    const { msghist, is_dec_prefix_msg } = await import('./display.js');
+    const { msghist, is_dec_prefix_msg, dec_prefix_cell } = await import('./display.js');
     const { tty_text_window } = await import('./invent.js');
     const h = msghist();
     const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
@@ -6843,10 +6868,12 @@ export async function doprev_message() {
     const redotoplin = async (str) => {
         /* C ref: topl.c redotoplin():128 — only the `/` command, still inside
            tty_putmixed(), may put a graphics character on the top line.  A
-           recalled message is not mixed, so that leading DEC graphics glyph
-           reaches the terminal as a raw high-bit byte and shows as blank. */
+           recalled message is not mixed, so that leading graphics glyph is
+           not redrawn: a DECgraphics high-bit code shows blank, a meta-bit
+           (IBMGraphics) byte shows U+FFFD (dec_prefix_cell, from pager.js
+           glyph_prefix_cell at the time the message was noted). */
         if (str && (Object.values(DEC_TO_UNICODE).includes(str[0]) || is_dec_prefix_msg(str)))
-            str = ' ' + str.slice(1);
+            str = dec_prefix_cell(str) + str.slice(1);
         // C redotoplin() calls putsyms(): hard-wrap at CO-1, including the
         // unwrapped query+answer stored by getline.c:81.
         const lines = [];
@@ -6879,7 +6906,16 @@ export async function doprev_message() {
     const putstr_wrapped = (lines) => {
         const out = [];
         let maxcol = 0;
-        for (const ln of lines) maxcol = Math.max(maxcol, tty_putstr_text(out, is_dec_prefix_msg(ln) ? ' ' + ln.slice(1) : ln));
+        for (const ln of lines) {
+            // C ref: tty_putstr() compress_str()s the line while its prefix is still
+            // the (non-space) glyph byte, so the run of spaces after it collapses to
+            // one instead of being dropped as leading blanks.  The byte only shows as
+            // a blank/U+FFFD once drawn.
+            const start = out.length;
+            maxcol = Math.max(maxcol, tty_putstr_text(out, ln));
+            if (is_dec_prefix_msg(ln) && out.length > start)
+                out[start] = dec_prefix_cell(ln) + out[start].slice(1);
+        }
         return { lines: out.map((t) => t.replace(DEC_GLYPH_RE, ' ')), maxcol };
     };
     const step_back = () => {
@@ -7171,7 +7207,8 @@ function extlist_render_page(m, idx) {
         return;
     }
     // Only reachable once a search has narrowed the list under one page.
-    renderMenuLines(items);
+    // C ref: wintty.c tty_display_nhwindow() parks the cursor after "(end)".
+    renderMenuLines(items, [null, null]);
     game._modal_screen = 'extlistwin';
 }
 

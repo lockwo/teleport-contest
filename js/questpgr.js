@@ -13,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle, align_str } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear } from './display.js';
+import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear, yn_cmdq_answer, yn_cmdq_save } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -3015,6 +3015,9 @@ export async function onquest() {
 // window opened straight afterwards must not emit a --More-- of its own.
 async function yn_unrestricted(query) {
     const g = game;
+    /* C ref: quest.c:167 yn_function("adjust?", 0, 'y', TRUE) -- addcmdq arm first */
+    const queued = await yn_cmdq_answer(null, 'y');
+    if (queued !== null) return queued;
     if (g._toplin === 1 /* NEED_MORE */) await topl_more();
     // Write + flush the prompt the way display.js y_n() does rather than via
     // update_topl: update_topl only mutates state, so without an explicit
@@ -3030,7 +3033,9 @@ async function yn_unrestricted(query) {
     if (disp?.setCursor) disp.setCursor(Math.min(query.length + 1, 79), 0);
     const c = await nhgetch();
     g._toplin = 0;
-    return String.fromCharCode(c);
+    const ans = String.fromCharCode(c);
+    await yn_cmdq_save(ans);
+    return ans;
 }
 
 // C ref: quest.c not_capable()

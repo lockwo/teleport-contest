@@ -469,7 +469,7 @@ export async function wiz_flip_level() {
 
     if (wizard()) {
         const { yn_function } = await import('./extcmd-handlers.js');
-        let c = await yn_function(prmpt, choices, '\0');
+        let c = await yn_function(prmpt, choices, '\0', true);
 
         if (c && choices.includes(c)) {
             c = c.charCodeAt(0) - '0'.charCodeAt(0);

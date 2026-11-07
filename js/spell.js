@@ -162,8 +162,13 @@ export function skill_based_spellbook_id() {
 // C ref: spell.c docast — the 'Z' command.
 export async function docast() {
     const spellNo = await getspell();
-    if (spellNo >= 0)
+    if (spellNo >= 0) {
+        /* C ref: spell.c docast(): cmdq_add_key(CQ_REPEAT, spellet(spell_no)) */
+        const { cmdq_add_key } = await import('./invent.js');
+        const { CQ_REPEAT } = await import('./const.js');
+        cmdq_add_key(CQ_REPEAT, spellet(spellNo));
         return await spelleffects(spellid(spellNo), false, false);
+    }
     // C: docast() returns ECMD_FAIL, so rhack() runs reset_cmd_vars(TRUE) and drops
     // CQ_REPEAT; js/cmd.js consumes this flag for the same effect (see getobj()).
     if (game.context) game.context._getobj_cancelled = true;
@@ -210,6 +215,19 @@ async function getspell() {
         return -1;
     }
     if (await rejectcasting()) return -1;
+    {
+        // C ref: spell.c getspell():729-740 `if ((cmdq = cmdq_pop()) != 0)` — a queued
+        // spell letter (CQ_REPEAT while ^A replays, else CQ_CANNED) answers without a prompt.
+        const { cmdq_pop } = await import('./invent.js');
+        const { CQ_CANNED, CQ_REPEAT, CMDQ_KEY } = await import('./const.js');
+        const cq = game.in_doagain ? cmdq_pop(CQ_REPEAT) : cmdq_pop(CQ_CANNED);
+        if (cq) {
+            if (cq.typ !== CMDQ_KEY) return -1;
+            const key = typeof cq.key === 'number' ? String.fromCharCode(cq.key) : cq.key;
+            const idx = spell_let_to_idx(key);
+            return (idx < 0 || idx >= nspells) ? -1 : idx;
+        }
+    }
     const chosen = { value: -1 };
     const { menu_style } = await import('./pickup.js');
     if (menu_style() === MENU_TRADITIONAL) {

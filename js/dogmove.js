@@ -18,7 +18,6 @@ import { See_invisible_hero } from './youprop.js';
 import { M_AP_FURNITURE, M_AP_MONSTER, M_AP_OBJECT, A_NONE, EPRI, EMIN, is_pool, is_lava, LARGEST_INT, OBJ_FLOOR } from './const.js';
 import { an, s_suffix } from './hacklib.js';
 import { rn2, rnd, getRngLog } from './rng.js';
-import { touch_artifact_monster } from './artifact.js';
 import { MTSZ, COLNO, ROWNO, IS_ROOM, MAGIC_PORTAL, isok,
     IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, ALTAR,
     POOL, MOAT, WATER, LAVAPOOL, LAVAWALL } from './const.js';
@@ -50,7 +49,7 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     is_animal, mindless, nohands, M1_TUNNEL, M1_NEEDPICK,
     passes_walls_flag, throws_rocks_flag, is_swimmer_flag,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
-import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn } from './mon.js';
+import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn, can_touch_safely } from './mon.js';
 import { on_qstart_level } from './questok.js';
 import { max_passive_dmg, resists_ston, resists_poison, resists_acid, slimeproof } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
@@ -1303,12 +1302,11 @@ export function can_carry(mtmp, obj) {
     const iquan = obj.quan || 1;
     // C ref: mon.c:2007 — notake(mdat) == (mflags1 & M1_NOTAKE).
     if ((mflags1_of(mtmp.data) & M1_NOTAKE) !== 0) return 0;
-    // C ref: mon.c:2010 can_touch_safely() — a monster without gloves won't
-    // pick up a cockatrice corpse it isn't stoning-proof against, nor (for a
-    // silver-hater) a silver item. Artifact permissions precede stack handling.
-    if (obj.otyp === CORPSE && flesh_petrifies_data(monster_by_pmidx(obj.corpsenm))
-        && !resists_ston(mtmp)) return 0;
-    if (!touch_artifact_monster(obj, mtmp)) return 0;
+    // C ref: mon.c:2010 can_touch_safely(): a cockatrice corpse without gloves
+    // or stoning resistance, a Rider corpse, a silver item for a silver-hater
+    // (except the Bell of Opening for a covetous monster), and artifact touch
+    // permission.  Precedes the stack handling below.
+    if (!can_touch_safely(mtmp, obj)) return 0;
     // C ref: mon.c:2020-2038 — a NOHANDS non-glomper takes exactly 1 of a stack,
     // BEFORE the steed/shk/load checks.
     if (iquan > 1) {

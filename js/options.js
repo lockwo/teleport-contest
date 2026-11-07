@@ -2393,15 +2393,24 @@ function optfn_scores(o, negated, opts, op, result) {
     op = string_for_opt(opts, false);
     if (op === '') return OPTN_ERR;
     if (negated) op = '';
+    /* 5.0: unspecified arguments are reset, not left at their old values */
+    const fl = result.flags;
+    fl.end_top = fl.end_around = 0, fl.end_own = false;
     let i = 0;
     while (i < op.length) {
         let neg = (op[i] === '!') || strncmpi_eq(op.slice(i), 'no', 2);
         if (neg) i += (op[i] === '!') ? 1 : (op[i + 2] !== '-') ? 2 : 3;
-        if (digit(op[i])) while (i < op.length && digit(op[i])) i++;
+        let inum = 1;
+        if (digit(op[i])) {
+            inum = parseInt(op.slice(i), 10);
+            while (i < op.length && digit(op[i])) i++;
+        }
         while (op[i] === ' ') i++;
         switch (lowc(op[i] || '\0')) {
-        case 't': case 'a': case 'o': case 'n':
-            break;
+        case 't': fl.end_top = neg ? 0 : inum; break;
+        case 'a': fl.end_around = neg ? 0 : inum; break;
+        case 'o': fl.end_own = !(neg || !inum); break;
+        case 'n': fl.end_top = fl.end_around = 0, fl.end_own = false; break;
         case '-':
             if (digit(op[i + 1])) {
                 config_error_add(`Values for ${o.name}:top and ${o.name}:around`
@@ -2417,8 +2426,18 @@ function optfn_scores(o, negated, opts, op, result) {
         while (op[i] === ' ') i++;
         if (op[i] === '/') i++;
     }
-    keep(o, op, result);
     return OPTN_OK;
+}
+
+// C ref: options.c optfn_scores() get_val.
+export function scores_val() {
+    const f = Object.assign({ end_top: 3, end_around: 2, end_own: false },
+                            game.flags);
+    let v = '';
+    if (f.end_top > 0) v += `${f.end_top} top`;
+    if (f.end_around > 0) v += `${f.end_top > 0 ? '/' : ''}${f.end_around} around`;
+    if (f.end_own) v += `${(f.end_top > 0 || f.end_around > 0) ? '/' : ''}own`;
+    return v || 'none';
 }
 
 // C ref: options.c optfn_scroll_amount()/optfn_scroll_margin()/

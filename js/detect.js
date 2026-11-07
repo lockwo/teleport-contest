@@ -617,6 +617,10 @@ export function glyph_at(x, y, remembered = false) {
        monster stands there (display.js show_bg_glyph records it in disp_hstatue). */
     if (!remembered && loc.disp_hstatue && !m_at(x, y))
         return { kind: 'monster', mon: null, x, y };
+    /* C ref: display.c glyph_at() is gbuf: a cell showing an object glyph is one
+       even when level.flags.hero_memory is off and nothing was remembered. */
+    if (!remembered && loc.disp_objotyp && sym !== ' ')
+        return { kind: 'object', obj: null, otyp: loc.disp_objotyp, x, y };
     const mon = remembered ? null : m_at(x, y);
     // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
     // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
@@ -1972,8 +1976,9 @@ async function show_map_spot_cnf(x, y, cnf) {
         await room_discovered(lev.roomno - ROOMOFFSET);
 }
 
-// C ref: detect.c:1589 cvt_sdoor_to_door(lev) — js/dokick.js:181 owns the same
-// port; repeated here because this module cannot import that file's private copy.
+// C ref: detect.c cvt_sdoor_to_door(lev) — the one port; apply.js, dig.js,
+// dokick.js, read.js and cmd.js import it (their private copies lacked the
+// Rogue-level D_NODOOR rule: "rogue didn't have doors, only doorways").
 export function cvt_sdoor_to_door(lev) {
     let newmask = (lev.doormask | 0) & ~(0x07 /* WM_MASK */);
     if (Is_rogue_level(game.u?.uz)) {
@@ -2253,7 +2258,7 @@ export async function use_crystal_ball(box) {
         if (game.flags?.verbose !== false)
             await pline('You may look for an object, monster, or special map symbol.');
         const { yn_function } = await import('./extcmd-handlers.js');
-        const ch = await yn_function('What do you look for?', null, '\0');
+        const ch = await yn_function('What do you look for?', null, '\0', true);
         /* Don't filter out ' ' here; it has a use */
         if (ch !== def_monsyms[S_GHOST].sym && ' \r\n\x1b'.includes(ch)) {
             if (game.flags?.verbose !== false) await pline('Never mind.');

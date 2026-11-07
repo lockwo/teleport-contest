@@ -361,13 +361,19 @@ async function expire_sickness() {
     const kptr = find_delayed_killer(C.SICK);
     if (!((u.usick_type | 0) & SICK_NONVOMITABLE)
         && rn2(100) < (await import('./attrib.js')).acurr_eff(A_CON)) {
-        await pline('You have recovered from your illness.');
-        u.uprops.Sick = 0;
+        // C ref: nh_timeout() already decremented the Sick intrinsic to 0, so a bot() flush triggered by
+        // this pline (disp.botl dirty, e.g. a level gain earlier in the turn) no longer shows FoodPois;
+        // with a clean botl the last published line stays up until make_sick() below sets it.
+        if (!game.botl && !game.disp?.botl) {
+            status_hold('sick', true);
+            status_hold('sicktype', u.usick_type | 0);
+        }
         u.sick = false;
-        u.usick_type = 0;
-        u.usick_cause = null;
-        game.botl = true;
-        dealloc_killer(kptr);
+        await pline('You have recovered from your illness.');
+        // C ref: timeout.c:698 make_sick(0, NULL, FALSE, SICK_ALL).  Sick is
+        // already 0 here (nh_timeout decremented it), so make_sick's cure arm
+        // (`old && ...`) does not run and u.usick_type keeps its stale bits.
+        await (await import('./potion.js')).make_sick(0, null, false, C.SICK_ALL);
         await exercise(A_CON, false);
         await (await import('./attrib.js')).adjattrib(A_CON, -1, 1);
         return;

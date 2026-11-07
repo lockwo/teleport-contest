@@ -204,6 +204,7 @@ export async function make_sick(xtime, cause, talk, type) {
         }
         game.botl = true;
     }
+    u.sick = HProp('Sick') > 0;   // mirror of the Sick intrinsic (C has no separate flag)
     const kptr = find_delayed_killer(SICK);
     if (HProp('Sick')) {
         await exercise(A_CON, false);
@@ -547,8 +548,14 @@ export async function potionhit_hero(obj, how) {
     default:
         break; // POT_SLEEPING and others: no direct isyou effect
     }
-    // distance == 0 for the hero -> always breathe the vapors (potion.c:1903).
-    await potionbreathe_hero(obj);
+    // C ref: potion.c:1906 — distance == 0 for the hero, but the vapors are
+    // only inhaled when `!breathless(youmonst.data) || haseyes(youmonst.data)`:
+    // a hero polymorphed into a breathless, eyeless form (green slime, vortex,
+    // golem...) skips potionbreathe() and only gets the naming opportunity.
+    if (!p_breathless(youmonst_data()) || p_haseyes(youmonst_data()))
+        await potionbreathe_hero(obj);
+    else if (obj.dknown && cansee_p(u.ux, u.uy))
+        await trycall(obj);
 }
 
 // C ref: potion.c potionbreathe(obj) — vapors inhaled by the hero.  Full switch:

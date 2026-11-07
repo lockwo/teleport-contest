@@ -1702,7 +1702,7 @@ export async function level_tele(readLevel, immediate = false) {
                     gotoRandom = true;
                 } else {
                     const { yn_function } = await import('./extcmd-handlers.js');
-                    const c = await yn_function('Go to Nowhere.  Are you sure?', 'ynq', 'q');
+                    const c = await yn_function('Go to Nowhere.  Are you sure?', 'ynq', 'q', true);
                     if (c !== 'y') return;
                     await go_to_nowhere();
                     return;

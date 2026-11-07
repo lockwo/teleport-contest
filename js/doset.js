@@ -24,7 +24,7 @@
 import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { vision_recalc } from './vision.js';
-import { update_topl, pline, topl_more, render_map_to_grid, docrt, reglyph_darkroom, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
+import { update_topl, pline, topl_more, render_map_to_grid, docrt, reglyph_darkroom, reglyph_remembered_terrain, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
 import { menu_ctx } from './windows.js';
@@ -35,9 +35,10 @@ import { color_attr_to_str } from './coloratt.js';
 import * as OPTS from './options.js';
 import { OPT_MENU_DRIVER, handler_number_pad,
          handler_autounlock, autounlock_val, handler_autopickup_exception,
-         handler_menu_colors, handler_statuslines, paranoid_confirmation_val } from './options.js';
+         handler_menu_colors, handler_statuslines, paranoid_confirmation_val, scores_val } from './options.js';
 import { count_status_hilites, count_cond } from './botl.js';
 import { mungspaces } from './hacklib.js';
+import { get_sortdisco } from './o_init.js';
 
 // C ref: dat/symbols "Handling:" lines per symset `start:` block — game.symset
 // (jsmain.js) stores only the selected symset NAME (no handling struct, unlike
@@ -96,6 +97,8 @@ async function runSymbolSetHandler(rogue = false) {
         || picks[0];
     if (rogue) game.roguesymset = pick?.item.value ?? name;
     else game.symset = pick?.item.value ?? name;
+    // C ref: symbols.c load_symset()/assign_graphics() -> reset_glyphmap(gm_symchange)
+    reglyph_remembered_terrain(rogue, name);
     await docrt();
 }
 
@@ -568,8 +571,11 @@ const OPT_VALUE = {
     runmode: () => flagStr('runmode', 'run'),
     // optfn_pickup_burden(): burdentype[flags.pickup_burden].
     pickup_burden: () => pickupBurdenStr(),
+    scores: scores_val,
     // optfn_sortloot(): sortltype[] entry whose first letter matches.
     sortloot: () => ({ n: 'none', l: 'loot', f: 'full' }[lowFirst(game.flags?.sortloot, 'l')] || 'loot'),
+    // optfn_sortdiscoveries() get_val: get_sortdisco() (o_init.c).
+    sortdiscoveries: () => get_sortdisco('', false),
     // optfn_statushilites() get_val.
     statushilites: () => {
         const d = game.iflags?.hilite_delta | 0;
@@ -1351,7 +1357,11 @@ async function dosetSimpleLoop() {
             // PICK_ONE boolean: parseoptions toggles it.  The simple menu emits
             // no top-line "toggled" message (give_opt_msg is FALSE) — the menu
             // simply re-renders with the new value.
+            const wasCustomColors = game.flags?.customcolors;
             toggleSimpleBool(it.name);
+            // C ref: options.c reset_needed_visuals() -> reset_customcolors()
+            if (it.name === 'customcolors')
+                reglyph_remembered_terrain(false, game.symset, wasCustomColors);
             // C ref: options.c doset_simple() — after each pick, if the toggled
             // option set go.opt_need_redraw (hilite_pet & other map-display
             // options), flush_screen(1) redraws the map.  Recompute the cell
@@ -1566,7 +1576,10 @@ async function dosetPass(skiphelp) {
                 continue;
             }
             const wasOff = !liveOptValue(e.name, e.body).on;
+            const wasCustomColors = game.flags?.customcolors;
             applyBooleanToggle(e.name, wasOff);
+            if (e.name === 'customcolors')
+                reglyph_remembered_terrain(false, game.symset, wasCustomColors);
             game._optStatusPainted = true;
             if (REDRAW_ON_TOGGLE.has(e.name)) game._optNeedRedraw = true;
             if (!game.flags.give_opt_msg_off)

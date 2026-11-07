@@ -8,6 +8,7 @@
 // occupation (dig_check / dighole) is a separate unported subsystem.
 
 import { game, hooks } from './gstate.js';
+import { cvt_sdoor_to_door } from './detect.js';
 import { Invis_hero, Fumbling_hero, Deaf_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { rnd, rn2, rn1 } from './rng.js';
 import { align_str } from './role.js';
@@ -222,19 +223,6 @@ export async function still_chewing(x, y) {
     }
     zero_digging();
     return false;
-}
-
-// C ref: detect.c cvt_sdoor_to_door(lev) — a secret door, once exposed, becomes
-// an ordinary (closed) door.  WM_MASK (rm.h) is the low wall-mode bits stored in
-// doormask for an SDOOR; strip them, then mark the newly revealed door closed
-// unless it was locked.
-const WM_MASK = 0x07;
-function cvt_sdoor_to_door(lev) {
-    let newmask = lev.doormask & ~WM_MASK;
-    if (!(newmask & D_LOCKED))
-        newmask |= D_CLOSED;
-    lev.typ = DOOR;
-    lev.doormask = newmask;
 }
 
 // C ref: mkobj.c sobj_at(BOULDER, x, y) — is a boulder lying on the floor here?

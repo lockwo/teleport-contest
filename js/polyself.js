@@ -25,7 +25,7 @@ const pline = update_topl;
 import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
 import { encumber_msg, freeinv, dropx, xname, near_capacity,
-    youmonst_data_pub, makeknown, simple_typename, worn_extrinsic, WA_ARMF } from './invent.js';
+    youmonst_data_pub, makeknown, simple_typename, worn_extrinsic, WA_ARMF, poly_gender } from './invent.js';
 import { makeplural } from './plural.js';
 import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
@@ -1234,6 +1234,7 @@ export async function newman() {
     hold_botl_xl();
     u.ulevel = newlvl;
 
+    const oldgend = poly_gender();
     // C ref: polyself.c newman() — `if (gs.sex_change_ok && !rn2(10))`.
     if (game.sex_change_ok && !rn2(10))
         change_sex();
@@ -1293,6 +1294,16 @@ export async function newman() {
     // form's, because polyman() below is about to restore it.
     const newform = urace_newform(u.Upolyd ? !!u.mfemale : !!game.flags.female);
     await polyman('You feel like a new %s!', newform);
+
+    const newgend = poly_gender();
+    /* C ref: polyself.c:446-452 — newman() bypasses achievements for new
+       ranks attained and doesn't log "new <form>" when that isn't
+       accompanied by a level change. */
+    if (newlvl !== oldlvl)
+        livelog_printf(LL_MINORAC,
+                       `became experience level ${newlvl} as a new ${newform}`);
+    else
+        livelog_newform(true, oldgend, newgend);
 
     if (Slimed_u()) {
         await pline('Your body transforms, but there is still slime on you.');
@@ -2675,7 +2686,7 @@ export async function domonability() {
     // the command parser executes it as a command.
     if (might_hide && webmaker(mdat)) {
         const { yn_function } = await import('./extcmd-handlers.js');
-        c = await yn_function('Hide [h] or spin a web [s]?', 'hsq', 'q');
+        c = await yn_function('Hide [h] or spin a web [s]?', 'hsq', 'q', true);
         if (c === 'q' || c === '\x1b')
             return ECMD_OK;
     }

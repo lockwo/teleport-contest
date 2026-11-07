@@ -1,3 +1,4 @@
+import { tty_putstr_text } from './pager.js';
 import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying_hero,
          Levitation_hero, Swimming_hero, Wwalking_hero, Fumbling_hero, Hunger_hero,
          Wounded_legs_hero, Passes_walls_hero, Unchanging_hero, Polymorph_control_hero,
@@ -274,7 +275,9 @@ function from_what(propidx, hkey) {
             } else if (!src && hkey && H_prop(propidx) && H_prop(propidx) !== FROMFORM
                        /* FROMRACE alone (polysense()'s HWarn_of_mon) is not FROMOUTSIDE */
                        && !((H_prop(propidx) & FROMRACE) && !(H_prop(propidx) & FROMOUTSIDE))
-                       && !temp_resist(propidx) /* timed only: no FROMOUTSIDE bit */
+                       && !(temp_resist(propidx) || (F_prop(propidx) && !E_prop(propidx)
+                            && ((H_prop(propidx) | 0) & TIMEOUT_MASK)
+                            && !((H_prop(propidx) | 0) & ~TIMEOUT_MASK))) /* timed only (form-protected too): no FROMOUTSIDE bit */
                        /* timed-only See_invisible has no FROMOUTSIDE bit */
                        && !(propidx === SEE_INVIS && !((H_prop(propidx) | 0) & FROMOUTSIDE))
                        /* HInvis keeps its timeout and FROMOUTSIDE bit in one word */
@@ -904,23 +907,13 @@ function putstr(win, attr, s) {
     if (!win) { insight_dumplog.push({ text: s, attr }); return; }
     const w = _wins.get(win);
     if (!w) return;
-    /* C ref: wintty.c tty_putstr() NHW_MENU/NHW_TEXT arm — the line is stored,
-       then a line of CO or more characters (strlen + 1 > CO) is cut after the
-       last space at or before column CO - 1; the space itself is dropped and
-       the rest becomes a new line. */
-    const CO = game.nhDisplay?.cols || 80;
-    let text = s;
-    let rest = null;
-    if (typeof s === 'string' && s.length + 1 > CO) {
-        let i = CO - 1;
-        while (i && s[i] !== ' ' && s[i] !== '\n') i--;
-        /* The recorded C screens show the broken first part WITHOUT the line's
-           leading space (" Your items ..." appears as "Your items ..." at col 0)
-           while the continuation also starts at col 0. */
-        if (i) { text = s.slice(0, i).replace(/^ /, ''); rest = s.slice(i + 1); }
-    }
-    w.lines.push({ text, attr });
-    if (rest !== null) putstr(win, attr, rest);
+    /* C ref: wintty.c tty_putstr() NHW_MENU/NHW_TEXT arm: compress_str() (a line
+       of CO or more characters loses its leading spaces), then a line with
+       strlen + 1 > CO is cut after the last space at or before column CO - 1,
+       the space dropped and the rest becomes a new line. */
+    const out = [];
+    tty_putstr_text(out, { text: s, attr });
+    for (const l of out) w.lines.push(l);
 }
 // C ref: display_nhwindow(win, TRUE) on an NHW_MENU filled only by putstr():
 // tty routes it through process_text_window() ("--More--"); a dump window
@@ -3574,12 +3567,12 @@ const ATR_INVERSE = 7;   // wintype.h
 function menu_headings_attr() {
     return game.iflags?.menu_headings?.attr ?? ATR_INVERSE;
 }
-// C ref: windows.c yn_function(query, resp, def, restorecursor).
+// C ref: windows.c/cmd.c yn_function(query, resp, def, addcmdq).
 // js/extcmd-handlers.js owns the port's copy; imported lazily because that
 // module statically imports insight.js (a cycle if taken at the top).
-async function yn_function(query, resp, def, _restorecursor) {
+async function yn_function(query, resp, def, addcmdq) {
     const { yn_function: ynf } = await import('./extcmd-handlers.js');
-    return ynf(query, resp, def);
+    return ynf(query, resp, def, addcmdq);
 }
 
 // ── insight.c:2969 num_extinct() ───────────────────────────────────────────

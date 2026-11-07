@@ -843,6 +843,11 @@ export async function mcast_insects(mtmp) {
         if (!bypos) return;
         if ((pm = M.mkclass(let_, 0)) != null
             && (mtmp2 = await M.makemon(pm, bypos.x, bypos.y, MM_ANGRY | MM_NOMSG)) != null) {
+            /* C ref: makemon.c:1503 `if (go.occupation) dochugw(mtmp, FALSE)` runs
+               inside makemon(), before the flag resets below, so a newly seen
+               hostile interrupts an occupation ("You stop eating.") before the
+               caster's "someone summoning ..." line is printed. */
+            await M.makemon_appears_msg(mtmp2, mtmp2.mx, mtmp2.my, MM_ANGRY | MM_NOMSG);
             success = true;
             mtmp2.msleeping = 0; mtmp2.mpeaceful = 0; mtmp2.mtame = 0;
             M.set_malign(mtmp2);

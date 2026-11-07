@@ -16,7 +16,7 @@ import {
 import { dunlevs_in_dungeon } from '../dungeon.js';
 import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
-import { TIN, bless, mksobj_at } from '../mkobj.js';
+import { TIN, bless, mksobj_at, weight } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     bigrm_load_map, bigrm_wallification, flip_level, get_location,
@@ -130,7 +130,7 @@ export async function makemaz_mon_loca() {
             // spe=1 directly (that IS a spinach tin); mksobj_at's own `artif`
             // flag is inert for FOOD_CLASS, so the plain call is faithful.
             const tin = mksobj_at(TIN, tinloc.x, tinloc.y, true, true);
-            if (tin) { tin.spe = 1; tin.quan = 2; bless(tin); }
+            if (tin) { tin.spe = 1; tin.quan = 2; tin.owt = weight(tin); bless(tin); } // sp_lev.c:2298-2300
             // des.engraving({ coord=tinloc, type="burn", text="Elbereth" }) —
             // explicit coord: no RNG.
             des_engraving_at(tinloc.x, tinloc.y, 'Elbereth', 'Elbereth', BURN);

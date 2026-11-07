@@ -3,7 +3,7 @@
 
 import { game } from '../gstate.js';
 import { M_AP_FURNITURE } from '../const.js';
-import { CHEST } from '../mkobj.js';
+import { CHEST, weight } from '../mkobj.js';
 import {
     bigrm_load_map, quest_create_monster, quest_create_monster_at,
     quest_create_object, quest_drop_default_invent, quest_end_moninvent, quest_floodfill_match,
@@ -109,7 +109,7 @@ export async function makemaz_rog_strt() {
         // while the table is being read — i.e. before the object is created.
         const daggerquan = quest_lua_random(1, 4) + quest_lua_random(1, 4);
         const daggers = quest_create_object(34 /*DAGGER*/, null, null, 2, master);
-        if (daggers) { daggers.quan = daggerquan; daggers.cursed = 0; }
+        if (daggers) { daggers.quan = daggerquan; daggers.owt = weight(daggers); daggers.cursed = 0; } // sp_lev.c:2298-2300
         quest_end_moninvent(master);
         quest_create_object(CHEST, 36, 11, null, null);
         const thugs = [[28, 10], [29, 11], [30, 9], [31, 7],

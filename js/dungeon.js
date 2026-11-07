@@ -1647,14 +1647,19 @@ export async function build_overview_lines(final = 0, how = 0) {
         const egInterest = inEndgame && In_endgame({ dnum: p.dnum, dlevel: p.dlevel });
         // C ref: dungeon.c:2886-2892 interest_mapseen() — in the tutorial list only
         // tutorial levels; outside it never list tutorial levels.
+        let tutInterest = false;
         if (!final && !onHere) {
             /* C ref: interest_mapseen() — `mptr->flags.notreachable ||
                mptr->flags.forgot` ends the question right after on_level() */
             if (cms?.flags?.notreachable || cms?.flags?.forgot) continue;
             if (In_tutorial(game.u?.uz) ? !In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })
                 : In_tutorial({ dnum: p.dnum, dlevel: p.dlevel })) continue;
+            /* C ref: interest_mapseen() — `if (In_tutorial(&u.uz)) return
+               In_tutorial(&mptr->lev);`: inside the tutorial every visited
+               tutorial level is listed, interesting or not. */
+            tutInterest = In_tutorial(game.u?.uz);
         }
-        if (!final && !egInterest && !onHere && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest
+        if (!final && !egInterest && !onHere && !tutInterest && !ofInterest && !annotated && !custom && !ms?.br && !isDeepest
             && !soko_interest) continue;
         const showheader = p.dnum !== lastdun;
         // C: the quest and Fort Ludios levels are numbered as if level 1.

@@ -1436,7 +1436,10 @@ async function movemon_pass() {
         // if hero is flagged to leave the level" (a quest leader's expulsion,
         // a monster-caused level change): somebody_can_move = FALSE and
         // iter_mons_safe() stops.  movemon() then runs deferred_goto().
-        if (game.u?.utotype) { game._somebody_can_move = false; break; }
+        // game._lvltport_dest is this port's pending-goto slot for trap.c
+        // fall_through() / teleport.c level_tele() (a monster's expels() can
+        // drop the hero through a hole at the expulsion square).
+        if (game.u?.utotype || game._lvltport_dest) { game._somebody_can_move = false; break; }
         await movemon_singlemon(mtmp);
     }
     return !!game._somebody_can_move;
@@ -1465,9 +1468,15 @@ export async function movemon() {
        temporary corridor out of vault hasn't been removed yet */
     await dmonsfree();
     /* a monster may have levteleported player -dlc */
-    if (game.u?.utotype) {
-        const { deferred_goto } = await import('./do.js');
-        await deferred_goto();
+    if (game.u?.utotype || game._lvltport_dest) {
+        if (game._lvltport_dest) {
+            const { run_deferred_lvltport } = await import('./do.js');
+            await run_deferred_lvltport();
+        }
+        if (game.u?.utotype) {
+            const { deferred_goto } = await import('./do.js');
+            await deferred_goto();
+        }
         /* changed levels, so these monsters are dormant */
         somebody_can_move = false;
     }

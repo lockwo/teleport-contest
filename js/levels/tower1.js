@@ -8,7 +8,7 @@ import { game } from '../gstate.js';
 import { makemon, mkclass, mm_mon_at, monster_by_pmidx, newcham_vamp
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
-import { CHEST, TALLOW_CANDLE, WAX_CANDLE, mksobj, mksobj_at, add_to_container, container_weight } from '../mkobj.js';
+import { CHEST, TALLOW_CANDLE, WAX_CANDLE, mksobj, mksobj_at, add_to_container, container_weight, weight } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
     S_VAMPIRE_CLASS, bigrm_get_location_dry, flip_level, q_absx, q_absy, quest_create_monster,
@@ -108,7 +108,7 @@ function tower_content_chest(mx, my, candleType) {
     const qty = 4 + rn2(5);                              // math.random(4,8)
     bigrm_get_location_dry();                            // get_location DRY
     const candle = mksobj(candleType, true, false);      // next_ident + init
-    if (candle) candle.quan = qty;
+    if (candle) { candle.quan = qty; candle.owt = weight(candle); } // sp_lev.c:2298-2300
     // add to container (no RNG); keep off the floor.  add_to_container() links
     // where/ocontainer, which obj_extract_self() needs to pull the candle back out.
     if (chest && candle) { add_to_container(chest, candle); container_weight(chest); }

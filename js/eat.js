@@ -796,7 +796,7 @@ export async function paranoid_ynq(be_paranoid, prompt, accept_q) {
         // ESC (WIN_STOP), in which case the query simply replaces it.
         game._yn_need_more = (game._toplin === 1 || game._yn_need_more) && !game._winStop;
         game._winStop = false;
-        c = await y_n(prompt, accept_q ? 'ynq\x1b' : 'yn\x1b', 'n');
+        c = await y_n(prompt, accept_q ? 'ynq\x1b' : 'yn\x1b', 'n', false); /* C: yn_function(.., FALSE) */
     }
     if (c !== 'y' && (c !== 'q' || !accept_q)) c = 'n';
     return c;
@@ -2774,7 +2774,9 @@ export function temp_resist(prop) {
     const key = PROP_KEY[prop] || '';
     const ekey = key.startsWith('H') ? `E${key.slice(1)}` : `E${key}`;
     const extrinsic = key ? ((game.u?.uprops?.[ekey]) | 0) : 0;
-    if (timeout && (raw & ~P_TIMEOUT) === 0 && !extrinsic)
+    // FROMFORM lives in u.formprops here (polyself.js), not in the H* word.
+    const fromform = key ? !!game.u?.formprops?.[key.slice(1)] : false;
+    if (timeout && (raw & ~P_TIMEOUT) === 0 && !extrinsic && !fromform)
         return timeout;
     return 0;
 }

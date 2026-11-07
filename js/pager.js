@@ -22,7 +22,7 @@ import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch } from './input.js';
 import { worm_known } from './worm.js';
-import { displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remember_topl, yn_prompt_history, displayed_doormask, symOverrideChar } from './display.js';
+import { displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -305,33 +305,34 @@ export async function dowhatdoes() {
     // solely on "did THIS call just print the once-only banner" (the old
     // `needMore` local) missed any OTHER message still pending from earlier in
     // the same turn when '/' is pressed after the banner has already fired once.
-    const cur = game._pending_message || '';
-    const softPending = !!cur && game._toplinSoft === cur;
-    if (game._toplin === 1 || softPending) await topl_more();
-    const full = 'What command? ';
-    remember_topl();
-    game._pending_message = full;
-    game._toplines = full;
-    await flush_screen(1);
-    const d = disp();
-    game._modal_screen = 'topl';
-    if (d?.setCursor) d.setCursor(Math.min(full.length, COLS - 1), 0);
-    let q = await nhgetch();
-    delete game._modal_screen;
-    yn_prompt_history(full, key2txt(q));
+    // C ref: cmd.c yn_function(addcmdq=TRUE) -- both pager.c dowhatdoes() prompts
+    // ("What command?" and the ALTMETA "]") take a queued key (CQ_REPEAT during
+    // ^A, else CQ_CANNED) before drawing anything, and save a typed answer on
+    // CQ_REPEAT.
+    const readkey = async (full) => {
+        const queued = await yn_cmdq_answer(null, '\0');
+        if (queued !== null) return queued.charCodeAt(0);
+        const cur = game._pending_message || '';
+        const softPending = !!cur && game._toplinSoft === cur;
+        if (game._toplin === 1 || softPending) await topl_more();
+        remember_topl();
+        game._pending_message = full;
+        game._toplines = full;
+        await flush_screen(1);
+        const d = disp();
+        game._modal_screen = 'topl';
+        if (d?.setCursor) d.setCursor(Math.min(full.length, COLS - 1), 0);
+        const k = await nhgetch();
+        delete game._modal_screen;
+        yn_prompt_history(full, key2txt(k));
+        await yn_cmdq_save(String.fromCharCode(k));
+        return k;
+    };
+    let q = await readkey('What command? ');
     // C ref: pager.c dowhatdoes() ALTMETA arm — a typed ESC is read again
     // through yn_function("]"); anything but a second ESC becomes M-<key>.
     if (q === 27 && game.iflags?.altmeta) {
-        const full2 = ']';
-        remember_topl();
-        game._pending_message = full2;
-        game._toplines = full2;
-        await flush_screen(1);
-        if (d?.setCursor) d.setCursor(Math.min(full2.length, COLS - 1), 0);
-        game._modal_screen = 'topl';
-        q = await nhgetch();
-        delete game._modal_screen;
-        yn_prompt_history(full2, key2txt(q));
+        q = await readkey(']');
         if (q !== 27) q |= 0x80;
     }
 
@@ -1066,6 +1067,8 @@ function showsym(idx, fallback) {
     // codes; no plain map character can equal them.
     if (idx >= SYM_OFF_P && idx < SYM_OFF_P + MAXPCHARS) {
         const c = idx - SYM_OFF_P;
+        const hb = symsetHighByte(LOADSYMS_PCHAR_NAMES[c]);
+        if (hb != null) return String.fromCharCode(hb);
         if (useDECgraphics('S_pool') && DEC_REMAPPED.has(c))
             return DEC_META[LOADSYMS_PCHAR_NAMES[c]] != null
                 ? String.fromCharCode(DEC_META[LOADSYMS_PCHAR_NAMES[c]]) : '\u0001';
@@ -1114,7 +1117,8 @@ export function pg_glyph_at(x, y) {
         return { kind: 'monster', mon, sym, x, y };
     /* while hallucinating, the glyph drawn for a seen monster is a random one
        whose symbol need not be the monster's own class letter */
-    if (mon && Hallucination_u() && canseemon_shared(mon))
+    if (mon && Hallucination_u() && canseemon_shared(mon)
+        && (pg_M_AP_TYPE(mon) === 0 || pg_M_AP_TYPE(mon) === M_AP_MONSTER))
         return { kind: 'monster', mon, sym, x, y };
     if (mon && mon.mappearance != null && pg_M_AP_TYPE(mon) === M_AP_OBJECT) {
         const { otyp, glyph: og } = mimic_object_glyph(mon);
@@ -1137,6 +1141,15 @@ export function pg_glyph_at(x, y) {
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
+        // C ref: pager.c lookat() glyph_at() is the REMEMBERED object glyph; when
+        // it names another object type than the one lying here now (a pile an
+        // unseen monster changed), object_from_map() finds no matching sobj_at()
+        // and mksobj()s a stand-in of the glyph's type.
+        const orem = loc.remembered_glyph;
+        if (og && og.ch === sym && !Hallucination_u() && orem?.objotyp
+            && orem.ch === sym && orem.objotyp !== otmp.otyp)
+            return { kind: 'object', obj: null, otyp: remembered_glyph_otyp(orem),
+                     corpsenm: orem.corpsenm, sym, x, y };
         if (og && og.ch === sym)
             // C ref: display.h generic_obj_to_glyph() — an undescribed potion/
             // gem/spellbook is drawn as its class's generic object, whose otyp
@@ -1170,7 +1183,7 @@ export function pg_glyph_at(x, y) {
     if (remembered?.cmap != null && remembered.ch === sym)
         return { kind: 'cmap', sym, cmap: remembered.cmap, dec: !!remembered.decgfx, x, y };
     // The remembered glyph is a wall even if the terrain was since dug out.
-    if (remembered?.wall && remembered.ch === sym)
+    if (remembered?.wall && remembered.ch === sym && !(IS_WALL(loc.typ) || loc.typ === SDOOR))
         return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
 }
@@ -1180,7 +1193,15 @@ export function pg_glyph_at(x, y) {
 // graphics shift at putmixed() time; a recalled copy (^P) shows it as a blank.
 export function glyph_prefix_is_symset_meta(x, y) {
     const g = pg_glyph_at(x, y);
-    return g.kind === 'cmap' && (!!g.dec || cmap_symset_remapped(g.cmap));
+    /* A meta-bit symset (IBMGraphics) gives the glyph a ttychar >= 0x80 as well. */
+    return g.kind === 'cmap' && (!!g.dec || cmap_symset_remapped(g.cmap)
+        || symsetHighByte(LOADSYMS_PCHAR_NAMES[g.cmap]) != null);
+}
+// What a recalled (^P) copy of that prefix shows: the raw ttychar byte of a meta-bit
+// symset is not valid UTF-8 (U+FFFD), a DECgraphics high-bit code shows blank.
+export function glyph_prefix_cell(x, y) {
+    const g = pg_glyph_at(x, y);
+    return g.kind === 'cmap' && symsetHighByte(LOADSYMS_PCHAR_NAMES[g.cmap]) != null ? '\ufffd' : ' ';
 }
 // C ref: display.c show_glyph() `a11y.glyph_updates` (mention_map) arm: a spot
 // that was GLYPH_NOTHING/UNEXPLORED (or whose new glyph is furniture), and is not
@@ -1229,7 +1250,10 @@ function cmap_index_for(loc, x, y) {
     const t = loc.typ;
     if (t === STONE || t === SCORR) return S_stone;
     if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
-    if (IS_WALL(t) || t === SDOOR) return 1;        /* S_vwall; "wall" */
+    /* C ref: display.c back_to_glyph() `idx = ptr->seenv ? wall_angle(ptr) : S_stone`:
+       the glyph is the specific wall cmap (corner, tee, ...), whose symset byte differs
+       per entry even though every one explains as "wall". */
+    if (IS_WALL(t) || t === SDOOR) return (loc.seenv && wall_angle(loc)) || 1;
     if (t === DOOR) {
         const dm = displayed_doormask(loc);
         if (dm & (D_CLOSED | D_LOCKED)) return 15;  /* S_vcdoor */
@@ -1973,6 +1997,13 @@ export function do_screen_description(cc, looked, sym, out_str, firstmatch,
            displayed char alone no longer says which cmap it is. */
         if (glyph.kind === 'cmap' && useDECgraphics('S_pool') && DEC_BARE_CELLS.get(glyph.cmap) === sym)
             sym = showsym(SYM_OFF_P + glyph.cmap, sym);
+        /* C: ttychar is the symset's real byte; the screen char is that byte with
+           the meta bit stripped (IBMGraphics S_vodoor 0xFE is shown as '~'), which
+           would wrongly also match monster/object classes using that letter. */
+        if (glyph.kind === 'cmap') {
+            const hb = symsetHighByte(LOADSYMS_PCHAR_NAMES[glyph.cmap]);
+            if (hb != null && sym === String.fromCharCode(hb & 0x7f)) sym = String.fromCharCode(hb);
+        }
         prefix = `${encglyph(glyph)}        `;
     } else {
         prefix = `${sym}        `;

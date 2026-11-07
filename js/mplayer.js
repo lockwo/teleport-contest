@@ -524,7 +524,7 @@ export async function mplayer_talk(mtmp) {
     const { pline } = await import('./display.js');
     /* C ref: pline.c:476 verbalize() — the text is quoted and gets
        PLINE_VERBALIZE. */
-    await pline(`Talk? -- "${line}"`);
+    await pline(`"Talk? -- ${line}"`);
 }
 
 // C ref: rm.h MON_AT(x,y) — the m_at() grid slot (display.js).

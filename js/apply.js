@@ -24,6 +24,7 @@
 import { makeplural } from './plural.js';
 import { Levitation_hero, Fumbling_hero, Passes_walls_hero, Wounded_legs_hero, Deaf_hero, Stunned_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
 import { game } from './gstate.js';
+import { cvt_sdoor_to_door } from './detect.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
 import { CQ_CANNED, CMDQ_KEY, CMDQ_EXTCMD, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
@@ -377,18 +378,6 @@ async function use_stethoscope(obj) {
     if (!await its_dead(rx, ry, res))
         await update_topl('You hear nothing special.');
     return res.v;
-}
-
-// C ref: detect.c cvt_sdoor_to_door(lev) — an exposed secret door becomes an
-// ordinary closed (or still-locked) door.  WM_MASK is the low wall-mode bits an
-// SDOOR keeps in doormask.  js/dig.js and js/read.js each keep their own copy
-// of this same six-line C function.
-const WM_MASK = 0x07;
-function cvt_sdoor_to_door(lev) {
-    let newmask = (lev.doormask || 0) & ~WM_MASK;
-    if (!(newmask & D_LOCKED)) newmask |= D_CLOSED;
-    lev.typ = DOOR;
-    lev.doormask = newmask;
 }
 
 // C ref: display.c unmap_invisible(x, y) — clear a remembered "sensed but
@@ -1591,14 +1580,17 @@ function calc_pole_range() {
     return { min_range, max_range };
 }
 
-// C ref: display.h glyph_is_poleable(G) — a displayed monster, a remembered
+// C ref: display.h glyph_is_poleable(G) -- a displayed monster, a remembered
 // "sensed but unseen monster" mark, or a statue.  This port keeps no glyph
-// array, so the same three cases are read off the level state.
+// array, so the same three cases are read off the level state.  A disguised
+// mimic is a monster the hero spots but its glyph is the object/furniture it
+// poses as: glyph_is_monster() is false there, which is what loc.disp_monster
+// records (display.js display_monster()).
 function poleable_at(x, y) {
     const loc = game.level?.at(x, y);
     if (loc?.invisMon) return true;
     const mtmp = _display.m_at(x, y);
-    if (mtmp && _uhitm.canspotmon(mtmp)) return true;
+    if (mtmp && _uhitm.canspotmon(mtmp) && loc?.disp_monster) return true;
     return statue_at(x, y);
 }
 
@@ -1637,7 +1629,7 @@ function find_poleable_mon(pos, min_range, max_range) {
         for (let y = lo_y; y <= hi_y; ++y) {
             if (!valid_polearm_position(x, y, min_range, max_range)) continue;
             const mtmp = _display.m_at(x, y);
-            if (!impaired && mtmp && _uhitm.canspotmon(mtmp)
+            if (!impaired && mtmp && _uhitm.canspotmon(mtmp) && game.level?.at(x, y)?.disp_monster
                 && (mtmp.mtame || (mtmp.mpeaceful && game.flags?.confirm !== false)))
                 continue;
             const isStatue = statue_at(x, y);
@@ -3806,7 +3798,8 @@ export async function use_tinning_kit(obj) {
     const mptr = A.makemon.monster_by_pmidx(corpse.corpsenm);
     if (A.invent.touch_petrifies(corpse.corpsenm)
         && !Stone_resistance_hero() && !game.uarmg) {
-        const corpse_name = ap_an(A.invent.xname(corpse));
+        const { cxname } = await import('./objnam.js');
+        const corpse_name = ap_an(cxname(corpse));
         let kbuf = '';
         if (ap_poly_when_stoned(A.invent.youmonst_data())) {
             await A.display.pline(`You tin ${corpse_name} without wearing gloves.`);

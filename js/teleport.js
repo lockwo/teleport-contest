@@ -45,6 +45,7 @@ import { inhishop, costly_spot, find_objowner, onshopbill, stolen_value, make_an
 import { search_special, somexyspace } from './mkroom.js';
 import { inhistemple } from './priest.js';
 import { sengr_at } from './engrave.js';
+import { monster_by_pmidx } from './makemon.js';
 
 // C ref: include/hack.h — rloc() flags.  (js/const.js carries an older copy of
 // these names with different values; the ones here are this C build's.)
@@ -664,8 +665,10 @@ export function enexto_core(xx, yy, mdat, entflags) {
     const allow_xx_yy = (entflags & GP_ALLOW_XY) !== 0;
 
     if (!mdat) {
-        /* default to player's original monster type */
-        mdat = youmonster_data_();
+        /* C ref: teleport.c enexto_core() `mdat = &mons[u.umonster]`: the
+           player's original monster type, NOT the
+           polymorphed form (a flying/swimming dragon would accept water squares) */
+        mdat = monster_by_pmidx(game.u?.umonster) || youmonster_data_();
     }
     /* cg.zeromonst + set_mon_data(&fakemon, mdat): a zeroed monst carrying only
        mdat, so goodpos()'s m_id is 0 and it uses goodpos_onscary(). */

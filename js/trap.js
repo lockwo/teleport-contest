@@ -910,6 +910,7 @@ const CONTAINED_TOO = 0x1; // zap.c get_obj_location() locflags bit (js/light.js
 export async function water_damage_chain(list, here) {
     if (!list) return;
     const chain = Array.isArray(list) ? [...list] : [list];
+    if (!chain.length) return;
     // C ref: trap.c:4866-4886 — ga.acid_ctx brackets the loop so
     // pot_acid_damage()'s "A/Some" vs "Another/More" wording varies across a
     // batch of potions damaged together in the same call (a flooded chest, a
