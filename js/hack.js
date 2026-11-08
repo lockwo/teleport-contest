@@ -543,6 +543,12 @@ async function takeTurn() {
         await deferred_goto();
     }
     await moveloop_turn();
+    // C ref: allmain.c moveloop_core():513 — `u.umoved = FALSE;` follows every
+    // iteration's turn processing.  moveloop_core()'s own reset (allmain.js)
+    // is skipped when an inline run/travel turn hands a helpless hero back
+    // (sleeping-gas trap mid-run): the next turn then read a stale TRUE and
+    // rolled the riding hero's mcalcmove(usteed) extra rn2(NORMAL_SPEED).
+    if (game.u) game.u.umoved = false;
 }
 
 // Drive an entire run/travel.  `run` is the C svc.context.run value (1 = run
@@ -1663,6 +1669,8 @@ export function self_lookat() {
         if (u.usteed) bufP += `, mounted on ${y_monnam(u.usteed)}`;
         bufP += self_region_suffix(u);
         if (u.uball) bufP += `, chained to ${ansimpleoname(u.uball)}`;
+        /* C ref: pager.c:130 `if (u.utrap) ", <trap_predicament>"` */
+        if (u.utrap) bufP += `, ${trap_predicament(null, false, false)}`;
         return bufP;
     }
     const rolemnum = game.urole?.mnum;
@@ -4420,8 +4428,8 @@ async function do_look_traps(nearby) {
             const loc = game.level?.at(x, y);
             const tg = trap_glyph(t);
             // The displayed symbol; the hero (not stored in the map memory) is
-            // drawn as '@'.
-            const cover = (x === u.ux && y === u.uy && canspotself()) ? '@'
+            // drawn as '@' or the polyform's class letter.
+            const cover = (x === u.ux && y === u.uy && canspotself()) ? hero_glyph().ch
                 : (loc && loc.disp_ch)
                     ? (loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch)
                     : ' ';

@@ -26,7 +26,7 @@ import { monster_by_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
          impossible, stairway_at, display_nhwindow_message, Hallucination_u,
-         note_topl, putmsghistory } from './display.js';
+         note_topl, putmsghistory, reglyph_remembered_darkroom } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello } from './role.js';
@@ -526,6 +526,13 @@ export async function dorestore() {
        early in the game"); released by resume_preamble_tail(). */
     game.defer_see_monsters = true;
     init_vision_globals();
+    /* C ref: restore.c restgamestate() — "Set up the vision internals, after
+       levl[] data is loaded but before docrt()": reglyph_darkroom() re-derives
+       every remembered square for the RESTORING process's dark_room and symset
+       (a lit_corridor S_litcorr memory that is not in sight re-darkens to S_corr
+       under dark_room).  The fresh process's viz_array is all zero, so cansee()
+       is false everywhere. */
+    reglyph_remembered_darkroom();
     vision_reset();
     /* C ref: restore.c dorecover() — vision_reset() (which sets
        vision_full_recalc = 1) and NO vision_recalc(): the first recompute is

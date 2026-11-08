@@ -3250,7 +3250,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         if (!T.noteleport_level(mtmp) && await T.teleport_pet(mtmp, false)) {
             const monname = Monnam(mtmp);   /* pre-movement visibility (teleport.c:1973) */
             if (trap.once) {
-                await mvault_tele_mm(mtmp, T);
+                await T.mvault_tele(mtmp);
             } else if (trap.teledest && isok(trap.teledest.x, trap.teledest.y)) {
                 // A monster teleporting onto an occupied square just doesn't move.
                 if (!(m_at(trap.teledest.x, trap.teledest.y)
@@ -3446,22 +3446,6 @@ function is_home_elemental_mm(mtmp) {
     if (Is_airlevel()) return n === 'air elemental';
     if (Is_waterlevel()) return n === 'water elemental';
     return false;
-}
-
-// C ref: teleport.c mvault_tele():1943 — the vault teleporter drops the
-// monster inside the vault when one exists, else falls back to rloc().
-async function mvault_tele_mm(mtmp, T) {
-    const VAULT = 4;
-    const croom = (game.level?.rooms || []).find(r => r.rtype === VAULT);
-    if (croom) {
-        const c = { x: 0, y: 0 };
-        const { somexy } = await import('./mkroom.js');
-        if (somexy(croom, c) && T.goodpos(c.x, c.y, mtmp, 0)) {
-            await T.rloc_to(mtmp, c.x, c.y);
-            return;
-        }
-    }
-    await T.rloc(mtmp, T.RLOC_NONE);
 }
 
 // C ref: trap.c m_easy_escape_pit(mtmp) — a pit fiend or anything MZ_HUGE or
