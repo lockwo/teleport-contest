@@ -204,7 +204,7 @@ let _hornPmidx = null;
 function num_horns(ptr) {
     if (!_hornPmidx) {
         _hornPmidx = new Map();
-        for (const n of ['horned devil', 'minotaur', 'Asmodeus', 'Balrog'])
+        for (const n of ['horned devil', 'minotaur', 'Asmodeus', 'balrog'])
             _hornPmidx.set(name_to_pmidx(n), 2);
         for (const n of ['white unicorn', 'gray unicorn', 'black unicorn', 'ki-rin'])
             _hornPmidx.set(name_to_pmidx(n), 1);

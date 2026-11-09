@@ -1161,12 +1161,13 @@ export function worn_blocked(prop) { return uprops_bits('uprops_blocked', prop);
 // C ref: youprop.h E<Prop> as an lvalue (do_wear.c Cloak_on: `EAcid_resistance |= WORN_CLOAK`).
 export function set_worn_extrinsic(prop, bits) { uprops_set_bits('uprops_extrinsic', prop, bits); }
 // C ref: youprop.h `#define Aggravate_monster (HAggravate_monster || EAggravate_monster)`.
-// The intrinsic half is spelled u.uprops.Aggravate_monster (eat.js corpse/pet
-// eating), u.HAggravate_monster (pray.js) or u.uAggravate_monster; the worn
-// half (ring of aggravate monster) is the extrinsic word.
+// The intrinsic half is u.uprops.HAggravate_monster (eat.js corpse/pet eating,
+// stripped by pray.js attrcurse()), u.HAggravate_monster (pray.js sacrifice) or
+// u.uAggravate_monster; the worn half (ring of aggravate monster) is the
+// extrinsic word.
 export function Aggravate_monster() {
     const u = game.u;
-    return !!(u?.uAggravate_monster || u?.uprops?.Aggravate_monster
+    return !!(u?.uAggravate_monster || (u?.uprops?.HAggravate_monster | 0)
               || (u?.HAggravate_monster | 0) || worn_extrinsic(43 /* AGGRAVATE_MONSTER */));
 }
 
@@ -2445,6 +2446,11 @@ export function renderPagedMenu(lines, page, npages, lmax) {
     // A full-screen menu's dismissal runs docrt(), which blanks the status
     // window; a floating overlay's docorner() leaves it intact.
     game._botl_blanked = true;
+    // C ref: wintty.c tty_display_nhwindow(): a multi-page NHW_MENU is a
+    // full-screen window (offx == 0), so tty_dismiss_nhwindow() ->
+    // erase_menu_or_text() runs docrt() (vision_recalc re-newsym()s every
+    // seen square) even when an earlier corner menu left a stale offx.
+    game._menuOffx = 0;
     game._statusCuts = null;
     display.clearScreen();
     let row = 0;
@@ -9151,6 +9157,11 @@ async function tty_select_menu(items, plan, how) {
         game.botlx = true;
         if (game.nhDisplay?.setCell) blank_status_rows(game.nhDisplay);
     }
+    /* C ref: wintty.c tty_dismiss_nhwindow() -> erase_menu_or_text(): an
+       offx == 0 window is erased with docrt(), whose vision_recalc(0)
+       newsym()s every seen square (a remembered engraving since wiped shows
+       as floor again). */
+    if (!(game._menuOffx > 0)) await docrt();
     if (cancelled) {
         const none = [];
         none.cancelled = true;
@@ -9192,6 +9203,10 @@ export async function yn_function_menu_ask(query, resp, def) {
         /* two were selected? use the one that wasn't the default */
         if (picked.length > 1 && res === def) res = picked[1].selector;
     }
+    /* C ref: select_menu()'s docrt() re-announces spotted monsters (notice_all_mons)
+       as plines; they sit on the topline until the pline below and the
+       clear_nhwindow(WIN_MESSAGE) that follows it erase them, with no --More--. */
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     /* C ref: cmd.c yn_function_menu() `pline("%s %s", query, key2txt(*res))` —
        update_topl() remember_topl()s the previous gt.toplines (e.g. a getobj
        menu prompt left there by putmsghistory()) before the answer replaces it. */
@@ -13033,6 +13048,42 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
     // seed0012 — the recorder is a custom "MacOS NetHack 5.0.0" build.
     const MENU_OFFX = Math.min(41, (display?.cols ?? 80)
                                - Math.max(...lines.map((l) => l.length)) - 1);
+    // C ref: wintty.c tty_display_nhwindow(): `cw->maxrow >= ttyDisplay->rows`
+    // forces offx 0 and term_clear_screen(); process_text_window() then pages
+    // rows-1 lines at a time from column 0, each page ended by dmore()'s
+    // "--More--" at column 1 on the next row.  Dismissal is docrt().
+    const rows = display?.rows ?? 24;
+    if (display?.setCell && lines.length >= rows) {
+        const cols = display.cols ?? 80;
+        const clearRow = (r) => { for (let c = 0; c < cols; c++) display.setCell(c, r, ' ', NO_COLOR, 0); };
+        const clearAll = () => { for (let r = 0; r < rows; r++) clearRow(r); };
+        const dmore = async (row) => {
+            clearRow(row);
+            display.putstr(1, row, '--More--', NO_COLOR, ATR_NONE);
+            display.setCursor(1 + '--More--'.length, row);
+            for (;;) {
+                game._modal_screen = 'thingshere';
+                const c = await nhgetch();
+                if (xwaitforspace_quit(c)) { delete game._modal_screen; return c !== 27; }
+            }
+        };
+        clearAll();
+        game._pending_message = '';
+        let n = 0, cancelled = false;
+        for (let i = 0; i < lines.length; i++) {
+            if (n === rows - 1) {
+                if (!(await dmore(n))) { cancelled = true; break; }
+                clearAll();
+                n = 0;
+            }
+            display.putstr(0, n++, lines[i], NO_COLOR, ATR_NONE);
+        }
+        if (!cancelled) await dmore(n);
+        const { docrt } = await import('./display.js');
+        await docrt();
+        await flush_screen(1);
+        return;
+    }
     const moreRow = lines.length;          // row after header + items
     const draw = () => {
         if (!display?.clearScreen) return;

@@ -1185,6 +1185,9 @@ export function pg_glyph_at(x, y) {
     // The remembered glyph is a wall even if the terrain was since dug out.
     if (remembered?.wall && remembered.ch === sym && !(IS_WALL(loc.typ) || loc.typ === SDOOR))
         return { kind: 'cmap', sym, cmap: 1 /* S_vwall; "wall" */, dec: !!loc.disp_decgfx, x, y };
+    // Likewise a remembered iron-bars glyph after dissolve_bars() out of sight.
+    if (remembered?.bars && remembered.ch === sym && loc.typ !== IRONBARS)
+        return { kind: 'cmap', sym, cmap: S_bars, dec: !!loc.disp_decgfx, x, y };
     return { kind: 'cmap', sym, cmap: cmap_index_for(loc, x, y), dec: !!loc.disp_decgfx, x, y };
 }
 // C ref: pager.c do_screen_description() `prefix = encglyph(glyphinfo.glyph)` —

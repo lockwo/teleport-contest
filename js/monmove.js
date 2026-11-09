@@ -9,7 +9,7 @@
 // to richer monster behavior without per-seed special cases.
 
 import { PLNMSG_HIDE_UNDER, FACE } from "./const.js";
-import { Fumbling_hero, Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, Invis_hero, See_invisible_hero } from './youprop.js';
+import { Fumbling_hero, Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, Invis_hero, See_invisible_hero, Acid_resistance_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
@@ -4743,7 +4743,7 @@ export async function cuss(mtmp) {
                             + `${RANDOM_INSULT[rn2(RANDOM_INSULT.length)]}!`);
         }
     } else if (is_minion(mtmp.data) && mon_aligntyp_cuss(mtmp) === A_LAWFUL
-               && !(mtmp.isminion && EMIN(mtmp)?.renegade)) {
+               && !(mtmp.isminion && (EMIN(mtmp) ?? mtmp.emin)?.renegade)) {
         await com_pager('angel_cuss'); /* TODO (C): the Hallucination msg */
     } else {
         if (!rn2(is_minion(mtmp.data) ? 100 : 5))
@@ -7079,9 +7079,7 @@ export async function thitu(tlev, dam, otmp) {
     // C ref: mthrowu.c:122-124 — an acid-resistant hero shrugs off acid venom
     // (no losehp(), no exercise()).
     const is_acid = otmp?.otyp === ACID_VENOM;
-    if (is_acid && (['Acid_resistance', 'HAcid_resistance', 'EAcid_resistance']
-        .some((k) => (game.u?.uprops?.[k] | 0) || (game.u?.[k] | 0))
-        || ((game.u?.uprops_extrinsic || {})[7 /* ACID_RES */] | 0))) {
+    if (is_acid && Acid_resistance_hero()) {
         await update_topl("It doesn't seem to hurt you.");
         monstseesu(M_SEEN_ACID);
         return 1;

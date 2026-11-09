@@ -450,8 +450,12 @@ export async function restfakecorr(grd) {
 export function parkguard(grd) {
     if (grd === game.context?.polearm?.hitmon) game.context.polearm.hitmon = 0;
     if (grd.mx) {
-        remove_monster(grd.mx, grd.my);
-        newsym(grd.mx, grd.my);
+        // C's remove_monster() only clears level.monsters[x][y]; grd->mx,my
+        // still name the old square for the newsym() below.  This port's
+        // remove_monster() zeroes mx,my, so keep the square.
+        const ox = grd.mx, oy = grd.my;
+        remove_monster(ox, oy);
+        newsym(ox, oy);
     }
     if (m_at(0, 0) !== grd) place_monster(grd, 0, 0);
     // place_monster() just set grd->mx,my to 0,0, so this sets ogx,ogy to 0,0
@@ -998,8 +1002,9 @@ export async function gd_pick_corridor_gold(grd, goldx, goldy) {
         /* just for insurance... */
         await gd_mv_monaway(grd, goldx, goldy);  /* make room for the guard */
         if (see_it) {               /* skip if the player won't see the message */
-            remove_monster(grd.mx, grd.my);
-            newsym(grd.mx, grd.my);
+            const gx = grd.mx, gy = grd.my;
+            remove_monster(gx, gy);
+            newsym(gx, gy);
             place_monster(grd, goldx, goldy);    /* sets <grd->mx, grd->my> */
         }
         mpickgold(grd);             /* does a newsym */
@@ -1013,8 +1018,9 @@ export async function gd_pick_corridor_gold(grd, goldx, goldy) {
 
     /* if the guard was moved to get the gold, move him back */
     if (grd.mx !== guardx || grd.my !== guardy) {
-        remove_monster(grd.mx, grd.my);
-        newsym(grd.mx, grd.my);
+        const gx = grd.mx, gy = grd.my;
+        remove_monster(gx, gy);
+        newsym(gx, gy);
         place_monster(grd, guardx, guardy);
         newsym(guardx, guardy);
     }

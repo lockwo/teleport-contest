@@ -19,7 +19,7 @@ import { fmonOrder } from './mon.js';
 import { nolimbs } from './monflags_data.js';
 import { mbodypart, body_part } from './polyself.js';
 import { Deaf_hero } from './display.js';
-import { ARM, HEAD, M_SEEN_FIRE } from './const.js';
+import { ARM, HEAD, M_SEEN_FIRE, GP_AVOID_MONPOS } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
 import { fingers_or_gloves } from './do_wear.js';
 import { makeplural } from './plural.js';
@@ -483,7 +483,7 @@ async function dowaterdemon() {
     }
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return;
-    const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
+    const spot = enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS);
     if (!spot) return;
     const was_full = game._full_mon_gen;
     game._full_mon_gen = true;
@@ -525,7 +525,7 @@ async function dowaternymph() {
     const pmidx = name_to_pmidx('water nymph');
     const gone = (game.mvitals?.[pmidx]?.mvflags ?? 0) & G_GONE;
     const ptr = (!gone && pmidx >= 0) ? monster_by_pmidx(pmidx) : null;
-    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;
@@ -582,7 +582,7 @@ async function dowatersnakes() {
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return;
     while (num-- > 0) {
-        const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
+        const spot = enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS);
         if (!spot) continue;
         const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
         if (!mtmp) continue;
@@ -793,7 +793,7 @@ async function spawnAtHeroSquare(pmidx) {
     const u = game.u;
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
-    const spot = enexto_gpflags(u.ux, u.uy, ptr, 0);
+    const spot = enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS);
     if (!spot) return null;
     const mtmp = makemon(ptr, spot.x, spot.y, MM_NOMSG | MM_APPARXY_BYYOU);
     return mtmp;

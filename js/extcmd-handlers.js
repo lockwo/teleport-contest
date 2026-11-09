@@ -4231,14 +4231,18 @@ async function wmode_extcmd() {
     return await wiz_show_wmodes();
 }
 
-// C ref: do.c doddrop() — fully implemented in invent.js and correctly wired
-// to the raw 'D' key (js/cmd.js:1502, `(await doddrop()) ? 1 : 0`), but absent
-// from HANDLERS so "#droptype<Enter>" silently no-oped and its menu-answer
-// keystrokes leaked into rhack().  invent.js's own ECMD_TIME is 3, not 1, so
-// (unlike cmd.js's truthy check) doextcmd()'s strict `res === 1` needs it
-// translated here.
+// C ref: do.c doddrop() — fully implemented in invent.js and wired to the raw
+// 'D' key (js/cmd.js), but absent from HANDLERS so "#droptype<Enter>" silently
+// no-oped and its menu-answer keystrokes leaked into rhack().
+// In menustyle:traditional doddrop() returns ggetobj()'s item COUNT, and
+// rhack() reads that as ECMD_* bits (1 TIME, 2 CANCEL, 4 FAIL): dropping six
+// items is 0b110 (CANCEL|FAIL, no game time), two items is CANCEL, three is
+// TIME|CANCEL.  doextcmd()'s `res === 1` wants plain ECMD_TIME, so translate.
 async function doddrop_extcmd() {
-    return (await doddrop()) ? 1 : 0;
+    const rD = await doddrop();
+    // C ref: cmd.c rhack():3810-3813 reset_cmd_vars(TRUE) zeroes gm.multi.
+    if ((rD & 6) !== 0) game.multi = 0;
+    return (rD & ECMD_TIME) !== 0 ? 1 : 0;
 }
 
 // C ref: cmd.c rhack():3775-3801 — a MOVEMENTCMD (do_move_west() etc., js/cmd.js

@@ -420,9 +420,9 @@ export function blocksMove(x, y) {
     // IRONBARS) return FALSE`. IS_OBSTRUCTED == (typ < POOL): STONE, every
     // wall, TREE, and secret SDOOR/SCORR — the last matters because an
     // unfound secret door is DRAWN as its wall, so testing only IS_WALL would
-    // let the hero walk through it instead of bumping. Passes_walls/tunnels/
-    // autodig/metallivorous escapes need an intrinsic no covered hero has, so
-    // this stays unconditional.
+    // let the hero walk through it instead of bumping. Only Passes_walls is
+    // folded in here; the tunnels()/passes_bars()/metallivorous escapes are the
+    // callers' (test_move_quiet() for TEST_MOVE, domove() for DO_MOVE).
     if (IS_OBSTRUCTED(loc.typ) || loc.typ === IRONBARS)
         return !(hero_passes_walls()
                  && !(IS_STWALL(loc.typ) && ((loc.wall_info || 0) & 0x10 /* W_NONPASSWALL */)));
@@ -647,7 +647,19 @@ export function test_move_quiet(x, y, dx = game.u.dx, dy = game.u.dy,
                                 ux = game.u.ux, uy = game.u.uy) {
     const u = game.u;
     if (!isok(x, y)) return false;
-    if (blocksMove(x, y)) return false;
+    // C ref: hack.c:1011-1040 test_move() obstacle arm: once Passes_walls is
+    // ruled out, a non-DO_MOVE query only fails for Underwater, for iron bars a
+    // form cannot squeeze through (passes_bars), and for rock/walls a form does
+    // not tunnel (tunnels() && !needspick(): still_chewing() is DO_MOVE-only).
+    if (blocksMove(x, y)) {
+        const _ol = game.level?.at(x, y);
+        const _hf = youmonst_data_pub();
+        const _passes = !u.uinwater && _ol
+            && (_ol.typ === IRONBARS ? passes_bars(_hf)
+                : IS_OBSTRUCTED(_ol.typ) && (mflags1_of(_hf) & M1_TUNNEL) !== 0
+                  && (mflags1_of(_hf) & 0x40 /* M1_NEEDPICK */) === 0);
+        if (!_passes) return false;
+    }
     if (blocksDiagonalDoor(ux, uy, x, y, dx, dy)) return false;
     // C ref: hack.c:1153-1172 — a tight diagonal between two rock/boulder-in-
     // Sokoban squares that cant_squeeze_thru() refuses (mode != DO_MOVE: no
@@ -3819,8 +3831,13 @@ async function domove_core(dx, dy, attemptTracked) {
     // mthrowu.c's URETREATING() reads: after a rush ended against a wall, a
     // monster behind the hero wrongly saw them still retreating and drew an
     // extra rn2(BOLT_LIM - dist) (seed0002 step 269).
-    u.ux0 = u.ux;
-    u.uy0 = u.uy;
+    // C ref: hack.c:2754 move_out_of_bounds() — an 'F' step off the map edge
+    // returns domove_fight_empty() from BEFORE this point, so ux0/uy0 keep the
+    // square left by the last real step and URETREATING() still sees it.
+    if (!offedge) {
+        u.ux0 = u.ux;
+        u.uy0 = u.uy;
+    }
 
     // ── bump into a monster ──  C ref: hack.c domove_core mtmp handling.
     let displaceu = false, evadedForcefight = false;
@@ -5927,6 +5944,10 @@ async function hero_rehides() {
     const data = youmonst_data_pub();
     if (hides_under_flag(data) || data?.mcls === 57 /* S_EEL */ || u.dx || u.dy)
         await (await import('./monmove.js')).hideunder(game.u);
+    // C ref: hack.c:2953-2959 — a mimicking hero who moves becomes noticeable.
+    if ((u.dx || u.dy) && ((u.m_ap_type | 0) === 2 /* M_AP_OBJECT */
+        || (u.m_ap_type | 0) === 1 /* M_AP_FURNITURE */))
+        u.m_ap_type = 0; /* M_AP_NOTHING */
 }
 
 // C ref: hack.c:2962 — `check_leash(u.ux0, u.uy0)` closes every domove_core

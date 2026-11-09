@@ -5,7 +5,7 @@
 // Real mklev.js handles level generation for screen parity.
 
 import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero } from './youprop.js';
-import { ROLE_PM_BASE } from './const.js';
+import { ROLE_PM_BASE, FAST } from './const.js';
 import { NetHackPanic, NetHackGameOver } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
@@ -23,7 +23,7 @@ import { name_to_pmidx, monster_by_pmidx } from './makemon.js';
 import { movemon, mcalcdistress, mcalcmove, base_mmove, fmonOrder } from './mon.js';
 import { run_regions, clear_regions } from './region.js';
 import { makemon_rnd_spawn, makemon_appears_msg, flush_group_newsyms } from './makemon.js';
-import { SPEED_BOOTS, objects } from './mkobj.js';
+import { objects } from './mkobj.js';
 import { mflags1_of, M1_CARNIVORE, M1_HERBIVORE, M1_METALLIVORE }
     from './monflags_data.js';
 import { dosounds } from './sounds.js';
@@ -896,18 +896,17 @@ export function youHaveFast() {
 }
 
 // C ref: hack.h Very_fast == ((HFast & ~INTRINSIC) || EFast).  EFast is the
-// extrinsic FAST conferred by worn speed boots (objects[SPEED_BOOTS].oc_oprop
-// == FAST, set on the boots slot by setworn()).  Potion/spell speed (the
-// HFast & TIMEOUT term) isn't exercised by the scored sessions, so only the
-// worn-boots term is modelled here.
+// extrinsic word u.uprops[FAST].extrinsic: setworn() sets it for worn speed
+// boots (objects[SPEED_BOOTS].oc_oprop == FAST), dragon_armor_handling() sets it
+// by hand for blue dragon scales/mail (u.efastArm here).  It is read from the
+// word, not from the uarmf pointer: nhl_gamestate() memcpy()s the pre-tutorial
+// `u` back on tutorial exit, after setworn() re-wore the boots, so a hero
+// wearing speed boots after the tutorial has EFast zero and rolls
+// u_calc_moveamt()'s Fast branch (allmain.c:131), not the Very_fast one (:127).
+// The (HFast & ~INTRINSIC) term is the TIMEOUT half: a timed FAST (potion of
+// speed, #wizintrinsic) counts as Very_fast, not merely Fast.
 function youHaveVeryFast() {
-    // C ref: hack.h Very_fast — EFast is set on the boots slot by setworn() when
-    // speed boots (oc_oprop FAST) are worn, and manually on the W_ARM slot by
-    // dragon_armor_handling() when blue dragon scale mail/scales are worn (their
-    // oc_oprop is not FAST, so the extrinsic is applied by hand — u.efastArm).
-    // The (HFast & ~INTRINSIC) term is the TIMEOUT half: a timed FAST (potion of
-    // speed, #wizintrinsic) counts as Very_fast, not merely Fast.
-    return game.uarmf?.otyp === SPEED_BOOTS || !!game.u?.efastArm
+    return !!worn_extrinsic(FAST) || !!game.u?.efastArm
         || ((((game.u?.uprops?.HFast | 0) | (game.u?.HFast | 0)) & TIMEOUT) !== 0);
 }
 export { youHaveVeryFast };

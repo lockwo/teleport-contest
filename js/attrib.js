@@ -169,7 +169,12 @@ export async function adjattrib(ndx, incr, msgflg) {
     u.amax = u.amax || { a: abase.slice() };
     const amax = u.amax.a;
     const { race_attrmin, race_attrmax } = await import('./u_init.js');
-    const ATTRMIN = race_attrmin(), ATTRMAX = race_attrmax();
+    const ATTRMIN = race_attrmin(), ATTRMAX = race_attrmax().slice();
+    // C ref: attrib.h ATTRMAX(x) — (x == A_STR && Upolyd) ? uasmon_maxStr()
+    if (ndx === A_STR && u.Upolyd) {
+        const { uasmon_maxStr } = await import('./polyself.js');
+        ATTRMAX[A_STR] = uasmon_maxStr();
+    }
     const old_acurr = acurr_eff(ndx), old_abase = abase[ndx] | 0,
         old_amax = amax[ndx] | 0;
     let attrstr, abonflg;

@@ -1841,10 +1841,13 @@ async function maybe_cannibal(pm, allowmsg) {
                 await update_topl('You have a bad feeling deep inside.');
             await update_topl('You cannibal!  You will regret this!');
         }
+        // C ref: eat.c maybe_cannibal() `HAggravate_monster |= FROMOUTSIDE`.  Stored
+        // under the H<Prop> key with the FROMOUTSIDE bit so sit.c attrcurse()
+        // (pray.js) sees it as an INTRINSIC to strip.
         const u = game.u;
         if (u) {
             u.uprops = u.uprops || {};
-            u.uprops.Aggravate_monster = 1;
+            u.uprops.HAggravate_monster = (u.uprops.HAggravate_monster | 0) | P_FROMOUTSIDE;
         }
         change_luck(-rn1(4, 2));                 /* -5..-2 */
         return true;
@@ -1897,8 +1900,9 @@ async function cprefx(pm) {
     if (DOMESTIC_NAMES.has(nm)) {
         if (!CANNIBAL_ALLOWED()) {
             await You_feel(`that eating the ${nm} was a bad idea.`);
+            // C ref: eat.c cprefx() `HAggravate_monster |= FROMOUTSIDE`.
             const u = game.u;
-            if (u) { u.uprops = u.uprops || {}; u.uprops.Aggravate_monster = 1; }
+            if (u) { u.uprops = u.uprops || {}; u.uprops.HAggravate_monster = (u.uprops.HAggravate_monster | 0) | P_FROMOUTSIDE; }
         }
     } else if (nm === 'Death' || nm === 'Pestilence' || nm === 'Famine') {
         await update_topl('Eating that is instantly fatal.');

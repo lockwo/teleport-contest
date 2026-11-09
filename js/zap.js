@@ -37,7 +37,7 @@ import { exercise, acurr_eff as ACURR } from './attrib.js';
 import { more_experienced, has_innate } from './exper.js';
 import { findit } from './detect.js';
 import { find_ac } from './u_init.js';
-import { cansee, vision_recalc, Blind, recalc_block_point, does_block } from './vision.js';
+import { cansee, vision_recalc, Blind, recalc_block_point, does_block, unblock_point } from './vision.js';
 import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_CLASS, ARMOR_CLASS,
          FOOD_CLASS, RING_CLASS, POT_OIL, POT_WATER, GLOB_OF_GREEN_SLIME,
          SPBOOK_CLASS, mkobj as _mkobj, place_object, objects,
@@ -132,7 +132,8 @@ export function obj_resists(obj, ochance, achance) {
     return chance < (obj?.oartifact ? achance : ochance);
 }
 
-import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, FM_FMON } from './const.js';
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, FM_FMON, LL_CONDUCT } from './const.js';
+import { livelog_printf } from './livelog.js';
 
 // C ref: objclass.h oc_dir values.
 const NODIR = 1;
@@ -859,6 +860,9 @@ export async function bhito(obj, otmp) {
             /* KMH, conduct */
             if (!game.u) game.u = {};
             if (!game.u.uconduct) game.u.uconduct = {};
+            /* C ref: zap.c:2198 bhitpile/bhito WAN_POLYMORPH conduct livelog */
+            if (!(game.u.uconduct.polypiles | 0))
+                livelog_printf(LL_CONDUCT, `polymorphed ${game.flags?.female ? 'her' : 'his'} first object`);
             game.u.uconduct.polypiles = (game.u.uconduct.polypiles | 0) + 1;
 
             /* any saved lock context will be dangerously obsolete */
@@ -1122,8 +1126,15 @@ export async function fracture_rock(obj) {
         const x = obj.ox, y = obj.oy;
         obj_extract_self(obj);
         place_object(obj, x, y);
-        recalc_block_point(x, y);
-        if (!does_block(x, y)) vision_recalc(0);
+        // C ref: zap.c:5568 fracture_rock — `if (!does_block(...)) { unblock_point();
+        // vision_recalc(0); }`.  C never calls block_point() here, so a pile that
+        // still holds another boulder sets no vision_full_recalc (the next pline
+        // would otherwise run a vision_recalc whose newsym draws on the
+        // hallucination display rng).
+        if (!does_block(x, y)) {
+            unblock_point(x, y);
+            vision_recalc(0);
+        }
         if (cansee(x, y)) newsym(x, y);
     }
 }

@@ -320,6 +320,10 @@ function _canPraySync() { return __canPrayLast; }
 let __canPrayLast = false;
 register_process_static(() => { __canPrayLast = false; });
 async function can_pray(praying) {
+    // in_trouble() reads near_capacity()/welded()/nohands() through the lazy
+    // _inv import; before it resolved, a polymorphed handless hero (C
+    // TROUBLE_UNUSEABLE_HANDS) was reported as untroubled and p_type came out 0.
+    if (!_inv) await loadSacDeps();
     const gp = praystate();
     const u = game.u;
     gp.aligntyp = on_altar() ? a_align(u.ux, u.uy) : (u.ualign?.type ?? 0);
@@ -1467,6 +1471,8 @@ async function loadSacDeps() {
     if (!_oin) _oin = await import('./o_init.js');
     if (!_pot) _pot = await import('./potion.js');
 }
+// can_pray_quiet() (enlightenment) is synchronous, so warm the cache up front.
+loadSacDeps();
 
 // C ref: obj.h carried(obj).
 function carried(otmp) { return otmp?.where === OBJ_INVENT; }

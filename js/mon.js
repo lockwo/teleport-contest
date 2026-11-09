@@ -2774,13 +2774,13 @@ export async function logdeadmon(mtmp, mndx) {
 
     if (mtmp.isshk) {
         howmany = 1;
-        /* C ref: mon.c:3025 — ", the <shoptype> proprietor".  shtypes[] is
-           js/shknam.js's table and is not exported, so the shop TYPE is the one
-           piece of this string that cannot be filled in yet.  The trailing
+        /* C ref: mon.c:3025 — ", the <shoptype> proprietor"; the trailing
            comma is C's, for the "<shk>, shkdetails, has been killed" phrasing
            when the hero isn't directly responsible. */
-        shkdetail = `, the ${mtmp.female ? 'proprietrix' : 'proprietor'}`
-            + `${herodidit ? '' : ','}`;
+        const { shtypes } = await import('./shtypes.js');
+        const { SHOPBASE } = await import('./const.js');
+        shkdetail = `, the ${shtypes[mtmp.eshk.shoptype - SHOPBASE].name} `
+            + `${mtmp.female ? 'proprietrix' : 'proprietor'}${herodidit ? '' : ','}`;
     } else if (mndx === PM('high priest')) {
         /* the high priest[ess] isn't unique, but !mrevived above means this is
            the first death for THIS one */

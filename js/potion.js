@@ -14,7 +14,7 @@ import { game, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
-         unmap_object, see_monsters, flush_sting_effects, set_mimic_blocking, You_feel, status_hold, You_see, You_hear } from './display.js';
+         unmap_object, see_monsters, flush_sting_effects, set_mimic_blocking, You_feel, status_hold, hold_botl_hp, You_see, You_hear } from './display.js';
 import { getobj, makeknown, useup, trycall, splitobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_EXCLUDE_NONINVENT, GETOBJ_NOFLAGS, GETOBJ_PROMPT,
          GETOBJ_DOWNPLAY, body_part, hands_obj, obj_doname, xname,
@@ -745,6 +745,10 @@ export async function healup(nhp, nxtra, curesick, cureblind) {
     const u = game.u;
     if (!u) return;
     if (nhp) {
+        // C ref: potion.c healup() sets disp.botl only at its very end, so a
+        // message printed in between (make_blinded's "You can see again.")
+        // still shows the HP the last bot() published on its --More--.
+        hold_botl_hp();
         if (Upolyd()) {
             u.mh = (u.mh | 0) + nhp;
             if (u.mh > (u.mhmax | 0)) u.mh = (u.mhmax = (u.mhmax | 0) + nxtra);
@@ -769,7 +773,8 @@ export async function healup(nhp, nxtra, curesick, cureblind) {
     game.botl = true;
 }
 
-import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
+import { ECMD_OK, ECMD_TIME, ECMD_CANCEL, LL_CONDUCT, GP_AVOID_MONPOS } from './const.js';
+import { livelog_printf } from './livelog.js';
 
 // C ref: potion.c drink_ok — getobj callback: only potions are suggested.
 // drink_ok_extra is C's file static, bumped once for every dungeon-feature quaff
@@ -1623,7 +1628,7 @@ async function ghost_from_bottle() {
     const u = game.u;
     const pmidx = name_to_pmidx('ghost');
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
-    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;
@@ -2774,6 +2779,9 @@ export async function potion_dip(obj, potion) {
             /* KMH, conduct */
             if (game.u) {
                 game.u.uconduct = game.u.uconduct || {};
+                /* C ref: potion.c:2476 */
+                if (!(game.u.uconduct.polypiles | 0))
+                    livelog_printf(LL_CONDUCT, `polymorphed ${game.flags?.female ? 'her' : 'his'} first item`);
                 game.u.uconduct.polypiles = (game.u.uconduct.polypiles | 0) + 1;
             }
             /* C: obj = poly_obj(obj, STRANGE_OBJECT).  It can DESTROY obj:
@@ -3200,8 +3208,10 @@ export async function djinni_from_bottle(obj) {
     const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     /* makemon(ptr, u.ux, u.uy, MM_NOMSG): the hero's own square, so
        makemon.c's byyou && !in_mklev branch runs enexto_core() first (the same
-       spawn sequence ghost_from_bottle() above drives) */
-    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, 0) : null;
+       spawn sequence ghost_from_bottle() above drives).  C gpflags =
+       GP_CHECKSCARY | GP_AVOID_MONPOS: the latter makes goodpos() reject
+       LR_MONGEN exclusion zones too (makemon.c:1162,1180). */
+    const spot = ptr ? enexto_gpflags(u.ux, u.uy, ptr, GP_AVOID_MONPOS) : null;
     let mtmp = null;
     if (spot) {
         const was_full = game._full_mon_gen;

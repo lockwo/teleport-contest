@@ -476,10 +476,14 @@ export function engr_at(x, y) {
 // MARK / blood lines for a BLIND hero, whom C tells nothing at all.
 export async function read_engr_at(x, y) {
     const ep = engr_at(x, y);
+    const { surface } = await import('./dungeon.js');
+    /* C ref: engrave.c read_engr_at `const char *eloc = surface(x, y);` is a
+       declaration initializer, so it runs (and draws hliquid() from the
+       display RNG for a hallucinating hero over pool/lava) even when there is
+       no engraving to read. */
+    const eloc = surface(x, y);
     if (!ep || !(ep.actualText || '')) return;
     const { update_topl, impossible } = await import('./display.js');
-    const { surface } = await import('./dungeon.js');
-    const eloc = surface(x, y);
     const on_ice = game.level?.at(x, y)?.typ === ICE;
     const Blind = isBlind();
     let sensed = 0;

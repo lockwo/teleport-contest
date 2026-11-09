@@ -809,7 +809,11 @@ export async function show_attributes_disclosure(final, basic = true) {
             // any other key: ignored (bell), same page stays up
         }
     }
-    await dismiss_invent_screen();
+    // C ref: insight.c:451 enlightenment() final: display_nhwindow(en_win, TRUE) +
+    // destroy_nhwindow() with no select_menu()/bot_disabled bracket, so the
+    // dismissal is an NHW_TEXT-style one (flush_screen()'s bot() runs before the
+    // docrt() map glyphs, which overwrite the shared status row).
+    await dismiss_invent_screen(!!final);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

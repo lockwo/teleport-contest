@@ -20,7 +20,7 @@ import { lock_action } from './lock.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
-import { t_at as t_at_hk, trap_explanation as trap_explanation_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
+import { t_at as t_at_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
@@ -28,7 +28,7 @@ import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_K
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, trap_description, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -1792,6 +1792,10 @@ function terrain_description(x, y, full = false) {
     if (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch
         && !is_cmap_engraving_at(x, y)) return 'wall';
     const typ = loc.typ;
+    // The same holds for a remembered iron-bars glyph whose bars were dissolved
+    // out of sight (dissolve_bars(): typ now ROOM/CORR).
+    if (loc.remembered_glyph?.bars && loc.remembered_glyph.ch === loc.disp_ch
+        && typ !== IRONBARS && !is_cmap_engraving_at(x, y)) return 'iron bars';
     // C ref: pager.c:779 do_screen_description() case S_stone —
     //     if (!levl[x][y].seenv)                       "unexplored"
     //     else if (Underwater && !Is_waterlevel)       "land"/"unknown" (not modelled)
@@ -1804,15 +1808,17 @@ function terrain_description(x, y, full = false) {
     if (typ === STONE) return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
     // C ref: detect.c reveal_terrain_getglyph() keeps a seen trap only when
     // `which_subset & TER_TRP`; otherwise the browsed glyph is the background.
+    // C ref: pager.c lookat() glyph_is_trap -> trap_description(), whose
+    // trapname(tnum, FALSE) draws the hallucinated name from the display RNG.
     { const _tm = game.iflags?.terrainmode | 0;
       const _t = (!_tm || (_tm & TER_TRP)) ? t_at_hk(x, y) : null;
-      if (_t && _t.tseen) return trap_explanation_hk(_t.ttyp);
+      if (_t && _t.tseen) return trap_description(_t.ttyp, x, y);
       /* C: glyph_at() is the REMEMBERED trap glyph even after the trap is gone
          (a boulder filled the pit while the hero was blind); map_trap() stamps
          its ttyp so the description follows the glyph, not the live ftrap chain. */
       if (!_t && (!_tm || (_tm & TER_TRP)) && loc.mapped_trap_ttyp
           && loc.remembered_glyph?.ch === loc.disp_ch)
-          return trap_explanation_hk(loc.mapped_trap_ttyp); }
+          return trap_description(loc.mapped_trap_ttyp, x, y); }
     // C ref: defsym.h rows 21/24 — a revealed engraving is DISPLAYED as
     // S_engroom/S_engrcorr, whose explanation is "engraving", so
     // do_screen_description() reports that rather than the floor/corridor
@@ -2006,6 +2012,13 @@ function look_at_object_here(x, y, describing = false) {
         && hrem.ch === loc.disp_ch && hrem.hallucotyp !== obj.otyp)
         return look_at_object(x, y, { kind: 'object', obj: null, otyp: hrem.hallucotyp,
                                       corpsenm: hrem.corpsenm, x, y });
+    // C ref: pager.c lookat() dispatches on glyph_at(): a remembered non-object
+    // glyph (dark room floor, stairs) stays that even while the hero hallucinates;
+    // an unseen object lying there is not named.  A hallucinated object drawn
+    // here would have remembered a random hallucotyp object glyph (handled above).
+    if (describing && game.u?.uhallu && hrem && !hrem.objotyp && hrem.hallucotyp == null
+        && !hrem.pile && hrem.ch === loc.disp_ch)
+        return null;
     if (describing && !game.u?.uhallu && loc.disp_ch != null
         && object_glyph(obj)?.ch !== loc.disp_ch) {
         // C glyph_at() is the REMEMBERED object glyph (e.g. an arrow whose
@@ -2632,13 +2645,16 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
     if (u && x === u.ux && y === u.uy && !engulferShown
         && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
         desc = self_lookat();
-    } else if (u && x === u.ux && y === u.uy && !terrainMode && tm0 && canspotself()
+    } else if (u && x === u.ux && y === u.uy && tm0 && canspotself()
                && game.level?.at(x, y)?.disp_ch === hero_glyph().ch
                && !game.level.at(x, y).remembered_glyph?.objotyp) {
         // C ref: pager.c do_screen_description(): with a terrainmode that lacks
         // TER_MON the displayed hero glyph ('@') matches no monster class, and no
         // object/cmap symbol either, so found == 0 and getpos.c auto_describe()
         // prints nothing (the previous topline stays up).
+        // The disp_ch test (not terrainMode) tells this from the #terrain view,
+        // where the hero square is drawn as terrain; after a getpos_menu()
+        // docrt() the live '@' is back while terrainmode is still set.
         return null;
     } else if (u?.uswallow && !terrainMode && !detectMode) {
         // C ref: pager.c do_screen_description() -- while engulfed every
@@ -3351,7 +3367,10 @@ export async function reveal_terrain(which_subset) {
                 const ga = glyph_at(x, y);
                 const gas = ga.kind === 'cmap' && !!ga.gascloud;
                 if (gas && keep_traps) {
+                    /* C ref: detect.c reveal_terrain(): show_glyph() keeps the region
+                       glyph in gbuf, so the browse's glyph_at() still reads a cloud */
                     show_glyph_cell(x, y, loc.disp_ch, loc.disp_color, false);
+                    loc.disp_region = true;
                     continue;
                 }
                 if (gas || ga.kind === 'monster') {
@@ -3359,6 +3378,9 @@ export async function reveal_terrain(which_subset) {
                     const g = reveal_terrain_getglyph(x, y, swallowed, dg, which_subset);
                     const gc = g.cell || dg.cell;
                     show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
+                    /* the stripped-monster/cloud square whose reveal_terrain_getglyph()
+                       result is the region's own glyph (traps kept) is a cloud glyph */
+                    if (g.gascloud) loc.disp_region = true;
                     continue;
                 }
             }

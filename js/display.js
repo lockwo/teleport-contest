@@ -1314,7 +1314,7 @@ export function terrain_glyph(loc, x, y) {
     // not the gray this used to claim.  dat/symbols DECgraphics remaps S_bars to
     // \xfc (meta-'|', "not-equals"); DEC_MAP has no '|' entry so, like S_tree,
     // emit the bare character with dec=false.
-    case IRONBARS:  return { ch: symOverrideChar('S_bars') || (dec ? '|' : '#'), color: CLR_CYAN, dec: false };
+    case IRONBARS:  return { ch: symOverrideChar('S_bars') || (dec ? '|' : '#'), color: CLR_CYAN, dec: false, bars: true };
     // C ref: dat/symbols DECgraphics S_tree = \xe7 (meta-g).  The recorder emits
     // it as 'g' inside the DEC (Shift-Out) font; the frozen decoder's DEC_MAP has
     // no 'g' entry, so the recorded C cell renders as the literal 'g'.  Emit 'g'
@@ -2256,6 +2256,9 @@ export async function swallowed(first) {
 // hallucinated-statue case where the remembered glyph is its own random object
 // (background_glyph hands that back as bg.mem).
 function remember_bg(loc, bg) {
+    // levl[x][y].glyph is a single field: mapping any background/object/trap
+    // glyph replaces a remembered 'I' (glyph_is_invisible) on the square.
+    loc.invisMon = false;
     const m = bg.mem || bg;
     // levl[x][y].glyph is overwritten, so a detect/trap-reveal stamp is stale
     // (unless the new glyph IS a trap glyph: map_trap() stamps its ttyp).
@@ -2263,7 +2266,7 @@ function remember_bg(loc, bg) {
     loc.remembered_glyph = { ch: m.ch, color: m.color, decgfx: m.dec, pile: !!bg.pile, bwEngr: !!bg.bwEngr, female: !!m.female,
                              objotyp: bg.mem ? 0 : bg.objotyp, hallucotyp: m.hallucotyp, corpsenm: m.corpsenm,
                              /* the remembered glyph is a wall cmap glyph (S_vwall..S_trwall) */
-                             wall: !!m.wall };
+                             wall: !!m.wall, bars: !!m.bars };
 }
 
 // Value identity of loc.remembered_glyph, standing in for C's `lev->glyph`
@@ -2999,7 +3002,7 @@ export function unmap_object(x, y) {
         g = { ch: ' ', color: NO_COLOR, dec: false };
     }
     loc.invisMon = false;
-    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false, bwEngr: !!g.bwEngr, wall: !!g.wall };
+    loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, pile: false, bwEngr: !!g.bwEngr, wall: !!g.wall, bars: !!g.bars };
 }
 
 // ── docrt ──
@@ -4359,7 +4362,16 @@ function _syncClipping() {
 // cells the status text owns.  A frozen departing-level cell carries the
 // signature its live cell had when it was captured.
 function _mapSigOf(l) {
-    return l?.disp_ch ? `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${l.remembered_glyph?.darkroom ? 'd' : ''}|${l.remembered_glyph ? 'g' : ''}` : '';
+    // C ref: display.c show_glyph() only sets gnew when the glyph differs.  The
+    // remembered-glyph flags ('g': levl.glyph no longer GLYPH_UNEXPLORED, 'd':
+    // S_darkroom memory) describe the BACKGROUND glyph, so they only matter
+    // while the cell shows it: a monster symbol already in gbuf is the same
+    // glyph whether or not the square got remembered (an infravision-seen
+    // monster that vision_recalc() then newsym()s must not be reprinted over
+    // the status text).
+    if (!l?.disp_ch) return '';
+    const bg = !l.disp_monster;
+    return `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${bg && l.remembered_glyph?.darkroom ? 'd' : ''}|${bg && l.remembered_glyph ? 'g' : ''}`;
 }
 
 export function capture_screen_for_level_change() {
@@ -4714,6 +4726,7 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         // A held departing frame (goto_level's postponed flushes) still shows the
         // OLD level, so its snapshot of what owns each status cell stays valid.
         if (game._statusSnapLevel !== game.level && !game._staleFrame) game._statusSnap = null;
+        if (game._statusMapOwn && game._statusMapOwn.level !== game.level && !game._staleFrame) game._statusMapOwn = null;
         const snap = sharedRow && game._statusSnap ? game._statusSnap : null;
         const owned = (c) => !!snap && (top + r) in snap && snap[top + r][c] !== undefined
             && snap[top + r][c] === mapSig(c)
@@ -4735,11 +4748,14 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
             // changed since the last flush (gnew) is drawn over the status text.
             if (rebuild && sharedRow && _displayed_loc(c + 1 + clipx, my)?._gchg) {
                 if (game._statusSnap?.[top + r]) game._statusSnap[top + r][c] = undefined;
+                // C ref: wintty.c flush_screen(): a blank (S_stone) map write owns the cell until status text repaints it
+                ((game._statusMapOwn ??= { level: game.level })[top + r] ??= new Set()).add(c);
                 continue;
             }
+            const mapOwn = game._statusMapOwn?.[top + r];
             if ((unchanged || (sharedRow && !inRanges(c))) && !owned(c)) {
                 const have = display.grid?.[top + r]?.[c];
-                const mapWins = (have && have.ch && have.ch !== ' ')
+                const mapWins = (have && have.ch && have.ch !== ' ') || !!mapOwn?.has(c)
                     || (my >= 0 && my < ROWNO
                         && (game._staleFrame
                             ? game._staleFrame.cells[my * COLNO + c + 1 + clipx]
@@ -4751,6 +4767,7 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
                 }
             } else if (!unchanged && sharedRow && rebuild && ranges === null) written[c] = true;
             else if (!unchanged && sharedRow && rebuild && inRanges(c)) written[c] = true;
+            mapOwn?.delete(c);
             display.setCell(c, top + r, cell.ch, cell.color ?? NO_COLOR, cell.attr | 0);
         }
         if (sharedRow && rebuild && !unchanged) {
@@ -7325,7 +7342,7 @@ export function reglyph_remembered_terrain(rogue, oldName, oldCustomColors = tru
                                                 && g.color === rg.color);
                 if (i < 0) continue;
                 const g = variants(loc, x, y)[i];
-                loc.remembered_glyph = { ...rg, ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall };
+                loc.remembered_glyph = { ...rg, ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall, bars: !!g.bars };
             }
     }
 }

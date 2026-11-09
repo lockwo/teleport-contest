@@ -461,7 +461,7 @@ export function premap_detect() {
             if (loc.typ === SDOOR)
                 loc.wall_info = 0; /* C ref: detect.c:2146 (see rm.h for explanation) */
             const bg = terrain_background_glyph(loc, x, y);
-            loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, wall: !!bg.wall };
+            loc.remembered_glyph = { ch: bg.ch, color: bg.color, decgfx: bg.dec, wall: !!bg.wall, bars: !!bg.bars };
             const obj = vobj_at(x, y);
             /* C: map_object(obj, 1) -- a hallucinating hero memorises a random
                object glyph (display RNG), not the boulder. */
@@ -756,7 +756,7 @@ function magic_map_background(x, y, show) {
     if (game.level?.flags?.hero_memory) {
         const old = glyph_at(x, y, true);
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
-            loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall };
+            loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall, bars: !!g.bars };
             if (g.darkroom) loc.remembered_glyph.darkroom = true;
             loc.mapped_trap_ttyp = 0;
         }
@@ -810,6 +810,7 @@ function map_object(obj, show) {
     /* C ref: display.h obj_to_glyph() -> obj_is_piletop(): MG_OBJPILE */
     const pile = obj_is_piletop(obj);
     if (game.level?.flags?.hero_memory) {
+        loc.invisMon = false; /* levl[x][y].glyph replaced: the remembered 'I' is gone */
         /* C ref: display.h obj_to_glyph() — a corpse/statue glyph carries its
            monster type (GLYPH_BODY_OFF + corpsenm), which autodescribe and
            lookat() read back out of levl[x][y].glyph. */
