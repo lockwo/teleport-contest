@@ -1115,6 +1115,11 @@ export function pg_glyph_at(x, y) {
     const mon = m_at(x, y);
     if (mon && sym === (mon.data?.mlet ?? '\0'))
         return { kind: 'monster', mon, sym, x, y };
+    /* display.c display_monster()'s worm_tail arm: a long worm's tail square is
+       drawn with the PM_LONG_WORM_TAIL glyph, whose class symbol ('~') is not the
+       worm's own letter, so the symbol comparison above never matches it */
+    if (mon && (mon.mx !== x || mon.my !== y) && loc.disp_monster)
+        return { kind: 'monster', mon, sym, x, y };
     /* while hallucinating, the glyph drawn for a seen monster is a random one
        whose symbol need not be the monster's own class letter */
     if (mon && Hallucination_u() && canseemon_shared(mon)
@@ -1777,6 +1782,29 @@ function glyph_is_ustuck(glyph, ustuck) {
     return pg_glyph_is_monster(glyph) && !glyph.isyou;
 }
 
+// C ref: pager.c lookat():675-700 — the " [seen: ...]" tail lookat() appends to
+// self_lookat() when the hero is invisible (to normal sight) or undetected:
+// "When you see yourself normally, no explanation is appended".  Shared with
+// hack.js's getpos autodescribe and farlook pick, which build the hero's own
+// description from self_lookat() directly.  Returns '' when nothing applies.
+export function self_seen_suffix() {
+    const u = pg_u();
+    const iflags = pg_iflags();
+    if (!(((Invis_hero() && !See_invisible_hero()) || u.uundetected) && !Blind()
+          && !(u.uswallow || iflags.save_uswallow)))
+        return '';
+    let how = 0;
+    if (Infravision()) how |= 1;
+    if (Unblind_telepat()) how |= 2;
+    if (Detect_monsters_hero()) how |= 4;
+    if (!how) return '';
+    return ` [seen: ${(how & 1) ? 'infravision' : ''}`
+         + `${((how & 3) > 2) ? ', ' : ''}`
+         + `${(how & 2) ? 'telepathy' : ''}`
+         + `${((how & 7) > 4) ? ', ' : ''}`
+         + `${(how & 4) ? 'monster detection' : ''}]`;
+}
+
 // C ref: pager.c:656 lookat(x, y, buf, monbuf) — the "(firstmatch)" detail
 // do_screen_description() appends in parentheses.  Returns
 // { pm, buf, monbuf }; pm is the permonst for the data.base lookup, and is
@@ -1796,19 +1824,7 @@ export function lookat(x, y) {
         if (game.urole?.mnum === 12 /* PM_WIZARD */ && !u.Upolyd
             && game.urace?.mnum === 3 /* PM_GNOME */)
             pm = monster_by_pmidx(12);
-        if (((Invis_hero() && !See_invisible_hero()) || u.uundetected) && !Blind()
-            && !(u.uswallow || iflags.save_uswallow)) {
-            let how = 0;
-            if (Infravision()) how |= 1;
-            if (Unblind_telepat()) how |= 2;
-            if (Detect_monsters_hero()) how |= 4;
-            if (how)
-                buf += ` [seen: ${(how & 1) ? 'infravision' : ''}`
-                     + `${((how & 3) > 2) ? ', ' : ''}`
-                     + `${(how & 2) ? 'telepathy' : ''}`
-                     + `${((how & 7) > 4) ? ', ' : ''}`
-                     + `${(how & 4) ? 'monster detection' : ''}]`;
-        }
+        buf += self_seen_suffix();
     } else if (u.uswallow) {
         /* only called for spots adjacent to the hero when swallowed, and
            blindness doesn't stop the hero feeling what holds him */

@@ -8,7 +8,7 @@ import { body_part } from './polyself.js';
 import { makeplural } from './plural.js';
 import { game } from './gstate.js';
 import { pline, newsym, terrain_background_glyph, show_glyph_cell,
-         object_glyph, corr_glyph_cell, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
+         object_glyph, corr_glyph_cell, vobj_at, trap_glyph, engraving_glyph, bg_attr, obj_is_piletop, obj_is_generic, Deaf_hero, map_object as display_map_object, You_see, You_feel } from './display.js';
 import { engr_at } from './engrave.js';
 import { visible_region_at } from './region.js';
 import { couldsee } from './vision.js';
@@ -646,8 +646,11 @@ export function glyph_at(x, y, remembered = false) {
         return { kind: 'object', obj: null, otyp: memObj, x, y };
     // A hallucinated monster glyph is drawn with a random species' letter, so
     // the drawn-letter comparison fails; disp_monster records that the cell
-    // currently shows a monster glyph (display.js show_glyph_cell/newsym).
-    if (mon && sym !== ' ' && (loc.disp_monster || sym === (mon.data?.mlet ?? '\0')))
+    // currently shows a monster glyph (display.js show_glyph_cell/newsym).  A
+    // ghost's S_ghost symbol is a space, so a drawn ghost is recognised only by
+    // disp_monster: its glyph is a monster glyph all the same (do_vicinity_map's
+    // replace-by-remembered-unseen pass relies on glyph_is_monster() here).
+    if (mon && (loc.disp_monster || (sym !== ' ' && sym === (mon.data?.mlet ?? '\0'))))
         return { kind: 'monster', mon, x, y };
     // C's trap-glyph test comes AFTER objects in _map_location's precedence but
     // BEFORE it here, because a mapped trapped chest/door glyph (stamped by
@@ -797,8 +800,9 @@ function map_object(obj, show) {
         return display_map_object(obj, show);
     } else {
         g = object_glyph(obj);
-        // C: a generic object glyph seen from close up is observed and re-glyphed.
-        if (obj.dknown !== 1 && cansee(x, y)) {
+        // C ref: display.c map_object: only a generic glyph (obj_is_generic: !dknown
+        // potion/gem/spellbook) seen from close up is observed and re-glyphed.
+        if (obj_is_generic(obj) && cansee(x, y)) {
             const r = ((game.u?.xray_range ?? 0) > 2) ? game.u.xray_range : 2;
             if (d_distu(x, y) <= (r * r) * 2 - r) {
                 observe_object(obj);

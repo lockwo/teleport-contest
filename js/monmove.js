@@ -959,6 +959,10 @@ export function set_apparxy(mtmp) {
 // it in the same tick, not after a dynamic import's microtask), so a hook
 // function pointer is the only option — not a dynamic import.
 hooks.set_apparxy = set_apparxy;
+// Same late binding for makemon.js's synchronous newcham(), which tests the scariness of the
+// hero's square (mon.c:5528 `onscary(...) && monnear(...)`) when a monster summons a shapechanger.
+hooks.onscary = onscary;
+hooks.monnear = monnear;
 
 // C ref: mon.c m_in_air(mtmp) — is the monster up in the air / on the ceiling?
 export function m_in_air(mtmp) {
@@ -5040,7 +5044,9 @@ const LANCE_OTYP = 72;
 export function is_pole(otmp) {
     if (!otmp) return false;
     const t = otmp.otyp;
-    return (t >= POLEARM_OTYP_LO && t <= POLEARM_OTYP_HI) || t === LANCE_OTYP;
+    // C: `... || is_art(otmp, ART_SNICKERSNEE)` -- a katana, but it hits from a distance.
+    return (t >= POLEARM_OTYP_LO && t <= POLEARM_OTYP_HI) || t === LANCE_OTYP
+        || is_art(otmp, ART_SNICKERSNEE);
 }
 
 // C ref: include/obj.h is_launcher(otmp) — WEAPON_CLASS with oc_skill in
@@ -8076,7 +8082,9 @@ export function select_rwep(mtmp) {
     // range limit squared-ish (mthrowu.c's POLE_LIM).
     if (dist2(mtmp.mx, mtmp.my, mtmp.mux, mtmp.muy) <= 13
         && couldsee(mtmp.mx, mtmp.my)) {
-        /* is_art(mwep, ART_SNICKERSNEE): no artifact reaches a monster here */
+        // C ref: weapon.c:562 -- a monster already wielding Snickersnee uses it
+        // as its polearm: it is the propellor and no pwep[] weapon is looked for.
+        if (is_art(mwep, ART_SNICKERSNEE)) { _propellor = mwep; return mwep; }
         for (const wt of PWEP) {
             if (!((strongmonst_flag(permonst_of(ptr)) && !hasShield)
                   || !BIMANUAL_RWEP.has(wt))) continue;

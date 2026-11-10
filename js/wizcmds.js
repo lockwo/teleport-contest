@@ -142,6 +142,10 @@ function In_W_tower(x, y, lev) {
 // a negative int and leaves cc alone.  This adapter keeps the C call shape.
 async function getpos_cc(cc, force, goal) {
     const { getpos } = await import('./hack.js');
+    // C getpos.c:843-844 curs(WIN_MAP, cx, cy); flush_screen(0): the tty cursor
+    // waits on the start position, which from a loop's second pass on is the
+    // previous pick (cc), not the hero.  The caller's pline() redraw left it home.
+    if (game.nhDisplay?.setCursor) game.nhDisplay.setCursor(cc.x - 1, cc.y + 1);
     // C ref: getpos.c — the "(For instructions ...)" line is gated on flags.verbose
     // itself (wiz_kill() clears it around the call for its own prompt).
     const pos = await getpos(goal, cc.x, cc.y, null, force, game.flags?.verbose !== false);
@@ -303,9 +307,6 @@ export async function wiz_kill() {
     for (;;) {
         await pline(`${prompt}:`);
         await flush_screen(1); // tty pline() draws at once; getpos() reads before any redraw
-        // C getpos.c:843-844 curs(WIN_MAP, cx, cy); flush_screen(0): from the second
-        // pass cc is the previous pick, so the cursor waits there, not on the hero.
-        if (game.nhDisplay?.setCursor) game.nhDisplay.setCursor(cc.x - 1, cc.y + 1);
         prompt = 'Next monster';
 
         if (game.flags) game.flags.verbose = false;

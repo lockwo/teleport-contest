@@ -63,7 +63,7 @@ import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
 import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_more, y_n, newsym,
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
-         capture_screen_for_level_change, freeze_screen_for_level_change,
+         capture_screen_for_level_change, note_departing_glyph_writes, freeze_screen_for_level_change,
          thaw_screen_for_level_change, Deaf_hero, You_feel, You_see, stairway_at } from './display.js';
 import { seetrap, dotrap, fill_pit, Teleport_control_fu, pooleffects, u_locomotion, reset_utrap } from './trap.js';
 import { set_utrap } from './polyself.js';
@@ -676,6 +676,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // it first would blank that frame's monsters, costing 19 screens across
     // seed0030/0014/0002; draw ORDER is identical either way.
     vision_recalc(2);
+    note_departing_glyph_writes();
 
     // C ref: do.c goto_level():1625 — recalc_mapseen() "recalculate map overview
     // before we leave the level" (the level's #overview annotations, features

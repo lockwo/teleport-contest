@@ -3202,12 +3202,20 @@ export function newcham(mtmp, mdat) {
         // is what the map shows.
         mtmp.meverseen = 0;
         if (mtmp.mx) hooks.newsym?.(mtmp.mx, mtmp.my);
-        // C ref: mon.c:5522-5526 — while a monster is moving (e.g. a spellcaster
+        // C ref: mon.c:5522-5534 — while a monster is moving (e.g. a spellcaster
         // summoning a vampshifter via nasty()), the new form gets a fresh
-        // chance to pinpoint the hero.
-        if (game.context?.mon_moving
-            && !(game.u.ux === mtmp.mux && game.u.uy === mtmp.muy))
-            hooks.set_apparxy?.(mtmp);
+        // chance to pinpoint the hero, and if the hero's spot is scary to it and it
+        // stands next to her it starts out fleeing: `monflee(mtmp, rn1(9, 2), TRUE, TRUE)`.
+        // That call may print "<new form> turns to flee." and this path is synchronous,
+        // so the rn1() draw happens here and makemon_appears_msg() (which every creation
+        // caller runs next, at C's makemon() tail) performs the monflee() itself.
+        if (game.context?.mon_moving) {
+            if (!(game.u.ux === mtmp.mux && game.u.uy === mtmp.muy))
+                hooks.set_apparxy?.(mtmp);
+            if (!mtmp.mpeaceful && hooks.onscary?.(mtmp.mux, mtmp.muy, mtmp)
+                && hooks.monnear?.(mtmp, mtmp.mux, mtmp.muy))
+                mtmp._creationFlee = rn1(9, 2); /* 2..10 turns */
+        }
     }
     return changed;
 }
@@ -4262,6 +4270,11 @@ export async function create_critters(cnt, mptr, neverask) {
 
 export async function makemon_appears_msg(mtmp, x, y, mmflags = 0) {
     if (!mtmp || game.in_mklev) return;
+    if (mtmp._creationFlee !== undefined) {
+        const fleetime = mtmp._creationFlee;
+        delete mtmp._creationFlee;
+        await (await import('./monmove.js')).monflee(mtmp, fleetime, true, true);
+    }
     const members = mtmp._grpMembers;
     if (members) {
         delete mtmp._grpMembers;

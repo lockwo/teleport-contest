@@ -1536,7 +1536,15 @@ export async function rhack(key) {
         // already fully implemented and self-contained, including its own
         // "There is no command available to repeat." message).
         const res = await do_repeat();
-        game.context.move = res === 1 ? 1 : 0;
+        game.context.move = (res & ECMD_TIME) ? 1 : 0;
+        // C ref: cmd.c rhack():3810-3816 — do_repeat() returns ECMD_OK when the replayed
+        // command took no time (savelife() clears context.move when a wizard-mode death is
+        // declined, so ^A of a fatal F-attack lands here), and an ECMD_OK result runs
+        // reset_cmd_vars(gm.multi < 0): `gm.multi = 0` cancels the multi = -1 savelife() set,
+        // so "You survived that attempt on your life." is never announced and the hero can
+        // act at once.  ECMD_CANCEL/ECMD_FAIL clear both command queues.
+        if (res & (ECMD_CANCEL | ECMD_FAIL)) reset_cmd_vars(true);
+        else if (!(res & ECMD_TIME)) reset_cmd_vars(game.multi < 0);
     } else if (key === 4) { // ^D — kick (dokick.c dokick())
         // C ref: cmd.c keymap C('d') = dokick.  Reads a direction, then resolves
         // the kicked square (monster / object / terrain).  Sets the turn flag
@@ -1839,11 +1847,16 @@ export async function rhack(key) {
         if (fireRes & (ECMD_CANCEL | ECMD_FAIL)) game.context._getobj_cancelled = true;
         game.context.move = (fireRes & ECMD_TIME) ? 1 : 0;
     } else if (ch === '_') {
-        // C ref: cmd.c — '_' (#travel) move toward a chosen map location.  The
-        // recorded session cancels at the destination prompt (ESC), so no turn
-        // elapses.
-        await dotravel();
-        game.context.move = 0;
+        // C ref: cmd.c — '_' (#travel) move toward a chosen map location.  ESC at
+        // the destination prompt spends no time.  A picked destination reaches
+        // dotravel_target(), whose walk took every elapsed turn inline
+        // (hack.js travel_walk()/travel_adjacent_step()); only a helpless hero's
+        // leftover context.move (a ball drag's nomul(-2)) may reach
+        // moveloop_core(), exactly as for ^_ #retravel below.  Zeroing it
+        // unconditionally dropped the remaining helpless turns of the drag, so the
+        // monsters' moves for those turns ran after the NEXT key instead of
+        // before the next screen (x355-hu246 step 428).
+        game.context.move = (((await dotravel()) & ECMD_TIME) && game.context.move) ? 1 : 0;
     } else if (key === 31) { // ^_ -- #retravel (cmd.c:1831 C('_'), dotravel_target)
         // invent.js's dotravel_target() answers ECMD_TIME as 3.  Like #travel
         // above, travel_walk()/travel_adjacent_step() took every elapsed turn

@@ -244,8 +244,9 @@ async function do_pit(x, y, tu_pit) {
     const { fillholetyp, liquid_flow } = await import('./dig.js');
     const filltype = fillholetyp(x, y, false);
     if (filltype !== ROOM) {
-        const here = game.level?.at?.(x, y);
-        if (here) here.typ = filltype;
+        /* C ref: music.c do_pit() set_levltyp(x, y, filltype): new lava is lit */
+        const { set_levltyp_lit, SET_LIT_NOCHANGE } = await import('./sp_lev.js');
+        set_levltyp_lit(x, y, filltype, SET_LIT_NOCHANGE);
         await liquid_flow(x, y, filltype, chasm, null);
         /* liquid_flow() deletes trap, might kill mtmp */
         if (!(await import('./trap.js')).t_at(x, y)) return;

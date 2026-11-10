@@ -2411,11 +2411,16 @@ export function quest_rndcoord(sel) {
 // A specific-coord ogre (create_monster with an explicit coord from rndcoord).
 export function quest_create_monster_at(name, x, y, peaceful) {
     const { pmidx, female: gend } = splev_find_montype(name);   // sp_lev.c:3156
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     // create_monster() (sp_lev.c:2125) assigns find_montype's gender over
     // whatever makemon() rolled.
     rn2(3);                                            // induced_align
+    // C ref: sp_lev.c:1946-1952 -- an extinct unique is not created; any
+    // other genocided/extinct species is replaced by a random monster.
+    const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) || 0;
+    if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+    if (g_mvflags & G_GONE) ptr = null;
     let mx = x, my = y;
     if (mm_mon_at(mx, my)) {
         const cc = enexto_gpflags(mx, my, ptr, 0);
@@ -2569,9 +2574,14 @@ export function quest_create_monster_randpos(name, peacefulOverride) {
     // tmpmons.female and overwrites makemon's own roll (sp_lev.c:2125).
     const gender = { v: NEUTRAL };
     const pmidx = find_montype(name, gender);
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     rn2(3);                                             // induced_align (dungeon.c:2012)
+    // C ref: sp_lev.c:1946-1952 -- an extinct unique is not created; any
+    // other genocided/extinct species is replaced by a random monster.
+    const g_mvflags = (game.mvitals?.[ptr.pmidx]?.mvflags) || 0;
+    if ((ptr.geno & G_UNIQ) && (g_mvflags & G_EXTINCT)) return null;
+    if (g_mvflags & G_GONE) ptr = null;
     const c = bigrm_get_location_dry();
     let x = c.x, y = c.y;
     if (mm_mon_at(x, y)) {

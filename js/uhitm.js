@@ -406,7 +406,18 @@ async function that_is_a_mimic_message(mtmp) {
     }
 
     let fmtbuf;
-    if (M_AP_TYPE(mtmp) === M_AP_FURNITURE) {
+    // C ref: uhitm.c that_is_a_mimic(): each disguise-specific format needs the
+    // glyph the hero actually has DISPLAYED at (x, y) to be of that kind (cmap /
+    // object / monster); an 'I' remembered-unseen-monster glyph or an
+    // undrawn square keeps the default "Wait!  That's %s!".
+    // glyph_at() reports a furniture mimic's remembered glyph as an OBJECT with
+    // otyp 0 (display_monster() stores objotyp 0 for any non-object disguise),
+    // but C's glyph there is the cmap furniture symbol.
+    const furn_glyph = M_AP_TYPE(mtmp) === M_AP_FURNITURE
+        ? (await import('./detect.js')).glyph_at(mtmp.mx, mtmp.my) : null;
+    if (furn_glyph
+        && (furn_glyph.kind === 'cmap'
+            || (furn_glyph.kind === 'object' && !furn_glyph.otyp))) {
         const { defsyms } = await import('./symbols.js');
         const furn = defsyms[mtmp.mappearance]?.explanation || FURNITURE_EXPLANATION[mtmp.mappearance] || 'thing';
         fmtbuf = `That ${furn} actually is %s!`;
@@ -433,7 +444,8 @@ async function that_is_a_mimic_message(mtmp) {
         const plural = is_plural(otmp);
         const verb = otense(otmp, 'are');
         fmtbuf = `${plural ? 'Those' : 'That'} ${otmp_name} ${verb} %s!`;
-    } else if (M_AP_TYPE(mtmp) === M_AP_MONSTER) {
+    } else if (M_AP_TYPE(mtmp) === M_AP_MONSTER
+               && game.level?.at(mtmp.mx, mtmp.my)?.disp_monster) {
         // C ref: uhitm.c that_is_a_mimic() glyph_is_monster arm -- the displayed
         // disguise is named with pmname(&mons[glyph_to_mon(glyph)], Mgender(mtmp)).
         const dis = monster_by_pmidx(mtmp.mappearance);

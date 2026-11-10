@@ -29,7 +29,7 @@ import { set_mktrap_victim, bind_sp_lev_externs, filler_region, lspo_map, lspo_r
 import { splev_finish_object, splev_table_spe } from './sp_lev.js';
 import { create_maze, walkfrom, mz, reset_maze_bounds, mkportal, makemaz, mazexy,
          check_ransacked, stolen_booty, gr as mm_gr } from './mkmaze.js';
-import { is_pool_or_lava } from './const.js';
+import { is_pool_or_lava, G_UNIQ, G_EXTINCT, G_GONE } from './const.js';
 import {
     selection_new, selection_clone, selection_clear, selection_setpoint,
     selection_getpoint, selection_getbounds, selection_iterate,
@@ -3446,10 +3446,23 @@ function mk_mines_race_suppress(data) {
     return rn2(3) ? null : data;
 }
 
+// C ref: sp_lev.c create_monster() — right after sp_amask_to_amask(): an extinct
+// G_UNIQ species makes the call return without creating anything (false), and a
+// genocided/extinct one (G_GONE) becomes a random monster, pm = NULL (null).
+// Every des.monster("name") port must apply this between induced_align and
+// the location/makemon draws: a genocided soldier is a rndmonst() pass instead.
+function mk_gone_pm(data) {
+    const gmv = (game.mvitals?.[data.pmidx]?.mvflags ?? 0);
+    if ((data.geno & G_UNIQ) && (gmv & G_EXTINCT)) return false;
+    return (gmv & G_GONE) ? null : data;
+}
+
 function mk_monster_named(name, peacefulOverride) {
-    const { data, mgend } = mk_find_montype(name);
+    const { data: data0, mgend } = mk_find_montype(name);
     // sp_amask_to_amask(AM_SPLEV_RANDOM) -> induced_align(80).
     oracle_induced_align();
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const data2 = mk_mines_race_suppress(data);
     // pm_to_humidity(pm) — DRY for these mines monsters (no swimmers/flyers).
     const c = mk_get_location_random(mk_ok_dry);
@@ -3697,8 +3710,10 @@ function mt4_place_monster(data, croom, peaceful) {
 
 // des.monster("name") / des.monster({id="name", peaceful=1}) inside a room.
 function mt4_monster(name, croom, peaceful) {
-    const { data, mgend } = mk_find_montype(name);   // find_montype gender roll
+    const { data: data0, mgend } = mk_find_montype(name);   // find_montype gender roll
     oracle_induced_align();                          // sp_amask_to_amask
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const mtmp = mt4_place_monster(mk_mines_race_suppress(data), croom, peaceful);
     if (mtmp) mtmp.female = mgend;                   // create_monster: mtmp->female = m->female
     return mtmp;
@@ -4034,8 +4049,10 @@ function mtown1_rndcoord(sel, removeit) {
 // from quest_floodfill_match()'s absolute keys, so this must NOT re-apply the
 // des.map() origin offset the way splev_create_monster()'s mx/my branch does.
 function mtown1_monster_abs(name, x, y, peaceful, levAdj) {
-    const { data, mgend } = mk_find_montype(name);
+    const { data: data0, mgend } = mk_find_montype(name);
     oracle_induced_align();
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const data2 = mk_mines_race_suppress(data);
     const c = { x, y };
     mk_enexto_if_occupied(c, data2);
@@ -4535,8 +4552,10 @@ function hf_monster_class_at(classChar, x, y, peacefulOverride) {
 
 // des.monster("name", x, y) — a named species at a fixed (map-relative) spot.
 function hf_monster_named_at(name, x, y, peacefulOverride) {
-    const { data, mgend } = mk_find_montype(name);
+    const { data: data0, mgend } = mk_find_montype(name);
     oracle_induced_align();
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const c = hf_loc(x, y);
     mk_enexto_if_occupied(c, data);
     const mtmp = makemon(data, c.x, c.y, 0);
@@ -5321,8 +5340,10 @@ function castle_door(state, x, y) {
 // resolved (find_montype, one rn2(2) gender roll for a non-fixed-gender
 // species), then induced_align, then makemon at the explicit coordinate.
 function castle_monster_named_at(name, x, y) {
-    const { data, mgend } = mk_find_montype(name);
+    const { data: data0, mgend } = mk_find_montype(name);
     oracle_induced_align();
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const c = hf_loc(x, y);
     mk_enexto_if_occupied(c, data);
     const mtmp = makemon(data, c.x, c.y, 0);
@@ -5989,8 +6010,10 @@ function qf_monster(croom, spec, peacefulOverride) {
         }
         return mtmp;
     }
-    const { data, mgend } = mk_find_montype(spec);
+    const { data: data0, mgend } = mk_find_montype(spec);
     oracle_induced_align();
+    const data = mk_gone_pm(data0);
+    if (data === false) return null;
     const mtmp = qf_place_monster(mk_mines_race_suppress(data), croom);
     if (mtmp) mtmp.female = mgend;
     if (mtmp && peacefulOverride != null) {
@@ -6242,9 +6265,16 @@ async function makemaz_oracle() {
                 setfeat(1, 2, FOUNTAIN);
                 setfeat(2, 1, FOUNTAIN);
                 // des.monster("Oracle", 1, 1) — fixed coords inside delphi.
+                // C ref: sp_lev.c create_monster(): the amask roll comes first, then a G_UNIQ
+                // species already G_EXTINCT (a wizard-mode ^G or an earlier level made it) makes
+                // the call return without creating anything, and a G_GONE (genocided) species
+                // falls back to a random monster at the same spot.
                 oracle_induced_align();             // sp_amask_to_amask
                 const ox = delphi.lx + 1, oy = delphi.ly + 1;
-                makemon(monster_by_pmidx(name_to_pmidx('Oracle')), ox, oy, 0);
+                const oraclePm = monster_by_pmidx(name_to_pmidx('Oracle'));
+                const oracleMv = (game.mvitals?.[oraclePm.pmidx]?.mvflags ?? 0);
+                if (!((oraclePm.geno & G_UNIQ) && (oracleMv & G_EXTINCT)))
+                    makemon((oracleMv & G_GONE) ? null : oraclePm, ox, oy, 0);
                 // des.door({ state="nodoor", wall="all" })
                 // C ref: oracle.lua des.door({ state="nodoor", wall="random" })
                 // -> lspo_door -> create_door() with mask != -1.
@@ -6984,6 +7014,13 @@ export async function makelevel_fill_and_mineralize() {
         // queued themeroom postprocess handlers (e.g. Teleportation hub's
         // deferred teleport traps) after the per-room fill loops.
         await run_themeroom_postprocess();
+        // C ref: mklev.c level_finalize_topology() — `bound_digging(); mineralize(...)`.
+        // C runs the fill loops above INSIDE makelevel(), i.e. BEFORE bound_digging()
+        // stamps W_NONDIGGABLE/W_NONPASSWALL on the boundary rock, so a wall-passer
+        // (a xorn/earth elemental statue-trap monster, makemon_rnd_goodpos ->
+        // goodpos -> may_passwall) still accepts any STONE square while the level is
+        // being filled.  mineralize() reads W_NONDIGGABLE, so it follows.
+        bound_digging();
         mineralize(-1, -1, -1, -1, false);
         // C mklev.c:1559-1560: this follows room filling, which sets has_morgue.
         if (game.level?.flags?.has_morgue) game.level.flags.graveyard = true;
@@ -7474,8 +7511,10 @@ export function set_wall_state() {
 }
 
 function level_finalize_topology() {
-    bound_digging();
-    // mineralize is consumed by makelevel_fill_and_mineralize
+    // C ref: mklev.c level_finalize_topology() begins `bound_digging(); mineralize(...)`,
+    // but this port runs C's fill loops after mklev() returns, in
+    // makelevel_fill_and_mineralize(), which therefore performs both (fill first,
+    // exactly C's order inside makelevel() -> level_finalize_topology()).
     game.in_mklev = false;
     // C ref: mklev.c themerooms_post_level_generate() runs the level-wide
     // wallification(1, 0, COLNO-1, ROWNO-1) at the very end of makelevel()

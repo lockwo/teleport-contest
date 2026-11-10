@@ -728,6 +728,13 @@ async function display_putstr_window(lines) {
         const key = await nhgetch();
         if (key === 27 || key === 13 || key === 10 || key === 32) break;
     }
+    // C ref: wintty.c erase_menu_or_text() docorner(offx, maxrow + 1): over a
+    // screen cls() blanked while goto_level() holds its flushes (hero died in
+    // transit), dismissing the corner window row_refresh()es the glyph buffer
+    // back over rows 0..lines.length from its left edge.
+    if (game._screenBlank === true)
+        game._screenBlankCorner = { cutCol: Math.max(0, text_window_offx(lines) - 1),
+                                    lastRow: lines.length - 1, cuts: null };
     const { flush_screen } = await import('./display.js');
     await flush_screen(1);
 }

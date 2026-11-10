@@ -33,7 +33,7 @@ import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx, can_saddle, put_saddle_on_mon } from './makemon.js';
 import { surface } from './dungeon.js';
-import { hliquid, mon_nam, mon_pmname } from './do_name.js';
+import { hliquid, mhe, mon_nam, mon_pmname } from './do_name.js';
 import { sobj_at, is_pole, near_capacity, youmonst_data } from './invent.js';
 import { t_at } from './mkroom.js';
 import { mon_mintrap } from './monmove.js';
@@ -160,7 +160,7 @@ export async function mount_steed(mtmp, force) {
     if (mtmp.mtrapped) {
         const t = t_at(mtmp.mx, mtmp.my);
         const { an } = await import('./objnam.js');
-        await pline(`You can't mount ${mon_nam(mtmp)} while ${mhe_std(mtmp)}'s trapped in ${
+        await pline(`You can't mount ${mon_nam(mtmp)} while ${mhe(mtmp)}'s trapped in ${
             an(trapname(t?.ttyp, false))}.`);
         return false;
     }
@@ -858,7 +858,7 @@ export async function kick_steed() {
         /* We assume a message has just been output of the form
          * "You kick <steed>."
          */
-        let He = mhe_std(u.usteed);
+        let He = mhe(u.usteed);
         He = He.charAt(0).toUpperCase() + He.slice(1);
         if ((u.usteed.mcanmove || u.usteed.mfrozen) && !rn2(2)) {
             if (u.usteed.mcanmove)
@@ -967,11 +967,6 @@ function objdescr_is_std(obj, descr) {
 // C ref: mon.h helpless(mon) — asleep, frozen or otherwise unable to act.
 function helpless_std(mon) {
     return !mon?.mcanmove || !!mon.msleeping || (mon.mfrozen | 0) > 0;
-}
-// C ref: do_name.c mhe(mon) — "he"/"she"/"it".
-function mhe_std(mon) {
-    if (mon?.female) return 'she';
-    return mon?.data?.gender === 'neuter' ? 'it' : 'he';
 }
 // C ref: eat.c finish_meating(mon) — js/dogmove.js:2300 holds the private port.
 function finish_meating_std(mon) { mon.meating = 0; }

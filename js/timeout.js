@@ -2452,7 +2452,13 @@ export async function wiz_timeout_queue() {
         _putstr(win, 0, `Level is no-teleport for ${stasis - (game.moves | 0) + 1} `
                         + `${(stasis - (game.moves | 0) > 0) ? 'turns' : 'more turn'}.`);
     }
-    if (_display_nhwindow(win, false)) {
+    if (win.lines.length >= (game.nhDisplay?.rows ?? 24)) {
+        /* C ref: wintty.c tty_display_nhwindow() NHW_MENU: a text window as tall
+           as the screen (maxrow >= rows) is full-screen and process_text_window()
+           pages it, a "--More--" on the last row of each full page.  Several
+           regions or timed properties push this report past 24 lines. */
+        await (await import('./invent.js')).tty_text_window(win.lines);
+    } else if (_display_nhwindow(win, false)) {
         /* tty display_nhwindow() of a text window runs process_text_window()'s
            dmore(): xwaitforspace() inside this command, and destroy_nhwindow()
            then erases the corner (docorner(), no RNG).  Leaving the key for the

@@ -28,7 +28,7 @@ import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_K
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, trap_description, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -1103,9 +1103,19 @@ export async function travel_adjacent_step(tx, ty) {
         (game.iflags = game.iflags || {}).travelcc = { x: 0, y: 0 };
         await domove(dx, dy);
         await end_turn_callbacks();    // allmain.c:558, end of this iteration
-        if (c.move) await takeTurn();  // the elapsed turn, taken inline
+        // C ref: cmd.c rhack():3819 — dotravel_target() returns ECMD_TIME and rhack()
+        // then forces svc.context.move back to TRUE, so the step costs a turn even
+        // when domove_core() refused it (a Stunned/Confused hero's confdir() sent
+        // it diagonally out of a doorway, test_move() zeroing context.move).
+        // travel_walk() below does the same for its first step.
+        c.move = 1;
+        await takeTurn();              // the elapsed turn, taken inline
         // C: reset_cmd_vars() at the top of the next rhack().
-        c.run = 0; c.travel = c.travel1 = c.mv = 0; c.nopick = 0;
+        c.run = 0; c.travel = c.travel1 = c.mv = 0;
+        // C: nopick is cleared by rhack()'s reset_cmd_vars, not by the end of travel; a hero
+        // left helpless by the elapsed turn (multi < 0, savelife) is not read for a command
+        // again until multi counts up, so a later spoteffects(TRUE) -> pickup(1) still sees it.
+        if ((game.multi | 0) >= 0) c.nopick = 0;
         c.move = 0;
         // A nomul(-n) from the elapsed turn (fainting, paralysis) must survive.
         if (game.multi > 0) game.multi = 0;
@@ -1232,12 +1242,22 @@ async function travel_walk(fastPathFailed = false) {
     if (leftoverRun) c.run = 0; // (not end_running()'s time_botl write)
     end_running(true);
     if (leftoverRun) c.run_leftover8 = 2; // 2 = set by the command now finishing
-    c.nopick = 0;
+    // C: nopick survives until rhack() runs again, which a helpless hero (multi < 0, e.g. a
+    // life-saved one regurgitated onto an object pile) does not do for several turns.
+    if (!helpless) c.nopick = 0;
     if (!helpless) {
         c.move = 0;
         game.multi = 0;
     } else {
         c.move = 1;
+        // C ref: allmain.c moveloop_core() — the elapsed turn above was the turn
+        // block of the iteration after the last step; its tail (the redraw and
+        // bot(), which publishes an AC/HP change made by that turn's monster
+        // attacks) runs BEFORE the next iteration's helpless turn block.  Leaving
+        // context.move set makes moveloop_core() run that turn first, so do the
+        // tail here exactly as the loop does between steps.
+        await moveloop_input_redraw();
+        await moveloop_bot();
     }
     return true;
 }
@@ -2311,8 +2331,24 @@ function gloc_glyph_covered(x, y, loc, mtmp) {
     // still what glyph_at() reports until the square is seen again
     const rg = loc.remembered_glyph;
     if ((rg?.objotyp || rg?.hallucotyp) && rg.ch === loc.disp_ch) return true;
+    return gloc_trap_glyph_shown(x, y, loc);
+}
+
+// C ref: display.c MAP_TRP/map_trap() — glyph_at() is the trap glyph only when
+// the hero's map actually carries it: a discovered trap not covered by deep
+// water/lava whose glyph was drawn or remembered (disp_trap / the
+// mapped_trap_ttyp stamp).  A trap carried by a Plane of Water bubble onto a
+// never-seen square keeps the level's base water glyph there (movebubbles()
+// resets levl[][] and moves only btrap->tx/ty), so tseen alone says nothing.
+function gloc_trap_glyph_shown(x, y, loc) {
     const trap = t_at(x, y);
-    return !!(trap && trap.tseen && !covers_objects(loc));
+    if (!trap || !trap.tseen || covers_objects(loc)) return false;
+    if (loc.disp_trap || loc.mapped_trap_ttyp) return true;
+    // Other draw paths (arrival vision of an already-seen hole/pit) show the
+    // trap glyph without the disp_trap stamp: the displayed and remembered
+    // glyph are then the trap's own symbol, never the base-element water glyph.
+    const tg = trap_glyph(trap), rg = loc.remembered_glyph;
+    return loc.disp_ch === tg.ch && rg?.ch === tg.ch && rg.color === tg.color;
 }
 
 // C ref: getpos.c gather_locs_interesting(x, y, gloc) — does the DISPLAYED
@@ -2345,9 +2381,11 @@ function gloc_remembers_door(loc, x, y) {
         }
     return false;
 }
+// A remembered dark room square (rg.darkroom) also draws as a blank, but its
+// glyph is S_darkroom, which getpos.c is_cmap_room() accepts for GLOC_EXPLORE.
 function gloc_remembers_stone(loc) {
     const rg = loc.remembered_glyph;
-    return !!rg && rg.ch === ' ' && !rg.objotyp && !rg.hallucotyp;
+    return !!rg && rg.ch === ' ' && !rg.darkroom && !rg.objotyp && !rg.hallucotyp;
 }
 // C ref: cmd.c spkeys[] defaults for mMoOdDxX_def[] — next/prev pairs, so the
 // index >> 1 is the GLOC_* class.
@@ -2500,10 +2538,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // the plain-terrain exclusion below and getpos's 'a' jump skipped it
         // entirely (bl036 step 248: 'a' landed on a farther object instead of
         // the nearer already-discovered pit).
-        {
-            const trap = t_at(x, y);
-            if (trap && trap.tseen && !covers_objects(loc)) return true;
-        }
+        if (gloc_trap_glyph_shown(x, y, loc)) return true;
         // C tests the displayed cmap sym, and S_engroom/S_engrcorr are NOT in
         // the exclusion list below (they sit outside is_cmap_room/is_cmap_corr),
         // so an engraved room/corridor square stays interesting even though its
@@ -2644,7 +2679,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
                              && m_at(x, y) === u.ustuck);
     if (u && x === u.ux && y === u.uy && !engulferShown
         && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
-        desc = self_lookat();
+        desc = self_lookat() + self_seen_suffix();
     } else if (u && x === u.ux && y === u.uy && tm0 && canspotself()
                && game.level?.at(x, y)?.disp_ch === hero_glyph().ch
                && !game.level.at(x, y).remembered_glyph?.objotyp) {
@@ -2887,7 +2922,19 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             // C getpos.c:865 auto_describe(cx, cy) at top of loop.
             const msg = describe(cx, cy);
             if (msg != null) await getpos_render(msg, cx, cy, 'suppress');
-            else { await flush_screen(1); const disp = game.nhDisplay; if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1); }
+            else {
+                // auto_describe() printed nothing, so the tty cursor stays where
+                // nxtc's flush_screen(0) left it: at the end of the last status
+                // row when bot() redrew pending fields (a getpos_menu() whose
+                // dismissal ran under bot_disabled), else on (cx,cy).
+                const botPending = !firstPass && !!(game.botl || game.botlx);
+                await flush_screen(1);
+                const disp = game.nhDisplay;
+                if (botPending && disp?.setCursor) {
+                    const lastRow = (disp.rows ?? 24) - 1;
+                    disp.setCursor(game._statusFinalx?.[lastRow] | 0, lastRow);
+                } else if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
+            }
         } else if (!firstPass) {
             // C getpos.c `nxtc:` — curs(WIN_MAP, cx, cy) + flush_screen(0) after
             // EVERY key, so the cursor tracks the cell even with no message
@@ -3750,7 +3797,7 @@ function look_pick_description(x, y) {
         // who isn't polymorphed) tacks on "or you", since '@' wouldn't
         // otherwise ever refer to them.  Mirrors js/pager.js's own faithful
         // (but, for this '/' command, unreached) do_screen_description port.
-        const self = self_lookat();
+        const self = self_lookat() + self_seen_suffix();
         // C ref: pager.c do_screen_description() keys off the displayed symbol —
         // a polymorphed hero is drawn as its monster class letter, so the class
         // explanation is that class's, and "or you" is never tacked on (!Upolyd).

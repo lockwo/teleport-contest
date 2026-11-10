@@ -1488,6 +1488,13 @@ function show_region_glyph(x, y, reg) {
 export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr = 0, keepColor = false, dark = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return;
+    /* C ref: display.c show_glyph() writes gbuf only; while goto_level()'s
+       flush_screen(-1) holds the departing frame, remember which cells the
+       new level has written (commit_stale_glyph_buffer()). */
+    if (game._staleFrame) {
+        (game._staleFrame.written ??= new Set()).add(y * COLNO + x);
+        game._staleFrame.departed?.delete(y * COLNO + x);
+    }
     /* The recorder's terminal only sees the glyph buffer at flush time: keep
        what the cell showed at the last build (blank if never drawn) so a
        control-byte symbol, which writes nothing, can fall back to it. */
@@ -2011,6 +2018,10 @@ function* see_monsters_loop() {
         // here (nor is the hero's square, via the `!u.usteed` tail) — docrt()
         // at end-of-game disclosure leaves the remembered floor glyph.
         if ((mon.mstate || 0) & MON_STILL_ARRIVING) continue;
+        // C: a steed dismounted before losedogs() (the hero fell down the stairs)
+        // is place_monster()ed on the map grid but still linked on mydogs, not
+        // fmon, so this fmon walk never reaches it.
+        if (game.mydogs?.length && game.mydogs.includes(mon)) continue;
         if (isok(mon.mx, mon.my)) newsym(mon.mx, mon.my);
         else yield mon;
         // C ref: worm.c see_wsegs(mon) — every tail segment short of the
@@ -2678,6 +2689,11 @@ function newsym_core(x, y) {
             show_glyph_cell(x, y, hg.ch, hg.color, false, hg.attr, hg.keepColor);
         } else {
             show_bg_glyph(x, y, bg);
+            // C ref: display.c _map_location(x, y, show=1) tail: `if (show &&
+            // !Blind && (reg = visible_region_at(x, y))) show_region(reg, x, y)`
+            // draws a visible gas cloud over what was just mapped.
+            const reg_over = !Blind() ? visible_region_at(x, y) : null;
+            if (reg_over) show_region_glyph(x, y, reg_over);
         }
         // C ref: map_background()/map_object()/map_trap() store `levl[x][y].glyph`
         // only `if (svl.level.flags.hero_memory)`; the Planes of Water and Air clear
@@ -4374,22 +4390,77 @@ function _mapSigOf(l) {
     return `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${bg && l.remembered_glyph?.darkroom ? 'd' : ''}|${bg && l.remembered_glyph ? 'g' : ''}`;
 }
 
+// One captured map cell of a frozen frame, or undefined for a blank unremembered
+// square.
+function _frame_cell(loc) {
+    if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) {
+        // a blank but remembered square still owns its screen cell
+        // (renderStatusLines' mapWins test), though it draws nothing
+        if (loc?.remembered_glyph) return { remembered_glyph: loc.remembered_glyph, sig: _mapSigOf(loc) };
+        return undefined;
+    }
+    return { disp_ch: loc.disp_ch, disp_decgfx: loc.disp_decgfx,
+        disp_color: loc.disp_color, disp_attr: loc.disp_attr, disp_dark: loc.disp_dark,
+        sig: _mapSigOf(loc) };
+}
+
 export function capture_screen_for_level_change() {
     const cells = new Array(COLNO * ROWNO);
     for (let y = 0; y < ROWNO; y++)
         for (let x = 1; x < COLNO; x++) {
-            const loc = game.level?.at(x, y);
-            if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) {
-                // a blank but remembered square still owns its screen cell
-                // (renderStatusLines' mapWins test), though it draws nothing
-                if (loc?.remembered_glyph) cells[y * COLNO + x] = { remembered_glyph: loc.remembered_glyph, sig: _mapSigOf(loc) };
-                continue;
-            }
-            cells[y * COLNO + x] = { disp_ch: loc.disp_ch, disp_decgfx: loc.disp_decgfx,
-                disp_color: loc.disp_color, disp_attr: loc.disp_attr, disp_dark: loc.disp_dark,
-                sig: _mapSigOf(loc) };
+            const c = _frame_cell(game.level?.at(x, y));
+            if (c) cells[y * COLNO + x] = c;
         }
     game._staleCapture = { cells, status: botl_lines() };
+}
+
+// C ref: do.c goto_level() keepdogs() / vision_recalc(2): both newsym() the
+// DEPARTING level, rewriting the glyph buffer (a monster no longer in sight
+// falls back to the remembered square) before flush_screen(-1) holds the tty.
+// Record every cell whose glyph now differs from the captured physical frame
+// so a corner window's docorner() replay shows it (commit_stale_glyph_buffer).
+export function note_departing_glyph_writes() {
+    const stale = game._staleCapture;
+    if (!stale) return;
+    const departed = new Map();
+    for (let y = 0; y < ROWNO; y++)
+        for (let x = 1; x < COLNO; x++) {
+            const idx = y * COLNO + x;
+            const now = _frame_cell(game.level?.at(x, y));
+            if (JSON.stringify(now) !== JSON.stringify(stale.cells[idx])) departed.set(idx, now);
+        }
+    stale.departed = departed;
+}
+
+// C ref: wintty.c docorner(xmin, ymax) -> display.c row_refresh(): the physical
+// screen under a dismissed corner window is repainted from the glyph buffer,
+// not from the departing frame goto_level()'s flush_screen(-1) keeps showing.
+// Cells the new level's newsym() wrote since the freeze (show_glyph_cell()
+// records them in _staleFrame.written) live only in the glyph buffer until
+// then, so a swept cell takes the new level's glyph; a swept cell the buffer
+// holds blank is blank.  Covers screen columns >= minCol on rows 0..lastRow.
+export function commit_stale_glyph_buffer(minCol, lastRow) {
+    const stale = game._staleFrame;
+    if (!stale?.written?.size && !stale?.departed?.size) return;
+    _syncClipping();
+    for (const idx of [...(stale.departed?.keys() ?? [])]) {
+        const x = idx % COLNO, y = Math.trunc(idx / COLNO);
+        const sr = _mapRowOnScreen(y);
+        if (sr < 0 || sr > lastRow) continue;
+        if (clipping && (x <= clipx || x >= clipxmax)) continue;
+        if (x - 1 - clipx < minCol) continue;
+        stale.cells[idx] = stale.departed.get(idx);
+        stale.departed.delete(idx);
+    }
+    for (const idx of [...(stale.written ?? [])]) {
+        const x = idx % COLNO, y = Math.trunc(idx / COLNO);
+        const sr = _mapRowOnScreen(y);
+        if (sr < 0 || sr > lastRow) continue;
+        if (clipping && (x <= clipx || x >= clipxmax)) continue;
+        if (x - 1 - clipx < minCol) continue;
+        stale.cells[idx] = _frame_cell(game.level?.at(x, y));
+        stale.written.delete(idx);
+    }
 }
 export function freeze_screen_for_level_change() {
     game._staleFrame = game._staleCapture;
@@ -4556,7 +4627,9 @@ function _buildScreenOutput() {
             for (let x = 1; x < COLNO; x++) {
                 if (clipping && (x <= clipx || x >= clipxmax)) continue;
                 if (blankCorner && x - 1 - clipx < blankCorner.cutCol) continue;
-                const loc = _displayed_loc(x, y);
+                // docrt()'s cls() emptied the glyph buffer and redrew it from the
+                // new level, so the replay reads the live level, not the held frame.
+                const loc = blankCorner ? game.level?.at(x, y) : _displayed_loc(x, y);
                 if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (ch === NUL_CELL) continue;

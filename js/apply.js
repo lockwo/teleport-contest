@@ -1668,23 +1668,30 @@ async function reapply_after_wield(obj, command = doapply) {
     _invent.cmdq_add_key(CQ_CANNED, obj.invlet);
     const moves_before = game.moves;
     await moveloop_turn();
-    // C ref: allmain.c moveloop_core() tail: `if (disp.botl || disp.botlx)
-    // bot(); else if (disp.time_botl) timebot();` is the only flush after the
-    // turn.  A message printed during the turn already flushed at vpline()
-    // time, before the pet or monster finished moving, and the queued command
-    // never reaches parse()'s flush_screen(1).  Otherwise the map a later
-    // --More-- freezes is still the one from the last flush.
-    if (game.botl || game.botlx
-        || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
-        await _display.flush_screen(1);
-    if (game._cmdqAbandonRetry) return ECMD_OK;
-    // C ref: the queued command is the next moveloop_core() iteration, whose
+    // C ref: allmain.c moveloop_core():473-479 — in the next iteration, AFTER the
     // once-per-input redraw (a hallucinating hero's see_monsters()/see_objects()
-    // display-RNG draws) runs after the monster phase and before rhack().  When
-    // the queue was abandoned (the hero died/was interrupted during the wield
-    // turn) the caller's own iteration head runs that redraw instead; doing it
-    // here too would draw the display RNG twice.
+    // display-RNG draws), `if (disp.botl || disp.botlx) { bot(); curs_on_u(); }
+    // else if (disp.time_botl) { timebot(); curs_on_u(); }`; curs_on_u() is
+    // flush_screen(1).  A message printed during the turn already flushed at
+    // vpline() time, before the pet or monster finished moving, and the queued
+    // command never reaches parse()'s flush_screen(1).  So the map a later
+    // --More-- freezes is the one painted here, redrawn cells included.
+    const flush_if_status_dirty = async () => {
+        if (game.botl || game.botlx
+            || (game.flags?.time && !game.context?.run && game.moves !== moves_before))
+            await _display.flush_screen(1);
+    };
+    if (game._cmdqAbandonRetry) {
+        await flush_if_status_dirty();
+        return ECMD_OK;
+    }
+    // C ref: the queued command is the next moveloop_core() iteration, whose
+    // once-per-input redraw runs after the monster phase and before rhack().
+    // When the queue was abandoned (the hero died/was interrupted during the
+    // wield turn) the caller's own iteration head runs that redraw instead;
+    // doing it here too would draw the display RNG twice.
     await moveloop_input_redraw();
+    await flush_if_status_dirty();
     // C ref: windows.c getlin() reached during the turn (a monster read an
     // unidentified scroll: docall "Call a scroll labeled ...") pops the
     // queued doapply (any non-KEY entry ends its drain) and leaves the invlet

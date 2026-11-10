@@ -2293,7 +2293,9 @@ export async function mhitm_ad_sedu(magr, mattk, mdef, mhm, ops) {
             await dismount_steed(DISMOUNT_POLY);
         }
         await extract_from_minvent(mdef, obj, true, false);
-        const onam = doname_invent(obj);
+        // C ref: uhitm.c mhitm_ad_sedu: `if (gv.vis) Strcpy(onambuf, doname(obj))`;
+        // doname -> xname -> observe_object only runs when the hero can see it.
+        const onam = vis ? doname_invent(obj) : '';
         add_to_minv(magr, obj);
         const buf = ops.Monnam(magr);
         if (vis && ops.canseemon(mdef))

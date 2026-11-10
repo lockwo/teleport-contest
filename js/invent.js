@@ -15,7 +15,7 @@ import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit } from './input.js';
-import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush } from './display.js';
+import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -2757,6 +2757,9 @@ export async function dismiss_invent_screen(textWindow = false) {
     // glyphs on every menu dismissal and desynchronised the display stream
     // (and with it every later hallucinated colour) from C's.
     if (!(game._menuOffx > 0)) await docrt();
+    // The same docorner() replays the glyph buffer, which a held goto_level()
+    // frame (hero died on arrival) has not yet flushed to the physical screen.
+    else commit_stale_glyph_buffer(Math.max(0, game._menuOffx - 1), (game._sweepLastRow ?? 0) + 1);
     // docorner() while drag_down()'s cls() left the screen blank (hero died in
     // transit): the glyph buffer is row_refresh()ed over the vacated corner.
     // flush_screen(-1) postponement: a hero who died inside goto_level() (stairs
@@ -3899,8 +3902,16 @@ async function getobj_menu(lets, altlets, bufFirst, allowed, allowxtra = false, 
     // menu leaves the status window blank until the next bot().
     const old_bot_disabled = game.bot_disabled;
     game.bot_disabled = true;
-    try { return await getobj_menu_inner(lets, altlets, bufFirst, allowed, allowxtra, word, out_cnt); }
+    let picked;
+    try { picked = await getobj_menu_inner(lets, altlets, bufFirst, allowed, allowxtra, word, out_cnt); }
     finally { game.bot_disabled = old_bot_disabled; }
+    // C ref: wintty.c erase_menu_or_text() -> docorner(): the dismissed menu's
+    // cl_end() sweep of the status tail stands until a bot() repaints it, and
+    // select_menu() ran the dismissal under gb.bot_disabled.  A corner menu the
+    // caller opens next (dodip's "dip <obj> into" after "dip") inherits it, as
+    // select_inventory_menu() already does.
+    game._menuTruncCarry = status_cuts_snapshot();
+    return picked;
 }
 async function getobj_menu_inner(lets, altlets, bufFirst, allowed, allowxtra = false, word = '', out_cnt = null) {
     for (;;) {

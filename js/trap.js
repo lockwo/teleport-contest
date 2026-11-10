@@ -13,7 +13,7 @@ import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp, hold_botl_hp } from './display.js';
 import { map_trap } from './detect.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
@@ -1514,7 +1514,9 @@ export async function sink_into_lava() {
         set_utrap(0, 0); /* reset_utrap(FALSE) */
     } else if (!u.uinvulnerable) {
         const Fire_resistance = (await import('./zap.js')).Fire_resistance();
-        if (!Fire_resistance) u.uhp = Math.floor((u.uhp + 2) / 3);
+        /* C: sink_into_lava() cuts u.uhp without disp.botl, so the status line
+           keeps the HP the last bot() drew until a later botl-dirtying event */
+        if (!Fire_resistance) { hold_botl_hp(); u.uhp = Math.floor((u.uhp + 2) / 3); }
 
         u.utrap -= (1 << 8);
         if (u.utrap < (1 << 8)) {
