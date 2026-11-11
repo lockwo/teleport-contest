@@ -78,6 +78,15 @@ export function xwaitforspace_quit(c) {
     return !!game._dismissMore && c === game._dismissMore;
 }
 
+// C ref: getline.c xwaitforspace() on ANY wait it serves (a menu page, a --More--, a text
+// window page): an ESC read there leaves ttyDisplay->dismiss_more == 1.  Menus themselves
+// treat the ESC as their own cancel (or count-stop), so this only records the side effect
+// that makes a later ^A dismiss a --More-- or text window page.  Returns its argument.
+export function xwaitforspace_note(c) {
+    if (c === 27) game._dismissMore = 1;
+    return c;
+}
+
 // Reset input state
 export function resetInputState() {
     _inputQueue.length = 0;

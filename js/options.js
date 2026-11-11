@@ -2586,7 +2586,9 @@ export async function handler_statuslines() {
     let status;
     try {
         status = optfn_statuslines({ name: 'statuslines' }, false,
-            `statuslines:${answer}`, answer, result, message => errors.push(message));
+            /* parseoptions() strips trailing white space from the whole "name:value" text */
+            `statuslines:${answer}`.replace(/\s+$/, ''), answer, result,
+            message => errors.push(message));
     } finally { inGameErrors = null; }
     for (const message of errors) await OPT_MENU_DRIVER.error(message);
     if (status !== OPTN_OK) return false;

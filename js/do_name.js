@@ -20,7 +20,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
 import { mflags2_of, M2_PNAME, msound_of } from './monflags_data.js';
 import { objects, SIR_TERRY_NOVELS } from './mkobj.js';
 import { m_at } from './display.js';
-import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM } from './const.js';
+import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM, Is_astralevel } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
 import { makeplural, vtense } from './plural.js';
 import { mungspaces } from './hacklib.js';
@@ -211,14 +211,10 @@ export function distant_monnam(mon, article) {
     if (_PM_HIGH_CLERIC < 0)
         _PM_HIGH_CLERIC = name_to_pmidx('high cleric') ?? -2;
     if (mon?.data?.pmidx === _PM_HIGH_CLERIC && !Hallucination()
-        && Is_astralevel() && !m_next2u(mon))
+        && Is_astralevel(game.u?.uz) && !m_next2u(mon))
         return (article === ARTICLE_THE ? 'the ' : '')
             + (mon.female ? 'high priestess' : 'high priest');
     return x_monnam(mon, article, null, 0, true);
-}
-// C ref: dungeon.h Is_astralevel(&u.uz) — dungeon 'The Planes', bottom level.
-function Is_astralevel() {
-    return game.u?.uz?.dnum === (game.astral_dnum ?? -1);
 }
 // C ref: mon.c m_next2u(mon) — adjacent to the hero.
 function m_next2u(mon) {
@@ -673,5 +669,8 @@ export function lookup_novel(lookname, idx) {
             return SIR_TERRY_NOVELS[k];
         }
     }
+    /* name not found; if novelidx is already set, override the name */
+    if (idx && idx.idx >= 0 && idx.idx < SIR_TERRY_NOVELS.length)
+        return SIR_TERRY_NOVELS[idx.idx];
     return null;
 }

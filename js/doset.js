@@ -924,6 +924,7 @@ async function pickupTypesMenu(blankStatus) {
             resetCount = false;
             continue;
         }
+        if (c === 27) game._dismissMore = 1;       // xwaitforspace(): ESC leaves dismiss_more == 1
         if (c === 27 && counting) continue;        // ESC while counting: stop the count only
         if (c === 27) return null;                 // ESC: cancel
         if (c === 13 || c === 10 || ch === ' ') break; // confirm
@@ -1303,6 +1304,7 @@ async function dosetSimpleLoop() {
                 count = count * 10 + (c - 48);
                 continue;
             }
+            if (c === 27) game._dismissMore = 1;   // xwaitforspace(): ESC leaves dismiss_more == 1
             if (c === 27 && count) { count = 0; continue; }
             const hit = pages[page].items.find(it => it.selectable && it.sel === ch);
             if (!hit && !' \r\n\x1b'.includes(ch) && !OPTS.default_menu_cmds.includes(ch)
@@ -1466,6 +1468,7 @@ async function dosetPass(skiphelp) {
         // C ref: process_menu_window() count prefix: digits accumulate and ESC
         // while counting only abandons the count; any other key consumes it.
         if (ch >= '0' && ch <= '9') { count = count * 10 + (c - 48); if (count) counting = true; continue; }
+        if (c === 27) game._dismissMore = 1;      // xwaitforspace(): ESC leaves dismiss_more == 1
         if (c === 27 && counting) { count = 0; counting = false; continue; }
         // xwaitforspace(resp) bells on anything outside the page selectors and
         // menu commands without returning, so a pending count survives it.

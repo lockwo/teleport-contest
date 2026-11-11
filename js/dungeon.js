@@ -6,7 +6,7 @@ import { within_bounded_area } from './rect.js';
 import { game } from './gstate.js';
 import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_note } from './input.js';
 import { Blind } from './vision.js';
 import { NO_COLOR } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
@@ -1282,7 +1282,7 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
     let pageNo = 1;
     pick: for (;;) {
         renderPage(pageNo);
-        let key = await nhgetch();
+        let key = xwaitforspace_note(await nhgetch());
         let ch = String.fromCharCode(key);
 
         // Cancel: ESC.

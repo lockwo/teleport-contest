@@ -482,6 +482,12 @@ export async function dorestore() {
     // nemesis-gender roll comes first in the stream.
     role_init_nemgend();
 
+    // C ref: restore.c restgamestate() tail — `adj_erinys(u.ualign.abuse);`.
+    // The Erinys's strength (level, flags, attacks) is grown in mons[] by the
+    // hero's alignment abuse, and mons[] is rebuilt pristine by the restoring
+    // process, so the saved abuse has to be applied again.  No RNG.
+    adj_erinys(game.u?.ualign?.abuse | 0);
+
     // C ref: restore.c dorecover():691-699 — "reset weapon so that player will
     // get a reminder about 'bashing' during next fight when bare-handed or
     // wielding an unconventional item; for pick-axe, we aren't able to

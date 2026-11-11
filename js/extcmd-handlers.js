@@ -9,7 +9,7 @@
 // #levelchange, #pray, #enhance, #chat, #sit).
 
 import { game } from './gstate.js';
-import { nhgetch, unshiftKeys } from './input.js';
+import { nhgetch, unshiftKeys, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { pline, pline_vision_flush, StatusRows, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr } from './menuattr.js';
@@ -29,7 +29,7 @@ import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT,
-         SHOPBASE, SHOP_DOOR_COST, ECMD_TIME,
+         SHOPBASE, SHOP_DOOR_COST, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL,
     is_pool, is_lava } from './const.js';
 import { is_undead_flag, is_demon_flag, humanoid, nohands, nolimbs, hides_under_flag, mflags1_of, M1_SLITHY } from './monflags_data.js';
 import { couldsee, Blind } from './vision.js';
@@ -490,6 +490,9 @@ export async function hooked_tty_getlin(query, hook) {
     let typed = '';   // what the user actually typed (obufp/bufp content)
     let shown = '';   // what is displayed (typed, possibly autocompleted)
     let doprev = false;
+    // draw_getlin()'s count of top-line rows this prompt has spilled onto; a
+    // previous (longer) getlin must not make this one clear rows below its own.
+    game._getlin_rows = 1;
     const base = (query + ' ').length; // column of first input char
     let tty = { x: 0, y: 0 };  // ttyDisplay->curx/cury as last parked
     let erased = null;         // tracked cursor left by a "\b" / "\b \b" echo
@@ -529,14 +532,21 @@ export async function hooked_tty_getlin(query, hook) {
         if (code === 16) {
             const { doprev_message } = await import('./cmd.js');
             const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
-            if (mode === 's' || (mode === 'c' && !doprev)) {
-                if (!doprev) await doprev_message(); /* need two initially */
-                await doprev_message();
-                doprev = true;
-            } else {
-                await doprev_message();
-                doprev = false;
-                msghist().maxcol = msghist().maxrow;
+            // ttyDisplay->inread is temporarily 0 in C here, but redotoplin() must know it is
+            // answering a getlin (it only rewrites the top row, see doprev_message()).
+            game._getlin_inread = true;
+            try {
+                if (mode === 's' || (mode === 'c' && !doprev)) {
+                    if (!doprev) await doprev_message(); /* need two initially */
+                    await doprev_message();
+                    doprev = true;
+                } else {
+                    await doprev_message();
+                    doprev = false;
+                    msghist().maxcol = msghist().maxrow;
+                }
+            } finally {
+                game._getlin_inread = false;
             }
             continue;
         }
@@ -662,7 +672,7 @@ export function extcmd_end_menu(items, promptStr) {
 // each rejected key is captured showing the unchanged menu).
 async function xwaitforspace(s) {
     for (;;) {
-        const c = await nhgetch();
+        const c = xwaitforspace_note(await nhgetch());
         if (c === 10 || c === 13) return '\0';
         if (c === 27) return '\x1b';
         const ch = String.fromCharCode(c);
@@ -796,7 +806,7 @@ async function tty_get_ext_cmd() {
     if (buf === '' || buf[0] === '\x1b') return -1;
     const matches = extcmds_match(buf, ECM_IGNOREAC | ECM_EXACTMATCH);
     if (matches.length !== 1) {
-        await pline(`#${buf}: unknown extended command.`);
+        await pline(`#${buf.slice(0, 60)}: unknown extended command.`);
         return -1;
     }
     return matches[0];
@@ -1094,7 +1104,12 @@ export async function jump(magic) {
                             (x, y) => get_valid_jump_position(x, y), /*force=*/true,
                             /*verbose=*/game.flags?.verbose !== false,
                             false, false, display_jump_positions);
-    if (!cc) return 0; // ESC -> ECMD_CANCEL (no time)
+    if (!cc) {
+        // apply.c jump() `return ECMD_CANCEL; /* user pressed ESC */`: rhack() runs
+        // reset_cmd_vars(TRUE), clearing CQ_REPEAT (a following ^A has nothing to repeat).
+        game.context._getobj_cancelled = true;
+        return 0;
+    }
 
     // is_valid_jump_pos(showmsg=TRUE): emits "Illegal move!" / "Too far!" /
     // "There is an obstacle preventing that jump." on failure -> ECMD_FAIL.
@@ -2018,8 +2033,8 @@ async function look_in_container(box, menuUp = false) {
     render_container_contents(box);
     for (;;) {
         const k = await nhgetch();
-        const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
-        if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+        // process_text_window(): dmore(quitchars); ESC leaves dismiss_more == 1 (^A then dismisses too).
+        if (xwaitforspace_quit(k)) break;
     }
 }
 
@@ -2192,7 +2207,7 @@ async function use_container(box, more_containers) {
                                   deselected);
             let ch = '';
             for (;;) { // xwaitforspace(resp): ignore keys outside the response set
-                const key = await nhgetch();
+                const key = xwaitforspace_note(await nhgetch());
                 ch = (key === 27) ? '\x1b' : String.fromCharCode(key);
                 if (respsel.includes(ch)) break;             // explicit menu choice
                 /* xwaitforspace() also accepts gm.mapped_menu_cmds; process_menu_window()
@@ -2274,7 +2289,7 @@ async function use_container(box, more_containers) {
     else if (stash_one) {
         // C ref: pickup.c:3174-3184 — stash a selected stack (or count), undoing
         // a split if the container rejects it without consuming a turn.
-        delete game._modal_screen;
+        await dismiss_invent_screen();
         const { stash_ok, in_container } = await import('./pickup.js');
         const { GETOBJ_ALLOWCNT, unsplitobj } = await import('./invent.js');
         game._pickup = game._pickup || {};
@@ -2359,7 +2374,7 @@ async function run_pickany_menu(items, buildLines) {
             counting = count !== 0;
             continue;
         }
-        if (key === 27 && counting) { count = 0; counting = false; continue; }
+        if (xwaitforspace_note(key) === 27 && counting) { count = 0; counting = false; continue; }
         const useCount = counting, useN = count;
         count = 0; counting = false;
         if (key === 27) return null;
@@ -3574,8 +3589,7 @@ async function display_text_fullscreen(lines) {
         for (;;) {
             game._modal_screen = 'textwin';
             const c = await nhgetch();
-            if (c === 27) { delete game._modal_screen; return false; }
-            if (c === 32 || c === 13 || c === 10) { delete game._modal_screen; return true; }
+            if (xwaitforspace_quit(c)) { delete game._modal_screen; return c !== 27; }
         }
     };
 
@@ -3883,7 +3897,9 @@ async function open_extcmd() {
 // C ref: shk.c dopay() — mirrors js/cmd.js's 'p' key translation exactly
 // (invent.js's own ECMD_TIME is 3, not 1).
 async function pay_extcmd() {
-    return ((await dopay()) & ECMD_TIME) ? 1 : 0;
+    const res = await dopay();
+    if (res & (ECMD_CANCEL | ECMD_FAIL)) game.context._getobj_cancelled = true;
+    return (res & ECMD_TIME) ? 1 : 0;
 }
 
 // C ref: do_wear.c doputon() — mirrors js/cmd.js's 'P' key translation
@@ -4782,7 +4798,10 @@ async function prefix_got_input(txt, res) {
     game.multi = 0;
     const savedSeen = game.context._prefix_seen;
     game.context._prefix_seen = true;
+    const savedVia = game.context._m_via_ext;
+    game.context._m_via_ext = txt === 'reqmenu';
     await rhack(0);
+    game.context._m_via_ext = savedVia;
     game.context._prefix_seen = savedSeen;
     return true;
 }
@@ -4964,7 +4983,7 @@ async function run_pickone_corner_menu(title, entries) {
         let redraw = false;
         let count = 0, counting = false;
         for (;;) {
-            const key = await nhgetch();
+            const key = xwaitforspace_note(await nhgetch());
             const ch = key === 27 ? '\x1b' : String.fromCharCode(key);
             if (sels.includes(ch)) {                     /* explicit choice */
                 toggle(entries.find((x) => x.sel === ch), counting, count);

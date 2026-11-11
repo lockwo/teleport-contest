@@ -74,6 +74,7 @@ import { monster_by_pmidx, name_to_pmidx, makemon,
          mkclass, mkclass_aligned, mm_mon_at, mongets_pub,
          name_gender_hint, MGEND_NEUTRAL, MM_ASLEEP, MM_NOGRP,
          set_mimic_sym, propagate, mpickobj, set_malign,
+         can_saddle, put_saddle_on_mon,
          newcham  } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { level_difficulty } from './dungeon.js';
@@ -2337,7 +2338,13 @@ export function quest_create_object(otyp, mx, my, spe, carryingMon) {
     if (carryingMon) {
         otmp = des_object_defaults(mksobj(otyp, true, true));   // not placed on floor
         if (spe != null) otmp.spe = spe;
-        mpickobj(carryingMon, otmp);               // add_to_minv(): merges
+        // C ref: sp_lev.c:2318 create_object() — a saddle handed to a monster
+        // that can wear one is worn at once (steed.c put_saddle_on_mon), which
+        // is what makes Kni-strt's warhorses "saddled warhorse"s.
+        if (otmp.otyp === 235 /* SADDLE */ && can_saddle(carryingMon))
+            put_saddle_on_mon(otmp, carryingMon);
+        else
+            mpickobj(carryingMon, otmp);           // add_to_minv(): merges
     } else {
         otmp = des_object_defaults(mksobj_at(otyp, x, y, true, true));
         if (spe != null) otmp.spe = spe;
@@ -4230,7 +4237,7 @@ const EXT_NAMES = [
     'select_newcham_form', 'is_vampshifter', 'validvamp',
     'mgender_from_permonst', 'set_mon_data', 'pm_invisible', 'vampshifted',
     'monst_to_any', 'oname', 'bury_an_obj', 'delete_contents', 'begin_burn',
-    'artifact_exists', 'can_saddle', 'put_saddle_on_mon',
+    'artifact_exists',
     'selection_floodfill', 'set_selection_floodfillchk',
     'back_to_glyph', 'glyph_is_cmap', 'count_level_features', 'fixup_special',
     'makemap_prepost', 'oinit', 'clear_level_structures', 'load_lua',
@@ -5279,8 +5286,8 @@ export function create_object(o, croom) {
             } else {
                 obj_extract_self(otmp);    /* C: remove_object(otmp) */
                 if (otmp.otyp === otyp_by_name('saddle')
-                    && EXT.can_saddle(spl.invent_carrying_monster))
-                    EXT.put_saddle_on_mon(otmp, spl.invent_carrying_monster);
+                    && can_saddle(spl.invent_carrying_monster))
+                    put_saddle_on_mon(otmp, spl.invent_carrying_monster);
                 else
                     mpickobj(spl.invent_carrying_monster, otmp);
             }

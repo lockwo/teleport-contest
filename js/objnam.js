@@ -2013,7 +2013,7 @@ export function doname_base(obj, doname_flags) {
         const pricebuf = `${quotedprice} ${currency(quotedprice)}`;
 
         bp += ` (${obj.unpaid ? 'unpaid' : 'contents'}, ${pricebuf})`;
-        record_price_quote(obj.otyp, quotedprice / obj.quan, true);
+        record_price_quote(obj.otyp, Math.trunc(quotedprice / obj.quan), true);
     } else if (with_price) { /* on floor or in a container on the floor */
         /* C: get_cost_of_shop_item(obj, &nochrg); js/shk.js returns the pair */
         const gcs = get_cost_of_shop_item(obj);
@@ -2029,7 +2029,7 @@ export function doname_base(obj, doname_flags) {
         }
 
         if (price > 0)
-            record_price_quote(obj.otyp, price / obj.quan, true);
+            record_price_quote(obj.otyp, Math.trunc(price / obj.quan), true);
     } else if (iflags().pricequotes && !objects[obj.otyp].oc_name_known) {
         bp = append_price_quote(bp, obj.otyp);
     }

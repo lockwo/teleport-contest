@@ -196,7 +196,8 @@ export async function outrip_and_score(how) {
     const waitforspace = async () => {
         for (;;) {
             const k = await nhgetch();
-            if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+            if (k === 27) game._dismissMore = 1;
+            if (k === 32 || k === 13 || k === 10 || k === 27 || (game._dismissMore && k === game._dismissMore)) return k;
         }
     };
 
@@ -1347,7 +1348,8 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         const waitforspace = async () => {
             for (;;) {
                 const k = await nhgetch();
-                if (k === 32 || k === 13 || k === 10 || k === 27) return k;
+                if (k === 27) game._dismissMore = 1;
+                if (k === 32 || k === 13 || k === 10 || k === 27 || (game._dismissMore && k === game._dismissMore)) return k;
             }
         };
 
@@ -1357,12 +1359,32 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         // + goodbye + blank + 3 summary + trailing blank), so it pages as a full
         // page then a blank one; a QUIT's is 6 lines -> a single page.
         const PAGE = ROWS - 1;
-        const npages = Math.max(1, Math.ceil(lines.length / PAGE));
+        // C ref: wintty.c compress_str() + tty_putstr() NHW_TEXT arm — a line of CO (80)
+        // or more characters has its space runs squeezed and is then broken at the last
+        // space before the final column, the remainder becoming the next window line.
+        const wrapped = [];
+        const text_putstr = (str) => {
+            const CO = 80;
+            if (str.length >= CO || str.includes('\n')) {
+                str = str.replace(/\n/g, ' ').replace(/ +/g, ' ').replace(/^ /, '').replace(/ $/, '');
+            }
+            wrapped.push(str);
+            if (str.length + 1 > CO) {
+                let i = CO - 1;
+                while (i && str[i] !== ' ' && str[i] !== '\n') i--;
+                if (i) {
+                    wrapped[wrapped.length - 1] = str.slice(0, i);
+                    text_putstr(str.slice(i + 1));
+                }
+            }
+        };
+        for (const l of lines) text_putstr(l);
+        const npages = Math.max(1, Math.ceil(wrapped.length / PAGE));
         let ripCancelled = false;
         for (let p = 0; p < npages && !ripCancelled; p++) {
             disp.clearScreen();
             for (let i = 0; i < PAGE; i++) {
-                const t = lines[p * PAGE + i];
+                const t = wrapped[p * PAGE + i];
                 if (t) disp.putstr(0, i, t, NO_COLOR, 0);
             }
             drawMore(ROWS - 1);
@@ -2405,8 +2427,10 @@ export async function container_contents(list, identified, all_containers,
                 // the plain --More--).
                 for (;;) {
                     const k = await nhgetch();
+                    if (k === 27) game._dismissMore = 1;
                     const kc = (k === 27) ? '\x1b' : String.fromCharCode(k);
-                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b') break;
+                    if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b'
+                        || (game._dismissMore && k === game._dismissMore)) break;
                 }
                 // C ref: draw_corner_window()'s callers all clear the modal
                 // flag once their window is dismissed (e.g.

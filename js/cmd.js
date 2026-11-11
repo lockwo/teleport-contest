@@ -8,7 +8,7 @@
 import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft, Fumbling_hero } from './youprop.js';
 import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_note } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
 import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
@@ -70,7 +70,7 @@ import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          SLT_ENCUMBER, MOD_ENCUMBER, OVERLOADED, Is_medusa_level, Is_juiblex_level,
          Is_waterlevel, Is_airlevel,
     is_pool, is_lava } from './const.js';
-import { exercise, acurr_eff } from './attrib.js';
+import { exercise, acurr_eff, change_luck } from './attrib.js';
 import { hides_under_flag, is_hider_flag, throws_rocks_flag, mflags1_of, M1_CLING, M1_TUNNEL, M1_METALLIVORE } from './monflags_data.js';
 import { noattacks, attacktype, dmgtype, AT_ENGL, AD_FIRE, AD_RUST, AD_CORR, AT_EXPL, MATTK, sticks } from './monattk_data.js';
 // onscary() is an `export function` declaration in monmove.js, so this cycle
@@ -154,6 +154,13 @@ function maybe_smudge_engr(x1, y1, x2, y2) {
 //                   b j n
 const DIR_DX = { h: -1, l: 1, j: 0, k: 0, y: -1, u: 1, b: -1, n: 1 };
 const DIR_DY = { h: 0, l: 0, j: 1, k: -1, y: -1, u: -1, b: 1, n: 1 };
+
+// C ref: cmd.c rhack() `if (func == do_reqmenu) was_m_prefix = TRUE` — only the
+// 'm' KEY sets it; "#reqmenu" runs through doextcmd() (func != do_reqmenu), so
+// the following command is tested against CMD_gGF_PREFIX like F/g/G.
+function was_m_prefix_now() {
+    return !!game.iflags?.menu_requested && !game.context?._m_via_ext;
+}
 
 function isMovementKey(ch) {
     return 'hjklyubn'.includes(ch);
@@ -900,6 +907,14 @@ async function get_count(inkey) {
     return key;
 }
 
+// C ref: cmd.c rhack() — a command result with ECMD_CANCEL or ECMD_FAIL runs reset_cmd_vars(TRUE),
+// which clears CQ_REPEAT (a following ^A has nothing to repeat).  This dispatcher has no
+// per-arm result variable, so the epilogue's `_getobj_cancelled` flag carries it.
+function ecmd_note(res) {
+    if (res & (ECMD_CANCEL | ECMD_FAIL)) game.context._getobj_cancelled = true;
+    return res;
+}
+
 // C ref: cmd.c rhack — main command dispatcher
 export async function rhack(key) {
     canned_kick_ran = false;
@@ -917,6 +932,14 @@ export async function rhack(key) {
     // so a fresh call is the only place either flag may be dropped.
     if (game.context && !game.context._prefix_seen) {
         game.context.nopick = 0;
+        // C ref: cmd.c rhack() — ECMD_CANCEL/ECMD_FAIL is the per-command `res`; here
+        // `_getobj_cancelled` stands in for it, so it must start false for every fresh
+        // command.  getpos() also runs outside rhack(), e.g. a monster hit's teleport
+        // prompt while the turn's monsters move; an ESC there leaves the flag set, and
+        // the next command (an F-attack that kills the hero and is life-saved,
+        // context.move = 0) would wrongly reset_cmd_vars(): multi = 0 loses savelife()'s
+        // multi = -1 and the pending "You survived that attempt on your life.".
+        game.context._getobj_cancelled = false;
         /* C ref: cmd.c:5103 parse() — `svc.context.move = TRUE; assume next
            command will take game time`; dokick's recoil tests it mid-command. */
         game.context.move = 1;
@@ -1039,7 +1062,14 @@ export async function rhack(key) {
         const fc = String.fromCharCode(key);
         const startsCount = npCmd.num_pad ? (key === NHKF_COUNT_KEY)
                                           : (fc >= '0' && fc <= '9');
-        if (startsCount && !game._modal_screen) {
+        // C ref: cmd.c rhack() — a key popped from a command queue (CQ_REPEAT during ^A,
+        // CQ_CANNED otherwise) never goes through parse(): gc.command_count, gm.multi and
+        // gc.cmd_key keep what the ^A / canned-command's own parse() left.  "2^A" relies on
+        // that: multi stays 1, so allmain's `rhack(gc.cmd_key)` repeats the replay once more,
+        // and shotlimit (dothrow.c gc.command_count) of a replayed 'f' is the typed count.
+        if (replay) {
+            // queued command: no count handling
+        } else if (startsCount && !game._modal_screen) {
             key = await get_count(npCmd.num_pad ? await nhgetch() : key);
             // ESC after a count cancels it (C: clears WIN_MESSAGE, multi 0).
             if (key === 27) {
@@ -1076,7 +1106,7 @@ export async function rhack(key) {
         // C ref: cmd.c parse() `gc.cmd_key = foo;` — the command key AFTER the
         // count, kept so moveloop_core's `gm.multi > 0` arm can repeat this
         // command without reading another key.
-        game._cmd_key = key;
+        if (!replay) game._cmd_key = key;
     }
 
 
@@ -1168,7 +1198,12 @@ export async function rhack(key) {
         && !game._modal_screen && !isMovementKey(ch)
         && ch !== '\x1b' && (key !== 32 || !!game.flags?.rest_on_space)
         && key !== 13
-        && ch !== 'F' && ch !== 'g' && ch !== 'G' && ch !== 'm') {
+        && ch !== 'F' && ch !== 'g' && ch !== 'G' && ch !== 'm'
+        // C ref: cmd.c rhack():3693-3695 — once an 'm' prefix was seen (was_m_prefix,
+        // which stays set across a following F/g/G), the test is CMD_M_PREFIX instead
+        // of CMD_gGF_PREFIX: a command that accepts 'm' just runs.
+        && !(was_m_prefix_now()
+             && accept_menu_prefix(cmdbind_get(key & 0xff)?.cmd))) {
         // C ref: cmd.c:3680 rhack() — can_do_extcmd(tlist) runs BEFORE the pending-
         // prefix complaint, so ^V after #fight reads "Unavailable command ...".
         const ecm = extcmdlist.find(ec => ec.key === (key & 0xff));
@@ -1181,13 +1216,21 @@ export async function rhack(key) {
             return;
         }
         // C ref: cmd.c:3696 which = visctrl(cmd_from_func(prefix_seen->ef_funct)):
-        // number_pad rebinds run to '5', so the name is the live binding.
-        const which = cmd_visctrl(cmd_from_func(game.context.forcefight ? 'do_fight'
-            : (game.context.run_prefix === 3 ? 'do_run'
-                : (game.context.run_prefix === 2 ? 'do_rush'
-                    : (game.iflags?.menu_requested ? 'do_reqmenu' : 'do_rush')))));
+        // number_pad rebinds run to '5', so the name is the live binding.  prefix_seen
+        // is the LAST prefix typed (a stale forcefight/run left by an earlier unbound
+        // key does not name it).
+        const which = cmd_visctrl(cmd_from_func(game.context._pfx_func
+            || (game.context.forcefight ? 'do_fight'
+                : (game.context.run_prefix === 3 ? 'do_run'
+                    : (game.context.run_prefix === 2 ? 'do_rush'
+                        : (game.iflags?.menu_requested ? 'do_reqmenu' : 'do_rush'))))));
         const updown = (ch === '<' || ch === '>') ? ' other than up or down' : '';
-        await pline(`The '${which}' prefix should be followed by a movement command${updown}.`);
+        if (was_m_prefix_now()) {
+            // C ref: cmd.c:3708-3711 (was_m_prefix)
+            await pline(`The ${cmdbind_get(key & 0xff)?.cmd?.ef_txt ?? commandName} command does not accept '${which}' prefix.`,
+                        { suppressHistory: true });
+        } else
+            await pline(`The '${which}' prefix should be followed by a movement command${updown}.`);
         // C ref: cmd.c:3810-3813 — failed prefix validation discards the count.
         reset_cmd_vars(true);
         game.context.stale_run = 0;
@@ -1264,13 +1307,17 @@ export async function rhack(key) {
         await skill_window_advance(ch);
         game.context.move = 0;
     } else if (game._modal_screen === 'textwin' && game._disco_pages
-        && (ch === ' ' || ch === '\r' || ch === '\n')) {
+        && (ch === ' ' || ch === '\r' || ch === '\n' || (key === 1 && game._dismissMore === 1))) {
         // A multi-page NHW_TEXT window ('\' discoveries) pages on any of
         // quitchars; only the last page's --More-- dismisses it.
         // C ref: wintty.c process_text_window() dmore(cw, quitchars).
         await disco_window_advance();
         game.context.move = 0;
     } else if (ch === '\x1b') {
+        // C ref: getline.c xwaitforspace() — an ESC read while a menu/text window (or a
+        // --More--) is up leaves ttyDisplay->dismiss_more == 1, so a later ^A dismisses a
+        // text window page or --More-- too.  At top level it is just a command-loop ESC.
+        if (game._modal_screen) game._dismissMore = 1;
         // Escape: dismiss any open menu/window; a no-op at top level.
         // C ref: cmd.c — ESC produces no message.
         game.context.run_prefix = 0;
@@ -1281,7 +1328,8 @@ export async function rhack(key) {
         if (!game._modal_screen) reset_cmd_vars(true);
         await dismiss_invent_screen();
         game.context.move = 0;
-    } else if (key === 32 || ((key === 13 || key === 10)
+    } else if (key === 32 || (key === 1 && game._modal_screen === 'textwin' && game._dismissMore === 1)
+        || ((key === 13 || key === 10)
         && !npBad && !npExt && !bindExt)) {
         // Space / Return.  A single-page inventory/text window is dismissed by
         // space/return (C tty treats space like a confirm/next that ends a
@@ -1489,8 +1537,9 @@ export async function rhack(key) {
         const applyRes = await doapply();
         game.context.move = (applyRes & ECMD_TIME) ? 1 : 0;
         // C ref: cmd.c rhack():3810-3813 — ECMD_CANCEL (declined direction/
-        // target prompt) runs reset_cmd_vars(TRUE), clearing CQ_REPEAT.
-        if (applyRes & ECMD_CANCEL) game.context._getobj_cancelled = true;
+        // target prompt) or ECMD_FAIL (apply.c "Sorry, I don't know how to use that.")
+        // runs reset_cmd_vars(TRUE), clearing CQ_REPEAT.
+        if (applyRes & (ECMD_CANCEL | ECMD_FAIL)) game.context._getobj_cancelled = true;
     } else if (ch === 'e') {
         // C ref: cmd.c 'e' (#eat) -> eat.c doeat().  Eats carried/floor food
         // (ECMD_TIME when a bite is taken).
@@ -1528,6 +1577,11 @@ export async function rhack(key) {
         if ((game.multi ?? 0) > 0) game._search_occupation = true;
         const searched = await dosearch();
         game.context.move = searched ? 1 : 0;
+    } else if (key === 1 && game._modal_screen) {
+        // C ref: getline.c xwaitforspace() — a menu/text window that is still up reads this
+        // key itself and rings the bell (^A is only accepted when an earlier ESC left
+        // dismiss_more == 1, handled above for a text window); it never reaches rhack().
+        game.context.move = 0;
     } else if (key === 1) { // ^A — repeat the previous command (cmd.c do_repeat)
         // C ref: cmd.c:1822 { C('a'), "repeat", ..., do_repeat }.  Unbound
         // here, ^A fell through to "Unknown command '<ch>'." (a non-printable
@@ -1549,7 +1603,7 @@ export async function rhack(key) {
         // C ref: cmd.c keymap C('d') = dokick.  Reads a direction, then resolves
         // the kicked square (monster / object / terrain).  Sets the turn flag
         // from dokick's ECMD result.
-        const res = await dokick();
+        const res = ecmd_note(await dokick());
         game.context.move = (res & ECMD_TIME) ? 1 : 0;
     } else if (key === 5) { // ^E — wizard-mode detect (wizcmds.c wiz_detect)
         // C ref: cmd.c:1953 { C('e'), "wizdetect", ..., WIZMODECMD }.  Unbound
@@ -1661,7 +1715,7 @@ export async function rhack(key) {
     } else if (ch === 'W') {
         // C ref: cmd.c keymap 'W' = dowear (do_wear.c).  Prompts for armor to
         // wear; ECMD_TIME (3) only when the don actually costs a turn.
-        game.context.move = ((await dowear()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dowear()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'A') {
         // C ref: cmd.c { 'A', "takeoffall", doddoremarm, 0 } (do_wear.c) — the
         // multi-item take-off/unwield command.  Under the default
@@ -1672,7 +1726,7 @@ export async function rhack(key) {
     } else if (ch === 'T') {
         // C ref: cmd.c keymap 'T' = dotakeoff (do_wear.c).  Removes worn armor
         // (a single piece comes off without a disambiguation prompt).
-        game.context.move = ((await dotakeoff()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dotakeoff()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'P') {
         // C ref: cmd.c keymap 'P' = doputon (do_wear.c).  Puts on a ring,
         // amulet, or eyewear; rings prompt for the ring-finger.  When doputon
@@ -1700,7 +1754,7 @@ export async function rhack(key) {
     } else if (ch === 'p') {
         // C ref: cmd.c keymap 'p' = dopay (shk.c).  Away from a shopkeeper this
         // reports "There appears to be no shopkeeper here ..." (ECMD_OK).
-        game.context.move = ((await dopay()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dopay()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'd') {
         // C ref: cmd.c — 'd' drop an item.  do.c dodrop() prompts for the
         // item then drops it on the floor (ECMD_TIME when something is
@@ -1787,13 +1841,13 @@ export async function rhack(key) {
         game.context.move = 0;
     } else if (ch === 'q') {
         // C ref: cmd.c — 'q' quaff (drink) a potion.
-        game.context.move = ((await dodrink()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dodrink()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'z') {
         // C ref: cmd.c — 'z' zap a wand.
-        game.context.move = ((await dozap()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dozap()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'Z') {
         // C ref: cmd.c — 'Z' cast a spell.
-        game.context.move = ((await docast()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await docast()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'E') {
         // C ref: cmd.c — 'E' (#engrave) -> engrave.c doengrave(): write/engrave
         // on the floor.  doengrave sets up the engraving (garble loop +
@@ -1809,21 +1863,21 @@ export async function rhack(key) {
         if (!game.context.move) game.multi = 0;
     } else if (ch === 'r') {
         // C ref: cmd.c — 'r' read a scroll or spellbook.
-        game.context.move = ((await doread()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await doread()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'Q') {
         // C ref: cmd.c — 'Q' (#quiver) ready ammunition.  doquiver_core returns
         // ECMD_TIME (3) only when unwielding the primary/secondary weapon cost a
         // turn; ECMD_OK/ECMD_CANCEL take no time.
-        game.context.move = ((await dowieldquiver()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dowieldquiver()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'w') {
         // C ref: cmd.c keymap 'w' = dowield (wield.c).  Wields a weapon (or
         // nothing).  ECMD_TIME (3) when the wield consumes a turn; ECMD_OK/FAIL/
         // CANCEL take no time.
-        game.context.move = ((await dowield()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dowield()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'x') {
         // C ref: cmd.c keymap 'x' = doswapweapon (wield.c) — swap the primary
         // and secondary weapons.
-        game.context.move = ((await doswapweapon()) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await doswapweapon()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'X') {
         // C ref: cmd.c { 'X', "twoweapon", dotwoweapon } (wield.c).  Unbound
         // here, 'X' fell through to "Unknown command 'X'."; only the '#twoweapon'
@@ -1834,7 +1888,7 @@ export async function rhack(key) {
         // C ref: cmd.c — 't' (#throw) throw/shoot an item.  throw_obj returns
         // ECMD_TIME (3) when the throw takes a turn; getdir (the direction
         // prompt) is supplied here to keep invent.js free of a cmd import cycle.
-        game.context.move = ((await dothrow(getdir)) & ECMD_TIME) ? 1 : 0;
+        game.context.move = (ecmd_note(await dothrow(getdir)) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'f') {
         // C ref: cmd.c keymap 'f' = dofire (dothrow.c).  Throws/shoots from the
         // quiver; with fireassist On a launcher in the swap slot is auto-wielded
@@ -1856,7 +1910,7 @@ export async function rhack(key) {
         // unconditionally dropped the remaining helpless turns of the drag, so the
         // monsters' moves for those turns ran after the NEXT key instead of
         // before the next screen (x355-hu246 step 428).
-        game.context.move = (((await dotravel()) & ECMD_TIME) && game.context.move) ? 1 : 0;
+        game.context.move = ((ecmd_note(await dotravel()) & ECMD_TIME) && game.context.move) ? 1 : 0;
     } else if (key === 31) { // ^_ -- #retravel (cmd.c:1831 C('_'), dotravel_target)
         // invent.js's dotravel_target() answers ECMD_TIME as 3.  Like #travel
         // above, travel_walk()/travel_adjacent_step() took every elapsed turn
@@ -1933,7 +1987,10 @@ export async function rhack(key) {
                 cmdq_add_key(CQ_REPEAT, origKey);
             }
             game.context._prefix_seen = true;
+            const savedPfx = game.context._pfx_func;
+            game.context._pfx_func = 'do_fight';
             await rhack(0);
+            game.context._pfx_func = savedPfx;
             game.context._prefix_seen = savedSeen;
             return;
         }
@@ -2011,7 +2068,10 @@ export async function rhack(key) {
                 cmdq_add_key(CQ_REPEAT, origKey);
             }
             game.context._prefix_seen = true;
+            const savedPfx = game.context._pfx_func;
+            game.context._pfx_func = (ch === 'G') ? 'do_run' : 'do_rush';
             await rhack(0);
+            game.context._pfx_func = savedPfx;
             game.context._prefix_seen = savedSeen;
             return;
         }
@@ -5185,7 +5245,7 @@ function sokoban_guilt_boulder() {
     const u = game.u;
     u.uconduct = u.uconduct || {};
     u.uconduct.sokocheat = (u.uconduct.sokocheat || 0) + 1;
-    u.uluck = (u.uluck || 0) - 1;
+    change_luck(-1); /* C ref: attrib.c change_luck() clamps u.uluck at LUCKMIN */
 }
 // C ref: obj.h is_blade(otmp).  js/engrave.js, js/invent.js, js/uhitm.js,
 // js/worn.js each keep the same private copy.
@@ -6892,7 +6952,7 @@ const spkeys_binds = [
 // (msghist(): cw->data[]/maxrow/maxcol, filled by remember_topl()).  The
 // Single and combination modes allow ^P to advance history at a wrapped More.
 export async function doprev_message() {
-    const { msghist, is_dec_prefix_msg, dec_prefix_cell } = await import('./display.js');
+    const { msghist, is_dec_prefix_msg } = await import('./display.js');
     const { tty_text_window } = await import('./invent.js');
     const h = msghist();
     const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
@@ -6903,11 +6963,11 @@ export async function doprev_message() {
         /* C ref: topl.c redotoplin():128 — only the `/` command, still inside
            tty_putmixed(), may put a graphics character on the top line.  A
            recalled message is not mixed, so that leading graphics glyph is
-           not redrawn: a DECgraphics high-bit code shows blank, a meta-bit
-           (IBMGraphics) byte shows U+FFFD (dec_prefix_cell, from pager.js
-           glyph_prefix_cell at the time the message was noted). */
+           not redrawn: a DECgraphics high-bit code or a meta-bit (IBMGraphics)
+           byte shows blank (the recorder's nomux_putch() drops the negative
+           signed char byte on macOS). */
         if (str && (Object.values(DEC_TO_UNICODE).includes(str[0]) || is_dec_prefix_msg(str)))
-            str = dec_prefix_cell(str) + str.slice(1);
+            str = ' ' + str.slice(1);
         // C redotoplin() calls putsyms(): hard-wrap at CO-1, including the
         // unwrapped query+answer stored by getline.c:81.
         const lines = [];
@@ -6924,8 +6984,16 @@ export async function doprev_message() {
             game._pending_message = '';
             return key;
         }
-        await flush_screen(1);
-        game.nhDisplay?.setCursor(Math.min(lines[0].length, COLNO - 1), 0);
+        // C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` touches only the top
+        // row and never calls flush_screen().  Under a getlin the screen behind the prompt is
+        // not the map (a menu's "Search for:", or the map left by an options menu with the
+        // status rows disabled), so rebuilding it from the model would repaint what tty leaves.
+        const disp = game.nhDisplay;
+        if (game._getlin_inread && disp?.setCell) {
+            for (let x = 0; x < disp.cols; x++) disp.setCell(x, 0, ' ', NO_COLOR, 0);
+            disp.putstr(0, 0, lines[0], NO_COLOR, 0);
+        } else await flush_screen(1);
+        disp?.setCursor(Math.min(lines[0].length, COLNO - 1), 0);
         return 0;
     };
     // C ref: wintty.c tty_putstr() NHW_MENU: each putstr() line is compress_str()'d
@@ -6944,11 +7012,11 @@ export async function doprev_message() {
             // C ref: tty_putstr() compress_str()s the line while its prefix is still
             // the (non-space) glyph byte, so the run of spaces after it collapses to
             // one instead of being dropped as leading blanks.  The byte only shows as
-            // a blank/U+FFFD once drawn.
+            // a blank once drawn.
             const start = out.length;
             maxcol = Math.max(maxcol, tty_putstr_text(out, ln));
             if (is_dec_prefix_msg(ln) && out.length > start)
-                out[start] = dec_prefix_cell(ln) + out[start].slice(1);
+                out[start] = ' ' + out[start].slice(1);
         }
         return { lines: out.map((t) => t.replace(DEC_GLYPH_RE, ' ')), maxcol };
     };
@@ -7004,6 +7072,9 @@ export async function doprev_message() {
             step_back();
         } while (key === 16);
     }
+    // C ref: topl.c tty_doprev_message() — every message_window mode but 'f' (full) ends with
+    // `ttyDisplay->dismiss_more = 0`, forgetting the ESC that xwaitforspace() recorded earlier.
+    if (mode !== 'f') game._dismissMore = 0;
     if (mode !== 's' && mode !== 'c' && mode !== 'f') h.maxcol = h.maxrow;
     return ECMD_OK;
 }
@@ -7197,7 +7268,7 @@ export function doc_extcmd_flagstr(efp) {
 // return/newline, '\033' for escape, else the accepted character.
 async function extlist_waitforspace(s) {
     for (;;) {
-        const c = await nhgetch();
+        const c = xwaitforspace_note(await nhgetch());
         if (c === 10 || c === 13) return '\0';
         if (c === 27) return '\x1b';
         const ch = String.fromCharCode(c);

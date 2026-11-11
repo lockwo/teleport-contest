@@ -91,7 +91,7 @@ let _mkobj = null;
 let _engrave = null;
 let _vision = null;
 let _objnam = null;
-async function loadEatDeps() {
+export async function loadEatDeps() {
     if (!_objnam) _objnam = await import('./objnam.js');
     if (!_invent) _invent = await import('./invent.js');
     if (!_mkobj) _mkobj = await import('./mkobj.js');
@@ -418,7 +418,7 @@ export async function food_xname_async(otmp, the_pfx) {
 // unpolymorphed hero; polyforms add the fire elemental (flammables),
 // metallivore (metal), ghoul (non-veggy corpses/eggs) and gelatinous cube
 // (organics without contents) arms.
-function is_edible(obj) {
+export function is_edible(obj) {
     if (!obj) return false;
     if (_mkobj?.objects?.[obj.otyp]?.oc_unique) return false;
     if (hero_is_pm('fire elemental') && _mkobj.is_flammable(obj)) return true;

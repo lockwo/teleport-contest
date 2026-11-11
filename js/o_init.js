@@ -1635,10 +1635,12 @@ async function destroy_nhwindow(win) {
 // page, "--More--" while more remains, "(end)" on the last page.
 async function display_nhwindow(win, _blocking) {
     const inv = await import('./invent.js');
-    const { nhgetch } = await import('./input.js');
+    const { nhgetch, xwaitforspace_quit, xwaitforspace_note } = await import('./input.js');
     const rows = game.nhDisplay?.rows ?? 24;
     const perPage = rows - 1;
-    const lines = win.lines.map((s) => ({ text: s }));
+    const { tty_putstr_text } = await import('./pager.js');
+    const lines = [];
+    for (const s of win.lines) tty_putstr_text(lines, { text: s });
     const pages = [];
     for (let i = 0; i < lines.length; i += perPage) pages.push(lines.slice(i, i + perPage));
     if (!pages.length) pages.push([]);
@@ -1651,8 +1653,13 @@ async function display_nhwindow(win, _blocking) {
         });
         for (;;) {
             const c = await nhgetch();
-            if (c === 27) { pi = pages.length; break; }
-            if (c === 32 || c === 13 || c === 10) break;
+            // NHW_TEXT: dmore(quitchars), where ESC leaves dismiss_more == 1 (^A then dismisses too);
+            // NHW_MENU (PICK_NONE): xwaitforspace(resp) accepts only the page keys.
+            if (win.type === NHW_TEXT ? xwaitforspace_quit(c)
+                : (xwaitforspace_note(c) === 27 || c === 32 || c === 13 || c === 10)) {
+                if (c === 27) pi = pages.length;
+                break;
+            }
         }
     }
 }

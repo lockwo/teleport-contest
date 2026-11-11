@@ -16,7 +16,7 @@ import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf, youmonst_data_pub } from './invent.js';
 import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool } from './const.js';
-import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM } from './monflags_data.js';
+import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, is_hider_flag } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags, the } from './objnam.js';
 import { mon_nam, Monnam, mhis } from './do_name.js';
@@ -72,7 +72,13 @@ export async function dosit() {
         await update_topl(`You are already sitting on ${mon_nam(u.usteed)}.`);
         return ECMD_OK;
     }
-    // u.uundetected / is_hider: the contest hero is never a ceiling hider.
+    // C ref: sit.c:410 — a hidden hider (a polymorphed piercer clinging to the
+    // ceiling) leaves its hiding place to sit; a trapper can stay hidden on the floor.
+    {
+        const yd = youmonst_data_pub();
+        if (u.uundetected && is_hider_flag(yd) && yd.name !== 'trapper')
+            u.uundetected = 0; /* no longer on the ceiling */
+    }
 
     if (!(await import('./engrave.js')).can_reach_floor(false)) {
         if (u.uswallow)
@@ -241,7 +247,8 @@ function eggs_in_water(ptr) {
 
 function isTowel(obj) { return objects[obj.otyp]?.name === 'towel'; }
 function isCreamPie(obj) { return objects[obj.otyp]?.name === 'cream pie'; }
-function isBox(obj) { return obj?.otyp === 214 || obj?.otyp === 215 || obj?.otyp === 216; }
+// C ref: obj.h Is_box(): large box and chest only (an ice box is not one).
+function isBox(obj) { return obj?.otyp === 214 || obj?.otyp === 215; }
 // C ref: objects[otyp].oc_material == CLOTH (material index 6 in the port's
 // objects table).
 function obj_is_cloth(obj) { return objects[obj.otyp]?.material === 6; }
@@ -451,7 +458,9 @@ async function throne_sit_effect() {
             await take_gold();
             break;
         case 6:
-            if (Luck_sit() + rn2(5) < 0) {
+            /* C ref: sit.c:106 — `u.uluck + rn2(5) < 0`: the BASE luck only,
+               not Luck (u.uluck + u.moreluck), so a luck item does not help here. */
+            if ((u.uluck | 0) + rn2(5) < 0) {
                 await You_feel('your luck is changing.');
                 change_luck(1);
             } else {

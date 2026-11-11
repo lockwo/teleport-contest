@@ -28,7 +28,7 @@ import { cvt_sdoor_to_door } from './detect.js';
 import { Blind as Blind_vision } from './vision.js';
 import { s_suffix } from './hacklib.js';
 import { CQ_CANNED, CMDQ_KEY, CMDQ_EXTCMD, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
-         ECMD_OK, ECMD_TIME, ECMD_CANCEL, Trap_Killed_Mon } from './const.js';
+         ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL, Trap_Killed_Mon } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { begin_burn, end_burn } from './timeout.js';
 
@@ -889,7 +889,7 @@ async function doapply_obj(obj) {
     // Any other tool isn't exercised; mirror C's "I don't know how to use that"
     // (C returns ECMD_FAIL here, which like ECMD_OK costs no turn).
     await _display.pline("Sorry, I don't know how to use that.");
-    return ECMD_OK;
+    return ECMD_FAIL;
 }
 
 // C ref: apply.c flip_through_book(obj) — applying a spellbook.  Always costs
@@ -1169,12 +1169,12 @@ async function do_break_wand(obj) {
             if (mon) await A.zap.bhitm(mon, obj);
             if (affects_objects && A.invent.objects_at(x, y).length) {
                 await A.zap.bhitpile(obj, x, y);
-                game.botl = true; /* potion effects */
+                if (game.botl) await _display.bot(); /* potion effects */
             }
         } else {
             if (affects_objects && A.invent.objects_at(x, y).length) {
                 await A.zap.bhitpile(obj, x, y);
-                game.botl = true; /* potion effects */
+                if (game.botl) await _display.bot(); /* potion effects */
             }
             const damage = await A.zap.zapyourself(obj, false);
             if (damage) {
@@ -1182,7 +1182,7 @@ async function do_break_wand(obj) {
                 await A.zap.losehp(A.zap.Maybe_Half_Phys(damage),
                     `killed ${him}self by breaking a wand`, NO_KILLER_PREFIX);
             }
-            game.botl = true; /* blindness */
+            if (game.botl) await _display.bot(); /* blindness */
         }
     }
 

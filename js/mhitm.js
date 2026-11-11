@@ -1355,9 +1355,13 @@ export async function mattackm(magr, mdef) {
     // as "never apply to the modeled matchups"; a sleeping defender is the
     // normal case for a monster the hero hasn't disturbed, and the +4 flips the
     // `tmp > dieroll` test — i.e. it decides whether mdamagem() rolls at all.
-    let tmpBase = find_mac(mdef) + monLev(magr);
+    // C declares `tmp` once for the whole function (mhitm.c:298) and never
+    // resets it per attack: `tmp += hitval(mwep)` before the to-hit roll and
+    // `tmp -= hitval(mwep)` after it are two independent calls, so an artifact
+    // weapon's rnd(attk.damn) spec_abon draw makes tmp drift between attacks.
+    let tmp = find_mac(mdef) + monLev(magr);
     if (mdef.mconf || helpless_mm(mdef)) {             // mhitm.c:322
-        tmpBase += 4;
+        tmp += 4;
         mdef.msleeping = 0;
     }
 
@@ -1384,7 +1388,7 @@ export async function mattackm(magr, mdef) {
         }
     }
 
-    if (is_elf_flag(pa) && is_orc_flag(pd)) tmpBase++;  // mhitm.c:353
+    if (is_elf_flag(pa) && is_orc_flag(pd)) tmp++;      // mhitm.c:353
 
     gv_vis = mm_visible(magr, mdef);                   // mhitm.c:358
     gs_skipdrin = false;                               // mhitm.c:372
@@ -1415,7 +1419,6 @@ export async function mattackm(magr, mdef) {
         let strike = 0, attk = 1;
         let mwep = null;
         let dieroll = 0;
-        let tmp = tmpBase;
 
         switch (mattk.aatyp) {
         case AT_WEAP:

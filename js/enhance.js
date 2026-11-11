@@ -555,6 +555,7 @@ async function select_skill_menu(pages, pickOne) {
             if (count !== 0) counting = true;
             continue;
         }
+        if (c === 27) game._dismissMore = 1;      // xwaitforspace(): ESC leaves dismiss_more == 1
         if (c === 27 && counting) { count = 0; counting = false; continue; }
         count = 0; counting = false;
         if (c === 27) { delete game._modal_screen; return null; }     // cancel
@@ -701,6 +702,7 @@ export async function doenhance() {
 // active and consumed the key.
 export async function skill_window_advance(key) {
     if (game._modal_screen !== 'skillwin') return false;
+    if (key === '\x1b') game._dismissMore = 1;      /* xwaitforspace(): ESC leaves dismiss_more == 1 */
     // C ref: wintty.c:1564-1615 — menu counts never echo on the topline;
     // ESC cancels a nonzero count before it can cancel the menu.
     if (key >= '0' && key <= '9') {

@@ -44,7 +44,7 @@ import { S_vwall } from './symbols.js';
 import { rogue_symset } from './display.js';
 import { NHW_MENU, MENU_BEHAVE_STANDARD, MENU_ITEMFLAGS_NONE, NH_BASIC_COLOR } from './const.js';
 import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_note } from './input.js';
 import {
     fill_glyphid_cache, free_glyphid_cache, glyphid_cache_status,
     wizcustom_glyphids,
@@ -1701,7 +1701,7 @@ async function wizcustom_select_menu(wt, win) {
         /* xwaitforspace(resp): anything outside resp[] is swallowed */
         let ch;
         for (;;) {
-            const k = await nhgetch();
+            const k = xwaitforspace_note(await nhgetch());
             ch = String.fromCharCode(k);
             if (k === 27 || k === 10 || k === 13 || ' 0123456789'.includes(ch)
                 || default_menu_cmds.includes(ch) || mapped_menu_cmds().includes(ch))

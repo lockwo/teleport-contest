@@ -28,7 +28,8 @@ import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_K
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
-import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta, glyph_prefix_cell } from './pager.js';
+import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta } from './pager.js';
+import { is_drawbridge_wall } from './dbridge.js';
 import { fruit_from_name } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
@@ -38,7 +39,7 @@ import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
 import { Invis, m_everyturn_effect, can_ooze_hero, passes_bars } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
-import { nhgetch, xwaitforspace_quit } from './input.js';
+import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
 import { ARTICLE_NONE, a_monnam, rndmonnam as rndmonnam_dn } from './do_name.js';
 import { dist2, distmin } from './hacklib.js';
@@ -1376,7 +1377,7 @@ async function show_getpos_tip_window() {
         let k;
         for (;;) { // xwaitforspace(resp)
             render_getpos_tip();
-            k = await nhgetch();
+            k = xwaitforspace_note(await nhgetch());
             if (k === 32 || k === 13 || k === 10 || k === 27
                 || (k >= 48 && k <= 57)
                 || MENU_RESP_CMDS.includes(String.fromCharCode(k))
@@ -1861,6 +1862,8 @@ function terrain_description(x, y, full = false) {
         const dm = displayed_doormask(loc);
         if (dm & (D_CLOSED | D_LOCKED)) return 'closed door';
         if (dm & D_ISOPEN) return 'open door';
+        /* C ref: pager.c lookat() case S_ndoor: the open portcullis of a drawbridge */
+        if (is_drawbridge_wall(x, y) >= 0) return 'open drawbridge portcullis';
         return dm & D_BROKEN ? 'broken door' : 'doorway';
     }
     // C ref: do_screen_description() dispatches on the DISPLAYED glyph: back_to_glyph()
@@ -3251,7 +3254,7 @@ export async function do_farlook() {
     // as '/' ("<sym>        <class> (<lookat>)"), monsters included.
     const picked = look_pick_description(cc.x, cc.y);
     const desc = picked.text;
-    if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(desc, glyph_prefix_cell(cc.x, cc.y));
+    if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(desc);
     // C ref: pager.c:1919 `putmixed(WIN_MESSAGE, 0, out_str)` — tty routes that
     // through update_topl(), so a description too wide for one row wraps and
     // blocks on --More-- before do_look returns.
@@ -4335,8 +4338,10 @@ async function display_dbase_window(lines, forceFull = false) {
         let dismissed = false;
         while (!dismissed) {
             const k = await nhgetch();
-            if (k === 27) { pi = pages.length; dismissed = true; } // ESC: cancel all
-            else if (k === 32 || k === 13 || k === 10) dismissed = true;
+            if (xwaitforspace_quit(k)) {          // ESC also leaves dismiss_more == 1 (^A then dismisses)
+                if (k === 27) pi = pages.length;  // ESC: cancel all
+                dismissed = true;
+            }
             // other keys ring the bell in C; reloop without redraw.
         }
     }
@@ -4883,7 +4888,7 @@ export async function do_look_full() {
         // data.base) fires its own --More-- via y_n.  Otherwise the NEED_MORE
         // line is flushed with --More-- by the next loop's "Pick..." or exit.
         const { text, firstmatch } = look_pick_description(cc.x, cc.y);
-        if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(text, glyph_prefix_cell(cc.x, cc.y));
+        if (glyph_prefix_is_symset_meta(cc.x, cc.y)) note_dec_prefix_msg(text);
         // C ref: pager.c:1919 putmixed(WIN_MESSAGE, ...) -> update_topl(): a
         // description that wraps onto a second row blocks on its own --More--
         // right here (redotoplin()), and an ESC there sets WIN_STOP, which

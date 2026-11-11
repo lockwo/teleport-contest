@@ -2678,7 +2678,7 @@ export function x_monnam(mtmp, article, _adjective, _suppress, called) {
                 return given.slice(0, bp + 5) + adj + given.slice(bp + 5);
         }
         const gnamed = (mtmp?.data?.pmidx === PM_GHOST())
-            ? adj + (/s$/i.test(given) ? `${given}'` : `${given}'s`) + ' ghost'
+            ? adj + s_suffix(given) + ' ghost'
             // C's l_monnam()/distant_monnam() request a species followed by
             // "called <name>".  The other wrappers use the personal name
             // directly ("Fido") and pass called=false.

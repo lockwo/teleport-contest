@@ -1094,7 +1094,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // the text (no gd.dfr_post_msg field here); delivering it from the caller
     // instead put it AFTER pickup(1)'s "You see here..." line
     // (w3-human-knight-debug step 131 shows the reversed order).
-    if (g._goto_post_msg) {
+    // C ref: do.c:2032 maybe_lvltport_feedback() only consumes a message that
+    // STARTS with "You materialize"; any other dfr_post_msg (fall_through()'s
+    // "The hole in the ceiling above you closes up.") stays pending for
+    // deferred_goto(), which delivers it after goto_level() returns.
+    if (g._goto_post_msg && /^you materialize/i.test(g._goto_post_msg)) {
         const pmsg = g._goto_post_msg;
         g._goto_post_msg = null;
         await update_topl(pmsg);
@@ -1903,10 +1907,19 @@ export async function run_deferred_lvltport() {
     // C ref: do.c deferred_goto() -> goto_level(), which delivers gd.dfr_post_msg
     // itself via maybe_lvltport_feedback() right after its docrt().
     game._goto_post_msg = pend.post_msg;
+    const oldlev = { dnum: game.u.uz.dnum, dlevel: game.u.uz.dlevel };
     // C ref: do.c deferred_goto() passes `!!(typmask & UTOTYPE_FALLING)` as
     // goto_level's `falling`; trap.c fall_through() schedules with that bit set
     // (js/trap.js sets pend.falling), level_tele() with UTOTYPE_NONE.
     await goto_level(pend.newlevel, false, !!pend.falling, false);
+    // C ref: do.c:2096 `if (gd.dfr_post_msg && !on_level(&u.uz, &oldlev))
+    // pline1(gd.dfr_post_msg);` — a message goto_level() left pending
+    // (maybe_lvltport_feedback() takes only "You materialize...") comes after
+    // the whole arrival, e.g. fall_through()'s "The hole in the ceiling above
+    // you closes up.".
+    if (game._goto_post_msg
+        && !(game.u.uz.dnum === oldlev.dnum && game.u.uz.dlevel === oldlev.dlevel))
+        await update_topl(String(game._goto_post_msg));
     game._goto_post_msg = null;
 }
 
@@ -3162,11 +3175,10 @@ export async function better_not_try_to_drop_that(otmp) {
         const DN = await import('./do_name.js');
         const buf = `Drop the ${DN.obj_pmname(otmp)} corpse without `
                   + `${I.body_part(HAND)} protection on?`;
-        // C ref: do.c:959 paranoid_ynq(TRUE, buf, FALSE) — cmd.c paranoid_ynq()
-        // is ported but module-private (js/eat.js:669, js/wizcmds.js:130); the
-        // shape of the query is a plain y_n with 'n' as the ESC/default answer.
-        const ans = await y_n(buf, 'yn\x1b', 'n');
-        return ans !== 'y';
+        // C ref: do.c:959 paranoid_ynq(TRUE, buf, FALSE): the player must type "yes"
+        // (a getlin query), anything else declines.
+        const { paranoid_ynq } = await import('./eat.js');
+        return (await paranoid_ynq(true, buf, false)) !== 'y';
     }
     return false;
 }

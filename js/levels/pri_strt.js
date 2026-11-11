@@ -14,8 +14,9 @@ import {
     quest_floodfill_match, quest_level_init_solidfill, quest_place_stair, quest_region_light,
     quest_register_branch, quest_replace_terrain, quest_rndcoord, quest_set_door, shuffle,
     vly_region,
-    vly_non_diggable,
+    vly_non_diggable, splev_create_monster,
 } from '../sp_lev.js';
+import { DART_TRAP, quest_trap } from './quest_home_common.js';
 
 // ════════════════════════════════════════════════════════════════════════
 // Priest quest "home" level loader (dat/Pri-strt.lua) — the Great Temple.
@@ -141,14 +142,19 @@ export async function makemaz_pri_strt() {
         // get_location — see quest_create_trap's header comment).
         for (let i = 0; i < 2; i++) {
             const c = quest_rndcoord(spacelocs);
-            if (c) { await maketrap(c.x, c.y, 2 /*DART_TRAP*/); rnd(4); }
+            // C ref: nhlsel.c l_selection_rndcoord() returns {x=-1,y=-1} for an
+            // empty selection; create_trap() then picks a random location.
+            if (!c) { await quest_trap(DART_TRAP); continue; }
+            await maketrap(c.x, c.y, 2 /*DART_TRAP*/); rnd(4);
         }
         // Four random traps.
         for (let i = 0; i < 4; i++) await quest_create_trap_random();
         // Monsters on siege duty: 12 human zombies in the open field.
         for (let i = 0; i < 12; i++) {
             const c = quest_rndcoord(spacelocs);
-            if (!c) continue;
+            // C ref: nhlsel.c l_selection_rndcoord() hands back {x=-1,y=-1} for an
+            // empty selection, which create_monster() treats as a random location.
+            if (!c) { splev_create_monster({ name: 'human zombie' }); continue; }
             quest_create_monster_at('human zombie', c.x, c.y, null);
         }
     } finally {

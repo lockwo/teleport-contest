@@ -763,7 +763,7 @@ async function ask_do_tutorial() {
         // C ref: xwaitforspace(resp) rings the bell and keeps reading INSIDE the
         // wait, so an ignored key never reaches the reset_count test above.
         let c, idx;
-        do { c = await nhgetch(); idx = RESP.indexOf(String.fromCharCode(c)); }
+        do { c = await nhgetch(); if (c === 27) game._dismissMore = 1; idx = RESP.indexOf(String.fromCharCode(c)); }
         while (idx < 0);                        // tty_nhbell(), re-read
         let ch = String.fromCharCode(c);
         if (idx >= SELECTORS.length) {          // map_menu_cmd() unless explicit
@@ -2129,7 +2129,7 @@ async function moveloop_core_body() {
     // a command; the spaces in the recorded input then acknowledge the
     // occupation's --More-- prompts rather than being parsed as commands.  The
     // occupation returns 0 when finished (clear it) or 1 to continue next turn.
-    if (g._force_box) {
+    if ((g.multi ?? 0) >= 0 && g._force_box) {
         const { forcelock } = await import('./extcmd-handlers.js');
         const busy = await forcelock();
         // The forcelock turn consumed game time; schedule next turn's per-turn
@@ -2151,7 +2151,7 @@ async function moveloop_core_body() {
     // picked ("You succeed in picking the lock." + exercise) or the attempt is
     // abandoned.  The monster moves for the turn already ran above (moveloop_turn
     // via _pendingTurn), matching C's context.move -> movemon -> occupation order.
-    if (g._picklock_box) {
+    if ((g.multi ?? 0) >= 0 && g._picklock_box) {
         const { picklock } = await import('./extcmd-handlers.js');
         const busy = await picklock();
         g.context = g.context || {};

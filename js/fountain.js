@@ -358,12 +358,14 @@ export async function drinkfountain() {
             await update_topl('The feeling subsides.');
             break;
         case 20: /* Foul water */
-            await update_topl(`The ${hliquid('water')} is foul!  You gag and vomit.`);
+            /* C ref: fountain.c:295 — a literal "water", not hliquid(): the text does not hallucinate */
+            await update_topl('The water is foul!  You gag and vomit.');
             await morehungry(rn1(20, 11));
             await vomit();
             break;
         case 21: /* Poisonous */
-            await update_topl(`The ${hliquid('water')} is contaminated!`);
+            /* C ref: fountain.c:300 — literal "water" (not hliquid()) */
+            await update_topl('The water is contaminated!');
             // C ref: fountain.c:302 — a poison-resistant hero (every orc, every
             // Healer) takes the SHORT arm: one rnd(4) and a different message,
             // not poison_strdmg's rn1(4,3) + rnd(10).  Argument order is

@@ -1301,10 +1301,16 @@ const DIED = 0;   // C ref: hack.h DIED
 // line, and the prompt's pet name costs one or two more rn2(2)s.  The prompt is
 // a REAL keystroke read: skipping it would let the answer fall through to
 // rhack() and run a phantom turn.
+// C: `u.utotype` — a level change is scheduled (trap.c fall_through() and
+// teleport.c level_tele() schedule_goto()).  This port keeps those two in
+// game._lvltport_dest (do.js run_deferred_lvltport), the rest in u.utotype.
+function level_change_pending() {
+    return !!(game.u?.utotype || game._lvltport_dest);
+}
 export async function mayberem(mon, seducer, obj, str) {
     if (!obj || !obj.owornmask) return;
     // A previous removal may have dropped the hero through a trap door.
-    if (game.u?.utotype || !await m_next2u_u(mon)) return;
+    if (level_change_pending() || !await m_next2u_u(mon)) return;
 
     if (Deaf()) {
         await emitU(`${seducer} takes off your ${str}.`);
@@ -1428,13 +1434,13 @@ export async function doseduce(mon) {
                 await inv.Ring_gone(game.uright);
                 /* ring removal might cause loss of levitation which could
                    drop hero onto trap that transports hero somewhere else */
-                if (u.utotype || !await m_next2u_u(mon)) return 1;
+                if (level_change_pending() || !await m_next2u_u(mon)) return 1;
                 setworn_accessory(ring, W_RINGR);
             } else if (game.uleft && game.uleft.otyp !== RIN_ADORNMENT) {
                 /* see "replaces" note above */
                 await emitU(`${Who} replaces ${inv.yname(game.uleft)} with ${inv.yname(ring)}.`);
                 await inv.Ring_gone(game.uleft);
-                if (u.utotype || !await m_next2u_u(mon)) return 1;
+                if (level_change_pending() || !await m_next2u_u(mon)) return 1;
                 setworn_accessory(ring, W_RINGL);
             } else {
                 await impossible('ring replacement');
@@ -1457,7 +1463,7 @@ export async function doseduce(mon) {
     await mayberem(mon, Who, game.uarmh, helm_simple_name(game.uarmh));
     if (!game.uarmc && !game.uarm) await mayberem(mon, Who, game.uarmu, 'shirt');
 
-    if (u.utotype || !await m_next2u_u(mon)) return 1;
+    if (level_change_pending() || !await m_next2u_u(mon)) return 1;
 
     const { rloc, tele_restrict, RLOC_MSG } = await import('./teleport.js');
     if (game.uarm || game.uarmc) {

@@ -3573,8 +3573,7 @@ function _botFields(order, transient = null) {
     // C ref: botl.c bot()/timebot() are the only writers of BL_TIME, so the
     // field shows `moves` as of the last bot()/timebot() (game._shownMoves,
     // refreshed by botl_flush()/timebot_sync()), not the live counter.
-    raw[BL_TIME] = String(game._shownMoves != null && game._shownMoves <= (game.moves || 1)
-        ? game._shownMoves : (game.moves || 1));
+    raw[BL_TIME] = String(game._shownMoves != null ? game._shownMoves : (game.moves || 1));
     // C ref: botl.c bot_via_windowport — hu_stat[] (eat.c) = {Satiated, "",
     // Hungry, Weak, Fainting, Fainted, Starved}; NOT_HUNGRY(1) shows nothing.
     const HU_STAT = ['Satiated', '', 'Hungry', 'Weak', 'Fainting', 'Fainted', 'Starved'];
@@ -4798,7 +4797,10 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
         };
         // A held departing frame (goto_level's postponed flushes) still shows the
         // OLD level, so its snapshot of what owns each status cell stays valid.
-        if (game._statusSnapLevel !== game.level && !game._staleFrame) game._statusSnap = null;
+        if (game._statusSnapLevel !== game.level && !game._staleFrame) {
+            game._statusSnap = null;
+            game._statusSnapLevel = game.level;
+        }
         if (game._statusMapOwn && game._statusMapOwn.level !== game.level && !game._staleFrame) game._statusMapOwn = null;
         const snap = sharedRow && game._statusSnap ? game._statusSnap : null;
         const owned = (c) => !!snap && (top + r) in snap && snap[top + r][c] !== undefined
@@ -5049,17 +5051,13 @@ function msgtype_suppressed(msg) {
 // C ref: pager.c do_screen_description() / topl.c redotoplin(): a farlook line whose
 // glyph prefix is a symset-remapped (high-bit) cmap char.  The history ring keeps the
 // decoded char, so the messages that carried one are tagged by their first 30
-// characters, and ^P (not a putmixed() caller) shows that prefix as a blank.
-// `cell` is what the recalled copy shows in the prefix column: blank for a DECgraphics
-// high-bit code, U+FFFD for an IBMGraphics byte (>= 0x80, invalid UTF-8 on its own).
-export function note_dec_prefix_msg(text, cell = ' ') {
-    (game._decPrefixMsgs ||= new Map()).set(String(text).slice(0, 30), cell);
+// characters, and ^P (not a putmixed() caller) shows that prefix as a blank
+// (DECgraphics and IBMGraphics alike: nomux_putch() drops the negative signed char).
+export function note_dec_prefix_msg(text) {
+    (game._decPrefixMsgs ||= new Set()).add(String(text).slice(0, 30));
 }
 export function is_dec_prefix_msg(text) {
     return !!text && !!game._decPrefixMsgs?.has(String(text).slice(0, 30));
-}
-export function dec_prefix_cell(text) {
-    return game._decPrefixMsgs?.get(String(text).slice(0, 30)) ?? ' ';
 }
 
 // ── tty message history ring ──
@@ -5496,8 +5494,10 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
     for (;;) {
         let c = await nhgetch();
         game._toplinSoft = null;
+        // C ref: tty_message_menu()/tty_doprev_message() overwrite ttyDisplay->dismiss_more with their
+        // own char (an invlet / ^P) for the duration of this wait, so the stale ESC value (^A) is out.
         if (c === 32 || c === 13 || c === 10 || c === 27
-            || (game._dismissMore && c === game._dismissMore)) {
+            || (!extraChars && game._dismissMore && c === game._dismissMore)) {
             if (c === 27) game._dismissMore = 1;
             else if (c !== 32 && c !== 13 && c !== 10) c = 32;
             // C ref: win/tty/topl.c more() — `if (morc == '\033') cw->flags |=

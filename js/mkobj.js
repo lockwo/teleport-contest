@@ -743,6 +743,7 @@ for (let otyp = 439; otyp <= 474; otyp++) OC_SKILL[otyp] = -21;
 
 export const objects = OBJECT_DATA.map(([otyp, sym, oclass, prob, flags, material, dir, name]) => ({
     otyp, sym, oclass, oc_class: oclass, oc_prob: prob, flags, material, dir, name,
+    oc_unique: (flags & F_UNIQUE) ? 1 : 0,
     oc_color: OC_COLOR[otyp] != null ? OC_COLOR[otyp] : 8,
     oc_skill: OC_SKILL[otyp] != null ? OC_SKILL[otyp] : 0,
     // C objects.h HARDGEM(): Mohs hardness >= 8 for these gem types.

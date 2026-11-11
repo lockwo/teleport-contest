@@ -2650,7 +2650,8 @@ export async function bury_objs(x, y) {
 
     if (costly && loss) {
         const { pline } = await import('./display.js');
-        await pline(`You owe ${shkname(shkp)} ${loss} zorkmids for burying merchandise.`);
+        const { currency } = await import('./invent.js');
+        await pline(`You owe ${shkname(shkp)} ${loss} ${currency(loss)} for burying merchandise.`);
     }
 }
 

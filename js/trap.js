@@ -23,7 +23,7 @@ import { body_part, near_capacity, update_inventory, delobj, xname, uslinging,
          Ring_off, off_msg, obj_doname, carried, otense, obj_extract_self,
          obj_resists, useupall, remove_worn_item, is_plural, simpleonames,
          stackobj, freeinv, inventoryArray, welded, worn_extrinsic, worn_blocked,
-         splitobj, dropx, carried_weight, youmonst_data_pub, bimanual, useup, Free_action, Yname2, Yobjnam2, setnotworn } from './invent.js';
+         splitobj, dropx, carried_weight, youmonst_data_pub, bimanual, useup, Free_action, Yname2, Yobjnam2, setnotworn, currency } from './invent.js';
 import { locomotion } from './monmove.js';
 import { the } from './objnam.js';
 import { makeplural } from './plural.js';
@@ -3060,8 +3060,9 @@ export async function dofiretrap(box) {
     }
     if (!num) await update_topl('You are uninjured.');
     else await losehp(num, TOWER_OF_FLAME);
-    // burn_away_slime(): the hero is never sliming in this port, and the
-    // function draws no RNG.
+    // C ref: trap.c:4304 dofiretrap() — burn_away_slime(): a Slimed hero's
+    // sliming is cured by the flames ("The slime that covers you is burned away!").
+    await (await import('./timeout.js')).burn_away_slime();
     const { burnarmor, destroy_items, ignite_items, burn_floor_objects }
         = await import('./zap.js');
     if (await burnarmor(u) || rn2(3)) {
@@ -3615,9 +3616,9 @@ export async function chest_trap(obj, bodypart, disarm) {
             await exercise(A_STR, false);
             if (costly && loss) {
                 if (insider) {
-                    await pline(`You owe ${loss} ${loss === 1 ? 'zorkmid' : 'zorkmids'} for objects destroyed.`);
+                    await pline(`You owe ${loss} ${currency(loss)} for objects destroyed.`);
                 } else {
-                    await pline(`You caused ${loss} ${loss === 1 ? 'zorkmid' : 'zorkmids'} worth of damage!`);
+                    await pline(`You caused ${loss} ${currency(loss)} worth of damage!`);
                     await make_angry_shk(shkp, ox, oy);
                 }
             }

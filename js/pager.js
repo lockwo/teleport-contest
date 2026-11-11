@@ -20,7 +20,7 @@ import { sticks, attacktype_fordmg } from './monattk_data.js';
 import { makeplural } from './plural.js';
 import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { worm_known } from './worm.js';
 import { displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
@@ -123,8 +123,12 @@ export async function display_text_window(lines) {
             modal: 'textwin',
         });
         const c = await nhgetch();
-        if (c === 27) break;                       // ESC: cancel remaining pages
-        if (c === 32 || c === 13 || c === 10) { pi++; continue; } // advance
+        // xwaitforspace(quitchars): ESC cancels (and leaves dismiss_more == 1); space, return
+        // and, once an ESC set dismiss_more, ^A advance a page.
+        if (xwaitforspace_quit(c)) {
+            if (c === 27) break;                   // ESC: cancel remaining pages
+            pi++; continue;                        // advance
+        }
         // any other key: ignored (bell) — re-render the same page and re-read
     }
     // Tear the window down and restore the map (docrt + flush_screen).
@@ -686,10 +690,10 @@ const GOLD_SYM = '$';
 // C ref: getline.c xwaitforspace(s) — read keys until one is acceptable,
 // ringing the bell for the rest.  Returns C's `morc`: '\0' for return/newline,
 // '\033' for escape, else the accepted character.  ttyDisplay->dismiss_more is
-// 0 outside topl.c's --More--, so the `c == x` arm never fires here.
+// 1 once any ESC was read by an xwaitforspace(); the `c == x` arm (^A) then hands the menu a key it only bells at, so it is omitted.
 async function xwaitforspace(s) {
     for (;;) {
-        const c = await nhgetch();
+        const c = xwaitforspace_note(await nhgetch());
         if (c === 10 || c === 13) return '\0';
         if (c === 27) return '\x1b';
         const ch = String.fromCharCode(c);
@@ -1199,17 +1203,15 @@ export function pg_glyph_at(x, y) {
 // putmixed() prints that glyph's ttychar.  A cmap the DECgraphics/curses symset
 // remaps has a high-bit/control ttychar, which the tty only renders through its
 // graphics shift at putmixed() time; a recalled copy (^P) shows it as a blank.
+// A meta-bit symset (IBMGraphics) is the same: the recorder's nomux_putch(int ch)
+// drops `ch < 32`, and the signed `char` byte of a topl/putstr line is negative
+// on macOS (the official recording platform), so the recalled prefix stays blank.
+// (An unsigned-char Linux/aarch64 build writes the raw byte instead, which the
+// session writer turns into U+FFFD: a platform artifact, not the official result.)
 export function glyph_prefix_is_symset_meta(x, y) {
     const g = pg_glyph_at(x, y);
-    /* A meta-bit symset (IBMGraphics) gives the glyph a ttychar >= 0x80 as well. */
     return g.kind === 'cmap' && (!!g.dec || cmap_symset_remapped(g.cmap)
         || symsetHighByte(LOADSYMS_PCHAR_NAMES[g.cmap]) != null);
-}
-// What a recalled (^P) copy of that prefix shows: the raw ttychar byte of a meta-bit
-// symset is not valid UTF-8 (U+FFFD), a DECgraphics high-bit code shows blank.
-export function glyph_prefix_cell(x, y) {
-    const g = pg_glyph_at(x, y);
-    return g.kind === 'cmap' && symsetHighByte(LOADSYMS_PCHAR_NAMES[g.cmap]) != null ? '\ufffd' : ' ';
 }
 // C ref: display.c show_glyph() `a11y.glyph_updates` (mention_map) arm: a spot
 // that was GLYPH_NOTHING/UNEXPLORED (or whose new glyph is furniture), and is not
@@ -1472,8 +1474,8 @@ export function mhidden_description(mon, mhid_flags) {
         const data = mon.data || {};
         if (pg_hides_under(data)) {
             out += ' under ';
-            if (pg_glyph_is_object(glyph)) { objfrommap(); return out; }
-            out += 'something';
+            if (pg_glyph_is_object(glyph)) objfrommap();
+            else out += 'something';
         } else if (pg_is_hider(data)) {
             out += ` on the ${pg_ceiling_hider(data) ? 'ceiling' : pg_surface(x, y)}`;
         } else if (data.mlet === ';' && pg_is_pool(x, y)) {
@@ -1630,7 +1632,8 @@ function observe_object_pg(obj) { observe_object(obj); }
 // C ref: pager.c:379 look_at_object(buf, x, y, glyph) — the object's name plus
 // the terrain suffix that says where it is stuck.
 export function look_at_object(x, y, glyph) {
-    const { fakeobj, obj: otmp } = object_from_map(glyph, x, y);
+    const { fakeobj, obj: found } = object_from_map(glyph, x, y);
+    let otmp = found;
     let buf;
 
     if (otmp) {
@@ -1640,9 +1643,12 @@ export function look_at_object(x, y, glyph) {
     } else {
         buf = 'something';                          /* sanity precaution */
     }
+    /* C: `if (fakeobj) { otmp->where = OBJ_FREE; dealloc_obj(otmp), otmp = NULL; }`
+       so the tests below see no object for a map-only (fake) one */
+    if (fakeobj) otmp = null;
 
     const typ = game.level?.at(x, y)?.typ;
-    if (otmp && !fakeobj && otmp.where === OBJ_BURIED) buf += ' (buried)';
+    if (otmp && otmp.where === OBJ_BURIED) buf += ' (buried)';
     /* check TREE before STONE due to level.flags.arboreal */
     else if (IS_TREE(typ))
         buf += ` ${(otmp && is_treefruit(otmp)) ? 'dangling' : 'stuck'} in a tree`;

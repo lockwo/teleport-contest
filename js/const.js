@@ -3030,7 +3030,7 @@ export function Upolyd(player) {
 // Canonical macros — previously duplicated as local stubs in 15+ files
 export function u_at(x, y) { return game?.u?.ux === x && game?.u?.uy === y; }
 export function OBJ_AT(x, y) { return game?.level?.objects?.some(o => o.ox === x && o.oy === y) ?? false; }
-export function Has_contents(obj) { return obj?.cobj != null; }
+export function Has_contents(obj) { return !!(obj?.cobj && (!Array.isArray(obj.cobj) || obj.cobj.length > 0)); }
 export function M_AP_TYPE(mon) {
     return (mon?.m_ap_type | 0) & M_AP_TYPMASK;
 }

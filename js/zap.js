@@ -6732,7 +6732,7 @@ let wish_history_idx = 0;
 register_process_static(() => { wish_history.fill(null); wish_history_idx = 0; });
 
 /* C ref: zap.c makewish() tests `wish_history[0]` (slot 0 filled == history non-empty). */
-export function wish_history_first() { return wish_history[0]; }
+export function wish_history_first() { return wish_history[0] != null; /* a "" entry is still a non-NULL pointer */ }
 
 export function wish_history_add(buf) {
     if (!DEBUG_BUILD_Z)
@@ -6744,7 +6744,7 @@ export function wish_history_add(buf) {
     for (i = 0; i < MAX_WISH_HISTORY_Z; i++) {
         const idx = (wish_history_idx + i) % MAX_WISH_HISTORY_Z;
 
-        if (!wish_history[idx])
+        if (wish_history[idx] == null)
             continue;
         /* C: !strncmpi(wish_history[idx], buf, strlen(wish_history[idx])) */
         if (String(buf).toLowerCase()
@@ -6780,7 +6780,7 @@ export async function wish_history_menu(buf) {
 
     for (let i = MAX_WISH_HISTORY_Z - 1; i >= 0; i--) {
         const idx = (wish_history_idx + i) % MAX_WISH_HISTORY_Z;
-        if (wish_history[idx]) {
+        if (wish_history[idx] != null) {
             /* a '\0' accelerator: tty hands out a, b, c... in order */
             const sel = String.fromCharCode(97 + accel++);
             items.push({ sel, text: wish_history[idx] });

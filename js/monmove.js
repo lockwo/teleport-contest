@@ -7105,7 +7105,7 @@ export async function thitu(tlev, dam, otmp) {
     // C ref: mthrowu.c:144-148 — silver sears a silver-hating hero.
     if (otmp && OBJECTS[otmp.otyp]?.material === MAT_SILVER && Hate_silver()) {
         await update_topl('The silver sears your flesh!');
-        exercise(4 /* A_CON */, false);
+        await exercise(4 /* A_CON */, false);
     }
     // C ref: mthrowu.c:149-152 — `if (is_acid) pline("It burns!")` precedes the
     // losehp() of the venom's damage.

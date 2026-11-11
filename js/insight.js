@@ -361,7 +361,7 @@ const PM_KNIGHT = 4;
 import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          LL_ARTIFACT, LL_GENOCIDE, LL_DUMP, LL_SPOILER, LL_MINORAC,
          livelog_printf } from './livelog.js';
-import { nhgetch } from './input.js';
+import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { can_pray_quiet } from './pray.js';
 import { currency, inv_weight, ysimple_name, is_weptool, worn_extrinsic, worn_blocked } from './invent.js';
 const _wizard = () => !!(game.flags && game.flags.debug);
@@ -705,8 +705,7 @@ async function page_text_window(lines) {
         let cancelled = false;
         for (;;) {
             const key = await nhgetch();
-            if (key === 27) { cancelled = true; break; }
-            if (key === 32 || key === 13 || key === 10) break;
+            if (xwaitforspace_quit(key)) { cancelled = key === 27; break; }
         }
         if (cancelled) break;
     }
@@ -726,7 +725,7 @@ async function display_putstr_window(lines) {
     await render_conduct_menu(lines);
     for (;;) {
         const key = await nhgetch();
-        if (key === 27 || key === 13 || key === 10 || key === 32) break;
+        if (xwaitforspace_quit(key)) break;
     }
     // C ref: wintty.c erase_menu_or_text() docorner(offx, maxrow + 1): over a
     // screen cls() blanked while goto_level() holds its flushes (hero died in
@@ -809,10 +808,40 @@ export async function show_attributes_disclosure(final, basic = true) {
                 modal: 'enlightenment',
             });
         }
+        // C ref: wintty.c process_menu_window() for the live (en_via_menu) popup:
+        // digits build a count and ESC while counting only stops the count
+        // (xwaitforspace() swallows keys outside resp[] without ending the
+        // loop pass, so they leave the count alone).  The final disclosure is a
+        // plain text window (dmore(quitchars)) and takes none of this.
+        let counting = false, count = 0, reset_count = true;
+        const { mapped_menu_cmds, map_menu_cmd } = final ? {} : await import('./options.js');
+        const MENU_RESP = ' 0123456789\x1b\n\r^|><.-@,\\~:';
         for (;;) {
-            const key = await nhgetch();
-            if (key === 27) { i = lines.length; break; } // ESC cancels the rest
-            if (key === 32 || key === 13 || key === 10) break; // advance
+            if (reset_count) { counting = false; count = 0; } else reset_count = true;
+            let key = xwaitforspace_note(await nhgetch());
+            if (!final) {
+                const ch = String.fromCharCode(key);
+                if (!MENU_RESP.includes(ch) && !mapped_menu_cmds().includes(ch)) {
+                    for (;;) {   /* bell: stay inside xwaitforspace() */
+                        key = xwaitforspace_note(await nhgetch());
+                        const c2 = String.fromCharCode(key);
+                        if (MENU_RESP.includes(c2) || mapped_menu_cmds().includes(c2)) break;
+                    }
+                }
+                const k = map_menu_cmd(String.fromCharCode(key));
+                if (k >= '0' && k <= '9') {
+                    count = count * 10 + (k.charCodeAt(0) - 48);
+                    if (count !== 0) { counting = true; reset_count = false; }
+                    continue;
+                }
+                if (k === '\x1b') {
+                    if (counting) continue;
+                    i = lines.length; break;
+                }
+                if (k === ' ' || k === '\r' || k === '\n') break;
+                continue;
+            }
+            if (xwaitforspace_quit(key)) { if (key === 27) i = lines.length; break; } // ESC cancels the rest, else advance
             // any other key: ignored (bell), same page stays up
         }
     }

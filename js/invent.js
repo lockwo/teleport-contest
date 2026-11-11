@@ -14,7 +14,7 @@ import { nh_delay_output_tick } from './nomux_capture.js';
 import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
-import { nhgetch, xwaitforspace_quit } from './input.js';
+import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
@@ -110,7 +110,7 @@ import { strongmonst_flag as strongmonst, throws_rocks_flag, is_were_flag, hates
          M1_NOHEAD, M1_NOTAKE, M1_NOHANDS, M1_FLY,
          M1_SWIM, M1_AMPHIBIOUS, M1_BREATHLESS,
          M2_DEMON, M2_UNDEAD, M2_ORC, M2_ELF, hides_under_flag } from './monflags_data.js';
-import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian } from './eat.js';
+import { tin_variety, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN, tintxts, vegetarian, is_edible, loadEatDeps } from './eat.js';
 import { enlightenment_lines, record_achievement } from './insight.js';
 import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
 import { FREE_ACTION as FREE_ACTION_PROP, SLOW_DIGESTION as SLOW_DIGESTION_PROP } from './const.js';
@@ -2183,8 +2183,8 @@ export async function tty_text_window(lines, maxcol = null) {
     const waitquit = async () => {
         for (;;) {
             const c = await nhgetch();
-            if (c === 27) return false;
-            if (c === 32 || c === 13 || c === 10) return true;
+            // xwaitforspace(quitchars): ESC leaves dismiss_more == 1, which then also lets ^A dismiss.
+            if (xwaitforspace_quit(c)) return c !== 27;
             /* xwaitforspace(): anything else rings the bell and waits on */
         }
     };
@@ -2363,7 +2363,7 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             if (how === PICK_ONE) return true;
             continue;
         }
-        if (c === 27 && counting) {
+        if (xwaitforspace_note(c) === 27 && counting) {
             count = 0;
             counting = false;
             continue;
@@ -2570,11 +2570,12 @@ export async function dodiscovered() {
     // early.  Keep the command blocked until the window is dismissed.
     for (;;) {
         const c = await nhgetch();
-        if (c === 27) {
-            await dismiss_invent_screen(true);
-            return ECMD_OK;
-        }
-        if (c === 32 || c === 13 || c === 10) {
+        // process_text_window(): dmore(quitchars) -- ESC cancels and leaves dismiss_more == 1.
+        if (xwaitforspace_quit(c)) {
+            if (c === 27) {
+                await dismiss_invent_screen(true);
+                return ECMD_OK;
+            }
             await disco_window_advance();
             if (game._modal_screen !== 'textwin') return ECMD_OK;
         }
@@ -2680,7 +2681,7 @@ async function attributes_menu(pages) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
         let key;
         const mapped = mapped_menu_cmds();
-        do key = String.fromCharCode(await nhgetch());
+        do key = String.fromCharCode(xwaitforspace_note(await nhgetch())); /* ESC (even while counting) leaves dismiss_more == 1 */
         while (!ATTR_RESP.includes(key) && !mapped.includes(key));
         key = map_menu_cmd(key);
         if (key >= '0' && key <= '9') {
@@ -2699,6 +2700,7 @@ async function attributes_menu(pages) {
 // C ref: process_menu_window() page navigation (space/'>' -> next page).
 export async function attr_window_advance(key) {
     if (game._modal_screen !== 'attrwin') return false;
+    if (key === '\x1b') game._dismissMore = 1;      /* xwaitforspace(): ESC leaves dismiss_more == 1 */
     const pages = game._attr_pages || [];
     const cur = game._attr_page || 0;
     const onLast = cur >= pages.length - 1;
@@ -3182,7 +3184,9 @@ export function merged(potmp, pobj) {
     if (!otmp.globby) otmp.quan = (otmp.quan || 1) + (obj.quan || 1);
     if (otmp.oclass === COIN_CLASS) { otmp.owt = weight(otmp); otmp.bknown = 0; }
     else if (!otmp.globby) otmp.owt = weight(otmp);
-    if (!has_oname(otmp) && has_oname(obj)) setONAME(otmp, ONAME(obj));
+    /* C: oname(otmp, ONAME(obj), ONAME_SKIP_INVUPD) -- truncates to PL_PSIZ and
+       declines to hand out a name that makes an artifact that already exists */
+    if (!has_oname(otmp) && has_oname(obj)) oname_assign(otmp, ONAME(obj), ONAME_SKIP_INVUPD);
     if (obj.pickup_prev && otmp.where === OBJ_INVENT) otmp.pickup_prev = 1;
     if (obj.bypass) otmp.bypass = 1;
     /* C ref: invent.c merged() transfers lit-object state before stopping
@@ -4047,6 +4051,7 @@ async function getobj_menu_inner(lets, altlets, bufFirst, allowed, allowxtra = f
                 continue;
             }
             if (ch === '\x1b') {
+                game._dismissMore = 1;  /* xwaitforspace(): ESC leaves dismiss_more == 1 */
                 if (counting) continue; /* only stops the count */
                 await dismiss_invent_screen(); return '\x1b';
             }
@@ -4942,6 +4947,9 @@ const BLUE_DRAGON_SCALE_MAIL = 108, BLUE_DRAGON_SCALES = 118;
 export async function Blindf_on(obj) {
     const { Blind, vision_recalc } = await import('./vision.js');
     const already_blind = Blind();
+    /* C ref: do_wear.c:1466 — blindfold might be wielded (or, after a polymorph,
+       already worn); release it for wearing */
+    await remove_worn_item(obj, false);
     setworn_accessory(obj, W_BLINDF);
     // setworn() sets no disp.botl: the pline()s before toggle_blindness() still
     // show the Blind status bot() last published.
@@ -9061,7 +9069,7 @@ async function tty_select_menu(items, plan, how) {
             if (count !== 0) { counting = true; reset_count = false; }
             continue;
         }
-        if (key === 27) {           /* ESC: cancel, or just stop a count */
+        if (xwaitforspace_note(key) === 27) {           /* ESC: cancel, or just stop a count */
             if (counting) continue;
             for (const it of items) { it.selected = false; it.count = -1; }
             cancelled = true;
@@ -9386,7 +9394,12 @@ export async function query_objlist_menu(qstr, olist, qflags, how, allow) {
 
     let n = 0, last = null;
     for (const curr of chain) if (allow(curr)) { last = curr; n++; }
-    if (n === 0) return [];
+    if (n === 0) {
+        /* C ref: pickup.c query_objlist() `if (n == 0) return (qflags & SIGNAL_NOMENU) ? -1 : 0;` */
+        const none = [];
+        none.nomenu = (qflags & SIGNAL_NOMENU) !== 0;
+        return none;
+    }
     if (n === 1 && (qflags & AUTOSELECT_SINGLE))
         return [{ obj: last, count: last.quan }];
 
@@ -10780,7 +10793,10 @@ async function menu_identify(id_limit) {
             for (let i = 0; i < n; i++, id_limit--)
                 await identify(picks[i].obj);
             first = false;
-        } else if (picks.cancelled) {
+        } else if (picks.nomenu) { /* no eligible items found (C: n == -1) */
+            await pline('That was all.');
+            break;
+        } else if (picks.cancelled) { /* player used ESC to quit menu (C: n == -2) */
             break;
         } else if (!--tryct) {
             await pline("That's enough tries!");   // invent.c:2689 thats_enough_tries
@@ -10991,35 +11007,12 @@ export function xprname(obj, txt = null, letChar = '\0', dot = true, cost = 0, q
     return result;
 }
 
-// C ref: invent.c surface(x,y) — the noun for the terrain underfoot, used in
-// the itemactions "Write on the <surface> with this item" label.  Ordinary
-// dungeon floor (and the cases the recorded sessions reach) is "floor".
+// C ref: dungeon.c surface(x,y) — the noun for the terrain underfoot.  dungeon.js
+// owns the full arm order (stairs are found through On_stairs(), not levl typ).
 function surface_underfoot() {
     const u = game.u || {};
-    const loc = game.level?.at?.(u.ux, u.uy);
-    const typ = loc?.typ ?? 0;
-    // C ref: dungeon.c surface(x,y) — the arms in C's order.  This used to
-    // answer "floor" for everything but ice, so a corridor/doorway/stairs square
-    // read "hits the floor" where C says "hits the ground"/"the stairs".
-    // rm.h typs: POOL 16 .. DRAWBRIDGE_UP 19, LAVAPOOL 20, LAVAWALL 21,
-    // CORR 24, ROOM 25, STAIRS 26, LADDER 27, FOUNTAIN 28, GRAVE 31, ALTAR 32,
-    // ICE 33, DRAWBRIDGE_DOWN 34, AIR 35, CLOUD 36.
-    if (typ === 35 /* AIR */) return 'air';
-    if (typ === 36 /* CLOUD */) return 'cloud';
-    if (typ >= POOL && typ <= 19 /* DRAWBRIDGE_UP */) return 'water';
-    if (typ === ICE) return 'ice';
-    if (typ === LAVAPOOL || typ === LAVAWALL) return 'lava';
-    if (typ === DRAWBRIDGE_DOWN) return 'bridge';
-    if (IS_ALTAR(typ)) return 'altar';
-    if (IS_GRAVE(typ)) return 'headstone';
-    if (IS_FOUNTAIN(typ)) return 'fountain';
-    if (typ === STAIRS || typ === 27 /* LADDER */) return 'stairs';
-    if (typ <= DBWALL || typ === SDOOR_TYP) return 'wall';
-    if (IS_DOOR(typ)) return 'doorway';
-    if (typ >= ROOM_TYP) return 'floor';
-    return 'ground';
+    return surface(u.ux, u.uy);
 }
-const SDOOR_TYP = 14, ROOM_TYP = 25;
 
 // itemactions() action enum (iactions.h IA_*) — the subset the object classes in
 // the recorded sessions can offer.  Each entry carries its menu accelerator and
@@ -11061,13 +11054,8 @@ function the_unique_obj(obj) {
     return !!objects[obj.otyp]?.oc_unique
         && (known || obj.otyp === AMULET_OF_YENDOR);
 }
-// C ref: eat.c is_edible(obj) — for a non-polymorphed hero this reduces to a
-// non-unique FOOD_CLASS object (the metallivore/gelatinous-cube arms need a
-// polymorphed youmonst, which the itemactions menu never has here).
-function is_edible_ia(obj) {
-    if (!obj || objects[obj.otyp]?.oc_unique) return false;
-    return obj.oclass === FOOD_CLASS;
-}
+// C ref: eat.c is_edible(obj) — eat.js owns the full polyform-aware test.
+function is_edible_ia(obj) { return is_edible(obj); }
 // C ref: do_wear.c armcat_to_wornmask() + wearmask_to_obj() — the piece already
 // occupying the slot this armor would go into, or null when it is free.
 function worn_in_slot_of(obj) { return worn_slot_get(armor_slot_mask(obj)); }
@@ -11463,6 +11451,7 @@ function renderItemActionsMenu(otmp, entries) {
 // action (whose dothrow needs the direction prompt) without a cmd<->invent
 // import cycle.
 async function itemactions(otmp, getDir) {
+    await loadEatDeps();
     const entries = itemactions_list(otmp);
     // Selectable accelerators (an IA_NONE placeholder like "[both ring fingers
     // in use]" is shown but not selectable — pressing its key rings the bell).
@@ -11498,7 +11487,7 @@ async function itemactions(otmp, getDir) {
             else counting = false;
             continue;
         }
-        if (c === 27 && counting) { counting = false; count = 0; continue; }
+        if (xwaitforspace_note(c) === 27 && counting) { counting = false; count = 0; continue; }
         counting = false; count = 0;
         if (c === 27) { // ESC: cancel — no action, no time
             delete game._modal_screen;
@@ -11589,6 +11578,9 @@ async function itemactions_run(otmp, act, getDir) {
         game.context.stale_run = 0;
         game.context.cmd_stale_run = 0;
     }
+    /* ... and reset_cmd_vars() zeroes gm.multi too, so a count typed before 'i'
+       ("9i") does not repeat the queued command */
+    (await import('./cmd.js')).reset_cmd_vars((game.multi | 0) < 0);
     // C ref: itemactions_pushkeys — push the object's invlet onto the canned
     // command queue so the dispatched command's getobj() consumes it silently.
     const seedInvlet = () => cmdq_add_key(CQ_CANNED, obj_to_let(otmp));
@@ -11821,7 +11813,7 @@ async function select_inventory_menu(rows, byLet) {
             repaint = false;
             continue;
         }
-        if (c === 27 && counting) {
+        if (xwaitforspace_note(c) === 27 && counting) {
             count = 0; counting = false;
             repaint = false;
             continue;
@@ -11849,7 +11841,7 @@ async function select_inventory_menu(rows, byLet) {
             if (info.multipage && page !== info.pages - 1) { page = info.pages - 1; continue; }
             repaint = false; continue;
         }
-        if (c === 27 || c === 32 || c === 13 || c === 10) {
+        if (xwaitforspace_note(c) === 27 || c === 32 || c === 13 || c === 10) {
             game._invmenu_esc = (c === 27);   /* display_inventory() == '\033' */
             await dismiss_invent_screen();
             return null;
