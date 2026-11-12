@@ -203,23 +203,16 @@ const INSTRUMENT_OTYPS = new Set([247 /*WOODEN_FLUTE*/, 248 /*MAGIC_FLUTE*/,
 // the stethoscope's first guard reads it.
 function Deaf() { return Deaf_hero(); }
 
-// C ref: wield.c will_weld(optr) — `optr->cursed && (erodeable_wep(optr) ||
-// otyp == TIN_OPENER)`, where erodeable_wep is WEAPON_CLASS || is_weptool ||
-// HEAVY_IRON_BALL || IRON_CHAIN.  js/invent.js keeps a private welded() that is
-// stubbed to `return false`, so the real predicate lives here.
-// mkobj.js OBJECT_DATA indices (verified against the loaded table, not guessed).
-const HEAVY_IRON_BALL = 477, IRON_CHAIN = 478, TIN_OPENER = 239;
-function welded_uwep() {
-    const o = game.uwep;
-    if (!o || !o.cursed) return false;
-    return o.oclass === WEAPON_CLASS
-        || !!(_invent && _invent.is_weptool && _invent.is_weptool(o))
-        || o.otyp === HEAVY_IRON_BALL || o.otyp === IRON_CHAIN
-        || o.otyp === TIN_OPENER;
-}
+const TIN_OPENER = 239; // mkobj.js OBJECT_DATA index
+
+// C ref: engrave.c freehand() — `!uwep || !welded(uwep) || (!bimanual(uwep)
+// && (!uarms || !uarms->cursed))`.  welded() (wield.c) sets bknown on a
+// weld-prone cursed uwep, so even a refused-then-declined wand break teaches
+// the curse ("a cursed tin opener (wielded)").
 function freehand() {
-    if (!welded_uwep()) return true;
-    return !_invent.bimanual(game.uwep) && !(game.uarms && game.uarms.cursed);
+    const uwep = game.uwep;
+    return !uwep || !_invent.welded(uwep)
+        || (!_invent.bimanual(uwep) && (!game.uarms || !game.uarms.cursed));
 }
 
 // C ref: apply.c use_stethoscope() — read a direction, then report on the

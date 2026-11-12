@@ -1299,7 +1299,6 @@ function curr_mon_load(mtmp) {
 // so a tamed dwarf (max load 1000) refused to apport five gold pieces.
 export function can_carry(mtmp, obj) {
     const maxload = max_mon_load(mtmp);
-    const iquan = obj.quan || 1;
     // C ref: mon.c:2007 — notake(mdat) == (mflags1 & M1_NOTAKE).
     if ((mflags1_of(mtmp.data) & M1_NOTAKE) !== 0) return 0;
     // C ref: mon.c:2010 can_touch_safely(): a cockatrice corpse without gloves
@@ -1307,6 +1306,11 @@ export function can_carry(mtmp, obj) {
     // (except the Bell of Opening for a covetous monster), and artifact touch
     // permission.  Precedes the stack handling below.
     if (!can_touch_safely(mtmp, obj)) return 0;
+    // C ref: mon.c can_carry — LARGEST_INT is 32767, so a stack above it draws
+    // 20000 + rn2(12768) and the monster takes that partial count.
+    const iquan = (obj.quan > LARGEST_INT)
+        ? 20000 + rn2(LARGEST_INT - 20000 + 1)
+        : (obj.quan || 1);
     // C ref: mon.c:2020-2038 — a NOHANDS non-glomper takes exactly 1 of a stack,
     // BEFORE the steed/shk/load checks.
     if (iquan > 1) {

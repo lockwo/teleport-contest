@@ -1215,8 +1215,11 @@ export async function lift_object(obj, container, cnt_p, telekinesis) {
                     : (next_encumbr >= HVY_ENCUMBER) ? nearloadpfx
                         : (next_encumbr >= MOD_ENCUMBER) ? moderateloadpfx
                             : slightloadpfx;
-                const qbuf = `${pfx} ${!container ? 'lifting' : 'removing'} `
-                    + `${doname(obj)}.  Continue?`;
+                /* C ref: pickup.c lift_object() safe_qbuf(qbuf, qbuf, ".  Continue?", obj,
+                   doname, ansimpleoname, something) */
+                const qbuf = safe_qbuf(`${pfx} ${!container ? 'lifting' : 'removing'} `,
+                                       '.  Continue?', obj, doname,
+                                       ansimpleoname, something);
                 obj.quan = savequan;
                 switch (await ynq(qbuf)) {
                 case 'q': result = -1; break;

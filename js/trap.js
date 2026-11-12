@@ -2955,8 +2955,9 @@ export async function animate_statue(statue, x, y, cause, fail_reason) {
     /* in case statue is wielded and hero zaps stone-to-flesh at self */
     if (statue.owornmask)
         await (await import('./invent.js')).remove_worn_item(statue, true);
+    /* statue no longer exists (delobj() redraws a floor statue's square;
+       C's animate_statue() has no newsym() of its own) */
     delobj(statue);
-    newsym(x, y);
 
     /* avoid hiding under nothing */
     if (x === game.u.ux && y === game.u.uy && game.u.Upolyd
@@ -5235,8 +5236,8 @@ export async function lava_effects() {
     // override, so debug-mode sessions still flag ordinary inventory here.
     const fire_resistance = (await import('./zap.js')).Fire_resistance();
     const water_walking = Wwalking_fu();
-    const hp = u.Upolyd ? (u.mh || 0) : (u.uhp || 0);
-    const usurvive_initial = fire_resistance || (water_walking && dmg < hp);
+    // C compares against u.uhp even when polymorphed.
+    const usurvive_initial = fire_resistance || (water_walking && dmg < (u.uhp || 0));
     const protectedObj = !usurvive_initial ? mark_lava_inventory() : null;
 
     let burncount = 0, burnmesgcount = 0;

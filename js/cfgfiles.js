@@ -207,32 +207,33 @@ export function get_default_configfile() {
 }
 
 // C ref: cfgfiles.c:167 do_write_config_file() — the #saveoptions command.
-// Two of its steps have no port: options.c all_options_strbuf() (which
-// serialises the whole option set) and an exported paranoid_query() —
-// js/eat.js and js/extcmd-handlers.js each define one but neither exports it.
-// So this reaches the prompt and stops; it is left in C's shape for whoever
-// ports those.
-export function do_write_config_file() {
-    /* The steps, in C's order, and why each one stops here:
-       1. !configfile[0] -> pline("Strange, could not figure out config file
-          name.") and return.  js/display.js exports pline(), but it is async
-          and this whole command is unreachable until step 3 exists.
-       2. flags.suppress_alert < FEATURE_NOTICE_VER(3,7,0) -> three warnings
-          ("saveoptions is highly experimental!", "Some settings are not
-          saved!", "All manual customization and comments are removed from the
-          file!"), each followed by wait_synch().  flags.suppress_alert has no
-          shared home in js/ (js/options.js keeps it per-parse on `result`),
-          and options.js's wait_synch() only records into the rc-parse raw
-          stream, so it is NOT the in-game getret() C calls here.
-       3. Sprintf(tmp, "Overwrite config file %.*s?", BUFSZ - 28 - 2,
-          configfile) then paranoid_query(TRUE, tmp).  js/eat.js and
-          js/extcmd-handlers.js each define paranoid_query() but neither
-          exports one.
-       4. fopen(configfile, "w"), all_options_strbuf(&buf) — no port at all —
-          fwrite, fclose, and a "wrote only partial data (%zu/%zu)." pline if
-          the write came up short.  The write itself is
-          vfsWriteFile(configfile, buf). */
-    unported('options.c all_options_strbuf() / an exported paranoid_query()');
+// wait_synch() after each warning is tty_wait_synch(): with a map window and
+// no rawprint it only flushes the map, so the --More-- between the warnings
+// comes from the next pline() finding the top line occupied.
+export async function do_write_config_file() {
+    const { pline } = await import('./display.js');
+    const { paranoid_query } = await import('./eat.js');
+    const { game } = await import('./gstate.js');
+    const { vfsWriteFile } = await import('./storage.js');
+    const { all_options_strbuf } = await import('./options.js');
+    /* The recorded game's RC path is not reachable from the port's VFS, so
+       the name falls back to default_configfile under $HOME like C's. */
+    const name = configfile || `${nh_getenv('HOME') ?? '.'}/${default_configfile}`;
+    if (!name) {
+        await pline('Strange, could not figure out config file name.');
+        return ECMD_OK;
+    }
+    if (((game.flags?.suppress_alert) | 0) < ((3 << 16) | (7 << 8))) {
+        await pline('Warning: saveoptions is highly experimental!');
+        await pline('Some settings are not saved!');
+        await pline('All manual customization and comments are removed from the file!');
+    }
+    const tmp = `Overwrite config file ${name.slice(0, BUFSZ - 28 - 2)}?`;
+    if (!(await paranoid_query(true, tmp)))
+        return ECMD_OK;
+    const sbuf = {};
+    await all_options_strbuf(sbuf);
+    vfsWriteFile(name, sbuf.str);
     return ECMD_OK;
 }
 

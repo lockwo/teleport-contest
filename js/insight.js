@@ -21,6 +21,7 @@ import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying
 import { dxdy_to_dist_descr } from './getpos.js';
 import { game, register_process_static } from './gstate.js';
 import { s_suffix, just_an, strcmpi } from './hacklib.js';
+import { menuHeadAttr } from './menuattr.js';
 import { roles, align_gname, align_str } from './role.js';
 import {
     A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA,
@@ -272,35 +273,11 @@ function from_what(propidx, hkey) {
                 buf = ' innately';
             } else if (src === 'exp') {
                 buf = ' because of your experience';
-            } else if (!src && hkey && H_prop(propidx) && H_prop(propidx) !== FROMFORM
-                       /* FROMRACE alone (polysense()'s HWarn_of_mon) is not FROMOUTSIDE */
-                       && !((H_prop(propidx) & FROMRACE) && !(H_prop(propidx) & FROMOUTSIDE))
-                       && !(temp_resist(propidx) || (F_prop(propidx) && !E_prop(propidx)
-                            && ((H_prop(propidx) | 0) & TIMEOUT_MASK)
-                            && !((H_prop(propidx) | 0) & ~TIMEOUT_MASK))) /* timed only (form-protected too): no FROMOUTSIDE bit */
-                       /* timed-only See_invisible has no FROMOUTSIDE bit */
-                       && !(propidx === SEE_INVIS && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* HInvis keeps its timeout and FROMOUTSIDE bit in one word */
-                       && !(propidx === INVIS_PROP && !((game.u?.uprops?.HInvis | 0) & FROMOUTSIDE))
-                       /* Sleepy's countdown lives in the same word; only FROMOUTSIDE is intrinsic */
-                       && !(propidx === 27 /* SLEEPY */ && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* Fumbling's countdown (HFumbling timeout) shares the word too */
-                       && !(propidx === FUMBLING && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* a timeout-only Polymorph word is not FROMOUTSIDE either */
-                       && !(propidx === POLYMORPH && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* Strangled is the amulet's 6-turn countdown, not an intrinsic */
-                       && !(propidx === STRANGLED_PROP && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* Invulnerable is the intrinsic word (youprop.h); a timeout alone has no FROMOUTSIDE */
-                       && !(propidx === INVULNERABLE && !((H_prop(propidx) | 0) & FROMOUTSIDE))
-                       /* purely timed properties have no FROMOUTSIDE source */
-                       && !((propidx === BLINDED_PROP || propidx === DEAF_PROP)
-                            && !((H_prop(propidx) | 0) & FROMOUTSIDE))) {
-                // C ref: attrib.c:872 `(*ability & FROMOUTSIDE) != 0`.  Read
-                // the intrinsic through H_prop() so the bare-name spelling
-                // several modules write (js/eat.js stores corpse intrinsics as
-                // u.uprops.Aggravate_monster, not HAggravate_monster) is seen:
-                // otherwise wizard-mode enlightenment dropped the
-                // " intrinsically" suffix for every one of them.
+            } else if (!src && hkey && ((H_prop(propidx) | 0) & FROMOUTSIDE)) {
+                // C ref: attrib.c innately() `(*ability & FROMOUTSIDE) != 0`.  A
+                // timeout-only word (potion, spell, #wizintrinsic) carries no
+                // FROMOUTSIDE bit, so it is never "intrinsically".  Corpse and
+                // prayer intrinsics are stored with the bit (eat.js, pray.js).
                 buf = ' intrinsically';
             } else if (!src && F_prop(propidx)) {
                 buf = ' from your creature form';
@@ -561,8 +538,7 @@ function N_times(n) {
 // C ref: insight.c achieve_msg[] — one {llflag, msg} per you.h ACH_* index.
 // The eight rank entries (23..30) build their text from the role's rank title
 // at record time (handled separately in record_achievement() below) and
-// ACH_MINE_PRIZE/ACH_SOKO_PRIZE append an identified item name; the latter
-// form isn't reachable from this port, so it's omitted.
+// ACH_MINE_PRIZE/ACH_SOKO_PRIZE append the item type name (record_achievement()).
 const ACHIEVE_MSG = {
     1: [LL_ACHIEVE, 'acquired the Bell of Opening'],
     2: [LL_ACHIEVE, 'entered Gehennom'],
@@ -573,6 +549,9 @@ const ACHIEVE_MSG = {
     7: [LL_ACHIEVE, 'entered the Elemental Planes'],
     8: [LL_ACHIEVE, 'entered the Astral Plane'],
     9: [LL_ACHIEVE, 'ascended'],
+    /* the identified item type name is appended by record_achievement() */
+    10: [LL_ACHIEVE | LL_SPOILER, "acquired the Mines' End"], /* " luckstone" */
+    11: [LL_ACHIEVE | LL_SPOILER, 'acquired the Sokoban'],    /* " <item>" */
     12: [LL_ACHIEVE | LL_UMONST, 'killed Medusa'],
     13: [0, 'hero was always blond, no, blind'],
     14: [0, 'hero never wore armor'],
@@ -612,6 +591,14 @@ export function record_achievement(achidx) {
     }
     const entry = ACHIEVE_MSG[absidx];
     if (!entry || !entry[1]) return;
+    if (achidx === 11 /* ACH_SOKO_PRIZE */ || achidx === 10 /* ACH_MINE_PRIZE */) {
+        /* need to supply extra information for these two */
+        const ach = game.context?.achieveo || {};
+        const otyp = (achidx === 11) ? ach.soko_prize_otyp : ach.mines_prize_otyp;
+
+        livelog_printf(entry[0], `${entry[1]} ${OBJECTS[otyp]?.name}`);
+        return;
+    }
     livelog_printf(entry[0], entry[1]);
 }
 
@@ -658,7 +645,8 @@ function text_window_offx(lines) {
     const cols = game.nhDisplay?.cols || 80;
     const rows = game.nhDisplay?.rows || 24;
     let maxcol = 0;
-    for (const l of lines) maxcol = Math.max(maxcol, l.length + 1);
+    for (const l of lines)
+        maxcol = Math.max(maxcol, (typeof l === 'string' ? l : l.text).length + 1);
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
     const ov = game.flags?.menu_overlay ?? game.iflags?.menu_overlay;
@@ -680,8 +668,11 @@ async function render_conduct_menu(lines, footer = '--More--') {
     for (let r = 0; r <= moreRow; r++) {
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
-    for (let r = 0; r < lines.length; r++)
-        disp.putstr(textCol, r, lines[r], NO_COLOR, 0);
+    for (let r = 0; r < lines.length; r++) {
+        const ln = lines[r];
+        if (typeof ln === 'string') disp.putstr(textCol, r, ln, NO_COLOR, 0);
+        else disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
+    }
     disp.putstr(textCol, moreRow, footer, NO_COLOR, 0);
     disp.setCursor(textCol + footer.length, moreRow);
 }
@@ -943,7 +934,11 @@ function create_nhwindow(type) {
     return id;
 }
 function putstr(win, attr, s) {
-    if (Array.isArray(win)) { win.push(s); return; } /* live text window */
+    if (Array.isArray(win)) { /* live text window; attr kept per line index */
+        if (attr) (win.attrs ||= {})[win.length] = attr;
+        win.push(s);
+        return;
+    }
     if (!win) { insight_dumplog.push({ text: s, attr }); return; }
     const w = _wins.get(win);
     if (!w) return;
@@ -963,7 +958,11 @@ async function show_putstr_window(lines, dumping) {
         for (const s of lines) insight_dumplog.push({ text: s, attr: 0 });
         return;
     }
-    await display_putstr_window(lines);
+    /* putstr(win, attr, ...) lines carrying an attribute (menu_headings) */
+    const attrs = lines.attrs;
+    await display_putstr_window(attrs
+        ? lines.map((t, i) => (attrs[i] ? { text: t, attr: attrs[i] } : t))
+        : lines);
 }
 function start_menu(win, behave) { const w = _wins.get(win); if (w) w.behave = behave; }
 function add_menu_str(win, s) {
@@ -1149,6 +1148,11 @@ const PROPKEY = {
     [FREE_ACTION]: 'Free_action', [FIXED_ABIL]: 'Fixed_abil',
     [LIFESAVED]: 'Lifesaved',
 };
+// Properties whose intrinsic word js/timeout.js, js/eat.js and #wizintrinsic
+// store under a spelling other than the youprop.h macro name above.
+const PROPALIAS = {
+    [BLND_RES]: 'HBlnd_resistance', [WARN_UNDEAD]: 'HWarn_undead',
+};
 // The bare-name spelling several modules write instead of the H<Prop> one.
 function _propAltKey(key) { return key.startsWith('H') ? key.slice(1) : `H${key}`; }
 // C ref: youprop.h H<Prop> — the intrinsic half only.
@@ -1171,8 +1175,10 @@ function H_prop(propidx) {
         if (game.u?.formprops?.[bare] && (p[bare] | 0) === FROMFORM
             && !(p[`H${bare}`] | 0) && !(game.u?.[`H${bare}`] | 0)) return FROMFORM;
     }
+    const alias = PROPALIAS[propidx];
     return (p[key] | 0) || (game.u?.[key] | 0)
         || (p[_propAltKey(key)] | 0) || (game.u?.[_propAltKey(key)] | 0)
+        || (alias ? ((p[alias] | 0) || (game.u?.[alias] | 0)) : 0)
         || (has_innate(key) ? 1 : 0)
         /* polyself.js set_uasmon() keeps the FROMFORM bits in u.formprops */
         || (game.u?.formprops?.[key.replace(/^H/, '')] ? FROMFORM : 0);
@@ -1780,7 +1786,7 @@ export function one_characteristic(mode, final, attrindx) {
        reliably tracking changes to characteristics */
     if (u.Upolyd) {
         hide_innate_value = true;
-    } else if (Prop(FIXED_ABIL)) {
+    } else if (E_prop(FIXED_ABIL)) { /* Fixed_abil: extrinsic only */
         if (stuck_ring(game.uleft, RIN_SUSTAIN_ABILITY)
             || stuck_ring(game.uright, RIN_SUSTAIN_ABILITY))
             hide_innate_value = true;
@@ -2836,7 +2842,7 @@ export function attributes_enlightenment(_unused_mode, final) {
         you_have('reflection', from_what_p(REFLECTING), final);
     if (E_prop(FREE_ACTION))
         you_have('free action', from_what_p(FREE_ACTION), final);
-    if (Prop(FIXED_ABIL))
+    if (E_prop(FIXED_ABIL)) /* youprop.h Fixed_abil is the extrinsic only */
         you_have('fixed abilities', from_what_p(FIXED_ABIL), final);
     if (E_prop(LIFESAVED))
         enl_msg('Your life ', 'will be', 'would have been', ' saved', '', final);
@@ -3455,8 +3461,10 @@ export async function set_vanq_order(for_vanq) {
 
 // ── insight.c:2783 list_vanquished() ───────────────────────────────────────
 // Used for #vanquished and end of game disclosure and end of game dumplog.
-// Async because the `ask` branch prompts; C is void.
-export async function list_vanquished(defquery, ask) {
+// Async because the `ask` branch prompts; C is void.  `prompted`: the caller
+// (end.js disclose()) already put the question, so `ask` (final disclosure,
+// headers not highlighted) must not prompt again.
+export async function list_vanquished(defquery, ask, prompted = false) {
     let i;
     let pfx, nkilled;
     let ntypes, ni;
@@ -3494,7 +3502,7 @@ export async function list_vanquished(defquery, ask) {
         let class_header, uniq_header, Rider,
             was_uniq = false, special_hdr = false;
 
-        if (ask) {
+        if (ask && !prompted) {
             let allow_yn;
 
             if (ntypes > 1) {
@@ -3600,12 +3608,10 @@ export async function list_vanquished(defquery, ask) {
 }
 // C ref: decl.c ynqchars/ynaqchars.
 const ynqchars = 'ynq', ynaqchars = 'ynaq';
-// C ref: wintype.h ATR_INVERSE — iflags.menu_headings.attr's default.  NOTE:
-// the port's own renderers pass 1 for inverse (js/enhance.js:403), so a wiring
-// pass has to translate; this side keeps C's value.
-const ATR_INVERSE = 7;   // wintype.h
+// C ref: iflags.menu_headings.attr as the port's render attribute (menuattr.js
+// translates options.js's enum; default ATR_INVERSE).
 function menu_headings_attr() {
-    return game.iflags?.menu_headings?.attr ?? ATR_INVERSE;
+    return menuHeadAttr();
 }
 // C ref: windows.c/cmd.c yn_function(query, resp, def, addcmdq).
 // js/extcmd-handlers.js owns the port's copy; imported lazily because that

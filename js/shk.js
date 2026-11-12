@@ -30,7 +30,7 @@ import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { rn2, rnd } from './rng.js';
-import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize, Hallucination_u } from './display.js';
+import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize, Hallucination_u, queue_impossible } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag, is_vampire, is_elf_flag, is_human_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
@@ -599,6 +599,11 @@ export function unpaid_cost(unp_obj, cost_type = COST_CONTENTS) {
             amt = contained_cost(unp_obj, shkp, amt, false, true);
         if (bp || (!unp_obj.unpaid && amt)) break;
     }
+    // C shk.c:3301-3303 — "onbill() gave no message if unexpected problem
+    // occurred": an unpaid item carried off its shop's level (escaped
+    // without paying) has no reachable bill.
+    if (!shkp || (unp_obj.unpaid && !bp))
+        queue_impossible('unpaid_cost: object wasn\'t on any bill.');
     return amt;
 }
 
@@ -1239,13 +1244,16 @@ export async function dopayobj(shkp, bp, obj, which, itemize, unseen) {
     let buy = PAY_BUY;
 
     if (itemize) {
-        // menustyle:traditional only.  C wraps the name in safe_qbuf(), whose
-        // BUFSZ fallback ("that"/"those") this port does not reproduce.
+        // menustyle:traditional only.
+        // C ref: shk.c dopay() safe_qbuf(qbuf, NULL, qsfx, obj,
+        // (quan == 1L) ? Doname2 : doname, ansimpleoname, "that"/"those")
         const { y_n } = await import('./display.js');
         const { doname_invent } = await import('./invent.js');
-        const nm = doname_invent(obj);
-        const qbuf = `${quan === 1 ? nm.charAt(0).toUpperCase() + nm.slice(1) : nm
-            } for ${ltmp} ${currency(ltmp)}.  Pay?`;
+        const { safe_qbuf } = await import('./pickup.js');
+        const Doname2 = (o) => { const nm = doname_invent(o); return nm.charAt(0).toUpperCase() + nm.slice(1); };
+        const qbuf = safe_qbuf('', ` for ${ltmp} ${currency(ltmp)}.  Pay?`, obj,
+                               (quan === 1) ? Doname2 : doname_invent, ansimpleoname,
+                               (quan === 1) ? 'that' : 'those');
         if (await y_n(qbuf) === 'n') buy = PAY_SKIP; /* don't want to buy */
     }
 
@@ -2704,7 +2712,7 @@ export async function bill_dummy_object(otmp) {
     dummy.where = OBJ_FREE;
     dummy.o_id = nextoid(otmp, dummy);
     dummy.timed = 0;
-    delete dummy.timer;
+    delete dummy.timers;
     copy_oextra(dummy, otmp);
     if (has_omid(dummy)) free_omid(dummy); /* only one association with m_id */
     dummy.owornmask = 0;
@@ -2912,9 +2920,13 @@ export async function sellobj(obj, x, y) {
         } else if (sell_response !== 'n') {
             await update_topl(`${Shknam(shkp)} cannot pay you at present.`);
             record_price_quote(obj.otyp, Math.trunc(tmpcr / (obj.quan || 1)), false);
-            /* C wraps the name in safe_qbuf(); its BUFSZ fallback is not ported */
-            c = await ynaq_(`Will you accept ${tmpcr} ${currency(tmpcr)
-                } in credit for ${doname_invent(obj)}?`);
+            /* C ref: shk.c sellobj() safe_qbuf(qbuf, qbuf, "?", obj, doname,
+               thesimpleoname, "that"/"those") */
+            const { safe_qbuf } = await import('./pickup.js');
+            const { thesimpleoname } = await import('./objnam.js');
+            c = await ynaq_(safe_qbuf(`Will you accept ${tmpcr} ${currency(tmpcr)} in credit for `,
+                                      '?', obj, doname_invent, thesimpleoname,
+                                      (obj.quan === 1) ? 'that' : 'those'));
             if (c === 'a') { c = 'y'; auto_credit = true; }
         } else { /* previously specified "quit" */
             c = 'n';
@@ -2961,8 +2973,11 @@ export async function sellobj(obj, x, y) {
                     : and_its_contents)
                 : ''}.  Sell ${one ? 'it' : 'them'}?`;
             record_price_quote(obj.otyp, Math.trunc(offer / (obj.quan || 1)), false);
-            /* C: safe_qbuf(qbuf, qbuf, qsfx, obj, xname, simpleonames, ...) */
-            qbuf = `${qbuf}${xname(obj)}${qsfx}`;
+            /* C ref: shk.c sellobj() safe_qbuf(qbuf, qbuf, qsfx, obj, xname,
+               simpleonames, one ? "that" : "those") */
+            const { safe_qbuf } = await import('./pickup.js');
+            const { simpleonames } = await import('./objnam.js');
+            qbuf = safe_qbuf(qbuf, qsfx, obj, xname, simpleonames, one ? 'that' : 'those');
         }
 
         const resp = (sell_response && sell_response !== '\0')

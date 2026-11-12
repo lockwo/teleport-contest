@@ -288,11 +288,16 @@ function next2u(x, y) {
 // far more often, move the monster to any nearby location.
 export async function u_collide_m(mtmp) {
     const u = game.u;
+    if (!mtmp || mtmp === u.usteed || mtmp !== m_at(u.ux, u.uy)) {
+        await impossible_do(`level arrival collision: ${!mtmp ? 'no monster'
+            : mtmp === u.usteed ? 'steed is on map' : 'monster not co-located'}?`);
+        return;
+    }
     // C: if (!rn2(2) && enexto(&cc, u.ux, u.uy, youmonst.data) && next2u(cc.x, cc.y))
     //        u_on_newpos(cc.x, cc.y);  else  mnexto(mtmp, RLOC_NOMSG);
     // The && short-circuits: rn2(2) is always drawn; enexto only when !rn2(2).
     let cc;
-    if (!rn2(2) && (cc = enexto(u.ux, u.uy)) && next2u(cc.x, cc.y)) {
+    if (!rn2(2) && (cc = enexto_gpflags(u.ux, u.uy, youmonst_data(), 0)) && next2u(cc.x, cc.y)) {
         await u_on_newpos(cc.x, cc.y);
     } else {
         // mnexto() -> rloc_to_core() newsym()s the monster's new square, which

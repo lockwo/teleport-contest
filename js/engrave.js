@@ -1040,6 +1040,11 @@ export async function doengrave() {
     }
     const frosted = (game.level?.at(u.ux, u.uy)?.typ === ICE);
 
+    // C ref: engrave.c doengrave():`gm.multi = 0; /* moves consumed */
+    // gn.nomovemsg = (char *) 0;` — a count prefix ("3E") never repeats engraving.
+    game.multi = 0;
+    game.nomovemsg = 0;
+
     // getobj("write with", stylus_ok, GETOBJ_PROMPT): otmp == hands_obj for '-'.
     const otmp = await getobj('write with', stylus_ok, GETOBJ_PROMPT);
     if (!otmp) return ECMD_CANCEL; // ("Never mind." already shown)

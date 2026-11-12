@@ -77,7 +77,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts } from './display.js';
+import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts, wall_angle } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -255,7 +255,9 @@ const OCC_SLOTS = [
     ['_dig_occupation', () => game.occupation_txt || 'digging'], // dig.c:1311/1356 use_pick_axe2()
     ['_takeoff_occupation', () => game.context.takeoff.disrobing], // do_wear.c:2985
     ['_trap_occupation', () => game.occupation_txt || 'setting the trap'], // apply.c:2864/2910 use_trap()
-    ['_picklock_box', () => lock_action(game.xlock)],   // lock.c:400/654 pick_lock()
+    // C stores lock_action()'s string when the occupation starts: a door a
+    // monster unlocks mid-attempt still reads "You stop picking the lock."
+    ['_picklock_box', () => game.occupation_txt || lock_action(game.xlock)],   // lock.c:400/654 pick_lock()
     ['_force_box', 'forcing the lock'],                 // lock.c:735 doforce()
 ];
 
@@ -1647,14 +1649,18 @@ function gp_glyph_at(x, y, detectMode = false) {
     if ((loc.disp_ch ?? ' ') === ' ' && gloc_unexplored(x, y)) return 'unexplored';
     // A doorway/broken door (S_ndoor) and plain room floor (S_room) draw the same
     // character but are distinct glyphs, so a skip-same-glyphs fast move stops at
-    // the doorway.  Only when the cell shows its terrain (no monster, object,
-    // trap, warning or hero over it).
+    // the doorway.  Likewise the wall variants (S_hwall, S_tlcorn, S_tdwall, ...)
+    // that the default symset draws alike: display.c back_to_glyph() picks one by
+    // wall_angle(), so a corner ends a run along its wall.  Only when the cell
+    // shows its terrain (no monster, object, trap, warning or hero over it).
     const u2 = game.u;
     const terrainShown = !loc.disp_monster && !loc.remembered_glyph?.objotyp
         && !loc.disp_trap && !loc.disp_warning && !loc.disp_hstatue
         && !(u2 && x === u2.ux && y === u2.uy);
     const ndoor = terrainShown && loc.typ === DOOR && !((loc.doormask || 0) & ~(D_NODOOR | D_BROKEN)) ? 1 : 0;
-    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}|${ndoor}`;
+    const wall = terrainShown && loc.seenv && (loc.disp_ch ?? ' ') !== ' '
+        && (IS_WALL(loc.typ) || loc.typ === SDOOR) && !loc.arboreal_sdoor ? wall_angle(loc) : -1;
+    return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}|${ndoor}|${wall}`;
 }
 
 // C ref: pager.c:123 self_lookat() -> mhidden_description(&youmonst,
@@ -1796,7 +1802,7 @@ function terrain_description(x, y, full = false) {
     // Only a square last DRAWN as the cloud counts (loc.disp_region): a remembered
     // corridor under a region the hero cannot see still shows the corridor glyph.
     if (loc.disp_region && loc.disp_ch === '#')
-        return loc.disp_color === CLR_BRIGHT_GREEN ? 'poison cloud'
+        return loc.disp_region === 'poison' ? 'poison cloud'
             : Is_airlevel(game.u?.uz) ? 'cloudy area' : 'fog/vapor cloud';
     // C ref: pager.c lookat() cmap arms: S_water goes through waterbody_name()
     // on the CURRENT terrain (an AIR square under a remembered S_water reads
@@ -2320,21 +2326,45 @@ function gloc_unexplored(x, y) {
     return !loc || (!loc.seenv && loc.remembered_glyph == null);
 }
 
+// C ref: detect.c reveal_terrain_getglyph() without TER_FULL: while #terrain
+// browses, glyph_at() is the remembered glyph minus the subsets left out.  A
+// remembered object glyph (no TER_OBJ) or the remembered-unseen 'I' becomes
+// the seen trap (TER_TRP) or else back_to_glyph() of lastseentyp[][].
+// Returns 'trap' or 'background' for such a replaced glyph, else null.
+function gloc_terrain_strip(x, y, loc) {
+    const tm = game.iflags?.terrainmode | 0;
+    if (!tm || (tm & (TER_FULL | 0x20 /* TER_DETECT */))) return null;
+    const rg = loc.remembered_glyph;
+    const objGlyph = !(tm & TER_OBJ) && !!rg && !!(rg.objotyp || rg.hallucotyp);
+    if (!objGlyph && !loc.invisMon) return null;
+    if ((tm & TER_TRP) && !covers_objects(loc) && t_at(x, y)?.tseen) return 'trap';
+    return 'background';
+}
+
 // Is the DISPLAYED glyph at <x,y> something other than a cmap symbol (a
 // visible monster, remembered 'I', warning, object or seen trap on top)?
 function gloc_glyph_covered(x, y, loc, mtmp) {
-    if (((game.iflags?.terrainmode || 0) & 0x10 /* TER_FULL */) !== 0) return false;
-    if (mtmp && canspotmon(mtmp)) return true;
-    if (loc.invisMon || loc.disp_warning) return true;
+    const tm = game.iflags?.terrainmode | 0;
+    if ((tm & TER_FULL) !== 0) return false;
+    const strip = gloc_terrain_strip(x, y, loc);
+    if (strip) return strip === 'trap';
+    // the #terrain subsets drop warnings (no TER_MON) and traps (no TER_TRP)
+    const keepMons = !tm || (tm & 0x08 /* TER_MON */) !== 0;
+    const keepTraps = !tm || (tm & TER_TRP) !== 0;
+    const keepObjs = !tm || (tm & TER_OBJ) !== 0;
+    // C ref: getpos.c glyph_is_cmap(glyph_at(x,y)): only a DRAWN monster covers the
+    // cmap glyph (a sensed-but-undrawn one, via monster detection, does not).
+    if (mtmp && loc.disp_monster) return true;
+    if (loc.invisMon || (keepMons && loc.disp_warning)) return true;
     // C reads glyph_at() (the displayed glyph): an object the hero has not seen
     // (remembered glyph is still the dark room) leaves the cmap glyph in place.
-    const dobj = vobj_at(x, y);
+    const dobj = keepObjs ? vobj_at(x, y) : null;
     if (dobj && !covers_objects(loc) && object_glyph(dobj)?.ch === loc.disp_ch) return true;
     // a remembered object glyph (e.g. a boulder since moved or destroyed) is
     // still what glyph_at() reports until the square is seen again
     const rg = loc.remembered_glyph;
     if ((rg?.objotyp || rg?.hallucotyp) && rg.ch === loc.disp_ch) return true;
-    return gloc_trap_glyph_shown(x, y, loc);
+    return keepTraps && gloc_trap_glyph_shown(x, y, loc);
 }
 
 // C ref: display.c MAP_TRP/map_trap() — glyph_at() is the trap glyph only when
@@ -2443,20 +2473,45 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         if (gloc === GLOC_INTERESTING || gloc === GLOC_VALID) return hero || ring;
         return false;
     }
+    // C ref: display.c under_water() -- while submerged (not on the Plane of Water)
+    // the display buffer is cls()ed and only the 3x3 around the hero is redrawn, so
+    // glyph_at() is unexplored everywhere else and no gloc class matches there
+    // (getpos.c gather_locs_interesting()); only getpos's own validity callback can.
+    if (game.u?.uinwater && !Is_waterlevel(game.u.uz) && !game.iflags?.terrainmode
+        && !detectMode
+        && (Math.max(Math.abs(x - game.u.ux), Math.abs(y - game.u.uy)) > 1
+            || !(loc.typ === ICE || IS_POOL(loc.typ) || IS_LAVA(loc.typ)))
+        && !(x === game.u.ux && y === game.u.uy)) {
+        return gloc === GLOC_VALID && validfn ? !!validfn(x, y) : false;
+    }
     // C ref: detect.c reveal_terrain_getglyph() TER_FULL -- the browsed glyph is
     // back_to_glyph() with seenv forced to SVALL, so every cell is "explored" and
     // no monster/object/trap glyph covers the terrain.
     const terrainFull = ((game.iflags?.terrainmode || 0) & 0x10 /* TER_FULL */) !== 0;
     const explored = terrainFull || !gloc_unexplored(x, y);
+    // C ref: display.c show_region() draws a visible gas cloud with show_glyph()
+    // only, so glyph_at() is the cmap S_poisoncloud or S_cloud (loc.disp_region)
+    // until the square is redrawn: never a monster, object, door, room or
+    // corridor glyph.  GLOC_INTERESTING excludes S_cloud but not S_poisoncloud.
+    if (!terrainFull && loc.disp_region) {
+        if (gloc === GLOC_VALID && validfn) return !!validfn(x, y);
+        if (gloc === GLOC_INTERESTING || gloc === GLOC_VALID)
+            return loc.disp_region === 'poison';
+        return false;
+    }
     // C ref: getpos.c:466 is_cmap_door || is_cmap_drawbridge || S_ndoor on the
     // DISPLAYED glyph.  back_to_glyph() shows a drawbridge as S_?cdbridge on its
     // DBWALL portcullis and S_?odbridge on DRAWBRIDGE_DOWN; the DRAWBRIDGE_UP
     // span itself displays the water/ice/lava/room beneath it.
     const stoneGlyph = !terrainFull && gloc_remembers_stone(loc);
-    const isDoorSym = explored && !stoneGlyph
-                      && ((loc.typ === DOOR && gloc_remembers_door(loc, x, y))
-                          || loc.typ === 12 /*DBWALL*/
-                          || loc.typ === 34 /*DRAWBRIDGE_DOWN*/);
+    // #terrain without TER_OBJ: a remembered object/'I' glyph is browsed as the
+    // background of lastseentyp[][] (or the seen trap), not as the object.
+    const strip = !terrainFull ? gloc_terrain_strip(x, y, loc) : null;
+    const shownTyp = strip === 'background' ? (game.lastseentyp?.[x]?.[y] ?? loc.typ) : loc.typ;
+    const isDoorSym = explored && !stoneGlyph && strip !== 'trap'
+                      && ((shownTyp === DOOR && (strip || gloc_remembers_door(loc, x, y)))
+                          || shownTyp === 12 /*DBWALL*/
+                          || shownTyp === 34 /*DRAWBRIDGE_DOWN*/);
     const terrainmode = game.iflags?.terrainmode || 0;
     const showMonsters = !terrainmode || (terrainmode & 0x08 /* TER_MON */) !== 0;
     const mtmp = showMonsters ? m_at(x, y) : null;
@@ -2481,7 +2536,11 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
             return mtmp.mappearance !== 475 /*BOULDER*/ && mtmp.mappearance !== 474 /*ROCK*/;
         // C excludes only the normal BOULDER and ROCK glyphs, not their
         // piletop variants (getpos.c:462-464, display.h:943-945).
-        if (mtmp && canspotmon(mtmp)) return false;
+        // C ref: getpos.c gather_locs_interesting() `glyph_is_object(glyph_at(x,y))`:
+        // the DISPLAYED glyph decides.  A monster the hero merely senses (monster
+        // detection, blind telepathy off-screen) without drawing it leaves the
+        // remembered object glyph in place, so only a drawn monster hides it.
+        if (mtmp && loc.disp_monster) return false;
         const rememberedObject = loc.remembered_glyph;
         // A hallucinated floor object displays a random object glyph
         // (display.h random_obj_to_glyph): still glyph_is_object(), so the
@@ -2684,8 +2743,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
         desc = self_lookat() + self_seen_suffix();
     } else if (u && x === u.ux && y === u.uy && tm0 && canspotself()
-               && game.level?.at(x, y)?.disp_ch === hero_glyph().ch
-               && !game.level.at(x, y).remembered_glyph?.objotyp) {
+               && game.level?.at(x, y)?.disp_ch === hero_glyph().ch) {
         // C ref: pager.c do_screen_description(): with a terrainmode that lacks
         // TER_MON the displayed hero glyph ('@') matches no monster class, and no
         // object/cmap symbol either, so found == 0 and getpos.c auto_describe()
@@ -2694,7 +2752,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         // where the hero square is drawn as terrain; after a getpos_menu()
         // docrt() the live '@' is back while terrainmode is still set.
         return null;
-    } else if (u?.uswallow && !terrainMode && !detectMode) {
+    } else if ((u?.uswallow || (u?.uinwater && !Is_waterlevel(u.uz))) && !terrainMode && !detectMode) {
         // C ref: pager.c do_screen_description() -- while engulfed every
         // non-adjacent spot reads "unreconnoitered" and the adjacent ones
         // are the swallow-boundary glyphs ("the interior of a monster").
@@ -3419,8 +3477,9 @@ export async function reveal_terrain(which_subset) {
                 if (gas && keep_traps) {
                     /* C ref: detect.c reveal_terrain(): show_glyph() keeps the region
                        glyph in gbuf, so the browse's glyph_at() still reads a cloud */
+                    const kind = loc.disp_region;
                     show_glyph_cell(x, y, loc.disp_ch, loc.disp_color, false);
-                    loc.disp_region = true;
+                    loc.disp_region = kind;
                     continue;
                 }
                 if (gas || ga.kind === 'monster') {
@@ -3430,7 +3489,8 @@ export async function reveal_terrain(which_subset) {
                     show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
                     /* the stripped-monster/cloud square whose reveal_terrain_getglyph()
                        result is the region's own glyph (traps kept) is a cloud glyph */
-                    if (g.gascloud) loc.disp_region = true;
+                    if (g.gascloud)
+                        loc.disp_region = region_is_poisoncloud(visible_region_at(x, y)) ? 'poison' : 'vapor';
                     continue;
                 }
             }
@@ -3868,6 +3928,15 @@ function look_pick_description(x, y) {
         return { text: `${look_prefix_char(swl)}        the interior of a monster${alts} (${look})`,
                  firstmatch: look, found: 1 };
     }
+    // C ref: pager.c do_screen_description() `submerged` arm: underwater (not on the
+    // Plane of Water) a non-adjacent spot is "unreconnoitered", and an adjacent
+    // non-water one is an unexplored glyph ("land"); pg_glyph_at() models the
+    // cls()ed display buffer under_water() leaves, so the generic port reads it.
+    if (u.uinwater && !Is_waterlevel(u.uz) && !(x === u.ux && y === u.uy)) {
+        const text = { s: '' }, firstmatch = { s: '' };
+        const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+        return { text: text.s, firstmatch: firstmatch.s, found };
+    }
     const mtmp = m_at(x, y);
     const loc0 = game.level?.at(x, y);
     // C ref: pager.c lookat() `glyph_is_monster(glyph)` with no monster here and
@@ -3886,7 +3955,20 @@ function look_pick_description(x, y) {
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         return { text: text.s, firstmatch: firstmatch.s, found };
     }
-    if (mtmp && canspotmon(mtmp)) {
+    // C ref: pager.c lookat() `glyph_is_monster(glyph_at(x, y))` -- the DISPLAYED
+    // glyph decides: a visible monster whose square was overpainted (map_trap()
+    // after wizard-mode ^F / trap detection) still reads as the trap until it is
+    // redrawn, exactly like the getpos autodescribe (loc.disp_monster).
+    if (mtmp && canspotmon(mtmp) && loc0?.disp_monster) {
+        // C ref: pager.c do_screen_description() -- a long worm's tail segment is
+        // drawn with the PM_LONG_WORM_TAIL glyph ('~', class S_WORM_TAIL), not the
+        // worm's own letter, so the class list is the tail's ("a long worm tail or
+        // a vibrating square") and the prefix is '~'; the generic port reads it.
+        if (mtmp.mx !== x || mtmp.my !== y) {
+            const text = { s: '' }, firstmatch = { s: '' };
+            const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+            return { text: text.s, firstmatch: firstmatch.s, found };
+        }
         // A monster drawn with the blank symbol (ghost, shade) shares ' ' with
         // S_stone, S_darkroom, "unexplored" and more: the generic port counts them.
         /* a hallucinating hero sees a random monster glyph, which is blank when
@@ -4678,7 +4760,7 @@ async function do_look_all(nearby, do_mons) {
                     lookbuf = look_at_object(x, y, { kind: 'object', obj: null,
                         otyp: mimic.mappearance | 0, x, y });
                     sym = cellSym(loc);
-                } else if (!(x === u.ux && y === u.uy) && !(mimic && canspotmon(mimic))) {
+                } else if (!(x === u.ux && y === u.uy) && !(mimic && loc?.disp_monster)) {
                     // C tests glyph_at(): an UNSEEN monster (an unseen pet standing
                     // on a remembered chest) leaves the remembered object glyph.
                     const otmp = vobj_at(x, y);

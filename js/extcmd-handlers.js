@@ -36,7 +36,6 @@ import { couldsee, Blind } from './vision.js';
 import { align_gname, halu_gname } from './role.js';
 import { map_invisible, doredraw, stairway_at } from './display.js';
 import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJECT, CHEST } from './mkobj.js';
-import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
 import { is_worn, wearing_armor, inventoryArray, select_off,
@@ -1810,19 +1809,6 @@ function is_container_otyp(otyp) { return otyp >= LARGE_BOX_OTYP && otyp <= BAG_
 function is_lockbox_otyp(otyp) { return otyp === LARGE_BOX_OTYP || otyp === CHEST_OTYP; }
 // C ref: attrib.h ACURR(x) — current attribute value.
 function ACURR(i) { return acurr_eff(i); }
-// C ref: objnam.c minimal_xname()/OBJ_DESCR — bare (article-less, BUC-less)
-// type name: the real name once identified (oc_name_known), else the shared
-// unidentified appearance ("bag" for sack/oilskin sack/bag of holding/tricks
-// before they're told apart; large box/chest/ice box have no separate
-// description and so are name-known from the start).
-function box_basename(otyp) {
-    const ocl = objects[otyp];
-    if (!ocl) return 'large box';
-    if (ocl.oc_name_known) return ocl.name;
-    const idx = ocl.oc_descr_idx != null ? ocl.oc_descr_idx : otyp;
-    return DESCR_BY_OTYP[idx] ?? ocl.name;
-}
-
 function floor_obj_here(pred) {
     const u = game.u;
     if (!u) return null;
@@ -1936,15 +1922,7 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
 // C ref: hacklib.c upstart().
 function capitalize(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
-// C ref: objnam.c safe_qbuf() — "<prefix><name><suffix>", falling back to the
-// shorter name and then `lastR` when the result would not fit in QBUFSZ - 1.
-function loot_safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
-    const budget = QBUFSZ - 1 - qprefix.length - qsuffix.length;
-    let name = func(obj);
-    if (name.length > budget) name = altfunc(obj);
-    if (name.length > budget) name = lastR;
-    return qprefix + name + qsuffix;
-}
+// objnam.c safe_qbuf() (js/pickup.js) builds every loot prompt below.
 
 // C ref: use_container():3075-3082 — the prompt is safe_qbuf() over
 // yname()/ysimple_name() ("Do what with <the/your/Shk's box>?"), or, when
@@ -1953,8 +1931,8 @@ function loot_safe_qbuf(qprefix, qsuffix, obj, func, altfunc, lastR) {
 // empty.  Do what with it?" (two spaces after the period).
 function loot_prompt_text(box, outmaybe) {
     return outmaybe
-        ? loot_safe_qbuf('Do what with ', '?', box, yname, ysimple_name, 'it')
-        : loot_safe_qbuf('', ' is empty.  Do what with it?', box,
+        ? safe_qbuf('Do what with ', '?', box, yname, ysimple_name, 'it')
+        : safe_qbuf('', ' is empty.  Do what with it?', box,
                          (o) => capitalize(yname(o)),
                          (o) => capitalize(ysimple_name(o)), 'This');
 }
@@ -2002,20 +1980,23 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
 // process_text_window().  Render "Contents of <box>:", a blank line, then the
 // sorted content stacks (each with two leading spaces), as a corner window with
 // a "--More--" footer.  Sets cknown (we're looking at the contents now).
-function render_container_contents(box) {
+async function render_container_contents(box) {
     box.cknown = 1;
-    const name = `the ${box_basename(box.otyp)}`;
-    const lines = [{ text: `Contents of ${name}:` }, { text: '' }];
+    const { tty_putstr_text } = await import('./pager.js');
+    const { the, doname_with_price_c } = await import('./objnam.js');
+    const raw = [`Contents of ${the(xname(box))}:`, ''];
     // sortflags mirror the default options (sortloot=loot, sortpack=on).
     const sorted = sortloot(box.cobj || [], SORTLOOT_LOOT | SORTLOOT_PACK, false, null);
     for (const sli of sorted) {
         if (!sli.obj) break;
-        lines.push({ text: '  ' + obj_doname(sli.obj) });
+        raw.push('  ' + doname_with_price_c(sli.obj));
     }
-    // putstr width convention: cw.maxcol = max(str.length + 1).
+    // tty_putstr() NHW_MENU: compress_str(), maxcol = max(strlen + 1) of the UNBROKEN
+    // text, then lines of CO or more columns are broken at the last space.
+    const lines = [];
     let maxcol = 0;
-    for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 1);
-    draw_corner_window(lines, maxcol, '--More--', 0);
+    for (const t of raw) maxcol = Math.max(maxcol, tty_putstr_text(lines, t));
+    draw_corner_window(lines.map((text) => ({ text })), maxcol, '--More--', 0);
 }
 
 // C ref: end.c container_contents(box, FALSE, FALSE, TRUE) — an empty box only
@@ -2030,7 +2011,7 @@ async function look_in_container(box, menuUp = false) {
         await (await import('./display.js')).display_nhwindow_message();
         return;
     }
-    render_container_contents(box);
+    await render_container_contents(box);
     for (;;) {
         const k = await nhgetch();
         // process_text_window(): dmore(quitchars); ESC leaves dismiss_more == 1 (^A then dismisses too).
@@ -2730,7 +2711,7 @@ async function pick_lock_box(pick, box) {
     if ((autounlock & 1) /* AUTOUNLOCK_UNTRAP */
         && await (await import('./trap.js')).could_untrap(false, true)
         && (c = box.tknown ? (box.otrapped ? 'y' : 'n')
-                           : await ynq(loot_safe_qbuf('Check ', ' for a trap?', box, yname, ysimple_name, 'this'))) !== 'n') {
+                           : await ynq(safe_qbuf('Check ', ' for a trap?', box, yname, ysimple_name, 'this'))) !== 'n') {
         if (c === 'q')
             return 0; // PICKLOCK_DID_NOTHING
         return await (await import('./trap.js')).untrap_container(box); // even if no trap found
@@ -2749,7 +2730,7 @@ async function pick_lock_box(pick, box) {
         const verb = it ? 'unlock' : 'pick';
         box.lknown = 1;
         if (c !== undefined) game._yn_need_more = false;
-        c = await ynq(loot_safe_qbuf('There is ', ` here; ${verb} ${it ? 'it' : 'its lock'}?`, box, obj_doname, ansimpleoname, 'a box'));
+        c = await ynq(safe_qbuf('There is ', ` here; ${verb} ${it ? 'it' : 'its lock'}?`, box, obj_doname, ansimpleoname, 'a box'));
         if (c !== 'y')
             return c === 'q' ? 0 : -1; // 'n': decided against all boxes (PICKLOCK_LEARNED_SOMETHING)
     }
@@ -2775,6 +2756,7 @@ async function pick_lock_box(pick, box) {
         magic_key: is_magic_key(game.u, pick),
     };
     game._picklock_box = box;
+    game.occupation_txt = lock_action(game.xlock); // set_occupation(picklock, lock_action(), 0)
     return 1; // PICKLOCK_DID_SOMETHING — a turn elapses
 }
 
@@ -2784,9 +2766,9 @@ async function pick_lock_box(pick, box) {
 // #force (AUTOUNLOCK_FORCE) for a lone container; unlocked -> use_container().
 async function do_loot_one(box, more_containers, ccount = 1) {
     if (box.olocked) {
-        const name = box_basename(box.otyp);
-        if (box.lknown) await pline(`The ${name} is locked.`);
-        else await pline(`Hmmm, the ${name} turns out to be locked.`);
+        const { the } = await import('./objnam.js');
+        if (box.lknown) await pline(`${The(xname(box))} is locked.`);
+        else await pline(`Hmmm, ${the(xname(box))} turns out to be locked.`);
         box.lknown = 1;
         const autounlock = game.flags?.autounlock ?? 2;
         if (autounlock) {
@@ -3648,6 +3630,7 @@ const HANDLERS = {
     loot: doloot,
     force: doforce,
     wizwish: wiz_wish,
+    saveoptions: async () => (await import('./cfgfiles.js')).do_write_config_file(),
     enhance: doenhance,
     rub: dorub,
     wipe: dowipe,
@@ -4232,11 +4215,12 @@ async function wiztelekinesis_extcmd() {
     const { wiz_telekinesis } = await import('./wizcmds.js');
     const res = await wiz_telekinesis();
     /* C ref: cmd.c rhack():3810 — ECMD_CANCEL runs reset_cmd_vars(TRUE), which
-       also zeroes multi (left negative by hurtle()'s nomul(-range)). */
+       also zeroes multi (left negative by hurtle()'s nomul(-range)); the
+       result reaches rhack() so the queued ^A entry is cleared too. */
     if (res & 0x02 /* ECMD_CANCEL */) {
         const { reset_cmd_vars } = await import('./cmd.js');
         reset_cmd_vars(true);
-        return 0;
+        return 0x02;
     }
     return res === 0x01 ? 1 : 0;
 }
@@ -4620,8 +4604,8 @@ async function wiz_intrinsic_docrt() {
     // hallucinating each repaint spends eight more display-RNG picks, so
     // skipping it leaves every later frame one batch behind (seed0383 step 165).
     if (game.u?.uswallow) {
-        if (game._pending_message) await topl_more();
-        game._pending_message = '';
+        // swallowed(1)'s own cls() pages the pending topline (unless an ESC'd
+        // --More-- left WIN_STOP set, display_nhwindow's WIN_CANCELLED) and blanks it.
         const { swallowed } = await import('./display.js');
         await swallowed(1);
     } else {
@@ -5057,7 +5041,7 @@ export async function dotip() {
                 for (const cobj of objects_at(u.ux, u.uy)) {
                     if (!is_container_otyp(cobj.otyp)) continue;
                     const c = await yn_function(
-                        loot_safe_qbuf('There is ', ' here, tip it?', cobj,
+                        safe_qbuf('There is ', ' here, tip it?', cobj,
                                        obj_doname, ansimpleoname, 'container'),
                         'ynq', 'q', true);
                     if (c === 'q') return 0;                 // ECMD_OK

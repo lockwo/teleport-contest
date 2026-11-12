@@ -1426,16 +1426,39 @@ function special_corpse(corpsenm) {
         || is_rider_pm(corpsenm);
 }
 
+// C ref: timeout.c start_timer()/obj->timed: an object can carry several timers
+// at once (a buried glob keeps its SHRINK_GLOB timer and gains ROT_ORGANIC from
+// bury_an_obj()), and obj->timed counts them.  Here they are the object's
+// `timers` list; every write installs a fresh array because shallow object
+// copies (splitobj, the shk.js bill dummy) clear `timed` but keep the reference.
+export function obj_timer_list(obj) {
+    return (obj?.timed && Array.isArray(obj.timers)) ? obj.timers : [];
+}
+// The object's timer of this action, if any.
+export function obj_timer(obj, action) {
+    return obj_timer_list(obj).find((t) => t.action === action);
+}
+export function set_obj_timer_list(obj, list) {
+    if (list.length) {
+        obj.timers = list;
+        obj.timed = list.length;
+    } else {
+        obj.timed = 0;
+        delete obj.timers;
+    }
+}
+
 function start_timer(when, kind, action, obj) {
     if (obj && kind === TIMER_OBJECT) {
-        obj.timed = true;
         // C ref: timeout.c start_timer() — gnu->timeout = svm.moves + when
         // (the caller's `when` is turns-from-now; the timer fires at that
-        // absolute turn).
-        obj.timer = {
+        // absolute turn).  A timer of the same action is replaced.
+        const t = {
             when: (game.moves ?? 0) + when, kind, action,
             tid: game._object_timer_id = (game._object_timer_id ?? 0) + 1,
         };
+        set_obj_timer_list(obj,
+            [...obj_timer_list(obj).filter((o) => o.action !== action), t]);
     }
     return true;
 }
@@ -1468,22 +1491,21 @@ export function disturb_buried_zombies(x, y) {
               && otmp.oy >= y - 1 && otmp.oy <= y + 1)) continue;
         /* peek_timer() returns the ABSOLUTE timeout (0 only when there is no
            such timer), so a timer already due this turn is still restarted. */
-        if (otmp.timer?.action !== ZOMBIFY_MON) continue;
+        if (!obj_timer(otmp, ZOMBIFY_MON)) continue;
         const t = stop_object_timer(otmp, ZOMBIFY_MON);
         start_timer(Math.max(1, Math.trunc((t * 2) / 3)), TIMER_OBJECT,
                     ZOMBIFY_MON, otmp);
     }
 }
 
-// Drop the per-object timer record (obj.timer) that this module's private
+// Drop every per-object timer record (obj.timers) that this module's private
 // start_timer() keeps for corpse/egg/figurine/glob timers.  This is only the
 // record half of timeout.c:2376 obj_stop_timers(): callers that can await use
 // timeout.js obj_stop_timers(), which also walks the queue and runs the cleanup
 // hooks.  The sync corpse/figurine paths below have no queue entries or hooks.
 export function clear_object_timer(obj) {
     if (!obj) return;
-    obj.timed = false;
-    delete obj.timer;
+    set_obj_timer_list(obj, []);
 }
 
 // C ref: timeout.c save_timers(RANGE_LEVEL) + restore_timers() — leaving a level
@@ -1498,7 +1520,7 @@ export function requeue_level_timers(level = game.level) {
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer) timers.push(o.timer);
+            timers.push(...obj_timer_list(o));
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1522,7 +1544,7 @@ export function requeue_global_timers() {
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer) timers.push(o.timer);
+            timers.push(...obj_timer_list(o));
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1548,16 +1570,17 @@ export async function run_object_timers() {
     const scan = (list) => {
         if (!Array.isArray(list)) return;
         for (const o of list) {
-            if (o.timed && o.timer && o.timer.when <= moves
-                && (o.timer.action === SHRINK_GLOB
-                    || o.timer.action === ROT_ORGANIC
-                    || o.timer.action === ROT_CORPSE
-                    || o.timer.action === REVIVE_MON
-                    || o.timer.action === ZOMBIFY_MON
-                    || o.timer.action === HATCH_EGG
-                    || o.timer.action === FIG_TRANSFORM
-                    || o.timer.action === BURN_OBJECT))
-                due.push({ obj: o, timer: o.timer });
+            for (const t of obj_timer_list(o))
+                if (t.when <= moves
+                    && (t.action === SHRINK_GLOB
+                        || t.action === ROT_ORGANIC
+                        || t.action === ROT_CORPSE
+                        || t.action === REVIVE_MON
+                        || t.action === ZOMBIFY_MON
+                        || t.action === HATCH_EGG
+                        || t.action === FIG_TRANSFORM
+                        || t.action === BURN_OBJECT))
+                    due.push({ obj: o, timer: t });
             if (Array.isArray(o.cobj)) scan(o.cobj);
         }
     };
@@ -1588,9 +1611,9 @@ export async function run_object_timers() {
             await melt_ice_away({ a_long: level_timer.where }, level_timer.when);
             continue;
         }
-        if (obj.timer !== timer || !obj.timed) continue;
-        obj.timed = false;
-        delete obj.timer;
+        const live = obj_timer_list(obj);
+        if (!live.includes(timer)) continue;
+        set_obj_timer_list(obj, live.filter((t) => t !== timer));
         switch (timer.action) {
         case SHRINK_GLOB:
             await shrink_glob(obj, timer.when);
@@ -1680,11 +1703,10 @@ const MAX_EGG_HATCH_TIME = 200;
 // this action and return its REMAINING turns (`timeout - svm.moves`), or 0 when
 // there was none.  Consumes no RNG.
 export function stop_object_timer(obj, action) {
-    if (!obj?.timed || obj.timer?.action !== action) return 0;
-    const remaining = obj.timer.when - (game.moves ?? 0);
-    obj.timed = false;
-    delete obj.timer;
-    return remaining;
+    const t = obj_timer(obj, action);
+    if (!t) return 0;
+    set_obj_timer_list(obj, obj_timer_list(obj).filter((o) => o !== t));
+    return t.when - (game.moves ?? 0);
 }
 
 // C ref: timeout.c attach_fig_transform_timeout(figurine):1204 — replace any

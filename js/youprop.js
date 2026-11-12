@@ -11,6 +11,8 @@ import { mflags1_of, M1_FLY, M1_SWIM } from './monflags_data.js';
 import { POISON_RES, TELEPAT, ACID_RES, SICK_RES, Is_waterlevel, I_SPECIAL, TIMEOUT, W_ARTI,
          TT_PIT, is_pit, is_hole } from './const.js';
 import { has_innate } from './exper.js';
+import { defended } from './artifact.js';
+import { AD_DISE } from './monattk_data.js';
 
 // C ref: youprop.h Poison_resistance == (HPoison_resistance || EPoison_resistance
 // || FROMFORM/FROMEXPER/FROMRACE): the worn half is the extrinsic word, role and
@@ -212,15 +214,18 @@ export function Acid_resistance_hero() {
               || p.AcidResistance || u?.HAcid_resistance)
         || ((u?.uprops_extrinsic || {})[ACID_RES] | 0) !== 0;
 }
-// C ref: youprop.h Sick_resistance == (HSick_resistance || ESick_resistance); fungus
-// and ghoul forms carry it through u.formprops.
+// C ref: youprop.h Sick_resistance == (HSick_resistance || ESick_resistance
+// || defended(&gy.youmonst, AD_DISE)); fungus and ghoul forms carry it through
+// u.formprops, and defended() covers a hero polymorphed into a green dragon
+// (its own scales) or wielding a defending artifact.
 export function Sick_resistance_hero() {
     const u = game.u;
     if (u?.formprops?.Sick_resistance) return true;
     const p = u?.uprops || {};
     return !!(p.HSick_resistance || p.ESick_resistance || p.Sick_resistance
               || u?.HSick_resistance)
-        || ((u?.uprops_extrinsic || {})[SICK_RES] | 0) !== 0;
+        || ((u?.uprops_extrinsic || {})[SICK_RES] | 0) !== 0
+        || defended(u, AD_DISE);
 }
 // C ref: youprop.h Stone_resistance / Drain_resistance == (H<X> || E<X> || FROMFORM ||
 // FROMRACE/FROMEXPER); the worn word includes dragon_armor_handling()'s extra grants

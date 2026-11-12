@@ -1173,6 +1173,7 @@ export async function rhack(key) {
             && !accept_menu_prefix(command)) {
             await pline(`The ${command.ef_txt} command does not accept 'm' prefix.`,
                         { suppressHistory: true });
+            game.context._pfx_rejected = true;
             reset_cmd_vars(true);
             return;
         }
@@ -1208,6 +1209,7 @@ export async function rhack(key) {
         // prefix complaint, so ^V after #fight reads "Unavailable command ...".
         const ecm = extcmdlist.find(ec => ec.key === (key & 0xff));
         if (ecm && !(ecm.flags & PREFIXCMD) && !(await can_do_extcmd(ecm))) {
+            game.context._pfx_rejected = true;
             reset_cmd_vars(true);
             game.context.stale_run = 0;
             game.context.stale_rush = false;
@@ -1232,6 +1234,7 @@ export async function rhack(key) {
         } else
             await pline(`The '${which}' prefix should be followed by a movement command${updown}.`);
         // C ref: cmd.c:3810-3813 — failed prefix validation discards the count.
+        game.context._pfx_rejected = true;
         reset_cmd_vars(true);
         game.context.stale_run = 0;
         game.context.stale_rush = false;
@@ -1286,6 +1289,11 @@ export async function rhack(key) {
         game.context.stale_rush = staleRush;
     }
 
+    // C ref: wintty.c process_menu_window()/process_text_window() — a key read
+    // while a menu/text window is up is consumed by that window inside the
+    // command that opened it; it never reaches rhack(), so CQ_REPEAT keeps
+    // that command (#enhance, ^X, i, ...) for a following ^A.
+    let windowKey = false;
     // A paged ^X attributes window consumes space/return to advance pages and
     // dismiss after the last; ESC cancels.  C ref: process_menu_window().
     if (game._modal_screen === 'attrwin') {
@@ -1296,6 +1304,7 @@ export async function rhack(key) {
         // other key fall through to rhack() and run as a command over the window.
         await attr_window_advance(ch);
         game.context.move = 0;
+        windowKey = true;
     } else if (game._modal_screen === 'skillwin') {
         // C ref: wintty.c process_menu_window().  The #enhance "Current
         // skills:" listing is a PICK_NONE menu, so it swallows EVERY key: the
@@ -1306,6 +1315,7 @@ export async function rhack(key) {
         // every input boundary after it (rc-baseline step 239 onward).
         await skill_window_advance(ch);
         game.context.move = 0;
+        windowKey = true;
     } else if (game._modal_screen === 'textwin' && game._disco_pages
         && (ch === ' ' || ch === '\r' || ch === '\n' || (key === 1 && game._dismissMore === 1))) {
         // A multi-page NHW_TEXT window ('\' discoveries) pages on any of
@@ -1313,11 +1323,15 @@ export async function rhack(key) {
         // C ref: wintty.c process_text_window() dmore(cw, quitchars).
         await disco_window_advance();
         game.context.move = 0;
+        windowKey = true;
     } else if (ch === '\x1b') {
         // C ref: getline.c xwaitforspace() — an ESC read while a menu/text window (or a
         // --More--) is up leaves ttyDisplay->dismiss_more == 1, so a later ^A dismisses a
         // text window page or --More-- too.  At top level it is just a command-loop ESC.
-        if (game._modal_screen) game._dismissMore = 1;
+        if (game._modal_screen) {
+            game._dismissMore = 1;
+            windowKey = game._modal_screen !== 'topl';
+        }
         // Escape: dismiss any open menu/window; a no-op at top level.
         // C ref: cmd.c — ESC produces no message.
         game.context.run_prefix = 0;
@@ -1337,6 +1351,7 @@ export async function rhack(key) {
         if (game._modal_screen === 'invent' || game._modal_screen === 'textwin') {
             await dismiss_invent_screen();
             game.context.move = 0;
+            windowKey = true;
         } else if (key === 32 && !game._modal_screen && game.flags?.rest_on_space) {
             // C ref: cmd.c update_rest_on_space() — with 'rest_on_space' On,
             // <space> is bound to a clone of extcmdlist['.'] (donull, "wait",
@@ -1484,7 +1499,8 @@ export async function rhack(key) {
         // trap", doidtrap, IFBURIED | GENERALCMD } -> pager.c doidtrap().
         // Prompts for a direction and names the trap there; never costs time
         // (ECMD_OK / ECMD_CANCEL only).
-        await doidtrap();
+        // ECMD_CANCEL (ESC at the direction prompt) clears CQ_REPEAT.
+        ecmd_note(await doidtrap());
         game.context.move = 0;
     } else if (ch === 'S') {
         // C ref: cmd.c { 'S', "save", ..., dosave, ... } -> save.c dosave().
@@ -1759,7 +1775,8 @@ export async function rhack(key) {
         // C ref: cmd.c — 'd' drop an item.  do.c dodrop() prompts for the
         // item then drops it on the floor (ECMD_TIME when something is
         // dropped, so the turn elapses and monsters move).
-        game.context.move = (await dodrop()) ? 1 : 0;
+        // ECMD_FAIL ("You cannot drop something you are wearing.") clears CQ_REPEAT.
+        game.context.move = (ecmd_note(await dodrop()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 'D') {
         // C ref: cmd.c { 'D', "droptype", doddrop } -> do.c doddrop(): the
         // multi-item drop.  Under the default menustyle:Full it opens the
@@ -1832,7 +1849,10 @@ export async function rhack(key) {
         // to repeat ("There is no command available to repeat.").
         if (!game.in_doagain) cmdq_of(CQ_REPEAT).length = 0;
         game._ext_tlist = null;
-        await doextcmd();
+        game.context._pfx_rejected = false;
+        // An ECMD_CANCEL/ECMD_FAIL result (e.g. #wiztelekinesis' getpos ESC)
+        // runs reset_cmd_vars(TRUE) after the ext_tlist recording: nothing to ^A.
+        ecmd_note(await doextcmd());
     } else if (ch === '?') {
         // C ref: cmd.c { '?', "help", dohelp, IFBURIED | GENERALCMD } ->
         // pager.c dohelp(): the help-topic PICK_ONE menu ("Select one item:").
@@ -1942,6 +1962,16 @@ export async function rhack(key) {
         // another per-turn pass.  C ref: cmd.c do_run_*(), hack.c domove().
         // A still-armed g/G prefix wins: set_move_cmd() leaves context.run at
         // the prefix's value when gd.domove_attempting is already set.
+        // C ref: cmd.c rhack():3777-3781 — a grid bug's diagonal run/rush is refused
+        // ("You can't get there from here...") before domove(), ahead of any
+        // Overloaded check; set_move_cmd() has already cleared context.travel.
+        game.u.dx = RUN_DX[ch];
+        game.u.dy = RUN_DY[ch];
+        if (!dxdy_moveok()) {
+            await pline("You can't get there from here...");
+            reset_cmd_vars(true);
+            return;
+        }
         const rprun = game.context.run_prefix || staleRun;
         game.context.nopick = game.iflags?.menu_requested ? 1 : 0; // set_move_cmd()
         game.iflags && (game.iflags.menu_requested = false);
@@ -1958,6 +1988,13 @@ export async function rhack(key) {
         // a plain run); e.g. C('l') / '\f' rushes east.  hack.js drives the
         // whole multi-turn rush inline and leaves game.context.move = 0.
         const rdir = CTRL_RUSH_DIR[key];
+        game.u.dx = DIR_DX[rdir];
+        game.u.dy = DIR_DY[rdir];
+        if (!dxdy_moveok()) {
+            await pline("You can't get there from here...");
+            reset_cmd_vars(true);
+            return;
+        }
         await do_run_prefixed(DIR_DX[rdir], DIR_DY[rdir], 3);
     } else if (ch === 'F' || ch === '-') {
         // C ref: cmd.c commands_init() `bind_key('-', "fight")` — '-' is a
@@ -2205,7 +2242,9 @@ export async function rhack(key) {
     // Only a no-time result lets that null pick cancel the command itself.
     const getobjCancelled = !!game.context._getobj_cancelled && !game.context.move;
     game.context._getobj_cancelled = false;
-    if (badCommand || !repeatName || getobjCancelled) {
+    if (windowKey) {
+        // Consumed by the open window: CQ_REPEAT still holds its command.
+    } else if (badCommand || !repeatName || getobjCancelled) {
         cmdq_of(CQ_REPEAT).length = 0;
         // C ref: cmd.c rhack():3810-3816's reset_cmd_vars() (ECMD_CANCEL/
         // ECMD_FAIL, or a cancelled getobj pick) and the bad_command tail
@@ -2236,7 +2275,9 @@ export async function rhack(key) {
             // repeatMark; whatever sits below it was queued earlier.
             const mid = cmdq_of(CQ_REPEAT).splice(0);
             mid.push(...midRepeat);
-            if (game._ext_tlist)
+            // C: a prefix rejected inside this command's own prefix loop ran
+            // reset_cmd_vars(TRUE) AFTER the ext_tlist recording, so nothing stays queued.
+            if (game._ext_tlist && !game.context._pfx_rejected)
                 cmdq_of(CQ_REPEAT).push({ typ: CMDQ_EXTCMD, ec_entry: { ef_txt: game._ext_tlist } }, ...mid);
         } else if (game._itemaction_repeat) {
             // C: the item action pushed on CQ_CANNED ran as its own rhack() and
@@ -3274,6 +3315,7 @@ export async function pick_lock_resume(pick) {
     await pline(`You resume your attempt at ${lock_action(xl)}.`);
     xl.magic_key = is_magic_key(game.u, pick);
     game._picklock_box = xl.box || xl.door; // set_occupation(picklock, action, 0)
+    game.occupation_txt = lock_action(xl);
     return PICKLOCK_DID_SOMETHING;
 }
 
@@ -3316,6 +3358,7 @@ async function pick_lock_door(pick, cx, cy, door) {
     };
     // allmain's shared picklock dispatcher is keyed by this occupation marker;
     game._picklock_box = door;
+    game.occupation_txt = lock_action(game.xlock); // set_occupation(picklock, lock_action(), 0)
     // C ref: lock.c:654 — schedule the occupation; its first callback runs
     // on the next move-loop pass, after this command's monster turn.
     return 2; // command elapsed a turn
@@ -3518,6 +3561,7 @@ export async function pick_lock(pick) {
     // loop runs the occupation on its next pass, i.e. after this command's
     // monster movement.  allmain.js's `_picklock_box` arm is that dispatcher.
     game._picklock_box = target.box || target.door;
+    game.occupation_txt = lock_action(game.xlock);
     return PICKLOCK_DID_SOMETHING;
 }
 
@@ -5398,6 +5442,10 @@ async function dopush(sx, sy, rx, ry, otmp, costly) {
 async function test_move_boulder(newx, newy) {
     const u = game.u;
     const bobj = boulder_at(newx, newy);
+    // C ref: hack.c test_move(): the whole boulder arm (run stop and moverock())
+    // is gated on `sobj_at(BOULDER, x, y) && (Sokoban || !Passes_walls)`: a hero
+    // who passes through walls (xorn form...) walks onto the boulder's square.
+    if (bobj && hero_passes_walls() && !In_sokoban(u.uz)) return false;
     // C ref: hack.c:1217 — a hero who is rushing/running/travelling
     // (context.run >= 2) stops in front of a boulder instead of pushing it,
     // and C's `if (!test_move(...DO_MOVE)) { move = 0; nomul(0); }` at
@@ -7853,7 +7901,7 @@ export async function dolookaround() {
             const iscorr = corr_next2u && !!cell && !cell.disp_monster
                 && cmd_typ_at(x, y) === CORR
                 && rg?.objotyp == null && !rg?.pile && !cell.invisMon
-                && !cell.disp_warning && !cell.disp_hstatue
+                && !cell.disp_warning && !cell.disp_hstatue && !cell.disp_region
                 && !is_cmap_engraving_at(x, y)
                 && [false, true].some((waslit) => {
                     const g = terrain_glyph({ typ: CORR, waslit }, x, y);
@@ -8028,6 +8076,14 @@ export async function do_repeat() {
         game.in_doagain = false;
         cmdq_of(CQ_REPEAT).length = 0;
         game._cmdq_repeat = repeat_copy;
+        /* C ref: itemactions() only queues its command on CQ_CANNED; it runs (and is
+           recorded on CQ_REPEAT) in the rhack() AFTER this restore.  This port runs it
+           inline inside the replay, so the recording was deferred to here. */
+        if (game._ia_deferred_repeat) {
+            cmdq_of(CQ_REPEAT).length = 0;
+            cmdq_add_ec(CQ_REPEAT, game._ia_deferred_repeat);
+            game._ia_deferred_repeat = null;
+        }
         iflags.menu_requested = false;
         if (svc.move)
             res = ECMD_TIME;

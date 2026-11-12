@@ -221,10 +221,11 @@ export async function adjattrib(ndx, incr, msgflg) {
 }
 const ATTRNAME = ['strength', 'intelligence', 'wisdom', 'dexterity',
     'constitution', 'charisma'];
-// C ref: prop.h Fixed_abil.
+// C ref: youprop.h `#define Fixed_abil u.uprops[FIXED_ABIL].extrinsic` -- only
+// the worn ring counts; an intrinsic (#wizintrinsic's HFixed_abil timeout) does not.
 export function Fixed_abil() {
     const props = game.u?.uprops;
-    return !!(props?.Fixed_abil || props?.HFixed_abil || props?.EFixed_abil
+    return !!(props?.Fixed_abil || props?.EFixed_abil
               || ((game.u?.uprops_extrinsic || {})[FIXED_ABIL_PROP] | 0) !== 0);
 }
 

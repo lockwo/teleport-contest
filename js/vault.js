@@ -512,9 +512,13 @@ export function findgd() {
                 // Simplified mon_arrive(): take it out of migrating_mons and
                 // park it at <0,0>.  mon_arrive proper would send it to limbo
                 // when no regular map spot is available; C avoids that here.
+                // C links it onto fmon first; this port's level.monsters list
+                // doubles as the map grid, so a linked guard at mx,my = 0,0
+                // would make parkguard()'s m_at(0,0) find it and skip
+                // place_monster(), leaving mstate MON_MIGRATING and movemon()
+                // never running the parked guard's gd_move() to remove the
+                // fake corridor.  place_monster() does the linking instead.
                 mig.splice(i, 1);
-                game.level.monsters = game.level.monsters || [];
-                game.level.monsters.push(mtmp);
                 mtmp.mtrack = [];   /* mon_track_clear */
                 mtmp.mux = u.ux; mtmp.muy = u.uy;
                 mtmp.mx = 0; mtmp.my = 0;

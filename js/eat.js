@@ -8,7 +8,7 @@ import { livelog_printf, LL_CONDUCT } from './livelog.js';
 import { monster_by_pmidx, mon_cwt, mon_cnutrit, name_to_pmidx } from './makemon.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
-import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear, flush_screen, display_nhwindow_message } from './display.js';
+import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear, flush_screen, display_nhwindow_message, Hallucination_u } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib, adjalign, change_luck } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
          INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_DELETED, COST_BITE,
@@ -2244,7 +2244,7 @@ async function rottenfood_eat(obj) {
     await update_topl(`Blecch!  ${obj && !is_rottable(obj) ? 'Awful' : 'Rotten'}`
                       + ` ${obj ? foodword(obj) : 'food'}!`);
     const u = game.u;
-    const hallu = !!u?.uhallu;
+    const hallu = Hallucination_u();
     if (!rn2(4)) {                                          // eat.c:1817
         await You_feel(hallu ? 'rather trippy.'
                            : `rather ${(await import('./invent.js')).body_part(LIGHT_HEADED)}.`);
@@ -4177,11 +4177,12 @@ export async function use_tin_opener(obj) {
 
     if (obj !== game.uwep) {
         if (obj.cursed && obj.bknown) {
-            // C: ynq(safe_qbuf("Really wield ", "?", obj, doname,
-            // thesimpleoname, "that")) — js/pickup.js:462 keeps the only
-            // safe_qbuf() and it is module-private, so the un-truncated form is
-            // used here.
-            if (await _invent.ynq(`Really wield ${_invent.obj_doname(obj)}?`) !== 'y')
+            // C ref: eat.c use_tin_opener() ynq(safe_qbuf(qbuf, "Really wield ", "?",
+            // obj, doname, thesimpleoname, "that"))
+            const { safe_qbuf } = await import('./pickup.js');
+            const { thesimpleoname } = await import('./objnam.js');
+            if (await _invent.ynq(safe_qbuf('Really wield ', '?', obj, _invent.obj_doname,
+                                            thesimpleoname, 'that')) !== 'y')
                 return ECMD_OK_;
         }
         if (!await _invent.wield_tool(obj, 'use')) return ECMD_OK_;

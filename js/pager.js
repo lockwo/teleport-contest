@@ -930,7 +930,7 @@ import { COLNO, ROWNO, BOLT_LIM, BUFSZ, isok, STONE, SCORR, SDOOR, ROOM, CORR,
          A_NEUTRAL, A_LAWFUL, A_NONE, OBJ_FLOOR, OBJ_BURIED, ECMD_CANCEL } from './const.js';
 import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
          MAXOCLASSES, DEF_INVISIBLE, S_stone, S_room, S_darkroom, S_corr,
-         S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_ice, S_pool,
+         S_litcorr, S_ndoor, S_altar, S_grave, S_cloud, S_poisoncloud, S_ice, S_pool,
          S_water, S_lava, S_lavawall, S_engroom, S_engrcorr, S_arrow_trap,
          S_fountain, S_sink, S_throne, S_bars, S_air, S_hodbridge, S_vcdbridge,
          S_vodbridge, S_hcdbridge, S_vibrating_square, S_invisible, S_HUMAN,
@@ -946,7 +946,7 @@ import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
     from './display.js';
 import { cansee, couldsee, Blind, Infravision } from './vision.js';
 import { engr_at } from './engrave.js';
-import { altarmask_at } from './dungeon.js';
+import { altarmask_at, In_hell } from './dungeon.js';
 import { is_drawbridge_wall } from './dbridge.js';
 import { t_at, trapname } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
@@ -1109,8 +1109,32 @@ const CURSES_REMAPPED = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
 export function pg_glyph_at(x, y) {
     const loc = game.level?.at(x, y);
     if (!loc) return { kind: 'unexplored', x, y };
+    /* C ref: display.c under_water() -- submerged (not on the Plane of Water) the
+       display buffer is cls()ed and only pool/lava/ice squares in the 3x3 around the
+       hero are redrawn (all of them GLYPH_UNEXPLORED while Blind but the hero's own
+       square), so every other spot's glyph_at() is unexplored. */
+    {
+        const u = game.u;
+        if (u?.uinwater && !u.uswallow && !Is_waterlevel(u.uz)
+            && !pg_iflags().terrainmode && !pg_u_at(x, y)) {
+            const near = Math.max(Math.abs(x - u.ux), Math.abs(y - u.uy)) <= 1;
+            if (!near || !(pg_is_pool(x, y) || pg_is_lava(x, y) || loc.typ === ICE)
+                || Blind())
+                return { kind: 'unexplored', sym: ' ', x, y };
+        }
+    }
+    /* C ref: display.c newsym()/show_region() -- a visible gas cloud is drawn with
+       show_glyph() over whatever lies there (the hero included), so glyph_at() is
+       S_poisoncloud or S_cloud until the square is redrawn (loc.disp_region). */
+    if (loc.disp_region)
+        return { kind: 'cmap', sym: loc.disp_ch ?? ' ',
+                 cmap: loc.disp_region === 'poison' ? S_poisoncloud : S_cloud, x, y };
     const sym = (loc.disp_ch != null) ? loc.disp_ch : ' ';
     if (loc.invisMon && sym === DEF_INVISIBLE) return { kind: 'invisible', sym, x, y };
+    /* display.c display_warning(): gbuf holds the warning glyph for a sensed
+       monster, even on a never-seen spot (lookat names def_warnsyms[]) */
+    if (loc.disp_warning && def_warnsyms[Number(sym)])
+        return { kind: 'warning', warnindx: Number(sym), sym, x, y };
     if (pg_u_at(x, y) && canspotself())
         return { kind: 'monster', mon: null, isyou: true, sym, x, y };
     /* a hallucinated statue is displayed as a (random) monster glyph; with no
@@ -1526,6 +1550,14 @@ function pg_remembered_glyph(x, y) {
             return { kind: 'object', obj: null, otyp,
                      corpsenm: mimic_obj_corpsenm(mtmp), sym: rg.ch, x, y };
     }
+    // C ref: display.c map_object(): levl[x][y].glyph is the object glyph last
+    // mapped there (a pile's top object at the time it was seen), whatever lies
+    // on the square now.  remember_bg() keeps that object type in rg.objotyp; a
+    // gas cloud over the square stops newsym() from refreshing the memory, so the
+    // heuristics below (re-deriving from today's floor pile) can disagree with it.
+    if (rg.objotyp)
+        return { kind: 'object', obj: null, otyp: rg.objotyp,
+                 corpsenm: rg.corpsenm, sym: rg.ch, x, y };
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
@@ -1993,7 +2025,7 @@ export function add_cmap_descr(found, idx, glyph, article, cc, x_str, prefix,
     return found;
 }
 /* dungeon.h In_hell(&u.uz) */
-function pg_Inhell() { return game.u?.uz?.dnum === (game.dungeon_topology?.d_hell_dnum ?? -1); }
+function pg_Inhell() { return In_hell(game.u?.uz); }
 
 // C ref: pager.c:1247 do_screen_description(cc, looked, sym, out_str,
 // &firstmatch, &for_supplement) — the whole "^ a trap or a doorway ..." /

@@ -274,7 +274,12 @@ function createObject(cx, cy, name, opts = {}) {
         const pm = name_to_pmidx(opts.montype);
         if (pm >= 0) set_corpsenm(otmp, pm);
     }
-    if (opts.quan != null) otmp.quan = opts.quan;
+    // C ref: sp_lev.c create_object(): `if (o->quan > 0 && objects[].oc_merge)
+    // { otmp->quan = o->quan; otmp->owt = weight(otmp); }`.
+    if (opts.quan > 0 && (objects[otyp]?.flags & 32 /*F_MERGE*/)) {
+        otmp.quan = opts.quan;
+        otmp.owt = weight(otmp);
+    }
     // Place the object on the floor (so it renders & joins fobj).
     if (cx != null && cy != null) {
         const { x, y } = A(cx, cy);

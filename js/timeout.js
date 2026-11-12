@@ -23,7 +23,8 @@ import { heal_legs } from './trap.js';
 import { exercise, stone_luck } from './attrib.js';
 import { A_CON, is_pool, is_ice, is_pool_or_lava } from './const.js';
 import { nomul, stop_occupation } from './hack.js';
-import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer } from './mkobj.js';
+import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer,
+         obj_timer, obj_timer_list, set_obj_timer_list } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters, status_hold, You_feel } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
@@ -2022,8 +2023,8 @@ export async function end_burn(obj, timer_attached) {
         del_light_source(LS_OBJECT, obj);
         obj.lamplit = 0;
         if (obj.where === OBJ_INVENT) await update_inventory();
-    } else if (obj.timer?.action === BURN_OBJECT) {
-        const expire_time = obj.timer.when;
+    } else if (obj_timer(obj, BURN_OBJECT)) {
+        const expire_time = obj_timer(obj, BURN_OBJECT).when;
         stop_object_timer(obj, BURN_OBJECT);
         await cleanup_burn(_obj_to_any(obj), expire_time);
     } else {
@@ -2263,12 +2264,12 @@ function _object_timer_queue() {
         for (const obj of list) {
             if (!obj || seen.has(obj)) continue;
             seen.add(obj);
-            if (obj.timed && obj.timer) {
+            for (const t of obj_timer_list(obj)) {
                 timers.push({
-                    timeout: obj.timer.when,
-                    tid: obj.timer.tid,
+                    timeout: t.when,
+                    tid: t.tid,
                     kind: TIMER_OBJECT,
-                    func_index: obj.timer.action,
+                    func_index: t.action,
                     arg: { a_void: obj },
                 });
             }
@@ -2624,8 +2625,7 @@ export async function start_timer(when, kind, func_index, arg) {
 
     /* fail if <arg> already has a <func_index> timer running */
     if (kind === TIMER_OBJECT) {
-        const t = arg.a_obj.timed && arg.a_obj.timer;
-        if (t && t.action === func_index) {
+        if (obj_timer(arg.a_obj, func_index)) {
             await impossible('Attempted to start duplicate '
                              + `${timeout_funcs[func_index]?.name} timer, aborted.`);
             return false;
@@ -2663,8 +2663,7 @@ export async function start_timer(when, kind, func_index, arg) {
 // silently instead of via the async impossible().
 export function start_timer_sync(when, kind, func_index, arg) {
     if (kind === TIMER_OBJECT) {
-        const t = arg.a_obj.timed && arg.a_obj.timer;
-        if (t && t.action === func_index) return false;
+        if (obj_timer(arg.a_obj, func_index)) return false;
         return start_object_timer(when, func_index, arg.a_obj);
     }
     for (let dup = timer_base; dup; dup = dup.next)
@@ -2682,10 +2681,11 @@ export function start_timer_sync(when, kind, func_index, arg) {
 // remaining until it would have gone off, 0 if there was no such timer.
 export async function stop_timer(func_index, arg) {
     const obj = arg.a_obj;
-    if (obj && obj.timed && obj.timer && obj.timer.action === func_index) {
+    const ot = obj ? obj_timer(obj, func_index) : null;
+    if (ot) {
         /* the per-object record (see start_timer above) */
-        const timeout = obj.timer.when;
-        clear_object_timer(obj);
+        const timeout = ot.when;
+        stop_object_timer(obj, func_index);
         const cleanup_func = timeout_funcs[func_index]?.cleanup;
         if (cleanup_func) await cleanup_func(arg, timeout);
         return timeout - (game.moves | 0);
@@ -2706,11 +2706,11 @@ export async function stop_timer(func_index, arg) {
 // C ref: timeout.c:2323 peek_timer(type, arg) — the ABSOLUTE expiry turn.  Note
 // that C does not check `kind` here, only func_index and the arg identity.
 export function peek_timer(type, arg) {
-    /* object timers live on the object itself (mkobj.js start_timer/obj.timer),
+    /* object timers live on the object itself (mkobj.js start_timer/obj.timers),
        not in timer_base */
     const o = arg?.a_void;
-    if (o && typeof o === 'object' && o.timed && o.timer && o.timer.action === type)
-        return o.timer.when;
+    const ot = (o && typeof o === 'object') ? obj_timer(o, type) : null;
+    if (ot) return ot.when;
     for (let curr = timer_base; curr; curr = curr.next)
         if (curr.func_index === type && curr.arg.a_void === arg.a_void)
             return curr.timeout;
@@ -2718,22 +2718,19 @@ export function peek_timer(type, arg) {
 }
 
 // C ref: timeout.c:2338 obj_move_timers(src, dest) — reassign every timer from
-// src to dest, leaving src untimed.  Object timers are the per-object record
-// (see start_timer), so the record changes hands.
+// src to dest, leaving src untimed.  Object timers are the per-object records
+// (see start_timer), so the records change hands.
 export function obj_move_timers(src, dest) {
-    if (src.timed && src.timer) {
-        dest.timer = src.timer;
-        dest.timed = true;
-    }
-    src.timed = false;
-    delete src.timer;
+    const list = obj_timer_list(src);
+    if (list.length) set_obj_timer_list(dest, [...obj_timer_list(dest), ...list]);
+    set_obj_timer_list(src, []);
 }
 
-// C ref: timeout.c:2358 obj_split_timers(src, dest) — duplicate src's timer
-// onto dest, same expiry turn.
+// C ref: timeout.c:2358 obj_split_timers(src, dest) — duplicate each of src's
+// timers onto dest, same expiry turn.
 export function obj_split_timers(src, dest) {
-    if (src.timed && src.timer)
-        start_object_timer(src.timer.when - (game.moves | 0), src.timer.action, dest);
+    for (const t of obj_timer_list(src))
+        start_object_timer(t.when - (game.moves | 0), t.action, dest);
 }
 
 // C ref: timeout.c:2376 obj_stop_timers(obj) — stop every timer attached to
@@ -2751,14 +2748,14 @@ export async function obj_stop_timers(obj) {
             prev = curr;
         }
     }
-    /* the per-object timer record (mkobj.js start_timer) lives on obj itself */
-    if (obj.timer) {
-        const cleanup_func = timeout_funcs[obj.timer.action]?.cleanup;
-        const expire = obj.timer.when;
-        clear_object_timer(obj);
-        if (cleanup_func) await cleanup_func(_obj_to_any(obj), expire);
+    /* the per-object timer records (mkobj.js start_timer) live on obj itself */
+    for (const t of obj_timer_list(obj)) {
+        const cleanup_func = timeout_funcs[t.action]?.cleanup;
+        stop_object_timer(obj, t.action);
+        if (cleanup_func) await cleanup_func(_obj_to_any(obj), t.when);
     }
     obj.timed = 0;
+    delete obj.timers;
 }
 
 // C ref: timeout.c:2403 obj_has_timer(object, timer_type).

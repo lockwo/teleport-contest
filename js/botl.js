@@ -213,8 +213,6 @@ function stripchars(strip, orig) {
     for (const c of String(orig ?? '')) if (!strip.includes(c)) out += c;
     return out;
 }
-/* C ref: hacklib.c trimspaces() — strip leading and trailing blanks/tabs. */
-function trimspaces(s) { return String(s ?? '').replace(/^[ \t]+|[ \t]+$/g, ''); }
 /* C ref: hacklib.c nowrap_add(a, i) — saturating add. */
 function nowrap_add(a, i) {
     return (a > 0 && i > 0 && a + i <= 0) ? LARGEST_INT * 65536 : a + i;
@@ -389,11 +387,18 @@ function In_tutorial(uz) {
 function Is_knox(uz) { return !!Is_knox_level(uz); }
 function dname_of(uz) { return game.dungeons?.[uz?.dnum]?.dname || ''; }
 
+/* C reads gu.urole directly; the port's game.urole.rank is only the cached
+   current title ({ m }, see exper.js update_rank), so the nine-entry rank
+   table comes from roles[]. */
+function urole_roles_entry() {
+    const monnum = game.urole?.mnum;
+    return roles.find((r) => r.mnum === monnum) || game.urole || roles[0];
+}
+
 /* C ref: botl.c rank() — rank_of(u.ulevel, Role_switch, flags.female). */
 function rank_of_hero() {
     const u = game.u || {};
-    const monnum = game.urole?.mnum;
-    let role = roles.find((r) => r.mnum === monnum) || game.urole || roles[0];
+    let role = urole_roles_entry();
     for (let i = xlev_to_rank_p(u.ulevel || 1); i >= 0; i--) {
         if (game.flags?.female && role.rank?.[i]?.f) return role.rank[i].f;
         if (role.rank?.[i]?.m) return role.rank[i].m;
@@ -652,7 +657,7 @@ export function title_to_mon(str, out) {
    pads with it.  Stored on gm to mirror C's gm.mrank_sz. */
 export function max_rank_sz() {
     let maxr = 0;
-    const urole = game.urole || roles[0];
+    const urole = urole_roles_entry();
     for (let i = 0; i < 9; i++) {
         let r;
         if (urole.rank?.[i]?.m && (r = urole.rank[i].m.length) > maxr) maxr = r;
@@ -1304,7 +1309,12 @@ export function bot_via_windowport() {
     condtests[bl_stun].test = Stunned();
     condtests[bl_submerged].test = Underwater();
     test_if_enabled(bl_elf_iron, false);   /* C ref: botl.c:1204 hardcoded */
-    test_if_enabled(bl_bareh, !game.uarmg && !game.uwep);
+    /* the first bot() of a game ran before u_init_inventory(), so nothing was
+       wielded or worn; allmain.js status_hold('bareh') keeps that published
+       value until the next real bot() */
+    test_if_enabled(bl_bareh, (game._statusHold && 'bareh' in game._statusHold)
+                              ? !!game._statusHold.bareh
+                              : (!game.uarmg && !game.uwep));
     test_if_enabled(bl_icy, game.level?.locations?.[u.ux]?.[u.uy]?.typ === ICE);
     test_if_enabled(bl_slippery, Glib());
     test_if_enabled(bl_woundedl, Wounded_legs());
@@ -2487,7 +2497,10 @@ export function status_hilite2str(hl) {
         else if (hl.rel === EQ_VALUE) behavebuf = 'changed';
         break;
     case BL_TH_VAL_ABSOLUTE:
-        if (op) behavebuf = `${op}${hl.value.a_int}`;
+        /* C prints value.a_int, the low 32 bits of the union; for the ANY_LONG
+           fields (gold, time, experience) the port stores a_long instead */
+        if (op) behavebuf = `${op}${initblstats[hl.fld].anytype === ANY_LONG
+                                    ? hl.value.a_long | 0 : hl.value.a_int}`;
         break;
     case BL_TH_TEXTMATCH:
         if (hl.rel === TXT_VALUE && hl.textmatch && hl.textmatch[0])
@@ -2941,38 +2954,48 @@ export async function status_hilite_menu_add(origfld) {
             inbuf = (inbuf == null) ? '\x1b' : inbuf;
             if (inbuf === '' || inbuf[0] === '\x1b') { state = 'choose_behavior'; continue; }
 
-            inbuf = trimspaces(inbuf);
-            let inp = inbuf;
-            if (!inp) { state = 'choose_behavior'; continue; }
+            /* C works in place on inbuf: trimspaces() drops trailing blanks
+               only (leading ones stay in the buffer), comparison characters
+               are overwritten with blanks, and a '%' is cut off then put back
+               later, so the text shown by the up/down menu is the edited
+               buffer, not the user's raw entry. */
+            let b = inbuf.replace(/[ \t]+$/, '');
+            let inp = 0;
+            while (b[inp] === ' ' || b[inp] === '\t') inp++;
+            let numstart = inp;
+            if (inp >= b.length) { state = 'choose_behavior'; continue; }
 
             /* allow "<50%", ">50", "50", "<=50%", ">=50", "=50" */
-            let ni = 0;
-            if (inp[0] === '>' || inp[0] === '<' || inp[0] === '=') {
-                lt_gt_eq = (inp[0] === '>') ? ((inp[1] === '=') ? GE_VALUE : GT_VALUE)
-                         : (inp[0] === '<') ? ((inp[1] === '=') ? LE_VALUE : LT_VALUE)
+            const setb = (i, ch) => { b = b.slice(0, i) + ch + b.slice(i + 1); };
+            if (b[inp] === '>' || b[inp] === '<' || b[inp] === '=') {
+                lt_gt_eq = (b[inp] === '>') ? ((b[inp + 1] === '=') ? GE_VALUE : GT_VALUE)
+                         : (b[inp] === '<') ? ((b[inp + 1] === '=') ? LE_VALUE : LT_VALUE)
                            : EQ_VALUE;
-                ni++;
-                if (lt_gt_eq === GE_VALUE || lt_gt_eq === LE_VALUE) ni++;
+                setb(inp++, ' ');
+                numstart++;
+                if (lt_gt_eq === GE_VALUE || lt_gt_eq === LE_VALUE) {
+                    setb(inp++, ' ');
+                    numstart++;
+                }
             }
-            let numstart = ni;
-            if (inp[ni] === '-') {
-                ni++;
-            } else if (inp[ni] === '+') {
-                ni++;
+            if (b[inp] === '-') {
+                inp++;
+            } else if (b[inp] === '+') {
+                setb(inp++, ' ');
                 numstart++;
             }
-            while (ni < inp.length && digit(inp[ni])) { ni++; gotnum = true; }
-            if (inp[ni] === '%') {
+            while (inp < b.length && digit(b[inp])) { inp++; gotnum = true; }
+            if (b[inp] === '%') {
                 if (!percent) {
                     await hl_pline('Not expecting a percentage.');
                     state = 'choose_behavior';
                     continue;
                 }
                 /* strip '%' [this accepts trailing junk!] */
-                inp = inp.slice(0, ni);
-            } else if (ni < inp.length) {
+                b = b.slice(0, inp);
+            } else if (inp < b.length) {
                 /* some random characters */
-                await hl_pline(`"${inp.slice(ni)}" is not a recognized number.`);
+                await hl_pline(`"${b.slice(inp)}" is not a recognized number.`);
                 state = 'choose_value';
                 continue;
             }
@@ -2989,8 +3012,7 @@ export async function status_hilite_menu_add(origfld) {
 
             const aval = zeroany();
             dt = percent ? ANY_INT : initblstats[fld].anytype;
-            let numtext = inp.slice(numstart);
-            s_to_anything(aval, numtext, dt);
+            s_to_anything(aval, b.slice(numstart), dt);
 
             if (percent) {
                 val = aval.a_int;
@@ -3012,7 +3034,7 @@ export async function status_hilite_menu_add(origfld) {
                     continue;
                 }
                 /* restore suffix for use in color and attribute prompts */
-                if (!numtext.includes('%')) numtext += '%';
+                if (!b.slice(numstart).includes('%')) b += '%';
             } else if (dt === ANY_INT
                        && (aval.a_int < ((fld === BL_AC) ? -128
                                          : (lt_gt_eq === GT_VALUE) ? -1
@@ -3031,9 +3053,11 @@ export async function status_hilite_menu_add(origfld) {
             if (lt_gt_eq === NO_LTEQGT) {
                 const ltok = (dt === ANY_INT) ? (aval.a_int > 0 || fld === BL_AC)
                                               : (aval.a_long > 0);
-                const gtok = (!percent || aval.a_long < 100);
+                /* C reads aval.a_long, which overlays the 32-bit a_int that
+                   s_to_anything() filled for a percentage value */
+                const gtok = (!percent || (aval.a_int >>> 0) < 100);
 
-                lt_gt_eq = await status_hilite_menu_choose_updownboth(fld, inbuf,
+                lt_gt_eq = await status_hilite_menu_choose_updownboth(fld, b,
                                                                      ltok, gtok);
                 if (lt_gt_eq === NO_LTEQGT) { state = 'choose_value'; continue; }
             }
@@ -3042,6 +3066,7 @@ export async function status_hilite_menu_add(origfld) {
                         : (lt_gt_eq === GT_VALUE) ? 'more than ' : '';
             const post = (lt_gt_eq === LE_VALUE) ? ' or less'
                          : (lt_gt_eq === GE_VALUE) ? ' or more' : '';
+            const numtext = b.slice(numstart);
             colorqry = `Choose a color for when ${initblstats[fld].fldname}`
                      + ` is ${pre}${numtext}${post}:`;
             attrqry = `Choose attribute for when ${initblstats[fld].fldname}`
@@ -3100,7 +3125,7 @@ export async function status_hilite_menu_add(origfld) {
                 hilite.textmatch = hutxt[rv];
             } else if (fld === BL_TITLE) {
                 const rolelist = [];
-                const urole = game.urole || roles[0];
+                const urole = urole_roles_entry();
                 for (let i = 0; i < 9; i++) {
                     const mbuf = `"${urole.rank?.[i]?.m}"`;
                     let fbuf = '', obuf = '';

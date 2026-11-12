@@ -61,7 +61,7 @@ import { mflags1_of, mflags2_of, msound_of, M1_NOHEAD, M1_AMORPHOUS,
          M2_PNAME, M2_HUMAN, M2_DEMON, M2_MALE, M2_FEMALE } from './monflags_data.js';
 import { Invis } from './monmove.js';
 import { can_chant } from './mondata.js';
-import { hcolor } from './do_name.js';
+import { hcolor, mhim } from './do_name.js';
 import { NUMMONS } from './disprng.js';
 
 import { ECMD_OK, ECMD_TIME, ECMD_CANCEL } from './const.js';
@@ -1302,6 +1302,7 @@ export function unpunish() {
         u.uball = null;
     }
 }
+hooks.unpunish = unpunish; // invent.js delallobj() (import cycle)
 
 // C ref: read.c:1850 seffect_fire(sobjp) — the scroll of fire / fireball spell.
 // The damage roll happens BEFORE useup(), and explode() applies it; the blessed
@@ -2519,8 +2520,8 @@ export async function drop_boulder_on_monster(x, y, confused, byu) {
                     await You_hear('a clanging sound.');
                 if (mdmg > 2) mdmg = 2;
             } else if (canspotmon(mtmp)) {
-                // C: pline("%s's %s does not protect %s.", Monnam, xname, mhim)
-                await pline_append(`${Monnam(mtmp)}'s ${xname(helmet)} does not protect it.`);
+                // C read.c:2381 drop_boulder_on_monster(): mhim(mtmp)
+                await pline_append(`${Monnam(mtmp)}'s ${xname(helmet)} does not protect ${mhim(mtmp)}.`);
             }
         }
         mtmp.mhp = (mtmp.mhp || 0) - mdmg;

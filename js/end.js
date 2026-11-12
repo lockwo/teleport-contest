@@ -553,7 +553,8 @@ async function done(how) {
             game._killer_name = '';
         }
         if (is_wizard()) {
-            await d.update_topl('You are a very tricky wizard, it seems.');
+            /* the recorder suppresses the "You are a very tricky wizard, it
+               seems." message for deterministic replay (end.c done()) */
             killer.format = KILLED_BY_AN; /* reset to 0 */
             return;
         }
@@ -820,10 +821,22 @@ async function done(how) {
                 const { discover_object } = await import('./o_init.js');
                 const inv = Array.isArray(game.invent) ? game.invent
                     : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
-                for (const obj of inv) {
+                for (const obj of [...inv]) {
                     discover_object(obj.otyp, true, true, false);
                     obj.known = obj.bknown = obj.dknown = obj.rknown = 1;
                     invmod.set_cknown_lknown(obj);
+                    // C ref: end.c really_done():1266 — resolve Schroedinger's
+                    // cat now (rn2(2) in observe_quantum_cat, no cat made); a
+                    // live cat leaves the box flag set and is scored later.
+                    if (SchroedingersBox(obj)) {
+                        if (!game._schroedingers_cat) {
+                            const { observe_quantum_cat } = await import('./pickup.js');
+                            await observe_quantum_cat(obj, false, false);
+                            if (SchroedingersBox(obj)) game._schroedingers_cat = true;
+                        } else {
+                            obj.spe = 0;
+                        }
+                    }
                 }
             }
             const clean = await disclose(how, taken);
@@ -1140,7 +1153,7 @@ async function disclose(how, taken = false) {
             if (c === 'q') stopprint = true;
             // 'a' with more than one type first asks for a sort order via
             // set_vanq_order() inside list_vanquished().
-            if (c === 'y' || c === 'a') await insight.list_vanquished(c, false);
+            if (c === 'y' || c === 'a') await insight.list_vanquished(c, q.ask, true);
         }
     }
     if (!stopprint) {
@@ -1256,6 +1269,16 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     }
     let urexp = (u?.urexp || 0) + tmp + valuables_pts;
     for (const pet of pets) urexp += pet.mhp;
+    // C ref: end.c:1463 — a live Schroedinger's cat adds d(adj_lev(housecat), 8).
+    const schroedcat = (how === ESCAPED || how === ASCENDED) && !!game._schroedingers_cat;
+    if (schroedcat) {
+        const { adj_lev, monster_by_pmidx } = await import('./makemon.js');
+        const { d } = await import('./rng.js');
+        let cat = null;
+        for (let i = 0; !cat && i < 400; i++)
+            if (monster_by_pmidx(i)?.name === 'housecat') cat = monster_by_pmidx(i);
+        urexp += d(adj_lev(cat), 8);
+    }
     u.urexp = urexp; // really_done() persists this before topten() reads it
 
     const deathText = game._killer_name || DEATHS[how] || 'died';
@@ -1285,11 +1308,13 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         lines.push(`${Goodbye(game.urole?.mnum)} ${plname} the ${roleName}...`);
         lines.push('');
         if (how === ESCAPED || how === ASCENDED) {
-            if (pets.length) {
+            const withcat = pets.length || schroedcat;
+            if (withcat) {
                 const { mon_nam } = await import('./do_name.js');
-                lines.push(`You${pets.map((pet) => ` and ${mon_nam(pet)}`).join('')}`);
+                lines.push(`You${pets.map((pet) => ` and ${mon_nam(pet)}`).join('')}`
+                    + (schroedcat ? " and Schroedinger's cat" : ''));
             }
-            lines.push(`${pets.length ? '' : 'You '}${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
+            lines.push(`${withcat ? '' : 'You '}${how === ASCENDED ? 'went to your reward' : 'escaped from the dungeon'}`
                 + ` with ${urexp} point${plur(urexp)},`);
             // C ref: end.c:1481-1519 — list artifacts, then the valuables
             // (gems first, then amulets), greatest count first.

@@ -112,7 +112,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
     priest.ispriest = 1;
     priest.isminion = 0;
     priest.msleeping = 0;
-    // set_malign(priest) writes only mtmp->malign; no RNG.
+    set_malign(priest); /* mpeaceful may have changed */
 
     // C ref: priest.c:260-263 — the high priest of Moloch holds the real
     // Amulet.  mongets() -> mksobj(AMULET_OF_YENDOR, TRUE, FALSE) is three

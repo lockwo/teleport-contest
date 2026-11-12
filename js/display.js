@@ -50,7 +50,7 @@ import { random_monster, random_object, rn2_on_display_rng, NUMMONS } from './di
 import { objects, fobj } from './mkobj.js';
 import { engr_at, can_reach_floor } from './engrave.js';
 import { depth as depth_of_level } from './hacklib.js';
-import { visible_region_at, show_region } from './region.js';
+import { visible_region_at, show_region, region_is_poisoncloud } from './region.js';
 import { ACCESSIBLE, IS_ROOM, IS_POOL, IS_LAVA, IS_OBSTRUCTED, IS_DOOR, In_sokoban,
          Is_knox_level, Is_rogue_level, OBJ_FREE, OBJ_FLOOR } from './const.js';
 import { In_hell, endgamelevelname } from './dungeon.js';
@@ -491,6 +491,9 @@ function show_bg_glyph(x, y, bg) {
         /* the DISPLAYED glyph is an object glyph (gbuf), whether or not the
            level keeps hero memory (Plane of Water: hero_memory off) */
         loc.disp_objotyp = bg.objotyp || 0;
+        /* a hallucinated object is drawn with a random object glyph
+           (random_obj_to_glyph), still glyph_is_object() in gbuf: its otyp */
+        loc.disp_hallucobj = bg.hallucotyp ?? 0;
     }
 }
 
@@ -1476,12 +1479,14 @@ function bw_terrain_attr(loc, x, y, ch) {
 // gas cloud is drawn over the map square by show_glyph() ONLY (levl[x][y].glyph
 // keeps the underlying memory), so glyph_at() is S_cloud/S_poisoncloud until the
 // square is next redrawn.  `disp_region` records that the displayed glyph is the
-// region's, since '#' alone cannot tell a cloud from a corridor.
+// region's, since '#' alone cannot tell a cloud from a corridor, and which cmap
+// it is ('poison' for S_poisoncloud, 'vapor' for S_cloud): without color both
+// draw as the same '#'.
 function show_region_glyph(x, y, reg) {
     const rg = show_region(reg);
     show_glyph_cell(x, y, rg.ch, rg.color, false);
     const loc = game.level?.at(x, y);
-    if (loc) loc.disp_region = true;
+    if (loc) loc.disp_region = region_is_poisoncloud(reg) ? 'poison' : 'vapor';
 }
 
 // ── show_glyph_cell ──
@@ -1541,6 +1546,7 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.disp_hstatue = false;
     loc.disp_trap = false;
     loc.disp_objotyp = 0;
+    loc.disp_hallucobj = 0;
     loc.disp_region = false;
     loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
@@ -2570,7 +2576,8 @@ function display_sensed_monster(x, y, mon, see_it) {
 // newsym_core() and the announcement is queued (newsym() is synchronous; the
 // queue drains before the next topline message or key read, as notice_mon's).
 const DISP_FIELDS = ['disp_ch', 'disp_color', 'disp_decgfx', 'disp_attr', 'disp_dark',
-                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap', 'disp_objotyp', 'disp_region'];
+                     'disp_monster', 'disp_warning', 'disp_hstatue', 'disp_trap', 'disp_objotyp',
+                     'disp_hallucobj', 'disp_region'];
 function snapDisp(loc) {
     const s = {};
     for (const f of DISP_FIELDS) s[f] = loc[f];
@@ -2827,8 +2834,12 @@ function newsym_core(x, y) {
             // back, losing one remembered cell per mimic for the rest of the game.
             if (see_it && game.level?.flags?.hero_memory && mimics_an_object(mon)) {
                 const mm = mg.mem || mg;
+                // C ref: display_monster() M_AP_FURNITURE: `levl[x][y].glyph = glyph` is a
+                // cmap glyph, so the disguise is NOT an object memory (objotyp unset):
+                // magic_map_background() overwrites it (glyph_is_cmap) with the real terrain.
                 loc.remembered_glyph = { ch: mm.ch, color: mm.color, decgfx: mm.dec,
-                    objotyp: (mg.mem || mm.hallucotyp != null || M_AP_TYPE(mon) !== M_AP_OBJECT) ? 0 : (mon.mappearance | 0),
+                    objotyp: M_AP_TYPE(mon) !== M_AP_OBJECT ? undefined
+                        : ((mg.mem || mm.hallucotyp != null) ? 0 : (mon.mappearance | 0)),
                     hallucotyp: mm.hallucotyp, corpsenm: mm.corpsenm };
             }
             // Detection reveals a mimic but preserves its visible disguise in map memory.
@@ -3149,9 +3160,11 @@ export function hero_glyph() {
                          attr: female_attr(u.mfemale) };
     }
     // C ref: display.c display_self() — while Upolyd, monnum_to_glyph(u.umonnum)
-    // is shown instead of '@'.
-    if (u?.Upolyd && u.data) {
-        return { ch: u.data.mlet || '@', color: (u.data.mcolor != null) ? u.data.mcolor : CLR_WHITE,
+    // is shown instead of '@'.  mons[u.umonnum], not youmonst.data (u.data):
+    // they differ after nhlua.c nhl_gamestate()'s tutorial restore.
+    const pd = u?.Upolyd ? monster_by_pmidx(u.umonnum) : null;
+    if (pd) {
+        return { ch: pd.mlet || '@', color: (pd.mcolor != null) ? pd.mcolor : CLR_WHITE,
                  attr: female_attr(u.mfemale) };
     }
     // C ref: display.h hero_glyph — with 'showrace' a non-poly'd hero is drawn
@@ -5256,6 +5269,7 @@ async function a11y_location_prefix(msg) {
 export async function verbalize(line) { await pline(`"${line}"`); }
 
 export async function pline(msg, opts = {}) {
+    if (game._pending_impossibles?.length) await flush_impossibles();
     msg = await a11y_location_prefix(msg);
     msg = vpline_clip(msg);
     const suppressHistory = !!opts.suppressHistory;
@@ -5342,6 +5356,18 @@ export async function impossible(msg) {
     if (game.program_state?.in_sanity_check) return;
     await update_topl('Program in disorder!  (Saving and reloading may fix this problem.)');
     await update_topl('Please report these messages to devteam@nethack.org.');
+}
+
+// impossible() is async here, so a SYNC caller (doname()'s unpaid_cost(),
+// addinv_core1()) queues its report.  In C the report is printed while the
+// caller's message is still being built (doname() runs as pline()'s
+// argument), so the next pline()/update_topl() prints the queue first.
+export function queue_impossible(msg) { (game._pending_impossibles ||= []).push(msg); }
+export async function flush_impossibles() {
+    const msgs = game._pending_impossibles;
+    if (!msgs?.length) return;
+    game._pending_impossibles = null;
+    for (const m of msgs) await impossible(m);
 }
 
 // C ref: win/tty/topl.c update_topl():284-297 — word-wrap a topline that is
@@ -5682,6 +5708,7 @@ export function set_msg_mon(mtmp) {
 }
 
 export async function update_topl(bp) {
+    if (game._pending_impossibles?.length) await flush_impossibles();
     bp = await a11y_location_prefix(bp);
     bp = vpline_clip(bp);
     if (msgtype_suppressed(bp)) return;
@@ -6021,7 +6048,8 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
     // custompline(SUPPRESS_HISTORY), whose tty_putstr remember_topl()s the old
     // topline; clean_up: then rewrites gt.toplines as prompt + answer text.
     remember_topl();
-    game._toplines = wrap_topl(full).join('\n'); /* C: update_topl() */
+    /* custompline(SUPPRESS_HISTORY) -> show_topl(): gt.toplines stays "" while the prompt is up */
+    game._toplines = '';
     game._prevmsg = full; /* custompline -> vpline copies the prompt to gp.prevmsg (pline.c:282) */
     let doprev = false;
     const answered = (r) => {
@@ -6105,7 +6133,12 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
             game._toplin = 0;
             return answered(def);
         }
-        const lc = ch.toLowerCase();
+        // C ref: topl.c tty_yn_function() — "normally we force lowercase, but if any
+        // uppercase letters are present in the allowed response, preserve case"
+        // (checked on the whole resp, hidden choices included).  invent.c dotypeinv()
+        // offers B/U/C/X/P that way.
+        const preserve_case = /[A-Z]/.test(resp);
+        const lc = preserve_case ? ch : ch.toLowerCase();
         // C ref: topl.c tty_yn_function():495-545 -- when '#' is an allowed
         // response, '#' or a digit starts a count: the typed digits echo after
         // the prompt until a non-digit ends the number (0 answers 'n', ESC or
@@ -6134,7 +6167,7 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
                 if (z >= 48 && z <= 57) {
                     value = value * 10 + (z - 48);
                     typed += String.fromCharCode(z); n_len++;
-                } else if (z === 121 /* y */ || z === 27 || z === 32 || z === 13 || z === 10) {
+                } else if (z === 121 /* y */ || (z === 89 && !preserve_case) || z === 27 || z === 32 || z === 13 || z === 10) {
                     if (z === 27) value = -1;   /* abort */
                     z = 10;                     /* break */
                 } else if (z === 8 || z === 127) {

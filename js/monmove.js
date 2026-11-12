@@ -2610,7 +2610,8 @@ async function mon_trapeffect_fire_trap(mtmp, trap) {
     if (in_sight) {
         await pline_mon(mtmp, `A tower of flame erupts from the ${
             surface(mtmp.mx, mtmp.my)} under ${mon_nam(mtmp)}!`);
-    } else if (see_it) {
+    } else if (see_it) { /* evidently `mtmp' is invisible */
+        (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my);
         await You_see(`a tower of flame erupt from the ${
             surface(mtmp.mx, mtmp.my)}!`);
     }

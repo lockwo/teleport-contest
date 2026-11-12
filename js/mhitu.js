@@ -1386,7 +1386,12 @@ export async function doseduce(mon) {
             }
             /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
-                const qbuf = `"That ${xname(ring)} looks pretty.  May I have it?"`;
+                /* C ref: mhitu.c doseduce() safe_qbuf(qbuf, "\"That ", " looks pretty.  May I
+                   have it?\"", ring, xname, simpleonames, "ring") */
+                const { safe_qbuf } = await import('./pickup.js');
+                const { simpleonames } = await import('./objnam.js');
+                const qbuf = safe_qbuf('"That ', ' looks pretty.  May I have it?"', ring,
+                                       xname, simpleonames, 'ring');
                 inv.makeknown(RIN_ADORNMENT);
                 if (await y_n(qbuf) === 'n')
                     continue;
@@ -1410,7 +1415,12 @@ export async function doseduce(mon) {
             }
             /* confirmation prompt when charisma is high bypassed if deaf */
             if (!Deaf() && rn2(20) < acurr_eff(A_CHA)) {
-                const qbuf = `"That ${xname(ring)} looks pretty.  Would you wear it for me?"`;
+                /* C ref: mhitu.c doseduce() safe_qbuf(qbuf, "\"That ", " looks pretty.  Would you
+                   wear it for me?\"", ring, xname, simpleonames, "ring") */
+                const { safe_qbuf } = await import('./pickup.js');
+                const { simpleonames } = await import('./objnam.js');
+                const qbuf = safe_qbuf('"That ', ' looks pretty.  Would you wear it for me?"', ring,
+                                       xname, simpleonames, 'ring');
                 inv.makeknown(RIN_ADORNMENT);
                 if (await y_n(qbuf) === 'n')
                     continue;

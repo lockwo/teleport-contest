@@ -609,6 +609,10 @@ export function glyph_at(x, y, remembered = false) {
         const steed = game.u?.usteed;
         const steed_obj_drawn = !!steed && sym !== (steed.data?.mlet ?? '@')
             && (steed.minvent || []).some((o) => object_glyph(o)?.ch === sym);
+        // While Hallucinating, map_object() draws a random object glyph there,
+        // which no real object's glyph need match: still glyph_is_object().
+        if (loc.disp_hallucobj)
+            return { kind: 'object', obj: null, otyp: loc.disp_hallucobj, x, y };
         if (!(og && sym !== '@' && og.ch === sym) && !steed_obj_drawn)
             return { kind: 'monster', mon: null, isyou: true, x, y };
     }
@@ -2186,8 +2190,8 @@ export async function use_crystal_ball(box) {
             break;
         }
         case 3: {
-            const hero_resists_blnd = Blind() || !!u.usleep;
-            if (!hero_resists_blnd) {
+            const { resists_blnd_u } = await import('./mhitu.js');
+            if (!resists_blnd_u()) {
                 await pline(`${Tobjnam_ball(obj, 'damage')} your vision!`);
                 const { make_blinded_hero, BlindedTimeout } = await import('./potion.js');
                 await make_blinded_hero(BlindedTimeout() + impair, false);

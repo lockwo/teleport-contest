@@ -335,6 +335,7 @@ async function newgame_real() {
        ran before u_init_inventory() (no weapon, nothing worn). */
     status_hold('weapon', 'Bare-hnds');
     status_hold('armor', 'Naked');
+    status_hold('bareh', true);
     bot_snapshot(true);
 
     // C ref: allmain.c:817-823 — the OPTIONS=reroll confirm-or-reroll menu,
@@ -1627,11 +1628,9 @@ async function regen_hp(wtcap = 0) {
                    && !Is_waterlevel(u.uz) && !youHaveBreathless()) {
             // C ref: allmain.c:637 — an eel stranded out of water loses hp,
             // similar to monster eels; the rate of loss slows as hp drops.
-            // No current session polymorphs the hero into an eel, so this arm
-            // is unreached, but the guard order (mh>1, !Regeneration, the two
-            // rn2 draws, then the Half_physical_damage odd-turn gate) is kept
-            // exact for when it is.
-            if (u.mh > 1 && !u_can_regen() && rn2(u.mh) > rn2(8)
+            // The guard is plain Regeneration, not U_CAN_REGEN(): a Sleepy
+            // hero who is asleep still rolls rn2(u.mh) and rn2(8) here.
+            if (u.mh > 1 && !Regeneration() && rn2(u.mh) > rn2(8)
                 && (!youHaveHalfPhysicalDamage() || !((game.moves || 0) % 2))) {
                 u.mh -= 1;
                 game.botl = true; // C ref: allmain.c:646-647
@@ -1649,12 +1648,11 @@ async function regen_hp(wtcap = 0) {
     if (!encumbrance_ok && !u_can_regen()) return; // C ref: allmain.c:652
     const con = acurr_eff(A_CON);
     let heal = ((u.ulevel || 1) + con) > rn2(100) ? 1 : 0;
-    // C ref: U_CAN_REGEN() == Regeneration — a worn ring of regeneration grants
-    // an extra +1 heal each turn (so the hero recovers every turn).
+    // C ref: allmain.c:661 U_CAN_REGEN() — Regeneration, or Sleepy and asleep,
+    // grants an extra +1 heal each turn.
     if (u_can_regen()) heal += 1;
     // C ref: allmain.c:663 — a Sleepy hero who is asleep heals one more point
-    // on top of the Regeneration bonus above; never set for the starter
-    // sessions, so this is a documented no-op today.
+    // on top of the U_CAN_REGEN() bonus above.
     if (youHaveSleepy() && u.usleep) heal += 1;
     if (heal) {
         game.botl = true; // C ref: allmain.c:667
@@ -1706,17 +1704,20 @@ async function regen_pw(wtcap = 0) {
     if (u.uen === u.uenmax) await interrupt_multi('You feel full of energy.');
 }
 
-// C ref: youprop.h Regeneration — the hero has the REGENERATION extrinsic.  For
-// the starter sessions this comes only from a worn ring of regeneration
-// (RIN_REGENERATION, otyp 179) on either ring finger.
+// C ref: youprop.h Regeneration — HRegeneration || ERegeneration (a worn ring
+// of regeneration, RIN_REGENERATION otyp 179, on either ring finger, or any
+// other extrinsic source).
 const RIN_REGENERATION_OTYP = 179;
-function u_can_regen() {
+function Regeneration() {
     const g = game;
     return (g.uleft && g.uleft.otyp === RIN_REGENERATION_OTYP)
         || (g.uright && g.uright.otyp === RIN_REGENERATION_OTYP)
         || HRegeneration()
-        || (((g.u?.uprops_extrinsic || {})[57 /* REGENERATION */] | 0) !== 0)
-        || (youHaveSleepy() && !!g.u?.usleep);
+        || (((g.u?.uprops_extrinsic || {})[57 /* REGENERATION */] | 0) !== 0);
+}
+// C ref: allmain.c:621 U_CAN_REGEN() (Regeneration || (Sleepy && u.usleep)).
+function u_can_regen() {
+    return Regeneration() || (youHaveSleepy() && !!game.u?.usleep);
 }
 
 const PM_MONK = 5;

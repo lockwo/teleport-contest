@@ -1567,8 +1567,9 @@ async function surface_dw() {
 // (a cursed secondary weapon still comes off, but that costs no time).
 export async function remarm_swapwep() {
     const cmd = cmdq_pop();
-    const key = (cmd && cmd.typ === 0 /*CMDQ_KEY*/) ? cmd.key : '\0';
-    if (key !== '-' || !game.uswapwep) return ECMD_FAIL;
+    // cmdq_add_key() stores the key as a char code, so compare against '-'.charCodeAt(0)
+    const key = (cmd && cmd.typ === 0 /*CMDQ_KEY*/) ? cmd.key : 0;
+    if (key !== 45 /* '-' */ || !game.uswapwep) return ECMD_FAIL;
     const oldbknown = game.uswapwep.bknown;
     reset_remarm();
     const t = takeoff_ctx();

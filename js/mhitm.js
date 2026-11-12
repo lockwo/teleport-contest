@@ -503,6 +503,11 @@ export async function thrwmmDeps() {
 // ── mhitm.c mdamagem ─────────────────────────────────────────────────────────
 // Applies one successful melee hit's damage.  Returns the M_ATTK_* result.
 async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
+    // C ref: mhitm.c:1023 `pa = magr->data, *pd = mdef->data` -- captured
+    // BEFORE the hit: mondead() reverts a killed shapeshifter to its true form
+    // (set_mon_data(mtmp, &mons[mtmp->cham])), but the AD_DGST digestion arms
+    // and mon_givit() below still see the form that was actually swallowed.
+    const pa = permonst(magr), pd = permonst(mdef);
     // C ref: mhitm.c:1025 — the mhm struct every mhitm_ad_* handler mutates.
     const mhm = {
         damage: d(mattk.damn | 0, mattk.damd | 0),
@@ -516,15 +521,15 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
     // C ref: mhitm.c:1032 — an aggressor that bites a cockatrice (or digests
     // Medusa) without the right protector turns to stone before its own
     // damage lands.  attk_protection() names the slot that would save it.
-    if ((touch_petrifies_mm(permonst(mdef))
-         || (mattk.adtyp === AD_DGST && permonst(mdef)?.name === 'Medusa'))
+    if ((touch_petrifies_mm(pd)
+         || (mattk.adtyp === AD_DGST && pd?.name === 'Medusa'))
         && !resists_ston_mm(magr)) {
         const protector = attk_protection_mm(mattk.aatyp);
         let wornitems = magr.misc_worn_check | 0;
         if (mwep) wornitems |= W_ARMG;          /* wielded weapon == gloves */
         if (protector === 0
             || (protector !== -1 && (wornitems & protector) !== protector)) {
-            if (poly_when_stoned(permonst(magr))) {
+            if (poly_when_stoned(pa)) {
                 const { mon_to_stone } = await import('./mon.js');
                 await mon_to_stone(magr);
                 return M_ATTK_HIT;              /* no damage during the polymorph */
@@ -589,12 +594,11 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
         if (mattk.adtyp === AD_DGST) {
             /* various checks similar to dog_eat and meatobj.
                after monkilled() to provide better message ordering */
-            const pdn = permonst(mdef)?.name;
-            const pan = permonst(magr);
+            const pdn = pd?.name;
             const { NC_SHOW_MSG } = await import('./const.js');
             if ((mdef.cham | 0) >= 0 && mdef.cham != null) {
                 await newcham_wizard_aware(magr, null, NC_SHOW_MSG);
-            } else if (pdn === 'green slime' && !slimeproof(pan)) {
+            } else if (pdn === 'green slime' && !slimeproof(pa)) {
                 await newcham_wizard_aware(magr, monster_by_pmidx(name_to_pmidx('green slime')), NC_SHOW_MSG);
             } else if (pdn === 'wraith') {
                 await grow_up(magr, null);
@@ -605,7 +609,7 @@ async function mdamagem(magr, mdef, mattk, mwep, dieroll) {
                 healmon(magr, magr.mhpmax, 0);
             }
             const { mon_givit } = await import('./mon.js');
-            await mon_givit(magr, permonst(mdef));
+            await mon_givit(magr, pd);
         }
         const grew = await grow_up(magr, mdef);
         return M_ATTK_DEF_DIED | (grew ? 0 : M_ATTK_AGR_DIED);

@@ -676,7 +676,9 @@ async function drop_weapon(alone) {
 export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     const u = game.u;
     u.Upolyd = polyd;
-    const mdat = youmonst_data_pub();
+    /* C: mdat = &mons[u.umonnum]; youmonst_data() reads the youmonst.data
+       mirror (u.data), which this call is about to replace */
+    const mdat = monster_by_pmidx(u.umonnum);
     const was_vampshifter = valid_vampshiftform(u.mcham, mdat?.pmidx);
     // C ref: mondata.c:13 set_mon_data() — leftover movement points are prorated
     // when the new form is SLOWER.  Human->gnome takes u.umovement 12 -> 6, which

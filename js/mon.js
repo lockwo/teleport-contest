@@ -57,7 +57,8 @@ import { NON_PM, LOW_PM, G_GENOD, MON_FLOOR, MON_OFFMAP, MON_DETACH, MON_LIMBO,
     W_SADDLE, DISMOUNT_FELL, MIGR_APPROX_XY, MIGR_RANDOM, POOL, MOAT, LAVAPOOL, LAVAWALL, FOUNTAIN,
     ACCESSIBLE, thats_enough_tries, ismnum, engulfing_u, Has_contents,
     M_AP_TYPE, M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, OBJ_AT, EDOG, MGIVENNAME, has_eshk, has_epri, has_emin,
-    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR, PLNMSG_GROWL } from './const.js';
+    has_egd, has_edog, In_endgame, Is_astralevel, NC_SHOW_MSG, OBJ_FREE, OBJ_FLOOR, PLNMSG_GROWL,
+    LARGEST_INT } from './const.js';
 import { M1_NOHEAD, M2_UNDEAD, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC,
     M2_SHAPESHIFTER } from './monflags_data.js';
 import { AT_GAZE, AT_EXPL, AT_BOOM, mattk_of } from './monattk_data.js';
@@ -1600,13 +1601,12 @@ export function can_carry(mtmp, otmp) {
     if (notake(mdat)) return 0;
     if (!can_touch_safely(mtmp, otmp)) return 0;
 
-    // C ref: mon.c:2002 —
-    //   iquan = (otmp->quan > (long) LARGEST_INT)
-    //              ? 20000 + rn2(LARGEST_INT - 20000 + 1) : (int) otmp->quan;
-    // The overflow arm DRAWS, but it needs a stack of more than 2^31-1 items;
-    // nothing in this port (or in C's own object creation) makes one, so the
-    // plain cast is exact and the missing rn2 is unreachable, not skipped.
-    const iquan = otmp.quan || 1;
+    // C ref: mon.c can_carry — LARGEST_INT is 32767 (global.h), not INT_MAX, so a
+    // gold/gem stack of more than 32767 draws 20000 + rn2(12768) and the monster
+    // gets the partial count.
+    const iquan = (otmp.quan > LARGEST_INT)
+        ? 20000 + rn2(LARGEST_INT - 20000 + 1)
+        : (otmp.quan || 1);
 
     if (iquan > 1) {
         let glomper = false;

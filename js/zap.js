@@ -465,7 +465,7 @@ async function do_osshock(obj) {
         // splitobj(obj, rnd(quan - 1)): the rnd() plus nextoid()'s trailing
         // next_ident() (an rnd(2) in this port) are both drawn here, and only
         // the split-off part is destroyed — the remainder survives on the floor.
-        target = splitobj(obj, rnd(quan - 1));
+        target = splitobj(obj, quan > 32767 /* LARGEST_INT */ ? rnd(30000) : rnd(quan - 1));
     }
     /* appropriately add damage to bill */
     const shk = await import('./shk.js');

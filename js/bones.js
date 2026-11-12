@@ -430,7 +430,7 @@ async function bones_getlev(blob) {
             const shift = (o, frozen) => {
                 if (!o) return;
                 if (!frozen && !age_is_relative(o)) o.age = (o.age | 0) + elapsed;
-                if (o.timed && o.timer) o.timer.when += elapsed;
+                if (o.timed && Array.isArray(o.timers)) for (const t of o.timers) t.when += elapsed;
                 if (Array.isArray(o.cobj)) for (const c of o.cobj) shift(c, o.otyp === ICE_BOX);
             };
             for (const o of level.objects || []) shift(o, false);

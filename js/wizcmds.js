@@ -262,9 +262,17 @@ export async function wiz_makemap() {
         const was_in_W_tower = In_W_tower(u.ux, u.uy, u.uz);
 
         await makemap_prepost(true, was_in_W_tower);
+        const prevLevel = game.level;
         /* create a new level; goto_level()-only side effects (Astral's
            guardian angel, Ft.Ludios' alarm) don't occur for replacements */
         await mklev();
+        // C ref: cmd.c makemap_prepost() savelev(FREEING) ->
+        // save_light_sources(RANGE_LEVEL) frees only the level's own light
+        // sources; RANGE_GLOBAL ones (the hero's own light as a light-emitting
+        // form, carried lit lamps) stay on the one chain and shine on the
+        // replacement level.  The per-level lists here need them moved.
+        const { carry_global_light_sources } = await import('./light.js');
+        carry_global_light_sources(prevLevel);
         // C ref: mklev.c:1404-1420,1561-1570 — finish the deferred room fill
         // and mineralization before makemap_prepost places the hero and pets.
         const { makelevel_fill_and_mineralize } = await import('./mklev.js');
