@@ -5,7 +5,7 @@
 // Real mklev.js handles level generation for screen parity.
 
 import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero } from './youprop.js';
-import { ROLE_PM_BASE, FAST } from './const.js';
+import { ROLE_PM_BASE, FAST, COLNO } from './const.js';
 import { NetHackPanic, NetHackGameOver } from './panic.js';
 import { game, hooks, svc_context_run } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
@@ -13,7 +13,7 @@ import { nhgetch } from './input.js';
 import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs, makelevel_fill_and_mineralize } from './mklev.js';
 import { makedog } from './dog.js';
-import { rhack, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
+import { rhack, domove, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
 import { Hallucination_u, docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
@@ -1969,7 +1969,13 @@ export async function moveloop_input_redraw() {
         if (dsp.have_warning() || Unblind_telepat() || warn_of_mon || any_visible_region())
             await dsp.see_monsters();
     }
-    if (g.vision_full_recalc) vision_recalc(0);
+    if (g.vision_full_recalc) {
+        vision_recalc(0);
+        /* C ref: vision_recalc() tail notice_all_mons() pline()s synchronously,
+           before this input's key read and before any monster of the NEXT turn
+           moves, so the --More-- it may raise pages over this map. */
+        if (g._noticeQueue?.length) await hooks.flushNotices();
+    }
 }
 
 // C ref: allmain.c:558 — `if (gl.luacore && nhcb_counts[NHCB_END_TURN])
@@ -1989,6 +1995,11 @@ export async function end_turn_callbacks() {
     if (g.vision_full_recalc) {
         vision_recalc(0);
         g.vision_full_recalc = 0;
+        /* C ref: vision_recalc() tail notice_all_mons() pline()s here, after the
+           hero's action and BEFORE movemon() runs: "You see a newt." pages
+           (--More--) over the map as the action left it, not after the pets and
+           monsters of the following turn have moved. */
+        if (g._noticeQueue?.length) await hooks.flushNotices();
     }
     if (!g._tutorial_active) return;
     await (await import('./nhlua.js')).tutorial_turn();
@@ -2079,6 +2090,7 @@ async function moveloop_core_body() {
     if (g.vision_full_recalc && (!g.context?.mv || Blind())) {
         vision_recalc(0);
         g.vision_full_recalc = 0;
+        if (g._noticeQueue?.length) await hooks.flushNotices();
     }
     // C ref: allmain.c:473-479 — `if (disp.botl || disp.botlx) { bot();
     // curs_on_u(); } else if (disp.time_botl) { timebot(); curs_on_u(); }`;
@@ -2110,7 +2122,7 @@ async function moveloop_core_body() {
     // occupation turn never flushes either: the pet's moves from a dig/eat turn
     // stay unflushed until a pline (a trap found mid-dig raises its --More--
     // over the PREVIOUS frame's pet position).
-    if (!((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run)
+    if (!((g.multi ?? 0) > 0 && !g.context?.run)
         && (g.multi ?? 0) >= 0
         && !(await import('./hack.js')).occupation_active())
         await flush_screen(1);
@@ -2412,11 +2424,28 @@ async function moveloop_core_body() {
     // arm was missing, so a counted rest ran exactly ONE turn and the leftover
     // count sat in gm.multi while the loop went back to the keyboard: seed4500
     // reached its 4th #pray at turn 156 where C reaches it at 195.
-    // lookaround() is a no-op here — C returns from it immediately unless
-    // svc.context.run is set, and a counted non-movement command leaves it 0 —
-    // so the run/travel (svc.context.mv) half stays with hack.js's own loop.
+    // lookaround() is a no-op for a counted non-movement command (C returns
+    // from it immediately unless svc.context.run is set).  A counted WALK is
+    // different: cmd.c rhack():3786-3788 arms `if (gm.multi) svc.context.mv =
+    // TRUE; domove();`, so the later steps are this loop's context.mv arm
+    // (allmain.c:515-526), which calls domove() directly instead of rhack().
+    // The input redraw above is then skipped (a hallucinating hero's
+    // see_monsters()/see_objects() display-rng draws), context.nopick from an
+    // 'm' prefix persists, and rhack()'s per-command resets never run.
     let cmd_key = 0;
-    if ((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run && g._cmd_key) {
+    let countedWalk = false;
+    if ((g.multi ?? 0) > 0 && g.context?.mv && !g.context?.run) {
+        const H = await import('./hack.js');
+        await H.lookaround();
+        await H.runmode_delay_output();
+        if (!g.multi) {
+            g.context.move = 0;
+            return;
+        }
+        if (g.multi < COLNO && !(g.multi -= 1)) H.end_running(true);
+        g.context.move = 1;
+        countedWalk = true;
+    } else if ((g.multi ?? 0) > 0 && !g.context?.mv && !g.context?.run && g._cmd_key) {
         // C ref: allmain.c:502-503 — `lookaround(); runmode_delay_output();`
         // precedes the repeat; on every 7th turn (RUN_LEAP) its curs_on_u() is
         // flush_screen(1), which paints the previous repeat's map changes
@@ -2431,7 +2460,8 @@ async function moveloop_core_body() {
     // (i.e. after its own nhgetch returns), so a free-action message such as
     // dolook's "You see no objects here." survives onto the captured screen.
     g._end_turn_cb_ran = false;
-    await rhack(cmd_key);
+    if (countedWalk) await domove(g.u.dx, g.u.dy, false);
+    else await rhack(cmd_key);
 
     // C ref: allmain.c moveloop_core():538 — `if (u.utotype) deferred_goto();`
     // fires immediately after rhack() returns.  doread() runs its own copy for

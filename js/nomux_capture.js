@@ -91,7 +91,12 @@ function inkedCells(term) {
     for (let r = 0; r < 24; r++) {
         const row = term.grid[r];
         if (!row) continue;
-        for (let c = 0; c < 80; c++) if (row[c] && (row[c].ch !== ' ' || row[c].attr)) n++;
+        for (let c = 0; c < 80; c++) {
+            const cell = row[c];
+            if (cell && (cell.ch !== ' ' || cell.attr
+                || (cell.color != null && cell.color !== NO_COLOR && cell.color !== 7)
+                || cellFlags(cell))) n++;
+        }
     }
     return n;
 }
@@ -220,9 +225,11 @@ export class NomuxRecorder {
             this.wrInt(RAW_ROW, raw.row);
             this.wrInt(RAW_COL, raw.col);
         }
-        // The longest cell serialization is far under 20 bytes, so a screen
-        // with fewer than OUT_SIZE/20 inked cells cannot reach the statics.
-        const ser = inkedCells(term) < 300 ? null : captureScreen(term);
+        // Even spaces can emit SGR/SO/SI.  A cell needs at most 22 bytes:
+        // one glyph, three 5-byte attribute changes, a 5-byte color and SO/SI.
+        // Include all 1920 plain spaces and 7 row-ending bytes per row, so
+        // fewer than 190 inked/styled cells cannot reach OUT_SIZE.
+        const ser = inkedCells(term) < 190 ? null : captureScreen(term);
         const L = ser ? ser.length : 0;
         const overflow = L >= OUT_SIZE + 2;
         if (overflow) {

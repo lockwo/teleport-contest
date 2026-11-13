@@ -10,7 +10,7 @@
 // potion_dip() (the carried-potion dip).  Where C's call would draw, the roll is
 // spent in place; where it would not, only the framing message is emitted.
 
-import { game, register_process_static } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
@@ -2087,6 +2087,10 @@ export async function toggle_blindness() {
     game.botl = true;               /* status conditions need update */
     game.vision_full_recalc = 1;    /* vision has changed */
     vision_recalc(0);
+    /* C ref: vision_recalc() tail notice_all_mons() pline()s synchronously, so
+       "You see your kitten." pages (--More--) right here, over the map and status
+       as of this instant: before the pet's move and the turn's regeneration. */
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     if (Blind_telepat() || Infravision() || Stinging) {
         const { see_monsters } = await import('./display.js');
         await see_monsters();       /* also counts EWarn_of_mon monsters */

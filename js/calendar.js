@@ -131,20 +131,24 @@ function mktime_c(y, mon, mday, hour, min, sec) {
 // moves the moon phase / Friday-13th day and midnight()/night()).
 const RECORDER_TM_ISDST = 1;
 
-// mktime() with tm_isdst == RECORDER_TM_ISDST: when the target instant is not
-// in the requested DST state, libc shifts by the DST/standard offset delta.
+// mktime() with tm_isdst == RECORDER_TM_ISDST: libc reads the broken-down
+// fields as local time in that DST state, i.e. at the zone's DST (or standard)
+// UTC offset, whatever the stamp's own date says.  That also covers the two
+// edge cases a "target instant is in the other state, shift by the delta"
+// rule gets wrong: the spring-forward gap (a 02:30 stamp on the changeover
+// Sunday exists in neither state, but reading it as DST gives 01:30 standard
+// time) and the repeated fall-back hour (the first, DST, occurrence).
 function mktime_recorder(y, mon, mday, hour, min, sec) {
-    const t = mktime_c(y, mon, mday, hour, min, sec);
     const off = (ms) => {
         const f = tz_fields(ms);
         return (Date.UTC(f.y, f.mon, f.mday, f.hour, f.min, f.sec) - ms) / 1000;
     };
     const jan = off(Date.UTC(y, 0, 1)), jul = off(Date.UTC(y, 6, 1));
     const std = Math.min(jan, jul), dst = Math.max(jan, jul);
-    if (std === dst) return t;                      /* zone without DST */
-    const isdst = off(t * 1000) === dst ? 1 : 0;
-    if (isdst === RECORDER_TM_ISDST) return t;
-    return t + (RECORDER_TM_ISDST ? std - dst : dst - std);
+    if (std === dst)                                /* zone without DST */
+        return mktime_c(y, mon, mday, hour, min, sec);
+    return Math.trunc(Date.UTC(y, mon, mday, hour, min, sec) / 1000)
+           - (RECORDER_TM_ISDST ? dst : std);
 }
 
 // C ref: hacklib.c-adjacent libc atoi() — leading digits only, 0 otherwise.

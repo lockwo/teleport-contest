@@ -221,7 +221,7 @@ import { See_invisible_hero, Blind_telepat, Levitation_hero, Half_physical_damag
 // this edge cannot reorder anything observable.
 import { attacktype_fordmg, attacktype, AT_ENGL, AD_DGST } from './monattk_data.js';
 import { mungspaces } from './hacklib.js';
-import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
+import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds, hide_unhide_msgtypes, MSGTYP_MASK_REP_SHOW } from './options.js';
 
 const LEASH = 236;
 const CANDELABRUM_OF_INVOCATION = 262;
@@ -1453,6 +1453,10 @@ export function inv_weight() {
     let wt = 0;
     const ydata = youmonst_data();
     for (const otmp of inventoryArray()) {
+        // C ref: invent.c addinv(): addinv_core1() -> artitouch() runs while the
+        // new object is still OBJ_FREE, so any bot() during its quest text sees
+        // the weight without it (flush_artitouch() runs after our insertion).
+        if (otmp === game._artitouchFree) continue;
         if (otmp.oclass === COIN_CLASS)
             wt += Math.trunc(((otmp.quan || 0) + 50) / 100);
         else if (otmp.otyp !== BOULDER || !throws_rocks_flag(ydata))
@@ -2300,7 +2304,7 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
         }
     }
     let page = 0;
-    let count = 0;
+    let count = 0n;
     let counting = false;
     let searchBlankTop = false;
     let paintedPage = -1;
@@ -2353,43 +2357,46 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             for (const { item } of entries) {
                 if (item?.gsel !== ch) continue;
                 item.selected = !item.selected;
-                item.count = item.selected && counting ? count : -1;
+                item.count = item.selected && counting ? Number(count) : -1;
             }
-            count = 0;
+            count = 0n;
             counting = false;
             if (how === PICK_ONE) return true;
             continue;
         }
         if (ch >= '0' && ch <= '9') {
-            count = count * 10 + (c - 48);
-            counting = count > 0;
+            // C AppendLongDigit uses a signed 64-bit long. Keep the prefix
+            // exact until it is consumed, then expose the usual numeric count.
+            count = count * 10n + BigInt(c - 48);
+            if (count > 0x7fffffffffffffffn) count = 0n;
+            counting = count > 0n;
             continue;
         }
         if (hit) {
             if (how === PICK_NONE) {
                 /* C ref: wintty.c process_menu_window() default: PICK_NONE rings the
                    bell and breaks; the loop top then drops the pending count. */
-                count = 0;
+                count = 0n;
                 counting = false;
                 continue;
             }
-            hit.item.selected = counting ? count > 0 : !hit.item.selected;
-            hit.item.count = counting ? count : -1;
-            count = 0;
+            hit.item.selected = counting ? count > 0n : !hit.item.selected;
+            hit.item.count = counting ? Number(count) : -1;
+            count = 0n;
             counting = false;
             if (how === PICK_ONE) return true;
             continue;
         }
         if (xwaitforspace_note(c) === 27 && counting) {
-            count = 0;
+            count = 0n;
             counting = false;
             continue;
         }
         if (c === 27) return false;                                    // cancel
         // xwaitforspace rejects unknown keys without ending a numeric count.
         if (c !== 13 && c !== 10 && !' ><^|:,.\\~-@'.includes(ch)) continue;
-        const useCount = counting, useN = count;   // MENU_SEARCH still sees the pending count
-        count = 0;
+        const useCount = counting, useN = Number(count); // MENU_SEARCH still sees the pending count
+        count = 0n;
         counting = false;
         if (c === 13 || c === 10) return true;                         // commit
         if (ch === ' ' || ch === '>') {
@@ -2766,8 +2773,8 @@ export async function dismiss_invent_screen(textWindow = false) {
     // recorded the sweep via status_sweep) is what wrecks the status lines'
     // tails; flush_screen's normal full redraw resets that for plain gameplay,
     // so restore it here for the very next corner window to inherit.
-    const carriedCuts = status_cuts_snapshot();
-    const sweptBot = status_sweep_reached();
+    let carriedCuts = status_cuts_snapshot();
+    let sweptBot = status_sweep_reached();
     // C ref: win/tty/wintty.c erase_menu_or_text(): docrt() ONLY for a
     // full-width window (offx == 0).  A corner menu is erased with
     // docorner(), which just row_refresh()es the glyph buffer back over the
@@ -2775,7 +2782,20 @@ export async function dismiss_invent_screen(textWindow = false) {
     // no display-RNG draws.  Running docrt() here re-rolled three hallucinated
     // glyphs on every menu dismissal and desynchronised the display stream
     // (and with it every later hallucinated colour) from C's.
-    if (!(game._menuOffx > 0)) await docrt();
+    if (!(game._menuOffx > 0)) {
+        const blankedBefore = !!game._statusClsBlank;
+        await docrt();
+        /* erase_menu_or_text() is `docrt(); flush_screen(1);`.  Unless select_menu() holds
+           bot disabled, that bot() repaints the whole status window (dropping the sweep of
+           the window just torn down), e.g. after an auto-disclosed tall inventory left it
+           blank and the attributes window was torn down next. */
+        if ((blankedBefore || carriedCuts) && !game.bot_disabled && !game._staleFrame
+            && !game._screenBlank) {
+            await flush_screen(1);
+            carriedCuts = null;
+            sweptBot = false;
+        }
+    }
     // The same docorner() replays the glyph buffer, which a held goto_level()
     // frame (hero died on arrival) has not yet flushed to the physical screen.
     else commit_stale_glyph_buffer(Math.max(0, game._menuOffx - 1), (game._sweepLastRow ?? 0) + 1);
@@ -3349,7 +3369,8 @@ export async function flush_artitouch() {
     if (obj) {
         game._pending_artitouch = null;
         observe_object(obj);
-        await artitouch(obj);
+        game._artitouchFree = obj;
+        try { await artitouch(obj); } finally { game._artitouchFree = null; }
     }
     await flush_addinv_plines();
 }
@@ -5331,7 +5352,7 @@ export { inv_cnt };
 // same prinv line, else a verbose "You are now wearing ..." sentence.  prinv()
 // leaves the formatted line in game._pending_message, which the next flush picks
 // up — exactly the deferred behavior the wield path relies on.
-async function on_msg_accessory(obj) {
+export async function on_msg_accessory(obj) {
     const m = obj.owornmask || 0;
     // Rings/amulets always show the prinv add-to-invent line; a worn tool
     // (blindfold/lenses/towel) shows it only when !verbose.  flags.verbose
@@ -9024,11 +9045,11 @@ async function tty_select_menu(items, plan, how) {
         }
     };
 
-    let counting = false, count = 0, reset_count = true, cancelled = false;
+    let counting = false, count = 0n, reset_count = true, cancelled = false;
     let curr_page = 0, painted_page = -1;
     let searchBlankTop = false;
     for (;;) {
-        if (reset_count) { counting = false; count = 0; } else reset_count = true;
+        if (reset_count) { counting = false; count = 0n; } else reset_count = true;
         const onpage = page_items(curr_page);
         if (painted_page !== curr_page) {
             searchBlankTop = false;
@@ -9081,8 +9102,9 @@ async function tty_select_menu(items, plan, how) {
 
         if (!explicit && ch >= '0' && ch <= '9') {
             if (!counting && gacc.has(ch)) { invert_all(ch, -1); continue; }
-            count = count * 10 + (key - 48);
-            if (count !== 0) { counting = true; reset_count = false; }
+            count = count * 10n + BigInt(key - 48);
+            if (count > 0x7fffffffffffffffn) continue; // AppendLongDigit overflow resets next iteration
+            if (count !== 0n) { counting = true; reset_count = false; }
             continue;
         }
         if (xwaitforspace_note(key) === 27) {           /* ESC: cancel, or just stop a count */
@@ -9151,7 +9173,7 @@ async function tty_select_menu(items, plan, how) {
                 let one = false;
                 for (const it of items) {
                     if (!pmatchi(searchbuf, `${it.selector} - ${it.desc}`)) continue;
-                    toggle_menu_curr(it, counting, count);
+                    toggle_menu_curr(it, counting, Number(count));
                     if (how === PICK_ONE) { one = true; break; }
                 }
                 if (one) break;
@@ -9160,7 +9182,7 @@ async function tty_select_menu(items, plan, how) {
         }
         if (how === PICK_NONE) continue;
         if (gacc.has(ch)) {
-            invert_all(ch, counting ? count : -1);
+            invert_all(ch, counting ? Number(count) : -1);
             if (how === PICK_ONE) break;
             continue;
         }
@@ -9168,7 +9190,7 @@ async function tty_select_menu(items, plan, how) {
            so an invlet that only appears on another page is not accepted. */
         const hit = onpage.find((it) => it.selector === ch);
         if (hit) {
-            toggle_menu_curr(hit, counting, count);
+            toggle_menu_curr(hit, counting, Number(count));
             if (how === PICK_ONE) break;
         }
         /* anything else: rejected (tty_nhbell), the menu stays up */
@@ -12939,9 +12961,9 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
 
     // C ref: invent.c look_here():4162 — before ANYTHING else (even the blind
     // grope), a gas cloud and/or an already-seen trap under the hero is
-    // announced.  Only the trap half is modelled: visible_region_at() (gas
-    // clouds) has no port.  Without this a ':' on a trap with objects on it
-    // went straight to the "Things that are here:" window and lost C's
+    // announced (visible_region_at() for gas/vapor clouds, then the trap).
+    // Without the trap half a ':' on a trap with objects on it went straight to
+    // the "Things that are here:" window and lost C's
     // "There is an arrow trap here.--More--" frame.
     if (!skip_objects) {
         const { visible_region_at, reg_damg } = await import('./region.js');
@@ -13198,8 +13220,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
 }
 
 export async function dolook() {
-    // C ref: invent.c dolook() — a bare pass-through to look_here(), which
-    // already prints everything for every branch (no-object/pile-summary via
+    // C ref: invent.c dolook() — look_here(), which already prints everything for every branch (no-object/pile-summary via
     // update_topl, single-object via game._pending_message flushed below,
     // multi-object "Things that are here:" menu via its own overlay with
     // _pending_message explicitly set to '' by renderThingsHereMenu()). A
@@ -13207,7 +13228,11 @@ export async function dolook() {
     // _pending_message was falsy wrongly re-printed that line after the
     // multi-object menu too, even though objects WERE here (shown in the
     // menu, matching a blank row 0 in the real recording).
+    // MSGTYPE={norep,hide} must not interfere with the feedback from #look.
+    hide_unhide_msgtypes(true, MSGTYP_MASK_REP_SHOW);
     const res = await look_here(0, 0);
+    /* restore normal msgtype handling */
+    hide_unhide_msgtypes(false, MSGTYP_MASK_REP_SHOW);
     if (game._pending_message) await renderMessageOnMap(game._pending_message);
     return res;
 }

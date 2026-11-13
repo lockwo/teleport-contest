@@ -1090,6 +1090,10 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     delete game._screenBlank;
     delete game._screenBlankCorner;
     thaw_screen_for_level_change();
+    // C ref: do.c goto_level():1839,1971-1972.  Arrival vision is drawn
+    // before its messages, but monster announcements wait until after them.
+    const { notice_mon_off, notice_mon_on, notice_all_mons } = await import('./hack.js');
+    notice_mon_off();
     await docrt();
     await flush_screen(-1);
 
@@ -1265,6 +1269,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // see: save_engravings() points each engraving's text back at its buffer
     // start, so the next wipe_engr_at() sees the leading blanks again.
     await (await import('./engrave.js')).save_engravings(WRITING);
+    notice_mon_on();
+    await notice_all_mons(true);
 
     // C ref: do.c:1974 print_level_annotation().
     const annotation = game._level_annotations?.[ledger];
@@ -1814,15 +1820,22 @@ export async function level_tele(readLevel, immediate = false) {
         const { done, DIED: DEATH } = await import('./end.js');
         await done(DEATH);
         escape_by_flying = 'find yourself back on the surface';
+        /* C: no disp.botl is raised here, so the status still reads the
+           surface/heaven level that done()/savelife() last published */
+        (await import('./display.js')).status_hold_leveldesc();
         u.uz = lsav; /* restore u.uz so escape code works */
     }
 
     /* calls done(ESCAPED) if newlevel==0 */
     if (escape_by_flying) {
         await pline(`You ${escape_by_flying}.`);
-        const { done, ESCAPED } = await import('./end.js');
-        await done(ESCAPED);
-        return;
+        /* [dlevel used to be set to 1, but it doesn't make sense to
+            teleport out of the dungeon and float or fly down to the
+            surface but then actually arrive back inside the dungeon]
+           goto_level() calls done(ESCAPED) for ledger_no() <= 0, at the end
+           of the turn like any other level teleport (so level_tele_trap()'s
+           own "You feel disoriented." and confusion still happen first) */
+        newlevel = { dnum: 0, dlevel: 0 };
     } else if (force_dest) {
         /* wizard mode menu; no further validation needed */
     } else {

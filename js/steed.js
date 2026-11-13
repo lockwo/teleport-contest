@@ -25,7 +25,7 @@ import { Fumbling_hero, Wounded_legs_hero, Stunned_hero, Stone_resistance_hero, 
 import { rnd, rn1, rn2 } from './rng.js';
 import { nhgetch } from './input.js';
 import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
-         canseemon_shared, y_n } from './display.js';
+         canseemon_shared, y_n, status_hold } from './display.js';
 import { m_at, Hallucination_u } from './display.js';
 import { DEADMONSTER } from './mon.js';
 import { killed } from './uhitm.js';
@@ -236,6 +236,7 @@ export async function mount_steed(mtmp, force) {
     {
         /* C ref: steed.c:372-377 — riding blocks stealth unless hero+steed fly */
         const was_stealthy = !!Stealth();
+        if (!game.botl && !game.botlx) status_hold('ride', false);
         u.usteed = mtmp;
         steed_vs_stealth();
         if (was_stealthy && !Stealth())
@@ -468,6 +469,7 @@ export async function dismount_steed(reason) {
     {
         /* C ref: steed.c:659-665 — dismounting lifts the riding stealth block */
         const was_stealthy = !!Stealth();
+        if (!game.botl && !game.botlx) status_hold('ride', true);
         u.usteed = null;
         u.ugallop = 0;
         steed_vs_stealth();

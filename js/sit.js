@@ -5,7 +5,7 @@
 import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft, Flying_hero, Deaf_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd, rn1, d } from './rng.js';
-import { update_topl, vobj_at, Hallucination_u, You_feel, map_background, newsym, y_n } from './display.js';
+import { update_topl, vobj_at, Hallucination_u, You_feel, map_background, newsym, y_n, hold_botl_hp } from './display.js';
 import { cansee, Blind } from './vision.js';
 import { adjattrib, change_luck } from './attrib.js';
 import { mflags2_of, M2_PRINCE } from './monflags_data.js';
@@ -436,6 +436,8 @@ async function throne_sit_effect() {
         }
         case 4: {
             await You_feel('much, much better!');
+            // C sets disp.botl after the cures, so their messages still show the old HP.
+            hold_botl_hp();
             if (u.Upolyd || u.mtimedone) {
                 if (u.mh >= (u.mhmax - 5)) u.mhmax += 4;
                 u.mh = u.mhmax;

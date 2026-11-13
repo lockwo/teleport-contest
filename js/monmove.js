@@ -5752,10 +5752,13 @@ async function mpickstuff(mtmp) {
             // names `otmp` (the post-split remainder), not otmp3.  update_topl,
             // not pline: C leaves toplin == NEED_MORE so a following message
             // ("You feel less confused now.") shares the line.
-            if (cansee(mtmp.mx, mtmp.my) && game.flags?.verbose) {
+            if (cansee(mtmp.mx, mtmp.my)) {
                 const { distant_doname, distant_far } = await import('./invent.js');
                 const _far = distant_far(otmp, mtmp.mx, mtmp.my);
-                await pline_mon(mtmp, `${Monnam(mtmp)} picks up ${distant_doname(otmp, _far)}.`);
+                // C observes nearby objects even when the pickup message is disabled.
+                const name = distant_doname(otmp, _far);
+                if (game.flags?.verbose)
+                    await pline_mon(mtmp, `${Monnam(mtmp)} picks up ${name}.`);
             }
             // C ref: mon.c:1901 obj_extract_self(otmp3) -> remove_object(), which
             // also re-checks boulder vision: a giant lifting a boulder stops it

@@ -904,7 +904,7 @@ import { money_cnt_invent, hidden_gold, costly_spot } from './shk.js';
 import { ansimpleoname,
          carrying, near_capacity, body_part, youmonst_data_pub, Hate_silver } from './invent.js';
 import { makeplural } from './plural.js';
-import { y_monnam, a_monnam } from './do_name.js';
+import { x_monnam, a_monnam, ARTICLE_YOUR, ARTICLE_THE, SUPPRESS_SADDLE, SUPPRESS_HALLUCINATION } from './do_name.js';
 import { mungspaces } from './hacklib.js';
 
 // ── window shim (wintty.h / C's ge.en_win) ──────────────────────────────────
@@ -1870,11 +1870,9 @@ export function status_enlightenment(mode, final) {
                          set; we want to ignore steed in that situation */
                       && !(final === ENL_GAMEOVERDEAD
                            && game.killer?.name === 'riding accident'));
-    /* C: x_monnam(u.usteed, mtame ? ARTICLE_YOUR : ARTICLE_THE, NULL,
-       SUPPRESS_SADDLE | SUPPRESS_HALLUCINATION, FALSE).  do_name.js keeps
-       x_monnam() module-private (js/do_name.js:27) and its y_monnam() is the
-       same call minus SUPPRESS_HALLUCINATION; the fix is to export x_monnam. */
-    const steedname = (!Riding ? null : y_monnam(u.usteed));
+    const steedname = (!Riding ? null
+        : x_monnam(u.usteed, u.usteed.mtame ? ARTICLE_YOUR : ARTICLE_THE, null,
+                   SUPPRESS_SADDLE | SUPPRESS_HALLUCINATION, false));
 
     /*\
      * Status (many are abbreviated on bottom line; others are or

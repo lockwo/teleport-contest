@@ -15,7 +15,7 @@ import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, verbalize } from './display.js';
 import { See_invisible_hero } from './youprop.js';
-import { Blind_telepat, Levitation_hero, Flying_hero, Half_spell_damage_hero, Wounded_legs_hero } from './youprop.js';
+import { Blind_telepat, Levitation_hero, Flying_hero, Half_spell_damage_hero, Wounded_legs_hero, Unchanging_hero } from './youprop.js';
 import { align_gname, align_str, roles, aligns } from './role.js';
 import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER, is_pool_or_lava } from './const.js';
 import { make_confused, make_sick, make_stoned, make_slimed } from './potion.js';
@@ -115,7 +115,7 @@ function ugod_is_angry() {
 
 // C ref: angrygods()'s gy.youmonst.data->mlet == S_HUMAN test.
 function heroIsHuman() {
-    return !game.u?.Upolyd;
+    return !game.u?.Upolyd || game.u.data?.mcls === 53 /* S_HUMAN */;
 }
 
 function ABASE(i) { return game.u?.acurr?.a?.[i] ?? 0; }
@@ -246,7 +246,7 @@ function in_trouble() {
     if (uprop('Sick')) return TROUBLE_SICK;
     if ((u.uhs | 0) >= WEAK) return TROUBLE_STARVING;
     if (region_danger()) return TROUBLE_REGION;
-    if ((!u.Upolyd || uprop('Unchanging')) && critically_low_hp(false))
+    if ((!u.Upolyd || Unchanging_hero()) && critically_low_hp(false))
         return TROUBLE_HIT;
     if ((u.ulycn ?? -1) >= 0) return TROUBLE_LYCANTHROPE;
     if ((_inv?.near_capacity() | 0) >= EXT_ENCUMBER && AMAX(A_STR) - ABASE(A_STR) > 3)
@@ -260,7 +260,7 @@ function in_trouble() {
     if (nohands_hero() || !freehand_hero()) {
         if (_inv?.welded(game.uwep)) return TROUBLE_UNUSEABLE_HANDS;
         if (u.Upolyd && nohands_hero()
-            && (!uprop('Unchanging') || ((() => { const oc = unchanger_hero(); return oc && oc.cursed; })())))
+            && (!Unchanging_hero() || ((() => { const oc = unchanger_hero(); return oc && oc.cursed; })())))
             return TROUBLE_UNUSEABLE_HANDS;
     }
     if (game.ublindf && game.ublindf.otyp !== 232 /* LENSES: Blindfolded */
@@ -784,7 +784,7 @@ async function fix_worst_trouble(trouble) {
         if (_inv?.welded(game.uwep)) {
             await fix_curse_trouble(game.uwep, null);
         } else if (u.Upolyd && nohands_hero()) {
-            if (!uprop('Unchanging')) {
+            if (!Unchanging_hero()) {
                 await update_topl('Your shape becomes uncertain.');
                 const { rehumanize } = await import('./polyself.js');
                 await rehumanize(); /* "You return to <normal> form." */
@@ -1112,18 +1112,19 @@ async function pleased(g_align) {
         case 5: {
             await godvoice(u.ualign?.type ?? 0, 'Thou hast pleased me with thy progress,');
             const giftMsg = (what) => update_topl(`"and thus I grant thee the gift of ${what}!"`);
-            if (!(HProp_pr('HTelepat') & INTRINSIC)) {
+            const innate = innate_intrinsics();
+            if (!innate.has('HTelepat') && !(HProp_pr('HTelepat') & INTRINSIC)) {
                 setHProp_pr('HTelepat', (HProp_pr('HTelepat') | 0) | FROMOUTSIDE);
                 await giftMsg('Telepathy');
                 if (Blind()) await see_monsters();
-            } else if (!(HProp_pr('HFast') & INTRINSIC)) {
+            } else if (!innate.has('HFast') && !(HProp_pr('HFast') & INTRINSIC)) {
                 setHProp_pr('HFast', (HProp_pr('HFast') | 0) | FROMOUTSIDE);
                 await giftMsg('Speed');
-            } else if (!(HProp_pr('HStealth') & INTRINSIC)) {
+            } else if (!innate.has('HStealth') && !(HProp_pr('HStealth') & INTRINSIC)) {
                 setHProp_pr('HStealth', (HProp_pr('HStealth') | 0) | FROMOUTSIDE);
                 await giftMsg('Stealth');
             } else {
-                if (!(HProp_pr('HProtection') & INTRINSIC)) {
+                if (!innate.has('HProtection') && !(HProp_pr('HProtection') & INTRINSIC)) {
                     setHProp_pr('HProtection', (HProp_pr('HProtection') | 0) | FROMOUTSIDE);
                     if (!u.ublessed) u.ublessed = rn1(3, 2);
                 } else {

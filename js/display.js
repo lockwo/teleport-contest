@@ -189,7 +189,7 @@ export function object_glyph(otmp) {
     // Statues display as the petrified monster's class symbol.
     if (otmp.otyp === STATUE_OTYP) {
         const mon = monster_by_pmidx(otmp.corpsenm);
-        const sym = mon?.mlet || oc_sym(ROCK_CLASS);
+        const sym = mon ? mlet_sym(mon, oc_sym(ROCK_CLASS)) : oc_sym(ROCK_CLASS);
         // C ref: display.c GLYPH_STATUE_* branch — obj_color(STATUE) = CLR_WHITE.
         return { ch: sym, color: CLR_WHITE, dec: false, corpsenm: otmp.corpsenm,
                  female: (otmp.spe & 0x03) === 1 /* CORPSTAT_FEMALE */ };
@@ -242,7 +242,7 @@ function random_obj_glyph() {
 function halluc_statue_glyph() {
     const mon = monster_by_pmidx(random_monster());
     rn2_on_display_rng(2);
-    return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false, hstatue: true };
+    return { ch: mlet_sym(mon, 'x'), color: mon?.mcolor ?? NO_COLOR, dec: false, hstatue: true };
 }
 
 // C ref: display.h obj_to_glyph(obj, rn2_on_display_rng) as passed to
@@ -327,7 +327,7 @@ export function tmp_at_flash_cell(glyph, tethered = false, always = false) {
 // Hallucinating.
 export function youmonst_glyph_cell(form, female) {
     const mon = Hallucination_u() ? monster_by_pmidx(random_monster()) : form;
-    return { ch: mon?.mlet || 'x', color: (mon?.mcolor != null) ? mon.mcolor : NO_COLOR,
+    return { ch: mlet_sym(mon, 'x'), color: (mon?.mcolor != null) ? mon.mcolor : NO_COLOR,
              dec: false, attr: female_attr(female) };
 }
 
@@ -336,7 +336,7 @@ export function youmonst_glyph_cell(form, female) {
 // random species.
 function halluc_mon_glyph() {
     const mon = monster_by_pmidx(random_monster());
-    return { ch: mon?.mlet || 'x', color: mon?.mcolor ?? NO_COLOR, dec: false };
+    return { ch: mlet_sym(mon, 'x'), color: mon?.mcolor ?? NO_COLOR, dec: false };
 }
 
 // C ref: display.c map_object + see_nearby_objects — an undescribed potion/
@@ -570,14 +570,14 @@ function monster_glyph(mon, reveal = false) {
     // monnum_to_glyph(what_mon(mappearance), gender).
     if (apt === M_AP_MONSTER && mon.mappearance != null) {
         const md = monster_by_pmidx(mon.mappearance | 0);
-        if (md) return { ch: md.mlet || 'x',
+        if (md) return { ch: mlet_sym(md, 'x'),
                          color: (md.mcolor != null) ? md.mcolor : NO_COLOR, dec: false,
                          female: !!mon.female };
     }
     if (apt === M_AP_OBJECT && mon.mappearance != null)
         return mimic_object_glyph(mon).glyph;
     const d = mon.data || {};
-    const sym = human_sym(d.mlet || 'x');
+    const sym = mlet_sym(d, 'x');
     const color = (d.mcolor != null) ? d.mcolor : NO_COLOR;
     return { ch: sym, color, dec: false, female: !!mon.female };
 }
@@ -624,7 +624,7 @@ function worm_tail_glyph() {
         _worm_tail_data = (idx != null && idx >= 0) ? monster_by_pmidx(idx) : null;
     }
     const d = _worm_tail_data || {};
-    return { ch: d.mlet || '~',
+    return { ch: mlet_sym(d, '~'),
              color: (d.mcolor != null) ? d.mcolor : CLR_BROWN, dec: false };
 }
 
@@ -1019,8 +1019,18 @@ const _WALL_NAME = {
     [S_blcorn]: 'S_blcorn', [S_brcorn]: 'S_brcorn', [S_crwall]: 'S_crwall', [S_tuwall]: 'S_tuwall',
     [S_tdwall]: 'S_tdwall', [S_tlwall]: 'S_tlwall', [S_trwall]: 'S_trwall',
 };
+// C ref: display.c clear_glyph_buffer()/show_glyph(GLYPH_UNEXPLORED) — the
+// S_unexplored symbol (blank unless SYMBOLS=S_unexplored:c).
+function unexplored_ch() {
+    return symOverrideChar('S_unexplored') || ' ';
+}
+// C ref: display.c back_to_glyph S_stone — the seen-but-solid cell, which
+// SYMBOLS=S_stone:c may draw as something other than a blank.
+function stone_glyph() {
+    return { ch: symOverrideChar('S_stone') || ' ', color: NO_COLOR, dec: false };
+}
 function wall_cmap_glyph(idx) {
-    if (idx === S_stone || idx == null) return { ch: ' ', color: NO_COLOR, dec: false };
+    if (idx === S_stone || idx == null) return stone_glyph();
     const ov = symOverrideChar(_WALL_NAME[idx]);
     if (ov) return { ch: ov, color: wall_cmap_color(), dec: false, wall: true };
     // C ref: dat/symbols plain changes only the nine corner/junction walls.
@@ -1158,9 +1168,26 @@ export function symsetHighByte(name) {
 // recorder's terminal: the cell keeps whatever it showed before.
 const NUL_CELL = '\x00';
 
-// C ref: symbols.c — a symset may replace the S_human monster-class symbol.
-function human_sym(ch) {
-    return ch === '@' ? (symOverrideChar('S_human', true) ?? ch) : ch;
+// C ref: symbols.c update_ov_primary_symset() — SYMBOLS=S_<CLASS>:c replaces the
+// showsyms[] character of a whole monster class (def_monsyms), and a symset may
+// replace S_human.  `d` is a mons[] record: `mlet` the default class char,
+// `mcls` the class index.
+const MCLS_SYMNAME = `S_ANT S_BLOB S_COCKATRICE S_DOG S_EYE S_FELINE S_GREMLIN
+S_HUMANOID S_IMP S_JELLY S_KOBOLD S_LEPRECHAUN S_MIMIC S_NYMPH S_ORC S_PIERCER
+S_QUADRUPED S_RODENT S_SPIDER S_TRAPPER S_UNICORN S_VORTEX S_WORM S_XAN
+S_LIGHT S_ZRUTY S_ANGEL S_BAT S_CENTAUR S_DRAGON S_ELEMENTAL S_FUNGUS S_GNOME
+S_GIANT S_invisible S_JABBERWOCK S_KOP S_LICH S_MUMMY S_NAGA S_OGRE S_PUDDING
+S_QUANTMECH S_RUSTMONST S_SNAKE S_TROLL S_UMBER S_VAMPIRE S_WRAITH S_XORN
+S_YETI S_ZOMBIE S_HUMAN S_GHOST S_GOLEM S_DEMON S_EEL S_LIZARD S_WORM_TAIL
+S_MIMIC_DEF`.split(/\s+/);
+const S_HUMAN_CLASS = 53;
+function mlet_sym(d, dflt) {
+    const ch = d?.mlet || dflt;
+    const nm = d?.mcls >= 1 ? MCLS_SYMNAME[d.mcls - 1] : null;
+    if (!nm) return ch;
+    const ov = (rogue_symset() ? game.roguesymoverride : game.symoverride)?.[nm];
+    if (ov) return ov;
+    return d.mcls === S_HUMAN_CLASS ? (symOverrideChar('S_human', true) ?? ch) : ch;
 }
 
 // S_tree, shared by TREE terrain and an arboreal level's STONE/SCORR.
@@ -1199,7 +1226,7 @@ export function terrain_glyph(loc, x, y) {
     case STONE:
     case SCORR:
         if (game.level?.flags?.arboreal) return tree_glyph(dec);
-        return { ch: ' ', color: NO_COLOR, dec: false };
+        return stone_glyph();
     case ROOM: {
         const ov = symOverrideChar('S_room');
         if (ov) return { ch: ov, color: NO_COLOR, dec: false };
@@ -1524,8 +1551,6 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     if (String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase() === 'blank') {
         ch = ' ';
         decgfx = false;
-        attr = 0;
-        color = NO_COLOR;
     }
     if (!attr && game.iflags?.use_color === false) attr = bw_terrain_attr(loc, x, y, ch);
     // C ref: display.c show_glyph() sets gbuf[y][x].gnew whenever the glyph
@@ -2970,7 +2995,7 @@ function newsym_core(x, y) {
             // is S_stone (blank).  This erases any stale live glyph, e.g. a warm
             // monster shown here via infravision that has since moved away (its
             // dark square was never mapped, so remembered_glyph is null).
-            show_glyph_cell(x, y, ' ', NO_COLOR, false);
+            show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false);
         }
     }
 }
@@ -3114,7 +3139,7 @@ async function docrt_live() {
             const loc = game.level.at(x, y);
             const rg = loc?.remembered_glyph;
             if (rg) show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg), false, !!rg.darkroom);
-            else show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+            else show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false, 0);
         }
     }
     vision_recalc(0);
@@ -3139,7 +3164,7 @@ export function hero_glyph() {
     if (st && mon_visible(st)) {
         // C ref: display.h ridden_mon_to_glyph(mon, rn2_on_display_rng) -> what_mon(): a hallucinating hero's steed is a fresh random species per draw.
         const d = (Hallucination_u() ? monster_by_pmidx(random_monster()) : st.data) || {};
-        return { ch: d.mlet || 'u', color: (d.mcolor != null) ? d.mcolor : CLR_WHITE,
+        return { ch: mlet_sym(d, 'u'), color: (d.mcolor != null) ? d.mcolor : CLR_WHITE,
                  attr: female_attr(st.female) };
     }
     // C ref: display.h display_self() — U_AP_TYPE == M_AP_FURNITURE / M_AP_OBJECT
@@ -3156,7 +3181,7 @@ export function hero_glyph() {
     // slime countdown's "mimic green slime" hack) draws monnum_to_glyph(mappearance).
     if (M_AP_TYPE(u) === M_AP_MONSTER && u.mappearance != null) {
         const md = monster_by_pmidx(u.mappearance | 0);
-        if (md) return { ch: md.mlet || '@', color: (md.mcolor != null) ? md.mcolor : CLR_WHITE,
+        if (md) return { ch: mlet_sym(md, '@'), color: (md.mcolor != null) ? md.mcolor : CLR_WHITE,
                          attr: female_attr(u.mfemale) };
     }
     // C ref: display.c display_self() — while Upolyd, monnum_to_glyph(u.umonnum)
@@ -3164,7 +3189,7 @@ export function hero_glyph() {
     // they differ after nhlua.c nhl_gamestate()'s tutorial restore.
     const pd = u?.Upolyd ? monster_by_pmidx(u.umonnum) : null;
     if (pd) {
-        return { ch: pd.mlet || '@', color: (pd.mcolor != null) ? pd.mcolor : CLR_WHITE,
+        return { ch: mlet_sym(pd, '@'), color: (pd.mcolor != null) ? pd.mcolor : CLR_WHITE,
                  attr: female_attr(u.mfemale) };
     }
     // C ref: display.h hero_glyph — with 'showrace' a non-poly'd hero is drawn
@@ -3180,9 +3205,9 @@ export function hero_glyph() {
         const rd = monster_by_pmidx(RACE_PM[game.initrace | 0]);
         // map_glyphinfo()'s HI_DOMESTIC tweak runs after reset_glyphmap()'s
         // rogue-level NO_COLOR strip, so it survives there (keepColor).
-        if (rd) return { ch: rd.mlet || '@', color: CLR_WHITE, attr: hero_female_attr(), keepColor: true };
+        if (rd) return { ch: mlet_sym(rd, '@'), color: CLR_WHITE, attr: hero_female_attr(), keepColor: true };
     }
-    return { ch: human_sym('@'), color: CLR_WHITE, attr: hero_female_attr() };
+    return { ch: mlet_sym({ mlet: '@', mcls: S_HUMAN_CLASS }, '@'), color: CLR_WHITE, attr: hero_female_attr() };
 }
 
 // C ref: display.c `show_glyph(mon->mx, mon->my, mon_to_glyph(mon, rn2_on_display_rng))`
@@ -3462,7 +3487,11 @@ function _botConditions() {
     const halluRes = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0);
     if (halluTime > 0 && !halluRes) out.push('Hallu');
     if ((u.uprops?.Levitation || wornExtrinsic(48 /*LEVITATION*/)) && !u.uprops?.BLevitation) out.push('Lev');
-    if (u.usteed) out.push('Ride');
+    // steed.c mount_steed()/dismount_steed() flip u.usteed ahead of the "You aren't
+    // stealthy anymore." / "You seem less noisy now." plines and set disp.botl
+    // only afterwards, so those frames keep the Ride state bot() last published.
+    const rideHeld = status_held('ride', null);
+    if (rideHeld === true || (rideHeld !== false && u.usteed)) out.push('Ride');
     // C ref: youprop.h Stunned — HStun (timeout.js STUNNED entry) incl. the
     // FROMFORM bit set_uasmon() puts on a stalker or bat form.
     if ((u.uprops?.Stun || 0) > 0 || u.Stunned || u.formprops?.Stunned) out.push('Stun');
@@ -3553,7 +3582,7 @@ function _botFields(order, transient = null) {
     /* ...and never let truncation turn a non-zero input into a zero result */
     if (hpPct === 0 && hpShown !== 0) hpPct = 1;
 
-    raw[BL_LEVELDESC] = _describeLevel();
+    raw[BL_LEVELDESC] = status_held('leveldesc', _describeLevel());
     // C ref: botl.c do_statusline2:131 — the gold field's label is the ENCODED
     // GOLD_PIECE glyph, i.e. the live showsyms[COIN_CLASS], so the Rogue level's
     // ROGUESET (drawing.c def_r_oc_syms: coin shares GEM_SYM) prints "*:0".
@@ -3828,6 +3857,9 @@ function _renderStatus() {
     if (status_held('stoned', false) === true) condBits |= 0x00100000; /* BL_MASK_STONE */
     /* timeout.c SLIMED expiry: polymon()'s plines run before the bot() that drops Slime */
     if (status_held('slimed', false) === true) condBits |= 0x00040000; /* BL_MASK_SLIME */
+    /* steed.c mount/dismount: u.usteed flips before the stealth plines, disp.botl after */
+    if (status_held('ride', null) === false) condBits &= ~0x00010000; /* BL_MASK_RIDE */
+    else if (status_held('ride', null) === true) condBits |= 0x00010000;
     /* potion.c make_sick() cure: its message is printed before disp.botl is set */
     if (game._statusHold && 'sicktype' in game._statusHold) {
         const st = game._statusHold.sicktype | 0;
@@ -4402,10 +4434,18 @@ function _mapSigOf(l) {
     return `${l.disp_ch}|${l.disp_color}|${l.disp_attr | 0}|${bg && l.remembered_glyph?.darkroom ? 'd' : ''}|${bg && l.remembered_glyph ? 'g' : ''}`;
 }
 
+// A space can still carry tty color, highlighting, or a graphics-set switch.
+// The recorder serializes those bytes even when the glyph itself is invisible.
+function _mapCellIsBlank(loc) {
+    return !loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr
+        && (loc.disp_color == null || loc.disp_color === NO_COLOR || loc.disp_color === CLR_GRAY)
+        && !loc.disp_dark && !loc.disp_decgfx);
+}
+
 // One captured map cell of a frozen frame, or undefined for a blank unremembered
 // square.
 function _frame_cell(loc) {
-    if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) {
+    if (_mapCellIsBlank(loc)) {
         // a blank but remembered square still owns its screen cell
         // (renderStatusLines' mapWins test), though it draws nothing
         if (loc?.remembered_glyph) return { remembered_glyph: loc.remembered_glyph, sig: _mapSigOf(loc) };
@@ -4518,7 +4558,7 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
             if (x - 1 - clipx < minCol || (free && !free(x - 1 - clipx))) continue;
             const loc = _displayed_loc(x, y);
-            if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
+            if (_mapCellIsBlank(loc)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
             display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
@@ -4546,7 +4586,7 @@ export function render_map_to_grid() {
         for (let x = 1; x < COLNO; x++) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
             const loc = _displayed_loc(x, y);
-            if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
+            if (_mapCellIsBlank(loc)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
             display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
@@ -4615,7 +4655,7 @@ function _buildScreenOutput() {
         // clears, so row 1 is a message row (blank) there.
         const promptText = (game._toplPromptFull && game._toplPromptFull.trimEnd() === msg)
             ? game._toplPromptFull : msg;
-        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : wrap_topl(msg);
+        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : topl_rows(msg);
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
             for (let c = 0; c < Math.min(ln.length, display.cols); c++)
@@ -4642,7 +4682,7 @@ function _buildScreenOutput() {
                 // docrt()'s cls() emptied the glyph buffer and redrew it from the
                 // new level, so the replay reads the live level, not the held frame.
                 const loc = blankCorner ? game.level?.at(x, y) : _displayed_loc(x, y);
-                if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
+                if (_mapCellIsBlank(loc)) continue;
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (ch === NUL_CELL) continue;
                 display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
@@ -4932,7 +4972,7 @@ export function blank_glyph_cells() {
     if (game.level)
         for (let y = 0; y < ROWNO; y++)
             for (let x = 1; x < COLNO; x++)
-                show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);
+                show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false, 0);
 }
 export async function cls() {
     game._statusSnap = null;
@@ -5059,6 +5099,11 @@ function msgtype_suppressed(msg) {
     const typ = game.msgtype_type(msg, false);
     return typ === MSGTYP_NOSHOW
            || (typ === MSGTYP_NOREP && msg === game._prevmsg);
+}
+// C ref: pline.c vpline() tail — `if (msgtyp == MSGTYP_STOP) display_nhwindow(WIN_MESSAGE, TRUE)`:
+// a MSGTYPE=stop message pages itself with --More-- once it is on the top line.
+function msgtype_is_stop(msg) {
+    return !!game.msgtypes && game.msgtype_type(msg, false) === MSGTYP_STOP;
 }
 
 // C ref: pager.c do_screen_description() / topl.c redotoplin(): a farlook line whose
@@ -5269,11 +5314,17 @@ async function a11y_location_prefix(msg) {
 export async function verbalize(line) { await pline(`"${line}"`); }
 
 export async function pline(msg, opts = {}) {
+    const ctx = {};
+    await pline_core(msg, opts, ctx);
+    if (ctx.stop) await display_nhwindow_message();
+}
+async function pline_core(msg, opts, ctx) {
     if (game._pending_impossibles?.length) await flush_impossibles();
     msg = await a11y_location_prefix(msg);
     msg = vpline_clip(msg);
     const suppressHistory = !!opts.suppressHistory;
     if (msgtype_suppressed(msg)) return;
+    ctx.stop = msgtype_is_stop(msg);
     // C ref: win/tty/topl.c update_topl() `skip`: once a --More-- was
     // dismissed with ESC (WIN_STOP), every later message until the next
     // input is accumulated into gt.toplines but never drawn.
@@ -5330,7 +5381,7 @@ export async function pline(msg, opts = {}) {
     // C ref: win/tty/topl.c redotoplin():139 — a message that word-wraps onto
     // a second display row blocks on --More-- IMMEDIATELY, no second logical
     // message required (e.g. a long welcome greeting).
-    if (wrap_topl(msg).length > 1) {
+    if (topl_rows(msg).length > 1) {
         await topl_more();
         game._toplin = 0;
         game._toplinSoft = null;
@@ -5409,6 +5460,23 @@ export function wrap_topl(msg) {
     return lines;
 }
 
+// C ref: win/tty/topl.c update_topl() + topl_putsym() — the rows a topline
+// really occupies on the tty.  update_topl()'s word-wrap (wrap_topl) leaves a
+// token wider than the screen whole ("Eek!  A huge token.", e.g. a 100-char
+// engraving in `You read: "..."`), and redotoplin()'s putsyms() then hard-wraps
+// it: a normal character is never put at column CO-1, so a row holds at most
+// CO-1 characters.  An exact CO-1 row followed by the word-wrap '\n' does not
+// add an empty row (the '\n' case of topl_putsym() takes no wrap of its own).
+// gt.toplines keeps only the word-wrap newlines, so history uses wrap_topl().
+export function topl_rows(msg) {
+    const rows = [];
+    for (const ln of wrap_topl(msg)) {
+        if (ln.length < CO) { rows.push(ln); continue; }
+        for (let i = 0; i < ln.length; i += CO - 1) rows.push(ln.slice(i, i + CO - 1));
+    }
+    return rows;
+}
+
 // Draw "--More--" for the current top-line message and block until the
 // user presses space/return/escape.  C ref: win/tty/topl.c more() +
 // win/tty/getline.c xwaitforspace().  The current message is assumed to
@@ -5462,7 +5530,7 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
     const msg = game._pending_message || '';
     // The message may already span multiple rows (topl.c word-wrap); --More--
     // follows the end of the LAST wrapped row.
-    const mlines = prewrapped ?? wrap_topl(msg);
+    const mlines = prewrapped ?? topl_rows(msg);
     // C more() only writes the message window. A later vision or timer
     // change must not repaint map or status pixels before this pager ends.
     for (let y = 0; y < mlines.length; y++) {
@@ -5500,7 +5568,7 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
             if (my < 0 || my >= ROWNO) continue;
             for (let x = 1; x < COLNO; x++) {
                 const loc = game.level?.at(x, my);
-                if (!loc?.disp_ch || (loc.disp_ch === ' ' && !loc.disp_attr)) continue;
+                if (_mapCellIsBlank(loc)) continue;
                 const mch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (mch === NUL_CELL) continue;
                 disp.setCell(x - 1, r, mch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0, meta_glyph(loc), loc.disp_dark);
@@ -5597,6 +5665,10 @@ export function status_hold(key, publishedValue) {
     game._statusHold ??= {};
     if (!(key in game._statusHold)) game._statusHold[key] = publishedValue;
 }
+// teleport.c level_tele(): the hero survives a fatal destination (Die? declined,
+// life saving) and u.uz is restored to the real level with no disp.botl, so the
+// status keeps showing the surface/heaven Dlvl that done()'s bot() published.
+export function status_hold_leveldesc() { status_hold('leveldesc', _describeLevel()); }
 function status_held(key, live) {
     const h = game._statusHold;
     return h && key in h ? h[key] : live;
@@ -5708,10 +5780,16 @@ export function set_msg_mon(mtmp) {
 }
 
 export async function update_topl(bp) {
+    const ctx = {};
+    await update_topl_core(bp, ctx);
+    if (ctx.stop) await display_nhwindow_message();
+}
+async function update_topl_core(bp, ctx) {
     if (game._pending_impossibles?.length) await flush_impossibles();
     bp = await a11y_location_prefix(bp);
     bp = vpline_clip(bp);
     if (msgtype_suppressed(bp)) return;
+    ctx.stop = msgtype_is_stop(bp);
     // C ref: pline.c vpline():129 `strncpy(gp.prevmsg, line, BUFSZ)` — the LAST
     // INDIVIDUAL message, which is what Norep()'s dedup compares against.  It is
     // NOT gt.toplines: that holds the whole CONCATENATED top row, so a Norep
@@ -5848,7 +5926,7 @@ export async function update_topl(bp) {
     // and leaves toplin == TOPLINE_EMPTY (topl.c:237-245).  Clearing
     // _pending_message is load-bearing: otherwise the next step redraws the
     // already-acknowledged line.
-    if (wrap_topl(bp).length > 1) {
+    if (topl_rows(bp).length > 1) {
         await topl_more();
         game._toplin = 0;
         game._toplinSoft = null;
@@ -7098,7 +7176,7 @@ export function show_remembered_glyph_at(x, y) {
     if (game.level?.flags?.hero_memory && rg) {
         show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg), false, !!rg.darkroom);
     } else if (game.level?.flags?.hero_memory) {
-        show_glyph_cell(x, y, ' ', NO_COLOR, false);
+        show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false);
     } else {
         const bg = background_glyph(loc, x, y);
         show_bg_glyph(x, y, bg);
@@ -7133,7 +7211,7 @@ export async function under_water(mode) {
         for (y = _uw_lasty - 1; y <= _uw_lasty + 1; y++)
             for (x = _uw_lastx - 1; x <= _uw_lastx + 1; x++)
                 if (isok(x, y))
-                    show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
+                    show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
     }
 
     /* C TODO? should this honor Xray radius rather than force radius 1? */
@@ -7142,7 +7220,7 @@ export async function under_water(mode) {
         for (y = uy - 1; y <= uy + 1; y++)
             if (isok(x, y) && (is_pool_or_lava_d(x, y) || is_ice_d(x, y))) {
                 if (Blind() && !(x === ux && y === uy))
-                    show_glyph_cell(x, y, ' ', NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
+                    show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false, 0);  /* show_glyph(GLYPH_UNEXPLORED) */
                 else
                     newsym(x, y);
             }

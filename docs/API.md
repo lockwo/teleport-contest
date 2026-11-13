@@ -65,6 +65,55 @@ and light sources through `obj_split_timers` and `obj_split_light_source`.
 Both halves of a split burning candle stack must remain lit with independent
 timers and light radii appropriate to their new quantities.
 
+Object naming can change knowledge without consuming RNG. A visible monster
+picking up a nearby object calls `distant_name` even with `verbose` disabled,
+so an unseen item beneath another object can enter the discoveries list.
+
+Discarding a monster's worn default inventory must clear its worn-slot bits
+and retain the pending gear recheck, even when a special level immediately
+equips replacement items. That recheck builds monster names for each armor
+slot and consumes display RNG while the hero is hallucinating.
+
+### Door command parity
+
+Closing toward the hero's own square spends a turn with "You are in the way!"
+only when the hero cannot pass through walls. A phasing hero instead operates
+on that square's terrain, including refusing an empty floor without a turn.
+
+### X-ray vision parity
+
+The x-ray pass sets fully seen wall angles and calls `newsym` before mobile
+lighting and before swapping the current vision array. Those early redraws
+consume display RNG while hallucinating, even when the normal vision update
+redraws the same object or monster again.
+
+### Tty menu input parity
+
+Command menus follow the recorder's signed 64-bit `long` range for count
+prefixes. An overflowing digit discards the pending count, so the next
+selection is uncounted unless another digit starts a new prefix. Prefix
+arithmetic stays exact through `9223372036854775807`. Selected item counts
+are returned to callers as numbers.
+
+For wrapped `getlin` input, backspace across the left edge first calls
+`tty_curs(BASE_WINDOW, CO, previous_row)`. That API converts the one-based
+column to `CO - 1` before the backspace. Line-kill echoes must preserve this
+cursor position even when the resulting text fits on one row again.
+
+Looking inside a container with `:` reveals whether it is empty. The repeated
+container prompt must then rebuild its available choices from the updated
+knowledge, including removing take-out and take-out-first choices for an empty
+container. This applies to both menu and traditional prompts.
+
+### Recorder serialization parity
+
+The C recorder serializes its shadow grid at each capture boundary. Its
+6144-byte capture buffer can overflow even when the displayed glyphs are
+spaces, as with the Blank symbol set on a mapped swamp. Preserve those cells'
+colors and attributes, and include them in overflow accounting. Overflow is
+determined by the serialized grid, not by cumulative tty output since the
+previous input. Corrupted cursor coordinates remain part of the recording.
+
 
 ## `input` — what the harness gives you
 
@@ -179,6 +228,12 @@ A port that works around that with its own serializer can keep it.)
 
 If you implement your own terminal, output anything that — after
 canonicalization — matches the recorded screen.
+
+Capture the last published status, not necessarily the latest hero state.
+For example, throne healing publishes HP after its cure messages, so a
+`--More--` during those messages still shows the previous HP. Farlook must
+also follow the displayed glyph: a raised drawbridge portcullis (`DBWALL`)
+uses a drawbridge glyph, not the wall glyph implied by `IS_WALL`.
 
 ### `getRngLog()`
 

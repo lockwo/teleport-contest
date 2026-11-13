@@ -385,7 +385,9 @@ export async function thrwmmDeps() {
             }
             const verb = MM.ammo_and_launcher(otmp, mwep) ? 'shoots' : 'throws';
             const { some_mon_nam } = await import('./do_name.js');
-            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}${mtarg ? ` at ${some_mon_nam(mtarg)}` : ''}!`);
+            // C monshoot caches the target before naming the thrower.
+            const trgbuf = mtarg ? some_mon_nam(mtarg) : '';
+            await emitMMmsg(`${Monnam(mtmp)} ${verb} ${onm}${mtarg ? ` at ${trgbuf}` : ''}!`);
         },
         // m_lined_up() — utarget is always false for a monster target, so the
         // throws_rocks/m_carrying/WAN_STRIKING/U_AP_TYPE fields it also reads
@@ -970,8 +972,11 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
     switch (adtyp) {
     case AD_ACID:
         if (mhitb && !rn2(2)) {
+            // C ref: mhitm.c:1334 Strcpy(buf, Monnam(magr)) runs whether or not
+            // the hero can see magr (hallucination: a display-rng name draw).
+            const buf = Monnam(magr);
             if (mm_can_see_mon(magr))
-                await emitMMmsg(`${Monnam(magr)} is splashed by ${s_suffix(mon_nam(mdef))} ${hliquid('acid')}!`);
+                await emitMMmsg(`${buf} is splashed by ${s_suffix(mon_nam(mdef))} ${hliquid('acid')}!`);
             if (mm_resists_acid(magr)) {
                 if (mm_can_see_mon(magr))
                     await emitMMmsg(`${Monnam(magr)} is not affected.`);
@@ -1020,14 +1025,16 @@ async function passivemm(magr, mdef, mhitb, mdead, mwep) {
                         const rbuf = `${s_suffix(Monnam(mdef))} gaze is reflected by %s %s.`;
                         if (await mon_reflects(magr, mm_can_see_mon(magr) ? rbuf : null))
                             return (mdead | mhit);
+                        const buf = Monnam(magr);   // C ref: mhitm.c:1380 unconditional
                         if (mm_can_see_mon(magr))
-                            await emitMMmsg(`${Monnam(magr)} is frozen by ${s_suffix(mon_nam(mdef))} gaze!`);
+                            await emitMMmsg(`${buf} is frozen by ${s_suffix(mon_nam(mdef))} gaze!`);
                         paralyze_monst(magr, tmp);
                         return (mdead | mhit);
                     }
                 } else { /* gelatinous cube — mhitm.c:1387-1392 */
+                    const buf = Monnam(magr);   // C ref: mhitm.c:1388 unconditional
                     if (mm_can_see_mon(magr))
-                        await emitMMmsg(`${Monnam(magr)} is frozen by ${mon_nam(mdef)}.`);
+                        await emitMMmsg(`${buf} is frozen by ${mon_nam(mdef)}.`);
                     paralyze_monst(magr, tmp);
                     return (mdead | mhit);
                 }
@@ -1207,19 +1214,23 @@ export async function mdisplacem(magr, mdef, quietly) {
 }
 
 // ── mhitm.c:597 failed_grab ──────────────────────────────────────────────────
-// Can't hold an unsolid target (ghosts, lights, vortices, most elementals).
-// notonhead (long-worm tail) isn't modelled.  Draws no RNG, but it CANCELS the
-// strike, which suppresses mdamagem()'s d() roll and the whole kill tail.
+// Can't hold an unsolid target (ghosts, lights, vortices, most elementals) or
+// a long worm tail (gn.notonhead).  Draws no RNG, but it CANCELS the strike,
+// which suppresses mdamagem()'s d() roll and the whole kill tail.
 export async function failed_grab(magr, mdef, mattk) {
-    if (unsolid_flag(permonst(mdef))
+    if ((unsolid_flag(permonst(mdef)) || game.notonhead)
         && (mattk.aatyp === AT_HUGS || mattk.adtyp === AD_WRAP
             || mattk.adtyp === AD_STCK || mattk.adtyp === AD_DGST)) {
         const udef = is_youmonst_mm(mdef), uatk = is_youmonst_mm(magr);
         if (uatk || udef || (gv_vis && mm_can_spot_mon(mdef))) {
+            const tailmiss = !!game.notonhead;
             const verb = (mattk.adtyp === AD_DGST) ? 'gulp'
                 : (mattk.adtyp === AD_STCK) ? 'adhere' : 'grab';
-            await emitMMmsg(`${uatk ? 'Your' : s_suffix(Monnam(magr))} ${verb} attempt`
-                + ` passes right through ${udef ? 'you' : mon_nam(mdef)}!`);
+            const magrnam = uatk ? 'Your' : s_suffix(Monnam(magr));
+            const mdefnam = !tailmiss ? (udef ? 'you' : mon_nam(mdef))
+                : `${s_suffix(some_mon_nam(mdef))} tail`;
+            await emitMMmsg(`${magrnam} ${verb} attempt`
+                + ` ${!tailmiss ? 'passes right through' : 'fails to hold'} ${mdefnam}!`);
         }
         return true;
     }
@@ -1277,13 +1288,18 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
     if (!compat && await shade_miss_mm(magr, mdef, mwep, false, gv_vis))
         return M_ATTK_MISS;
     if (gv_vis) {
+        // C ref: mhitm.c:666 Strcpy(magr_name, Monnam(magr)) runs for every
+        // visible hit, even when the message is suppressed for an artifact
+        // weapon (mhitm_ad_phys delivers it); hallucination makes the name a
+        // display-rng draw.
+        const magr_name = Monnam(magr);
         if (compat) {
-            await emitMMmsg(`${Monnam(magr)}`
+            await emitMMmsg(`${magr_name}`
                 + ` ${mdef.mcansee ? 'smiles at' : 'talks to'}`
                 + ` ${mon_nam(mdef)}`
                 + ` ${compat === 2 ? 'engagingly' : 'seductively'}.`);
         } else if (mattk.aatyp === AT_TENT) {
-            await emitMMmsg(`${s_suffix(Monnam(magr))} tentacles suck`
+            await emitMMmsg(`${s_suffix(magr_name)} tentacles suck`
                 + ` ${mon_nam(mdef)}.`);
         } else {
             // C ref: mhitm.c:691-701 -- a hug by a monster that is not (yet)
@@ -1296,7 +1312,7 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
             const isHitsDefault = verb === 'hits';
             if (!isHitsDefault || !weaponhit || !mwep || !mwep.oartifact) {
                 const { mon_nam_too } = await import('./do_name.js');
-                await emitMMmsg(`${Monnam(magr)} ${verb}`
+                await emitMMmsg(`${magr_name} ${verb}`
                     + ` ${mon_nam_too(mdef, magr)}.`);
             }
             // C ref: mhitm.c:712-731 — a silver weapon sears a silver-hater.
@@ -1307,7 +1323,7 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
                 const { mon_nam_too } = await import('./do_name.js');
                 const { simpleonames } = await import('./objnam.js');
                 let mdef_name = mon_nam_too(mdef, magr);
-                const magr_name = s_suffix(Monnam(magr));
+                const magr_poss = s_suffix(magr_name);
                 const pd = permonst(mdef);
                 if (pd?.mcls !== 54 /* S_GHOST: noncorporeal */
                     && !(mflags1_of(pd) & M1_AMORPHOUS)) {
@@ -1319,7 +1335,7 @@ async function hitmm(magr, mdef, mattk, mwep, dieroll) {
                     }
                     mdef_name += ' flesh';
                 }
-                await emitMMmsg(`${magr_name} ${simpleonames(mwep)} sears ${mdef_name}!`);
+                await emitMMmsg(`${magr_poss} ${simpleonames(mwep)} sears ${mdef_name}!`);
             }
         }
     } else {

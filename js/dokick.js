@@ -35,7 +35,7 @@ import {
     MM_ANGRY, MM_NOMSG, MM_MALE, MM_FEMALE, ER_NOTHING,
     AM_MASK, Amask2align, W_ARMF,
     PIT, SPIKED_PIT, WEB, WATER, ZAP_POS, FOOT, VIS_EFFECTS, MAY_HIT,
-    ER_DESTROYED, OBJ_MINVENT, STATUE_TRAP, Is_airlevel, Is_waterlevel, WT_HUMAN } from './const.js';
+    OBJ_MINVENT, STATUE_TRAP, Is_airlevel, Is_waterlevel, WT_HUMAN } from './const.js';
 import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
          COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
@@ -1000,15 +1000,13 @@ function closed_door(x, y) {
 // C ref: trap.h is_pit(ttyp).
 function is_pit_ttyp(ttyp) { return ttyp === PIT || ttyp === SPIKED_PIT; }
 
-// C ref: do.c flooreffects(obj, x, y, verb) — what happens to an object as it
-// lands.  Only the water arm has a ported body (trap.js water_damage); the
-// boulder-fills-a-pit, lava, hole/ship_object, globby-merge and hot-Gehennom-
-// floor arms need subsystems this port lacks and are NOT reached by a kick on
-// the levels it covers.  Returns TRUE when the object is used up.
+// C ref: do.c flooreffects(obj, x, y, "fall") — what happens to an object as it
+// lands: boulder/pit, lava, pool, teetering at a hole, globby-merge
+// (obj_nexto_xy's rn2(2) pair), hot-ground potion.  Returns TRUE when the
+// object is used up.  The object is free (obj_extract_self'd) at both callers.
 async function kick_flooreffects(obj, x, y) {
-    if (is_pool(x, y))
-        return (await water_damage(obj, null, false)) === ER_DESTROYED;
-    return false;
+    const { flooreffects } = await import('./do.js');
+    return flooreffects(obj, x, y, 'fall');
 }
 
 // C ref: zap.c bhit(ddx, ddy, range, KICKED_WEAPON, 0, 0, &obj) — a kicked

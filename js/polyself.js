@@ -13,7 +13,7 @@ import { Levitation_hero, Flying_hero, Stunned_hero, Stone_resistance_hero, Sick
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, hold_botl_rank, You_feel } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, hold_botl_rank, hold_botl_hp, You_feel } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -1000,6 +1000,12 @@ export async function polymon(mntmp) {
         await make_glib(0);
     }
 
+    // C ref: polyself.c polymon() — `u.mhmax = ...; u.mh = u.mhmax;` set no
+    // disp.botl.  When a pline between set_uasmon() and here already ran bot()
+    // (check_strangling(FALSE)'s "You are no longer being strangled."), the
+    // status row keeps showing u.mh/u.mhmax as that bot() drew them (HP:0(0)
+    // for a hero polymorphing from human form) until a later bot().
+    hold_botl_hp();
     const mlvl = mdatNew.mlevel | 0;
     if (mdatNew.mlet === 'D' && mntmp >= PM_GRAY_DRAGON) {
         // C ref: polyself.c:858 In_endgame ? 8*mlvl : 4*mlvl + d(mlvl,4).

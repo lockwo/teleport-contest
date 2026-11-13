@@ -349,7 +349,7 @@ const TOPL_WRAP = TOPL_CO - 1;
 
 // C ref: topl.c topl_putsym() cursor effect only (ttyDisplay->curx/cury), used
 // to replay getline.c's "\b" / " " echoes.  A '\b' at curx == 0 on a wrapped
-// row first jumps to column CO on the row above, and the cursor then backs up
+// row first jumps to column CO - 1 on the row above, and then backs up
 // one; any other character advances it, wrapping lazily at CO - 1.  The
 // tracked cursor is history dependent: erasing the character that wrapped onto
 // row 1 leaves it at (0, 1), not at the (CO - 1, 0) a pure index -> (col, row)
@@ -357,7 +357,7 @@ const TOPL_WRAP = TOPL_CO - 1;
 function topl_putsyms_cursor(t, str) {
     for (const c of str) {
         if (c === '\b') {
-            if (t.x === 0 && t.y > 0) { t.x = TOPL_CO; t.y--; }
+            if (t.x === 0 && t.y > 0) { t.x = TOPL_CO - 1; t.y--; }
             t.x--;
         } else {
             if (t.x === TOPL_CO - 1) { t.x = 0; t.y++; }
@@ -373,20 +373,25 @@ function draw_getlin(query, shown, cursorCol, cursorAt = null) {
     if (!disp?.setCell) return;
     const line = query + ' ' + shown;
     const rows = Math.max(1, Math.ceil(line.length / TOPL_WRAP));
-    // C ref: tty_clear_nhwindow(NHW_MESSAGE) -> docorner(1, cury+1, 0) blanks
+    // C ref: tty_clear_nhwindow(NHW_MESSAGE) -> docorner(1, maxrow+1, 0) blanks
     // the rows the previous (longer) top line spilled onto and redraws the map
-    // cells on them (row_refresh).
+    // cells on them (row_refresh).  A getline "\b \b" echo (backspace, kill
+    // char) is only putsyms(): it blanks the erased characters and never
+    // touches the map, so `cursorAt` (set only for those echoes) skips it.
     const clearRows = Math.max(rows, game._getlin_rows || 1);
     for (let r = 0; r < clearRows && r < disp.rows; r++)
         for (let c = 0; c < disp.cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
-    for (let r = Math.max(rows, 1); r < clearRows && r < disp.rows; r++)
-        render_map_row_to_grid(r);
+    if (!cursorAt) {
+        for (let r = Math.max(rows, 1); r < clearRows && r < disp.rows; r++)
+            render_map_row_to_grid(r);
+    }
     for (let i = 0; i < line.length; i++) {
         const r = Math.floor(i / TOPL_WRAP);
         if (r >= disp.rows) break;
         disp.setCell(i % TOPL_WRAP, r, line[i], NO_COLOR, 0);
     }
     game._getlin_rows = rows;
+    game._getlin_maxrows = Math.max(game._getlin_maxrows || 1, rows);
     // The newline is emitted lazily (only when the NEXT char would land on
     // col CO-1), so a cursor sitting exactly at col CO-1 stays on its row.
     const cr = cursorCol === 0 ? 0 : Math.floor((cursorCol - 1) / TOPL_WRAP);
@@ -492,6 +497,7 @@ export async function hooked_tty_getlin(query, hook) {
     // draw_getlin()'s count of top-line rows this prompt has spilled onto; a
     // previous (longer) getlin must not make this one clear rows below its own.
     game._getlin_rows = 1;
+    game._getlin_maxrows = 1;
     const base = (query + ' ').length; // column of first input char
     let tty = { x: 0, y: 0 };  // ttyDisplay->curx/cury as last parked
     let erased = null;         // tracked cursor left by a "\b" / "\b \b" echo
@@ -521,6 +527,11 @@ export async function hooked_tty_getlin(query, hook) {
                 game._pending_message = '';
                 game._toplin = 0;
                 game._toplinSoft = null;
+                // tty_clear_nhwindow() -> docorner(1, maxrow+1, 0): every row the
+                // top line spilled onto since the last clear gets its map back,
+                // even ones a "\b \b" echo had already blanked.
+                game._getlin_rows = game._getlin_maxrows || 1;
+                game._getlin_maxrows = 1;
                 continue;
             }
             if (!suppress_hist) yn_prompt_history(`${query} `, '');
@@ -1841,8 +1852,10 @@ function floor_lockbox_here() { return floor_obj_here(is_lockbox_otyp); }
 function floor_lockboxes_here() {
     const u = game.u;
     if (!u) return [];
+    // C doforce() walks svl.level.objects[x][y] head-first (newest first); level.objects is
+    // a flat push-ordered array, so reverse (same as cmd.js pick_lock()).
     return (game.level?.objects || []).filter(
-        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp));
+        (o) => o.where === OBJ_FLOOR && o.ox === u.ux && o.oy === u.uy && is_lockbox_otyp(o.otyp)).reverse();
 }
 
 // (the status rows of the modal container renders go through status_sweep/apply_status_cuts)
@@ -2117,7 +2130,7 @@ async function use_container(box, more_containers) {
     // choices ('o'/'b') still appear for a container whose contents aren't
     // known yet, even if it turns out to be empty; only a container already
     // known-empty (cknown && !Has_contents) hides them.
-    const outmaybe = !!(box.cobj && box.cobj.length) || !box.cknown;
+    let outmaybe = !!(box.cobj && box.cobj.length) || !box.cknown;
     // C: inokay = invent && (invent != container || invent->nobj) — the hero
     // carries something OTHER than the container itself.
     let inokay = inv_other_than(box);
@@ -2127,17 +2140,18 @@ async function use_container(box, more_containers) {
     if (ms === MENU_TRADITIONAL || ms === MENU_COMBINATION) {
         // C ref: use_container() TRADITIONAL|COMBINATION arm — a tty_yn_function
         // prompt, "Do what with <box>? [:oibrs nq or ?] (q)".
-        let pbuf = ':', xbuf = '';
-        if (outmaybe) pbuf += 'o'; else xbuf += 'o';
-        if (inokay) pbuf += 'i'; else xbuf += 'i';
-        if (outmaybe) pbuf += 'b'; else xbuf += 'b';
-        if (inokay) pbuf += 'rs'; else xbuf += 'rs';
-        pbuf += ' ';
-        if (more_containers) pbuf += 'n'; else xbuf += 'n';
-        pbuf += 'q';
-        if (game.iflags?.cmdassist !== false) pbuf += ' or ?'; else xbuf += '?';
-        if (xbuf) pbuf += '\x1b' + xbuf;
         for (;;) { // repeats iff '?' or ':' gets chosen
+            outmaybe = !!(box.cobj && box.cobj.length) || !box.cknown;
+            let pbuf = ':', xbuf = '';
+            if (outmaybe) pbuf += 'o'; else xbuf += 'o';
+            if (inokay) pbuf += 'i'; else xbuf += 'i';
+            if (outmaybe) pbuf += 'b'; else xbuf += 'b';
+            if (inokay) pbuf += 'rs'; else xbuf += 'rs';
+            pbuf += ' ';
+            if (more_containers) pbuf += 'n'; else xbuf += 'n';
+            pbuf += 'q';
+            if (game.iflags?.cmdassist !== false) pbuf += ' or ?'; else xbuf += '?';
+            if (xbuf) pbuf += '\x1b' + xbuf;
             const qbuf = loot_prompt_text(box, outmaybe);
             const c = await yn_function(qbuf, pbuf, more_containers ? 'n' : 'q', true);
             if (c === '?') {
@@ -2161,11 +2175,6 @@ async function use_container(box, more_containers) {
         // anything outside it.  So a stray key over an open loot menu neither
         // closes it nor leaks into rhack() as a command — the screen just doesn't
         // change.
-        let respsel = sel[1]; // ':' look inside is always present
-        if (outmaybe) respsel += sel[2] + sel[4];
-        if (inokay) respsel += sel[3] + sel[5] + sel[6];
-        if (more_containers) respsel += sel[7];
-        respsel += sel[8];
         // wintype.h MENU_FIRST_PAGE/LAST/NEXT/PREVIOUS, SELECT_ALL/UNSELECT_ALL/
         // INVERT_ALL, SELECT_PAGE/UNSELECT_PAGE/INVERT_PAGE, SEARCH.
         const MENU_CMDS = '^|><.-@,\\~:';
@@ -2184,6 +2193,12 @@ async function use_container(box, more_containers) {
            (`case '\033': if (!counting) { ...cancel }`, else only stop count). */
         let counting = false, cnt = 0;
         for (;;) { // repeats iff ':' (look inside) gets chosen
+            outmaybe = !!(box.cobj && box.cobj.length) || !box.cknown;
+            let respsel = sel[1]; // ':' look inside is always present
+            if (outmaybe) respsel += sel[2] + sel[4];
+            if (inokay) respsel += sel[3] + sel[5] + sel[6];
+            if (more_containers) respsel += sel[7];
+            respsel += sel[8];
             render_in_or_out_menu(box, outmaybe, inokay, used !== 0, !!more_containers,
                                   deselected);
             let ch = '';
@@ -3963,17 +3978,12 @@ async function dosave_extcmd() {
     return 0;
 }
 
-// C ref: hack.c dosearch() — lives in cmd.js as a local (now exported)
-// wrapper returning a JS boolean, not a numeric ECMD code; mirrors the 's'
-// raw-key site's occupation-arming side effect exactly.
+// C ref: cmd.c doextcmd() invokes dosearch() without rhack()'s f_text
+// occupation setup. A counted "#search" returns to the '#' prompt on its
+// next repetition, unlike a counted 's' or a queued direct search command.
 async function dosearch_extcmd() {
     const { dosearch } = await import('./cmd.js');
-    // C ref: cmd.c:3728 — the occupation is armed before the command runs.
-    const counted = (game.multi ?? 0) > 0;
-    const searched = await dosearch();
-    if (searched && counted)
-        game._search_occupation = true;
-    return searched ? 1 : 0;
+    return (await dosearch()) ? 1 : 0;
 }
 
 // C ref: invent.c doprinuse() returns ECMD_OK, but the item action picked from
@@ -4794,6 +4804,12 @@ async function prefix_got_input(txt, res) {
 // earlier doextcmd() for #repeat) runs its command directly, no '#' prompt.
 export async function run_extcmd_txt(txt) {
     const fn = HANDLERS[txt];
+    // C ref: cmd.c rhack():3728-3729. A queued extended command is dispatched
+    // directly, so its f_text arms the timed occupation BEFORE the first call.
+    if ((game.multi ?? 0) > 0) {
+        if (txt === 'search') game._search_occupation = true;
+        else if (txt === 'wait') game._wait_occupation = true;
+    }
     let res = 0;
     if (fn) res = await fn();
     if (await prefix_got_input(txt, res)) return res;

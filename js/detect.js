@@ -17,7 +17,7 @@ import { COLNO, ROWNO, BOLT_LIM, SDOOR, SCORR, DOOR, CORR, A_WIS, IS_FURNITURE,
          STONE, W_NONDIGGABLE, W_NONPASSWALL, ROOMOFFSET,
          Is_rogue_level, Is_waterlevel, Is_airlevel } from './const.js';
 import { room_discovered } from './dungeon.js';
-import { update_lastseentyp } from './display.js';
+import { update_lastseentyp, under_water, under_ground } from './display.js';
 import { BOULDER, COIN_CLASS, GOLD_PIECE, objects } from './mkobj.js';
 import { NO_COLOR, CLR_WHITE, ATR_INVERSE } from './terminal.js';
 import { rnd } from './rng.js';
@@ -25,7 +25,7 @@ import { rnd } from './rng.js';
 // Additional imports used only by the translated block at the end of this file.
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
-         Hallucination_u, impossible, warning_of, display_nhwindow_message, female_attr } from './display.js';
+         Hallucination_u, impossible, warning_of, display_nhwindow_message, female_attr, show_remembered_glyph_at } from './display.js';
 import { Blind, cansee, unblock_point, recalc_block_point, do_clear_area_async } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
@@ -111,6 +111,7 @@ async function findone(zx, zy, found) {
         if (mtmp.m_ap_type) {
             /* C: flash_glyph_at(zx, zy, mon_to_glyph(mtmp, rn2_on_display_rng), ...) */
             if (Hallucination_u()) random_monster_disp();
+            show_remembered_glyph_at(zx, zy); /* flash_glyph_at() final frame */
             seemimicLocal(mtmp);
             found.num_mons++;
         } else if (mtmp.mundetected && (is_hider_flag(mtmp.data)
@@ -120,6 +121,9 @@ async function findone(zx, zy, found) {
                FOUND_FLASH_COUNT) — the glyph pick draws off the display rng
                while hallucinating; the flash itself is display-only. */
             if (Hallucination_u()) random_monster_disp();
+            /* the flash loop ends with the remembered glyph drawn, with no newsym() of
+               its own; the newsym() below is a no-op for a far square while submerged */
+            show_remembered_glyph_at(zx, zy);
             mtmp.mundetected = 0;
             newsym(zx, zy);
             found.num_mons++;
@@ -207,6 +211,7 @@ export async function show_map_spot(x, y, cnf) {
     const lev = game.level?.at(x, y);
     if (!lev) return;
     const oldglyph = glyph_at(x, y);
+    const oldTtyp = lev.mapped_trap_ttyp;   /* magic_map_background() clears it; a restored trap glyph keeps its type */
     // C: `lev->glyph = oldglyph` restores the glyph NUMBER, so a generic
     // (gray, dknown==0) potion/book stays generic and see_nearby_objects()
     // still recognises it.  disp_color is the has_color()-suppressed colour
@@ -258,6 +263,7 @@ export async function show_map_spot(x, y, cnf) {
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             if (game.level?.flags?.hero_memory) {
                 lev.invisMon = false;
+                if (glyph_is_trap(oldglyph) && oldTtyp) lev.mapped_trap_ttyp = oldTtyp;
                 lev.remembered_glyph = {
                     ch: oldcell.ch, color: oldcell.memColor ?? oldcell.color, decgfx: oldcell.dec,
                     pile: !!oldcell.pile, bwEngr: !!oldcell.bwEngr, female: !!oldcell.female,
@@ -560,9 +566,10 @@ function d_digests(ptr) {
 }
 /* hack.h Confusion — mirrors js/allmain.js:1414. */
 function d_Confusion() { return !!(game.u?.uconf || game.u?.HConfusion); }
-/* pline.c Norep() — suppress when identical to the persistent top line. */
+/* pline.c Norep() — vpline() drops a line identical to gp.prevmsg, the last
+   INDIVIDUAL message (game._prevmsg), not the concatenated top row. */
 async function d_Norep(msg) {
-    if (game._toplines === msg) return;
+    if (game._prevmsg === msg) return;
     await update_topl(msg);
 }
 
@@ -665,7 +672,9 @@ export function glyph_at(x, y, remembered = false) {
     const otmp = vobj_at(x, y);
     if (otmp && !covers_objects(loc)) {
         const og = object_glyph(otmp);
-        if (og && og.ch === sym)
+        // Blank symbols cannot identify a drawn object by character alone.
+        // An unseen object must not turn GLYPH_UNEXPLORED into an object glyph.
+        if (og && og.ch === sym && sym !== ' ')
             return { kind: 'object', obj: otmp, otyp: otmp.otyp, x, y };
     }
     const t = d_t_at(x, y);
@@ -709,7 +718,10 @@ function glyph_is_object(g) { return g?.kind === 'object'; }
 function glyph_is_trap(g) { return g?.kind === 'trap'; }
 function glyph_is_monster(g) { return g?.kind === 'monster'; }
 function glyph_is_invisible(g) { return g?.kind === 'invisible'; }
-function glyph_is_cmap(g) { return g?.kind === 'cmap'; }
+// C ref: display.h glyph_is_cmap -- one range from GLYPH_CMAP_STONE_OFF through the
+// cmap_c block; trap_to_glyph() is cmap_to_glyph(trap_to_defsym()), so a remembered
+// trap glyph IS a cmap glyph and magic_map_background() overwrites it.
+function glyph_is_cmap(g) { return g?.kind === 'cmap' || g?.kind === 'trap'; }
 function glyph_is_unexplored(g) { return g?.kind === 'unexplored'; }
 function glyph_to_obj(g) { return g?.otyp ?? STRANGE_OBJECT; }
 
@@ -753,13 +765,12 @@ function magic_map_background(x, y, show) {
     // C ref: display.c:251-253 magic_map_background() — only overwrite the
     // remembered glyph when it was unexplored or already a bare cmap/terrain
     // glyph (`glyph_is_unexplored(lev->glyph) || glyph_is_cmap(lev->glyph)`).
-    // An object, trap, or invisible-monster ('I') memory already on the
-    // square must survive untouched.  show_map_spot()'s own trailing
-    // glyph_is_trap/glyph_is_object branch separately restores those two
-    // cases from its saved oldglyph, but has no such restore for
-    // glyph_is_invisible — it relies entirely on this guard, so omitting it
-    // let every #wizmap/magic-mapping pass permanently stomp a remembered
-    // sensed-but-unseen monster with plain floor.
+    // An object or invisible-monster ('I') memory already on the square must
+    // survive untouched.  A remembered TRAP is a cmap glyph (trap_to_glyph() is
+    // cmap_to_glyph()), so it is overwritten here and only comes back through
+    // show_map_spot()'s tail when the trap still exists and is seen, or when it
+    // was the glyph DISPLAYED before mapping (oldglyph); a trap that was deleted
+    // meanwhile (arrow trap used up) and sat under a sensed monster is forgotten.
     if (game.level?.flags?.hero_memory) {
         const old = glyph_at(x, y, true);
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
@@ -870,9 +881,10 @@ function blank_map_cells() {
 export async function map_redisplay() {
     reconstrain_map();
     await docrt();
-    // C: `if (Underwater) under_water(2); if (u.uburied) under_ground(2);` —
-    // js/do.js has no under_water()/under_ground() yet, so the two re-entry
-    // redraws are the only part of map_redisplay not represented.
+    if (game.u?.uinwater)
+        await under_water(2);
+    if (game.u?.uburied)
+        await under_ground(2);
 }
 
 // C ref: detect.c:105 browse_map(ter_typ, ter_explain) — hand control to

@@ -1252,7 +1252,14 @@ export async function rhack(key) {
     // While the command runs C's svc.context.run still holds the residue, so
     // its nomul()/end_running() calls see it (svc_context_run() reads
     // cmd_stale_run) and clear it (end_running() zeroes cmd_stale_run).
-    const staleRun = game.context.stale_run || 0;
+    // C permits an m-accepting non-movement command after m+g/G. Its timed
+    // result leaves both context.run and domove_attempting armed, just like
+    // a bad prefix follower (rhack():3774-3777).
+    const prefixedNonmove = game.context._prefix_seen && was_m_prefix_now()
+        && !isMovementKey(ch) && !isRunKey(ch)
+        && !(cmdbind_get(origKey & 0xff)?.cmd?.flags & PREFIXCMD);
+    const pendingRun = prefixedNonmove ? game.context.run_prefix || 0 : 0;
+    const staleRun = game.context.stale_run || pendingRun;
     game.context.stale_run = 0;
     // gd.domove_attempting's DOMOVE_RUSH bit, left behind by the same g/G +
     // unbound-key sequence.  Unlike svc.context.run it is NOT touched by
@@ -1261,7 +1268,7 @@ export async function rhack(key) {
     // movement command then finds domove_attempting still set: set_move_cmd()
     // leaves svc.context.run alone (0 once end_running() has run) and rhack()
     // takes the DOMOVE_RUSH arm (multi = max(COLNO, ROWNO), context.mv).
-    const staleRush = !!game.context.stale_rush;
+    const staleRush = !!(game.context.stale_rush || pendingRun);
     game.context.stale_rush = false;
     // Set by a command whose ECMD_* result makes rhack() run reset_cmd_vars()
     // (ECMD_CANCEL/ECMD_FAIL), which wipes both residues above.
@@ -2058,7 +2065,8 @@ export async function rhack(key) {
             // prefix loops straight back and pops the queued command, as the F/g/G arms do.
             if (game.in_doagain) {
                 game.context.move = 0;
-                game.multi = 0;
+                // Queued prefixes skip parse(), so a count on ^A survives
+                // into the following command (e.g. 4^A after "m.").
                 await rhack(0);   // _m_fresh keeps menu_requested alive through this call
                 return;
             }
@@ -2170,6 +2178,10 @@ export async function rhack(key) {
         // plain walk replaces any run left live by an earlier command (a travel's run == 8 that an F-prefixed
         // dig kept, see above), while an F prefix left domove_attempting set, so its step keeps the run.
         game.context.run = game.context.forcefight ? svc_context_run() : 0;
+        // C ref: cmd.c rhack():3785-3788 DOMOVE_WALK arm — `if (gm.multi)
+        // svc.context.mv = TRUE; domove();`.  A counted walk's later steps are
+        // then moveloop_core()'s context.mv arm (js/allmain.js), not rhack().
+        if (game.multi) game.context.mv = true;
         await domove(DIR_DX[ch], DIR_DY[ch], !countRepeat);
         game.iflags && (game.iflags.menu_requested = false);
         // C ref: cmd.c rhack() DOMOVE_WALK branch — forcefight is cleared right
@@ -3182,7 +3194,7 @@ export async function doclose() {
     const x = u.ux + dir.dx, y = u.uy + dir.dy;
     // u_at(x,y) && !Passes_walls: "You are in the way!" (ECMD_TIME).  dx=dy=0
     // ('.'/'s') targets the hero's own square.
-    if (x === u.ux && y === u.uy) {
+    if (x === u.ux && y === u.uy && !hero_passes_walls()) {
         await pline('You are in the way!');
         return ECMD_TIME;
     }
@@ -4205,8 +4217,11 @@ async function domove_core(dx, dy, attemptTracked) {
     // still, not walk on and describe the floor.  Consumes no RNG.  C:
     // domove_core runs this before trapmove()/test_move(), so it sits right
     // after the monster-bump block.
+    // C: `glyph_is_invisible(glyph_at(x, y))` reads the DISPLAYED glyph, so an 'I'
+    // blanked by under_water()'s cls() (hero submerged) is not a force-fight target.
     const _ff_invis = isok(newx, newy) && !!game.level?.at(newx, newy)?.invisMon
-                      && !m_at(newx, newy) && !game.context?.nopick;
+                      && !m_at(newx, newy) && !game.context?.nopick
+                      && pg_glyph_at(newx, newy).kind === 'invisible';
     if (game.context?.forcefight || _ff_invis) {
         const off_edge = !isok(newx, newy);
         const loc = off_edge ? null : game.level?.at(newx, newy);
@@ -4971,10 +4986,12 @@ function forcefight_terrain_name(loc, x, y) {
 // struggle consumes NO RNG, matching the recorded seed0004 "b" struggles.
 async function trapmove(x, y) {
     const u = game.u;
+    // C trapmove names the steed even when no predicament message is printed.
+    const steedname = u.usteed ? y_monnam(u.usteed) : null;
     if (!u.utrap) return true; // sanity (C: !u.utrap -> return TRUE)
     const dx = u.dx, dy = u.dy;
     // C: the predicament lines name the steed when riding ("Your pony is ...").
-    const predicament_msg = (what) => (u.usteed ? `${YMonnam(u.usteed)} is ${what}.` : `You are ${what}.`);
+    const predicament_msg = (what) => (u.usteed ? `${cmd_upstart(steedname)} is ${what}.` : `You are ${what}.`);
 
     switch (u.utraptype) {
     case TT_BEARTRAP: {
@@ -4992,7 +5009,7 @@ async function trapmove(x, y) {
         // predicament line ("... bear trap.  You finally wriggle free.").
         if (!u.utrap) {
             const { update_topl } = await import('./display.js');
-            await update_topl(u.usteed ? `${YMonnam(u.usteed)} finally lurches free.`
+            await update_topl(u.usteed ? `${cmd_upstart(steedname)} finally lurches free.`
                                        : 'You finally wriggle free.');
         }
         return false;
@@ -5017,7 +5034,7 @@ async function trapmove(x, y) {
                 await Norep_topl(predicament_msg('stuck to the web'));
         }
         else if (u.usteed)
-            await pline(`${YMonnam(u.usteed)} breaks out of the web.`);
+            await pline(`${cmd_upstart(steedname)} breaks out of the web.`);
         else
             await pline('You disentangle yourself.');
         return false;
@@ -5033,7 +5050,7 @@ async function trapmove(x, y) {
             if ((u.utrap & 0xff) === 0) {
                 u.utrap = 0;
                 await pline(u.usteed
-                    ? `You lead ${y_monnam(u.usteed)} to the edge of the ${hliquid('lava')}.`
+                    ? `You lead ${steedname} to the edge of the ${hliquid('lava')}.`
                     : `You pull yourself to the edge of the ${hliquid('lava')}.`);
             }
         }
@@ -5065,14 +5082,14 @@ async function trapmove(x, y) {
                 const culprit = anchored ? 'buried ball' : surface(u.ux, u.uy);
                 if (u.usteed) {
                     await Norep_topl(anchored
-                        ? `You and ${y_monnam(u.usteed)} are ${predicament} ${culprit}.`
-                        : `${YMonnam(u.usteed)} is ${predicament} ${culprit}.`);
+                        ? `You and ${steedname} are ${predicament} ${culprit}.`
+                        : `${cmd_upstart(steedname)} is ${predicament} ${culprit}.`);
                 } else
                     await Norep_topl(`You are ${predicament} ${culprit}.`);
             }
         } else {
             await pline(u.usteed
-                ? `${YMonnam(u.usteed)} finally ${!anchored ? 'lurches' : 'wrenches the ball'} free.`
+                ? `${cmd_upstart(steedname)} finally ${!anchored ? 'lurches' : 'wrenches the ball'} free.`
                 : `You finally ${!anchored ? 'wriggle' : 'wrench the ball'} free.`);
             if (anchored) {
                 const { buried_ball_to_punishment } = await import('./dig.js');

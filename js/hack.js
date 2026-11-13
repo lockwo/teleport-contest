@@ -27,7 +27,7 @@ import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR } from './const.js';
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
+import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta } from './pager.js';
 import { is_drawbridge_wall } from './dbridge.js';
 import { fruit_from_name } from './objnam.js';
@@ -54,7 +54,7 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, LADDER, FOUNTAIN,
          POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
          D_CLOSED, D_LOCKED, D_ISOPEN, D_BROKEN, D_NODOOR, IRONBARS,
          TREE, SDOOR, SCORR, THRONE, SINK, GRAVE, ALTAR,
-         DRAWBRIDGE_UP, DRAWBRIDGE_DOWN,
+         DRAWBRIDGE_UP, DRAWBRIDGE_DOWN, DBWALL,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_STWALL, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
          IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, AIR, Is_airlevel, Is_astralevel,
@@ -326,7 +326,7 @@ export async function stop_occupation(append = false) {
 // C ref: hack.c lookaround() — examine the 8 cells around the hero after a
 // run/travel step and decide whether to stop (nomul) or keep going, possibly
 // turning to follow a corridor.  Stop messages honor mention_walls.
-async function lookaround() {
+export async function lookaround() {
     const u = game.u;
     const c = game.context;
     let x0 = 0, y0 = 0, m0 = 1, i0 = 9;
@@ -2659,6 +2659,14 @@ async function getpos_render(message, cx, cy, hist = 'append') {
     if (hist !== 'append') remember_topl();
     if (hist !== 'suppress') game._toplines = wrap_topl(message).join('\n');
     game._pending_message = message || '';
+    // C ref: tty_putstr() with ATR_NOHISTORY (auto_describe()'s
+    // SUPPRESS_HISTORY) calls show_topl()/addtopl(), NOT update_topl(): no
+    // word-wrap and no --More--, topl_putsym() just hard-wraps at column CO-1
+    // (the same path tty_yn_function's prompt takes, see display.js
+    // _toplPromptMsg).  A long monster name made the autodescribe line break
+    // mid-word on row 1 with the cursor still on the map.
+    const hardWrap = hist === 'suppress' && message && wrap_topl(message).length > 1;
+    if (hardWrap) { game._toplPromptMsg = message; game._toplPromptFull = message; }
     // C update_topl()/redotoplin() marks each fresh message NEED_MORE.
     // readchar() acknowledges descriptions, but a final "Done." has no read.
     game._toplin = message ? 1 : 0;
@@ -2669,7 +2677,7 @@ async function getpos_render(message, cx, cy, hist = 'append') {
     // through update_topl like any other message, so a description long enough
     // to word-wrap onto a second row blocks on --More-- right away (the long
     // "a doorway or the floor of a room or ..." cmap list does).
-    if (message && wrap_topl(message).length > 1) {
+    if (message && !hardWrap && topl_rows(message).length > 1) {
         await topl_more();
         game._toplin = 0;
         game._pending_message = '';
@@ -3843,8 +3851,30 @@ function look_prefix_char(loc) {
     return decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
 }
 
+// C ref: pager.c:1919 / 1933 putmixed(WIN_MESSAGE, 0, out_str) -> windows.c
+// decode_mixed(): the farlook line passes through the backslash-escape decoder,
+// so a lone `\` of the text (a monster named "Kitty\n", an engraving) is
+// dropped.  out_str's first char is the glyph (encglyph() in C, never a raw
+// backslash there), so only what follows it is decoded; firstmatch stays raw
+// (checkfile() looks it up in data.base verbatim).
 function look_pick_description(x, y) {
+    const r = look_pick_description_raw(x, y);
+    if (r.text) r.text = r.text[0] + decode_mixed(r.text.slice(1));
+    return r;
+}
+
+function look_pick_description_raw(x, y) {
     const u = game.u;
+    // C ref: display.c newsym() `if (reg && ...) { show_region(); return; }` — a
+    // visible gas/vapor cloud is drawn over everything on its square (the hero
+    // included), so glyph_at() is S_poisoncloud/S_cloud and do_screen_description()
+    // lists every cmap sharing its '#'; lookat() then names the cloud, or self_lookat()
+    // ("..., in a cloud of poison gas") on the hero's own square.
+    if (game.level?.at(x, y)?.disp_region) {
+        const text = { s: '' }, firstmatch = { s: '' };
+        const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
+        return { text: text.s, firstmatch: firstmatch.s, found };
+    }
     // C ref: pager.c do_screen_description() keys off glyph_at(), what is DRAWN on
     // the hero's square: after wiz_map's map_trap() it is the trap glyph, and
     // the farlook reads "^ a trap (human ... called ...)" -- the class lookup
@@ -4089,7 +4119,10 @@ function look_pick_description(x, y) {
     // gs.showsyms, so `loc.disp_ch` (the same char actually drawn) plus the
     // `disp_decgfx` flag it already carries stand in for sym/is_swallow_sym.
     const wallShown = look_prefix_char(loc) !== ' '
-        && (IS_WALL(typ) || (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch));
+        // A DBWALL portcullis is drawn as S_vcdbridge/S_hcdbridge ('#'), never as a wall
+        // (display.c back_to_glyph()), so it does not share the swallow block's '-'/'|'.
+        && ((IS_WALL(typ) && typ !== DBWALL)
+            || (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch));
     if (wallShown && (!loc.disp_decgfx || loc.disp_ch === 'x')) {
         // A meta-bit symset (IBMgraphics) gives walls high-byte ttychars that collide
         // with the swallow block only through S_sw_ml/S_sw_mr (== S_vwall), so the
@@ -4975,7 +5008,7 @@ export async function do_look_full() {
         // description that wraps onto a second row blocks on its own --More--
         // right here (redotoplin()), and an ESC there sets WIN_STOP, which
         // suppresses the next loop pass's "Pick ..." line.
-        if (wrap_topl(text).length > 1) {
+        if (topl_rows(text).length > 1) {
             game._toplin = 0;
             game._pending_message = '';
             await update_topl(text);

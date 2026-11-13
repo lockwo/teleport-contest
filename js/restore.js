@@ -327,9 +327,12 @@ const UNSAVED_GLOBALS = [
     '_touch_blasted', '_ext_tlist', '_goto_familiar', '_dowhatdoes_once',
     '_search_occupation', '_engrave_occupation', '_wait_occupation',
     '_takeoff_occupation', '_eat_occupation', '_study_occupation',
-    '_dig_occupation', 'occupation', 'occupation_txt', '_prayer',
+    '_dig_occupation', 'occupation', 'occupation_txt', '_prayer', '_already_found_flag',
     'in_steed_dismounting', '_dressing_obj', '_dressing_off', '_did_nothing_flag',
     '_invmenu_esc', '_cmdqAbandonRetry',
+    /* termcap.c `nomux_anim_id` (recorder static) and decl.c gh.hitmsg_mid /
+       gh.hitmsg_prev (mhitu.c hitmsg() "again"): process globals, never saved */
+    '_nomuxAnimId', '_hitmsg',
     /* tty status / top-line / menu caches (wintty.c, botl.c statics; disp.*) */
     'disp', 'botl', 'botlx', 'time_botl', 'input_state', '_getposFrameValid',
     '_statusSnap', '_terrainStatusWipe', '_statusDocrt', '_toplinStale',
@@ -346,6 +349,35 @@ function reset_unsaved_globals(fresh) {
     for (const k of UNSAVED_GLOBALS) {
         if (Object.prototype.hasOwnProperty.call(fresh, k)) game[k] = fresh[k];
         else delete game[k];
+    }
+}
+
+/* C ref: restore.c restgamestate() reads back `struct flag flags` only.  The
+   options that flag.h keeps in `struct instance_flags iflags` (never saved)
+   or in a11y come from the restoring process's own option processing, so a
+   runtime `O` change or a different rc in the saving segment must not carry
+   over.  This port keeps several of them (the iflags-addressed booleans of
+   optlist.h, plus number_pad / statuslines) on game.flags, where the blob has
+   just overwritten the value initoptions() set: put the fresh one back, or
+   drop the key when the restoring rc never set it. */
+const IFLAGS_ONLY_FLAG_KEYS = [
+    'accessiblemsg', 'altmeta', 'ascii_map', 'bgcolors', 'color', 'customcolors',
+    'customsymbols', 'eight_bit_tty', 'extmenu', 'fireassist', 'force_invmenu',
+    'fullscreen', 'guicolor', 'herecmd_menu', 'hilite_pet', 'hilite_pile',
+    'hitpointbar', 'large_font', 'mention_map', 'menu_overlay', 'menucolors',
+    'mon_movement', 'news', 'perm_invent', 'popup_dialog', 'preload_tiles',
+    'price_quotes', 'query_menu', 'rawio', 'sanity_check', 'selectsaved',
+    'softkeyboard', 'sounds', 'spot_monsters', 'splash_screen', 'status_updates',
+    'tiled_map', 'toptenwin', 'use_darkgray', 'use_inverse', 'use_truecolor',
+    'voices', 'whatis_menu', 'whatis_moveskip', 'wraptext',
+    'number_pad', 'statuslines',
+];
+function reset_iflags_type_options(fresh) {
+    const ff = fresh.flags || {};
+    game.flags = game.flags || {};
+    for (const k of IFLAGS_ONLY_FLAG_KEYS) {
+        if (Object.prototype.hasOwnProperty.call(ff, k)) game.flags[k] = ff[k];
+        else delete game.flags[k];
     }
 }
 
@@ -388,6 +420,7 @@ export async function dorestore() {
     const fresh = { ...game };
     Object.assign(game, saved);
     reset_unsaved_globals(fresh);
+    reset_iflags_type_options(fresh);
     game.nhDisplay = keepDisplay;
     game._preNhgetchHook = keepHook;
     game.datetime = keepDatetime;

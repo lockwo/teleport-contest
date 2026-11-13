@@ -29,7 +29,7 @@ import { mungspaces } from './hacklib.js';
 // of uhitm.js or mondata.js here creates a cycle during module initialization.
 let _hooks = { x_monnam: null, mon_pmname: null, pronoun_gender: null };
 export function register_monnam_hooks(h) { _hooks = { ..._hooks, ...h }; }
-function x_monnam(mtmp, article, adjective, suppress, called) {
+export function x_monnam(mtmp, article, adjective, suppress, called) {
     return _hooks.x_monnam
         ? _hooks.x_monnam(mtmp, article, adjective, suppress, called)
         : (mtmp?.data?.name || 'monster');

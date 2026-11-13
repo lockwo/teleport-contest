@@ -759,7 +759,9 @@ function sscanf_ape(mapping, lead) {
     while (i < mapping.length && mapping[i] !== '"' && i - start < 253) i++;
     if (i === start) return { n: 0 };           /* scanset matched nothing */
     const text = mapping.slice(start, i);
-    if (mapping[i] !== '"') return { n: 0 };    /* literal '"' unmatched */
+    /* literal '"' unmatched: the scanset already assigned `text`, so sscanf
+       returns 1 (EOF or mismatch after a successful conversion) */
+    if (mapping[i] !== '"') return { n: 1, text };
     i++;
     while (i < mapping.length && isspace(mapping[i])) i++;
     if (i >= mapping.length) return { n: 1, text };
@@ -3922,13 +3924,15 @@ function free_one_msgtype(idx, result) { result.msgtypes.splice(idx, 1); }
 
 // C ref: options.c hide_unhide_msgtypes() — a NEGATIVE msgtype is not
 // recognised by pline(), which is how "hide these types for now" works.
-function hide_unhide_msgtypes(hide, hide_mask, list) {
-    for (const t of list) {
+export function hide_unhide_msgtypes(hide, hide_mask) {
+    for (const t of game.msgtypes || []) {
         let mt = t.msgtype;
         if (!hide) mt = -mt;
         if (mt > 0 && ((1 << mt) & hide_mask)) t.msgtype = -t.msgtype;
     }
 }
+// C ref: hack.h MSGTYP_MASK_REP_SHOW.
+export const MSGTYP_MASK_REP_SHOW = (1 << MSGTYP_NOREP) | (1 << MSGTYP_NOSHOW);
 
 // C ref: options.c test_regex_pattern() — compile a pattern only to find out
 // whether it is valid; the caller re-parses it after validating the rest.

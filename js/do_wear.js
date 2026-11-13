@@ -25,7 +25,7 @@ import {
     worn_slot_clear, body_part, xname, yname, makeknown,
     update_inventory, bimanual, is_sword, welded, adj_abon_attrib, learnring,
     silly_thing, dropx, canletgo, setuswapwep, setuqwep,
-    Ring_off, Ring_on, Amulet_on, remove_worn_item, setworn_accessory, Amulet_off, Blindf_on, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
+    Ring_off, Ring_on, Amulet_on, on_msg_accessory, remove_worn_item, setworn_accessory, Amulet_off, Blindf_on, Blindf_off, off_msg, curse_blocks_removal, oc_delay,
     otense, Yname2, Tobjnam, makeknown_credit, cmdq_pop, worn_extrinsic, worn_blocked, set_worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
@@ -1000,7 +1000,8 @@ export async function set_wear(obj) {
         const amul = game.uamul;
         await remove_worn_item(amul, false);
         setworn_accessory(amul, W_AMUL);
-        await Amulet_on(amul);
+        /* C: Amulet_on() ends with `if (!on_msg_done) on_msg(uamul)` */
+        if (!(await Amulet_on(amul))) await on_msg_accessory(amul);
     }
 
     if (!obj ? !!game.uarmu : (obj === game.uarmu)) await Shirt_on();

@@ -194,6 +194,7 @@ const WAND_BACKFIRE_CHANCE = 100;
 // otyps consulted by the IMMEDIATE wand path.  C ref: include/objects.h enum.
 const WAN_POLYMORPH = 422;
 const SPE_POLYMORPH = 399;
+const SCR_MAIL = 364;
 const POT_POLYMORPH = 316;
 // objects.h order: ...RESTFUL_SLEEP(204) versus_poison(205) CHANGE(206)
 // UNCHANGING(207) REFLECTION(208) MAGICAL_BREATHING(209) GUARDING(210)...
@@ -445,6 +446,7 @@ function obj_shudders(obj) {
 // almost always leaves it at -1.  splitobj() for quan>1 piles isn't exercised by
 // the covered sessions, so the quan==1 delobj() case is modelled faithfully.
 async function do_osshock(obj) {
+    if (obj.otyp === SCR_MAIL) return; /* MAIL_STRUCTURES */
     game.obj_zapped = true;
     const Luck = (game.u?.uluck || 0) + (game.u?.moreluck || 0);
     if (game.poly_zapped < 0) {
@@ -527,6 +529,12 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
     /* preserve inventory letter if in inventory */
     if (obj_location === OBJ_INVENT)
         otmp.invlet = obj.invlet;
+    /* You can't send yourself 100 mail messages and then
+     * polymorph them into useful scrolls */
+    if (obj.otyp === SCR_MAIL) {
+        otmp.otyp = SCR_MAIL;
+        otmp.spe = 1;
+    }
 
     /* avoid abusing eggs laid by you */
     if (obj.otyp === EGG && obj.spe) {
@@ -1335,6 +1343,7 @@ async function polyuse(pile, mat, minwt) {
         if (otmp === game.u?.uball || otmp === game.u?.uchain) continue;
         if (otmp.where !== OBJ_FLOOR) continue;
         if (obj_resists(otmp, 0, 0)) continue; /* preserve unique objects */
+        if (otmp.otyp === SCR_MAIL) continue; /* MAIL_STRUCTURES */
         if (((objects[otmp.otyp]?.material | 0) === mat) === (rn2(minwt + 1) !== 0)) {
             /* appropriately add damage to bill */
             const shk = await import('./shk.js');

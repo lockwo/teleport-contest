@@ -160,11 +160,9 @@ export async function outrip_and_score(how) {
 
     // ── build the endgame TEXT window (24 lines), C ref rip.c + end.c ──
     const lines = [];
-    // C: end.c really_done() draws the stone only for a death (how <= GENOCIDED);
-    // ESCAPED/ASCENDED/QUIT get the text summary alone, and their middle line is
-    // "You escaped from the dungeon with N points," (end.c:1475) rather than the
-    // "in <dungeon> on dungeon level N" form.
-    const stone = how <= GENOCIDED;
+    // C ref: end.c:1393, live tty stones exclude genocide and honor tombstone.
+    // ESCAPED/ASCENDED/QUIT get the text summary alone.
+    const stone = how < GENOCIDED && game.flags?.tombstone !== false;
     if (stone) {
         lines.push('');                                // 0 (genl_outrip leading "")
         for (const r of genl_outrip(plname, umoney, deathText, year))
@@ -1297,8 +1295,8 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     // notice below is unconditional.
     if (!stopprint) {
         const lines = [];
-        // Stone only for a death (how <= GENOCIDED); see outrip_and_score().
-        const stone = how <= GENOCIDED;
+        // C ref: end.c:1393, genocide has no live stone even though dumplog does.
+        const stone = how < GENOCIDED && game.flags?.tombstone !== false;
         if (stone) {
             lines.push('');
             for (const r of genl_outrip(plname, umoney, deathText, year)) lines.push(r);

@@ -2707,8 +2707,7 @@ export function quest_drop_default_invent(mtmp) {
     for (let i = 0; i < mtmp.minvent.length; i++) {
         rn2(100);                                      // obj_resists(obj, 0, 0)
     }
-    // discard_minvent(mtmp, TRUE): non-artifact items dealloc with no RNG.
-    mtmp.minvent = [];
+    discard_minvent(mtmp, true);
 }
 
 // C ref: sp_lev.c lspo_map halign=SPLEV_H_LEFT / valign=SPLEV_CENTER offset

@@ -729,6 +729,38 @@ export function vision_recalc(control = 0) {
         view_from(u.uy, u.ux, next, next_rmin, next_rmax);
     }
 
+    // C ref: vision.c:631-668.  Publish x-ray angles before light sources and
+    // before swapping viz_array.  The early newsym calls also spend display RNG.
+    if (!Blind() && !rogue && control !== 2 && !u.uswallow
+        && u.xray_range >= 0) {
+        const range = u.xray_range | 0;
+        if (range === 0) {
+            next[u.uy][u.ux] |= IN_SIGHT;
+            game.level.at(u.ux, u.uy).seenv = SVALL;
+            next_rmin[u.uy] = Math.min(next_rmin[u.uy], u.ux);
+            next_rmax[u.uy] = Math.max(next_rmax[u.uy], u.ux);
+        } else {
+            for (let row = Math.max(0, u.uy - range);
+                 row <= Math.min(ROWNO - 1, u.uy + range); row++) {
+                const dy = Math.abs(u.uy - row);
+                const radius = circle_data[circle_start[range] + dy];
+                const start = Math.max(1, u.ux - radius);
+                const stop = Math.min(COLNO - 1, u.ux + radius);
+                for (let col = start; col <= stop; col++) {
+                    const oldval = next[row][col];
+                    const loc = game.level.at(col, row);
+                    const oldseenv = loc.seenv || 0;
+                    next[row][col] |= IN_SIGHT;
+                    loc.seenv = SVALL;
+                    if (!(oldval & IN_SIGHT) || oldseenv !== SVALL)
+                        newsym(col, row);
+                }
+                next_rmin[row] = Math.min(next_rmin[row], start);
+                next_rmax[row] = Math.max(next_rmax[row], stop);
+            }
+        }
+    }
+
 
     // C ref: vision.c:703 do_light_sources(next_array) — mobile light sources
     // (a gold dragon, a fire vortex, a lit lamp) mark TEMP_LIT on the cells
@@ -788,32 +820,6 @@ export function vision_recalc(control = 0) {
                 } else {
                     next[row][col] |= IN_SIGHT;
                 }
-            }
-        }
-    }
-    // C ref: vision.c vision_recalc() xray pass.  X-ray cells are visible
-    // through walls, retain SVALL in level memory, and expand the newsym range.
-    if (!blind && !rogue && control !== 2 && !u.uswallow
-        && u.xray_range >= 0) {
-        const range = u.xray_range | 0;
-        if (range === 0) {
-            next[uy][ux] |= IN_SIGHT;
-            level.at(ux, uy).seenv = SVALL;
-            next_rmin[uy] = Math.min(next_rmin[uy], ux);
-            next_rmax[uy] = Math.max(next_rmax[uy], ux);
-        } else {
-            for (let row = Math.max(0, uy - range);
-                 row <= Math.min(ROWNO - 1, uy + range); row++) {
-                const dy = Math.abs(uy - row);
-                const radius = circle_data[circle_start[range] + dy];
-                const start = Math.max(1, ux - radius);
-                const stop = Math.min(COLNO - 1, ux + radius);
-                for (let col = start; col <= stop; col++) {
-                    next[row][col] |= IN_SIGHT;
-                    level.at(col, row).seenv = SVALL;
-                }
-                next_rmin[row] = Math.min(next_rmin[row], start);
-                next_rmax[row] = Math.max(next_rmax[row], stop);
             }
         }
     }

@@ -459,10 +459,25 @@ export class NethackGame {
                 bail('Until next time then...');
                 return;
             }
-            if (!game.plname) await this._promptForName();
-            /* askname() runs inside plnamesuffix()'s do/while, after the
-               genericusers test: a typed generic name is kept */
-            plnamesuffix(true);
+            /* plnamesuffix()'s do/while: askname() again while the typed name was
+               nothing but "-role-race" suffix tokens (e.g. "-" or "-wiz").  Each
+               further askname() puts a blank BASE line, then its prompt, under
+               the previous one. */
+            for (let ask = 0; ; ask++) {
+                if (!game.plname) {
+                    if (ask === 0) await this._promptForName();
+                    else {
+                        this._renameOverBase = true;
+                        this._renameBase = null;
+                        await this._promptForName(12 + 2 * ask);
+                    }
+                    (this._askLog = this._askLog || []).push({ row: 12 + 2 * ask, text: this._askedName, retry: this._asknameRetry });
+                }
+                /* askname() runs inside plnamesuffix()'s do/while, after the
+                   genericusers test: a typed generic name is kept */
+                plnamesuffix(true);
+                if (game.plname) break;
+            }
         }
         optsel.role = g.initrole;
         optsel.race = g.initrace;
@@ -548,14 +563,25 @@ export class NethackGame {
         // loop), so gate the "Who are you?" line on whether askname() ACTUALLY
         // ran this game, not on whether a name happens to be set.
         if (this._asknamePrompted) {
-            if (this._asknameRetry)
+            const log = this._askLog && this._askLog.length > 1 ? this._askLog : null;
+            if (this._asknameRetry && !log)
                 disp.putstr(0, promptRow - 1, 'Enter a name for your character...', NO_COLOR);
             /* the row keeps what was typed, "-role-race" suffix included,
                although plnamesuffix() has since shortened svp.plname */
-            const typed = (name === game.plname && this._askedName) ? this._askedName : name;
-            const prompt = `Who are you? ${typed || ''}`;
-            disp.putstr(0, promptRow, prompt, NO_COLOR);
-            if (!topLine) disp.setCursor(Math.min(prompt.length, 79), promptRow);
+            if (log) {
+                /* askname() ran more than once: every prompt row stays on the BASE window */
+                for (const a of log) {
+                    if (a.retry) disp.putstr(0, a.row - 1, 'Enter a name for your character...', NO_COLOR);
+                    disp.putstr(0, a.row, `Who are you? ${a.text || ''}`, NO_COLOR);
+                }
+                const last = log[log.length - 1];
+                if (!topLine) disp.setCursor(Math.min(13 + (last.text || '').length, 79), last.row);
+            } else {
+                const typed = (name === game.plname && this._askedName) ? this._askedName : name;
+                const prompt = `Who are you? ${typed || ''}`;
+                disp.putstr(0, promptRow, prompt, NO_COLOR);
+                if (!topLine) disp.setCursor(Math.min(prompt.length, 79), promptRow);
+            }
         }
         // The topLine is a tty yn_function prompt ("...? [ynaq]"). C's
         // yn_function prints the prompt followed by a space and leaves
@@ -1217,6 +1243,24 @@ export class NethackGame {
                 else if (switchTo === 'race') sel.race = ROLE_NONE;
                 else if (switchTo === 'gender') sel.gender = ROLE_NONE;
                 else if (switchTo === 'align') sel.align = ROLE_NONE;
+                if (switchTo !== 'role') {
+                    /* C ref: the facet's block counts its acceptable values and only
+                       opens a menu when more than one is left; a role/race/&c filter
+                       can leave exactly one, which is taken silently and the flow
+                       moves on to the next unresolved facet. */
+                    const cnt = switchTo === 'race' ? count_ok_race(sel.role, sel.gender, sel.align)
+                        : switchTo === 'gender' ? count_ok_gend(sel.role, sel.race, sel.align)
+                            : count_ok_align(sel.role, sel.race, sel.gender);
+                    if (cnt.n <= 1) {
+                        if (switchTo === 'race') sel.race = cnt.k;
+                        else if (switchTo === 'gender') sel.gender = cnt.k;
+                        else sel.align = cnt.k;
+                        prompt = this._advanceForcedFacets(sel);
+                        if (prompt === 'ok' && !getconfirmation) return true;
+                        this._renderManualPrompt(sel);
+                        continue;
+                    }
+                }
                 rigid_role_checks(sel);
                 if (sel.role < 0) sel.role = ROLE_NONE; // pick_role rigid may set
                 prompt = switchTo;

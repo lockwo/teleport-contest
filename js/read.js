@@ -9,9 +9,9 @@
 // fully written, just missing their `case` arms in the switch below.
 
 import { ceiling } from './dungeon.js';
-import { ONAME, HEAD, STOMACH } from './const.js';
+import { ONAME, HEAD, STOMACH, ROLE_PM_BASE } from './const.js';
 import { game, hooks } from './gstate.js';
-import { LL_CONDUCT, livelog_printf } from './livelog.js';
+import { LL_CONDUCT, LL_GENOCIDE, livelog_printf } from './livelog.js';
 import { rnd, rn2, rn1, d } from './rng.js';
 import { pline, topl_more, update_topl, urgent_topl, newsym, y_n, status_hold, You_hear, You_feel } from './display.js';
 import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
@@ -2930,7 +2930,6 @@ async function name_to_monclass_read(str) {
 // "?" re-prompts without consuming a try.  RNG-free: the whole cost is the
 // input it consumes and the mvitals writes.
 //
-// livelog_printf() is score-only and is left out.
 // C's gu.urole.mnum / gu.urace.mnum are mons[] indices; this port stores
 // 0-based role/race indices there (role order matches PM_ARCHEOLOGIST..
 // PM_WIZARD), so map them back for the genocide "is it you?" tests.
@@ -2949,6 +2948,7 @@ export async function do_class_genocide() {
     const { monster_by_pmidx } = await import('./makemon.js');
     const { kill_genocided_monsters } = await import('./mon.js');
     let feel_dead = 0;
+    let ll_done = false;
     let gameover = false;              /* true iff killed self */
     const { role: urole_mnum, race: urace_mnum } = await hero_genocide_pms();
 
@@ -2974,8 +2974,10 @@ export async function do_class_genocide() {
         /* choosing "none" preserves genocideless conduct */
         const low = buf.toLowerCase();
         if (buf[0] === '\x1b' || low === 'none' || low === "'none'"
-            || low === 'nothing')
+            || low === 'nothing') {
+            livelog_printf(LL_GENOCIDE, 'declined to perform class genocide');
             return;
+        }
         /* "?" runs #genocided to show existing genocides, then re-prompts */
         if (buf === '?' || buf === "'?'") {
             const { list_genocided } = await import('./insight.js');
@@ -3032,6 +3034,14 @@ export async function do_class_genocide() {
                 || ((ptr.geno & G_GENO) && !(mvitals_mvflags(i) & G_GENOD))) {
                 /* This check must be first since player monsters might have
                    G_GENOD or !G_GENO. */
+                if (!ll_done) {
+                    ll_done = true;
+                    if (!game.mvitals?.some(v => (v?.mvflags | 0) & G_GENOD))
+                        livelog_printf(LL_CONDUCT | LL_GENOCIDE,
+                            `performed ${game.flags?.female ? 'her' : 'his'} first genocide (class ${def_monsyms[klass].sym})`);
+                    else
+                        livelog_printf(LL_GENOCIDE, `genocided class ${def_monsyms[klass].sym}`);
+                }
                 mvitals_set(i, G_GENOD | G_NOCORPSE);
                 await kill_genocided_monsters();
                 update_inventory();    /* eggs & tins */
@@ -3105,8 +3115,7 @@ export async function do_class_genocide() {
 // forced-self variants.  `how` bits: REALLY 1, PLAYER 2, ONTHRONE 4.
 // RNG: the cursed arm's rn1(3, 4) count and one makemon() per creature; the
 // "no free pass" fallbacks each draw an rndmonst().
-//
-// SetVoice() and livelog are not modelled (none draws RNG).
+// Genocide choices also populate the live #chronicle, including declined ones.
 export async function do_genocide(how) {
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     const { monster_by_pmidx, rndmonst, makemon } = await import('./makemon.js');
@@ -3149,6 +3158,7 @@ export async function do_genocide(how) {
                 /* ... but no free pass if cursed */
                 if (!(how & REALLY) && (ptr = rndmonst()) != null)
                     break;             /* remaining checks don't apply */
+                livelog_printf(LL_GENOCIDE, 'declined to perform genocide');
                 return;
             }
             /* "?" or "'?'" runs #genocided to show existing genocides */
@@ -3224,6 +3234,12 @@ export async function do_genocide(how) {
     }
 
     if (how & REALLY) {
+        if (!game.mvitals?.some(v => (v?.mvflags | 0) & G_GENOD))
+            livelog_printf(LL_CONDUCT | LL_GENOCIDE,
+                `performed ${game.flags?.female ? 'her' : 'his'} first genocide (${makeplural(realbuf)})`);
+        else
+            livelog_printf(LL_GENOCIDE, `genocided ${makeplural(realbuf)}`);
+
         /* setting no-corpse affects wishing and random tin generation */
         mvitals_set(mndx, G_GENOD | G_NOCORPSE);
         await pline_append(`Wiped out ${which}${
@@ -3376,7 +3392,11 @@ export async function create_particular_parse(str, d) {
 
     d.quan = 1 + ((game.multi > 0) ? (game.multi | 0) : 0);
     d.monclass = MAXMCLASSES;
-    d.which = game.urole?.mnum ?? 0;   /* an arbitrary index into mons[] */
+    /* C: gu.urole.mnum, an index into mons[]; roles[].mnum here is only the
+       offset from PM_ARCHEOLOGIST, and a class request ("V", "H") keeps it, so
+       the doppelganger/shapeshifter fix-up in create_particular_creation()
+       newcham()s into the hero's own player-monster (e.g. a valkyrie) */
+    d.which = ROLE_PM_BASE + (game.urole?.mnum ?? 0);
     d.fem = -1;                        /* gender not specified */
     d.genderconf = -1;                 /* no confusion on which gender to assign */
     d.randmonst = false;
@@ -3457,7 +3477,7 @@ export async function create_particular_parse(str, d) {
         d.monclass = MAXMCLASSES;
         return true;
     } else if (d.monclass > 0) {
-        d.which = game.urole?.mnum ?? 0;  /* reset from NON_PM */
+        d.which = ROLE_PM_BASE + (game.urole?.mnum ?? 0);  /* reset from NON_PM */
         return true;
     }
     return false;

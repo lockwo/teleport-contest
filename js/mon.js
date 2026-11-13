@@ -897,7 +897,10 @@ async function m_calcdistress(mtmp) {
     // against water/lava once per turn even though it never moves, because it
     // can be carried/teleported into liquid; vision is caught up first.
     if (mmove_of(mtmp.data) === 0) {
-        if (game.vision_full_recalc) vision_recalc(0);
+        if (game.vision_full_recalc) {
+            vision_recalc(0);
+            if (game._noticeQueue?.length) await hooks.flushNotices();
+        }
         if (await minliquid(mtmp)) return;
     }
     // C ref: mon.c:1193 — regenerate hit points, BEFORE the shapeshift and
@@ -1298,7 +1301,12 @@ async function movemon_singlemon(mtmp) {
     // a boulder a previous monster lifted or dropped is reflected in cansee()/
     // couldsee() for its m_move, linedup and newsym (hallucinated glyphs draw
     // from the display RNG only for squares the hero can see).
-    if (game.vision_full_recalc) vision_recalc(0);
+    if (game.vision_full_recalc) {
+        vision_recalc(0);
+        /* C ref: the recalc's notice_all_mons() pline()s now, before this
+           monster's move, not at the first pline/key read after it. */
+        if (game._noticeQueue?.length) await hooks.flushNotices();
+    }
 
     // makemon.c sets mcansee=mcanmove=TRUE and mpeaceful=peace_minded() on
     // every monster.  The JS makemon doesn't store those move-loop fields, so

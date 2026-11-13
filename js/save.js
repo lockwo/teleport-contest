@@ -207,6 +207,15 @@ export async function dosave0() {
     }
     undo_startup_luck();
     try {
+        /* C ref: save.c savelev_core() — "purge any dead monsters (necessary if
+           we're starting a panic save rather than a normal one, or sometimes
+           when changing levels without taking time -- e.g. create statue trap
+           then immediately level teleport)": `if (iflags.purge_monsters)
+           dmonsfree();` runs before the level is written, so the saved chain
+           holds no DEADMONSTER and iflags.purge_monsters (never saved) starts
+           the restored game at 0.  This port keeps dead monsters in the level
+           list until dmonsfree(), and the blob serializes that list as is. */
+        if (game.iflags?.purge_monsters) await (await import('./mon.js')).dmonsfree();
         copy_other_levels_for_save();
         forget_saved_priests();
         /* C ref: savegamestate() -> o_init.c savenames().  The objects[] table

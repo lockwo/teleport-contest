@@ -18,7 +18,7 @@ import {
     ICE, DRAWBRIDGE_UP, DB_UNDER, DB_ICE, MAX_OIL_IN_FLASK,
     COLNO, ROWNO, LUCKADD, MIGR_TO_SPECIES,
     ONAME, has_oname, setONAME, OMONST, Has_contents, ismnum, isok, In_quest,
-    PLNMSG_OBJ_GLOWS,
+    PLNMSG_OBJ_GLOWS, I_SPECIAL,
 } from './const.js';
 import {
     rndmonst_adj, monster_by_pmidx, can_be_hatched, dead_species,
@@ -3170,19 +3170,23 @@ export function dobjsfree() {
 }
 
 // C ref: mkobj.c discard_minvent(mtmp, uncreate_artifacts) — throw away a
-// monster's whole inventory (a monster leaving the game, not dying, so nothing
-// drops).  `uncreate_artifacts` releases the artifact-exists reservation so the
-// artifact can be generated again.
+// monster's whole inventory, including defaults replaced by a special level.
+// Worn items queue a gear recheck through extract_from_minvent() in C even
+// when the replacement inventory is equipped immediately during creation.
+// `uncreate_artifacts` releases the artifact-exists reservation.
 export function discard_minvent(mtmp, uncreate_artifacts) {
     if (!mtmp) return;
     const inv = mtmp.minvent;
     if (!Array.isArray(inv)) { mtmp.minvent = []; return; }
     while (inv.length) {
         const otmp = inv[0];
+        const unwornmask = otmp.owornmask | 0;
         inv.splice(0, 1);
         otmp.where = OBJ_FREE;
         otmp.ocarry = null;
         otmp.owornmask = 0;
+        if (unwornmask)
+            mtmp.misc_worn_check = ((mtmp.misc_worn_check | 0) & ~unwornmask) | I_SPECIAL;
         if (uncreate_artifacts && otmp.oartifact) {
             const reg = game.artifact_exists;
             if (reg) delete reg[otmp.oartifact];
