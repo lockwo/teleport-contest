@@ -359,7 +359,7 @@ export async function do_enlightenment_effect() {
     // C ref: mode is MAGICENLIGHTENMENT alone (no BASICENLIGHTENMENT bit), so
     // the Background/Basics/Characteristics section is skipped — basic=false.
     await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */, false);
-    await update_topl('The feeling subsides.');
+    await pline('The feeling subsides.');
     exercise(A_WIS, true);
 }
 

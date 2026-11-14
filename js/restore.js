@@ -26,7 +26,7 @@ import { monster_by_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
          impossible, stairway_at, display_nhwindow_message, Hallucination_u,
-         note_topl, putmsghistory, reglyph_remembered_darkroom } from './display.js';
+         note_topl, putmsghistory, reglyph_remembered_darkroom, reglyph_remembered_terrain } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello } from './role.js';
@@ -418,6 +418,10 @@ export async function dorestore() {
     const keepIflags = game.iflags;
     const keepSeed = game.currentSeed;
     const fresh = { ...game };
+    const saved_symset = saved.symset, saved_roguesymset = saved.roguesymset;
+    const saved_symoverride = saved.symoverride || {}, saved_roguesymoverride = saved.roguesymoverride || {};
+    const saved_customcolors = saved.flags?.customcolors;
+    const saved_darkroom_off = !saved.flags?.dark_room || saved.iflags?.use_color === false;
     Object.assign(game, saved);
     reset_unsaved_globals(fresh);
     reset_iflags_type_options(fresh);
@@ -571,7 +575,14 @@ export async function dorestore() {
        (a lit_corridor S_litcorr memory that is not in sight re-darkens to S_corr
        under dark_room).  The fresh process's viz_array is all zero, so cansee()
        is false everywhere. */
-    reglyph_remembered_darkroom();
+    /* C stores remembered squares as glyph numbers, so a restoring process whose
+       symset (or customcolors) differs from the saving one draws them with its own.
+       This port stores rendered cells: re-render them from the saved process's names. */
+    reglyph_remembered_terrain(false, saved_symset, saved_customcolors, saved_symoverride);
+    reglyph_remembered_terrain(true, saved_roguesymset, saved_customcolors, saved_roguesymoverride);
+    /* A blank memory is GLYPH_NOTHING only if the saving process had dark_room off or color
+       off (else it is S_stone and stays): the same blanks occur in an ordinary same-rc save. */
+    reglyph_remembered_darkroom(saved_darkroom_off);
     vision_reset();
     /* C ref: restore.c dorecover() — vision_reset() (which sets
        vision_full_recalc = 1) and NO vision_recalc(): the first recompute is

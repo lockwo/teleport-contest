@@ -802,6 +802,10 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // reloaded destination gets its own ring back via getlev_restore().
     initrack();
 
+    // C ref: do.c:1666 — `if (Is_rogue_level(newlevel) || Is_rogue_level(&u.uz)) assign_graphics(..)`:
+    // the symbol set is switched only by a level transition, so a hero who dies off the Rogue level
+    // (u.uz forced to <0,0> by a level-teleport death) keeps ROGUESET until then.
+    if (Is_rogue_level(newlevel) || Is_rogue_level(u.uz)) game._rogueSet = Is_rogue_level(newlevel);
     // C ref: do.c:1672 — "record this level transition as a potential seen
     // branch unless using some non-standard means of transportation (level
     // teleport)".  Runs BEFORE u.uz is reassigned; it is what puts the

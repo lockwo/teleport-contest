@@ -719,9 +719,16 @@ const PICKUP_CLASSES = [
 ];
 const WIZARD_PICKUP_CLASSES = [...PICKUP_CLASSES,
     {a:'p', sym:'.', label:'splash of venom'}];
-// C ref: options.c:3358-3359 adds VENOM_SYM only for wizard mode.
+// C ref: options.c optfn_pickup_types(): choose_classes_menu() gets `ocl` = oc_to_str(flags.inv_order)
+// (so packorder reorders the menu and the selectors are assigned by position), plus VENOM_SYM
+// only in wizard mode.
 function pickupClasses() {
-    return game.flags?.debug ? WIZARD_PICKUP_CLASSES : PICKUP_CLASSES;
+    const order = (game.flags?.inv_order || DEF_INV_ORDER_OC).map((oc) => OC_SYMS[oc]).filter(Boolean);
+    if (game.flags?.debug && !order.includes('.')) order.push('.');
+    return order.map((sym, i) => ({
+        a: String.fromCharCode(97 + i), sym,
+        label: WIZARD_PICKUP_CLASSES.find((c) => c.sym === sym)?.label ?? sym,
+    }));
 }
 
 // OPT_MENU_ENTRIES's bracketed value for every plain-boolean line (both the
@@ -817,7 +824,7 @@ function buildPickupLines(selected, preselected, counts) {
         lines.push({ text: `${cls.a} ${mark} ${cls.sym}  ${cls.label}` });
     }
     lines.push({ text: '' });
-    lines.push({ text: `A ${selected.has('A') ? '+' : '-'}    All classes of objects` });
+    lines.push({ text: `A ${selected.has('A') ? (counts?.has('A') ? '#' : '+') : '-'}    All classes of objects` });
     lines.push({ text: 'Note: when no choices are selected, "all" is implied.' });
     lines.push({ text: autopickupOn()
         ? "Toggle off 'autopickup' to not pick up anything."
@@ -955,7 +962,15 @@ async function pickupTypesMenu(blankStatus) {
         // C ref: wintty.c:1650-1698; windows.c:1562,1715 — bulk changes
         // obey the All classes entry's SKIPINVERT flag.
         if (![',', '.', '\\', '-', '~', '@'].includes(ch) && bySym.get(ch)) {
-            toggle(bySym.get(ch));
+            // C ref: wintty.c invert_all_on_page(acc, count): a group accelerator INVERTS its
+            // items; a pending count is only recorded when the item becomes selected.
+            const gc = bySym.get(ch);
+            if (selected.has(gc.a)) { selected.delete(gc.a); counts.delete(gc.a); }
+            else {
+                selected.add(gc.a);
+                if (counting && count > 0) counts.set(gc.a, count);
+            }
+            preselected.delete(gc.a);
             continue;
         }
         if ([',', '.', '\\', '-', '~', '@'].includes(ch)) {
@@ -969,6 +984,7 @@ async function pickupTypesMenu(blankStatus) {
                 if (wasSelected === nowSelected) continue;
                 if (nowSelected) selected.add(cls.a);
                 else selected.delete(cls.a);
+                counts.delete(cls.a); // invert_all_on_page(count -1)/unset: curr->count = -1
                 preselected.delete(cls.a);
             }
         }
@@ -1127,7 +1143,7 @@ export async function runOptionsHandler(handler, { pageAtEnd = true } = {}) {
 // unless the getlin was ESCaped; optfn_statuslines() only asks for a redraw
 // (opt_need_redraw) when the value was accepted.
 async function runStatuslinesHandler() {
-    const accepted = await runOptionsHandler(handler_statuslines);
+    const accepted = await runOptionsHandler(handler_statuslines, { pageAtEnd: false });
     if (accepted === null) return;
     tty_preference_update('statuslines');
     if (accepted) await docrt();
@@ -1308,7 +1324,8 @@ async function dosetSimpleLoop() {
             if (c === 27 && count) { count = 0; continue; }
             const hit = pages[page].items.find(it => it.selectable && it.sel === ch);
             if (!hit && !' \r\n\x1b'.includes(ch) && !OPTS.default_menu_cmds.includes(ch)
-                && !OPTS.mapped_menu_cmds().includes(ch)) continue;
+                && !OPTS.mapped_menu_cmds().includes(ch)
+            && !(game._dismissMore && c === game._dismissMore)) continue;   // xwaitforspace() `c == x`
             if (!hit) {   /* a selector outranks a mapped menu command */
                 ch = OPTS.map_menu_cmd(ch);
                 c = ch.charCodeAt(0);
@@ -1458,9 +1475,26 @@ async function dosetPass(skiphelp) {
     // menu's own title row; only a page change repaints it.
     let blankTop = false;
     let count = 0, counting = false;
+    // C ref: wintty.c toggle_menu_curr() repaints only the item's indicator character (window
+    // column 4) in place.  When the item is the page's first row and the "Search for:" getlin
+    // has blanked that row, the indicator is all that is left of the line.
+    let prev0 = null, prevPage = -1, row0Repaint = null;
+    const mark0 = () => {
+        const e0 = entries[page * PER_PAGE];
+        if (!e0 || e0.t !== 'a') return null;
+        const i0 = page * PER_PAGE;
+        return selected.has(i0) ? (counts_sel.has(i0) ? '#' : '+') : '-';
+    };
     for (;;) {
+        const m0 = mark0();
+        if (page !== prevPage || !blankTop) row0Repaint = null;
+        else if (prev0 !== null && m0 !== prev0) row0Repaint = m0;
+        prev0 = m0; prevPage = page;
         renderOptionsPage(entries, page, npages, selected, counts_sel, plus);
-        if (blankTop) for (let x = 0; x < COLS; x++) disp().setCell(x, 0, ' ', NO_COLOR, 0);
+        if (blankTop) {
+            for (let x = 0; x < COLS; x++) disp().setCell(x, 0, ' ', NO_COLOR, 0);
+            if (row0Repaint) disp().putstr(3, 0, row0Repaint, NO_COLOR, 0);
+        }
         game._modal_screen = 'optmenu';
         let c = await nhgetch();
         delete game._modal_screen;

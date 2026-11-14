@@ -796,7 +796,7 @@ const CURSES_DEC_SYMBOLS = new Set([
 // HAS_ROGUE_IBM_GRAPHICS, i.e. SYMHANDLING(H_IBM), which a DEC/ASCII build is
 // not.
 export function rogue_symset() {
-    return Is_rogue_level(game.u?.uz);
+    return game._rogueSet ?? Is_rogue_level(game.u?.uz);
 }
 
 // ── Terrain to display character + color + DEC flag ──
@@ -4661,6 +4661,17 @@ function _buildScreenOutput() {
             for (let c = 0; c < Math.min(ln.length, display.cols); c++)
                 display.setCell(c, li, ln[c], NO_COLOR, 0);
         }
+        // C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` touches only
+        // row 0, so while a wrapped yn prompt is being recalled with ^P the prompt's
+        // later rows stay on the terminal (game._toplResidue holds rows 1..n).
+        if (game._toplResidue) {
+            for (let r = 0; r < game._toplResidue.length; r++) {
+                if (r + 1 < mlines.length) continue;
+                const ln = game._toplResidue[r];
+                for (let c = 0; c < Math.min(ln.length, display.cols); c++)
+                    display.setCell(c, r + 1, ln[c], NO_COLOR, 0);
+            }
+        }
         // Map — write characters to grid (DEC → Unicode for browser display).
         // A multi-line topline obscures the map rows it overlaps (grid rows
         // 0..mlines.length-1); skip those map rows so the message stays visible,
@@ -4668,7 +4679,7 @@ function _buildScreenOutput() {
         // _screenBlank: ball.c drag_down()'s cls() has cleared the PHYSICAL
         // screen and goto_level's docrt() has not flushed yet, so the frames in
         // between show only the topline (no map, no status).
-        const msgRows = mlines.length;
+        const msgRows = Math.max(mlines.length, game._toplResidue ? game._toplResidue.length + 1 : 0);
         // A corner menu dismissed over that blank screen (docorner()) has
         // row_refresh()ed the glyph buffer back over its rows from its left edge.
         const blankCorner = game._screenBlank === true ? game._screenBlankCorner : null;
@@ -6169,7 +6180,10 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
                 game._pending_message = full.trimEnd();
                 h.maxcol = h.maxrow;
             } else {
-                if (!doprev) await doprev_message(); /* need two initially */
+                if (!doprev) {
+                    game._toplResidue = hard_wrap_topl(full).slice(1);
+                    await doprev_message(); /* need two initially */
+                }
                 await doprev_message();
                 doprev = true;
             }
@@ -6179,6 +6193,7 @@ export async function y_n(query, resp = 'yn\x1b', def = 'n', addcmdq = true) {
             const h = msghist();
             h.maxcol = h.maxrow;
             doprev = false;
+            game._toplResidue = null;
             game._pending_message = full.trimEnd();
             game._toplin = 0;
             game._toplinSoft = null;
@@ -7435,7 +7450,7 @@ export function reglyph_darkroom() {
 // the Rogue level, a remembered S_darkroom becomes S_room if the square was lit
 // and GLYPH_NOTHING otherwise, so a Rogue-level floor square the hero felt while
 // leaving (feel_location's S_darkroom) comes back blank on re-entry.
-export function reglyph_remembered_darkroom() {
+export function reglyph_remembered_darkroom(blankNothing = false) {
     const lvl = game.level;
     if (!lvl) return;
     // C ref: display.c reglyph_darkroom():1824-1832 — the corridor arm: with
@@ -7465,6 +7480,15 @@ export function reglyph_remembered_darkroom() {
             for (let y = 0; y < ROWNO; y++) {
                 const loc = lvl.at(x, y);
                 const rg = loc?.remembered_glyph;
+                // C ref: display.c reglyph_darkroom() — a S_darkroom memory kept blank by a
+                // use_color-off process shows as floor again once color is on.  A plain blank
+                // memory (GLYPH_NOTHING vs S_stone) cannot be told apart here, so it is left.
+                if (rg && (rg.darkroom || blankNothing) && rg.ch === ' ' && rg.objotyp == null && !rg.pile && !rg.bwEngr
+                    && rg.hallucotyp == null && loc.typ === ROOM && loc.seenv && !cansee(x, y)) {
+                    const f = terrain_glyph(loc, x, y);
+                    loc.remembered_glyph = { ch: f.ch, color: f.color, decgfx: f.dec, wall: false, bars: false, darkroom: true };
+                    continue;
+                }
                 if (!rg || rg.darkroom || rg.objotyp != null || rg.pile || rg.bwEngr
                     || loc.typ !== ROOM || !loc.seenv || !loc.waslit
                     || cansee(x, y)) continue;
@@ -7491,12 +7515,16 @@ export function reglyph_remembered_darkroom() {
 // remembered squares as rendered cells, so each remembered terrain cell that the
 // OLD symset / customcolors state drew is re-rendered under the NEW one.  Cells
 // holding objects, piles or engravings are independent of both.
-export function reglyph_remembered_terrain(rogue, oldName, oldCustomColors = true) {
+export function reglyph_remembered_terrain(rogue, oldName, oldCustomColors = true, oldOverride) {
     const key = rogue ? 'roguesymset' : 'symset';
+    const okey = rogue ? 'roguesymoverride' : 'symoverride';
     const newName = game[key];
+    const newOverride = game[okey];
+    if (oldOverride === undefined) oldOverride = newOverride;
     game.flags = game.flags || {};
     const newCustomColors = game.flags.customcolors;
-    if (oldName === newName && (oldCustomColors !== false) === (newCustomColors !== false)) return;
+    if (oldName === newName && (oldCustomColors !== false) === (newCustomColors !== false)
+        && JSON.stringify(oldOverride || {}) === JSON.stringify(newOverride || {})) return;
     const variants = (loc, x, y) => {
         const v = [terrain_glyph(loc, x, y)];
         if (loc.typ === DOOR)
@@ -7518,15 +7546,18 @@ export function reglyph_remembered_terrain(rogue, oldName, oldCustomColors = tru
                 const rg = loc?.remembered_glyph;
                 if (!rg || rg.objotyp || rg.pile || rg.bwEngr || rg.hallucotyp != null) continue;
                 game[key] = oldName;
+                game[okey] = oldOverride;
                 game.flags.customcolors = oldCustomColors;
                 const olds = variants(loc, x, y);
                 game[key] = newName;
+                game[okey] = newOverride;
                 game.flags.customcolors = newCustomColors;
+                // A remembered S_darkroom keeps CLR_BLACK, not the lit floor colour.
                 const i = olds.findIndex((g) => g.ch === rg.ch && !!g.dec === !!rg.decgfx
-                                                && g.color === rg.color);
+                                                && (rg.darkroom || g.color === rg.color));
                 if (i < 0) continue;
                 const g = variants(loc, x, y)[i];
-                loc.remembered_glyph = { ...rg, ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall, bars: !!g.bars };
+                loc.remembered_glyph = { ...rg, ch: g.ch, color: rg.darkroom ? rg.color : g.color, decgfx: g.dec, wall: !!g.wall, bars: !!g.bars };
             }
     }
 }

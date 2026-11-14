@@ -2251,6 +2251,7 @@ async function ap_get_adjacent_loc(prompt, emsg, x, y, cc) {
     const A = await ap_load();
     const dir = await A.cmd.getdir(prompt);
     if (!dir) {
+        game.context._getobj_cancelled = false; // get_adjacent_loc() callers return ECMD_OK
         await A.display.pline('Never mind.');
         return false;
     }

@@ -1855,7 +1855,8 @@ function optfn_disclose(o, negated, opts, op, result) {
 // C ref: options.c optfn_fruit() — mungspaces()'d, and an empty value defaults
 // to "slime mold".  During config reading the 100-fruit cap cannot be hit.
 function optfn_fruit(o, negated, opts, op, result) {
-    op = string_for_opt(opts, negated);
+    /* C: string_for_opt(opts, negated || !go.opt_initial) -- in the game an empty value is silent */
+    op = string_for_opt(opts, negated || inGameErrors !== null);
     if (negated) {
         if (op !== '') { bad_negation('fruit', true); return OPTN_ERR; }
         op = '';
@@ -2555,7 +2556,9 @@ export async function handler_compound_getlin(name) {
     let abuf = await getlin(`Set ${name} to what?`);
     if (abuf[0] === '\x1b') return null;
     const result = { flags: {}, iflags: {}, msgtypes: [], menucolors: [],
-                     status_hilites: [], conds: {}, apelist: [] };
+                     status_hilites: [], conds: {}, apelist: [], keybind: {}, symoverride: {},
+                     warnsyms: [], menu_cmd_alias: [], keybind_param: {}, keyunbind: [],
+                     spkeys: {}, mousebtn: {}, autocomplete: {} };
     const errors = [];
     inGameErrors = errors;
     try {
@@ -5958,8 +5961,15 @@ export async function handler_menu_colors() {
                 return OPTN_OK;                     /* goto menucolors_done */
             }
             const { query_color, query_attr } = await import('./coloratt.js');
-            if (mcbuf
-                && test_regex_pattern(mcbuf, 'MENUCOLORS regex')
+            // C ref: options.c test_regex_pattern() -> config_error_add(): outside config-file
+            // reading the message is pline()d, so collect it and report it like the other handlers.
+            const regexErrors = [];
+            inGameErrors = regexErrors;
+            let regexOk;
+            try { regexOk = !!mcbuf && test_regex_pattern(mcbuf, 'MENUCOLORS regex'); }
+            finally { inGameErrors = null; }
+            for (const message of regexErrors) await OPT_MENU_DRIVER.error(message);
+            if (regexOk
                 && (mcclr = await query_color(null, NO_COLOR_IDX)) !== -1
                 && (mcattr = await query_attr(null, ATR_NONE)) !== -1
                 && !add_menu_coloring_parsed(mcbuf, mcclr, mcattr,
@@ -6030,8 +6040,13 @@ export async function handler_msgtype() {
         } else if (opt_idx === 0) { /* add new */
             mtbuf = await getlin('What new message pattern?');
             if (mtbuf[0] === '\x1b') return true;
-            if (mtbuf
-                && test_regex_pattern(mtbuf, 'MSGTYPE regex')
+            const regexErrors = [];
+            inGameErrors = regexErrors;
+            let regexOk;
+            try { regexOk = !!mtbuf && test_regex_pattern(mtbuf, 'MSGTYPE regex'); }
+            finally { inGameErrors = null; }
+            for (const message of regexErrors) await OPT_MENU_DRIVER.error(message);
+            if (regexOk
                 && (mttyp = await query_msgtype()) !== -1
                 && !msgtype_add(mttyp, mtbuf, { msgtypes: types })) {
                 await pline('Error adding the message type.');
@@ -6115,6 +6130,12 @@ export async function handler_versinfo() {
         if (newval) game.flags.versinfo = newval;
     }
     destroy_nhwindow(tmpwin);
+    // C ref: optfn_versinfo() do_handler: pline("'%s' %s %u.") after handler_versinfo().
+    const changed = (game.flags.versinfo | 0) !== vi;
+    await pline(`'versinfo' ${changed ? 'changed to' : 'not changed, still'} ${game.flags.versinfo | 0}.`);
+    /* recorded C: a changed value leaves the message waiting for a --More-- when the options
+       menu is redisplayed, an unchanged one does not */
+    if (changed) game._toplin = 1;
     return OPTN_OK;
 }
 

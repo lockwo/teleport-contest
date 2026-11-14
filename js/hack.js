@@ -1383,7 +1383,9 @@ async function show_getpos_tip_window() {
             if (k === 32 || k === 13 || k === 10 || k === 27
                 || (k >= 48 && k <= 57)
                 || MENU_RESP_CMDS.includes(String.fromCharCode(k))
-                || mapped_menu_cmds().includes(String.fromCharCode(k))) break;
+                || mapped_menu_cmds().includes(String.fromCharCode(k))
+                // C ref: getline.c xwaitforspace() `c == x` (ttyDisplay->dismiss_more, left at 1 by any earlier ESC)
+                || (game._dismissMore && k === game._dismissMore)) break;
         }
         if (k >= 48 && k <= 57) {
             count = count * 10 + (k - 48);

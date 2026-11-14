@@ -697,6 +697,56 @@ export class NethackGame {
             if (l.gsel && l.gsel !== l.sel && !sels.has(l.gsel)) sels.set(l.gsel, l.act);
         }
         this._curMenuSel = sels;
+        this._curMenuLines = lines;
+        this._curMenuCursor = [offx + 7, lines.length - 1];
+        this._mcount = 0; this._mcounting = false;
+    }
+
+    // C ref: wintty.c process_menu_window() — keys outside resp[] (selectors, " 0123456789\033\n\r",
+    // the menu commands) are swallowed by xwaitforspace() with the pending count intact; digits build
+    // a count; ESC while counting only stops the count.  Any other valid key ends the count.
+    // Returns true when the key was consumed here.
+    _menuPreKey(ch) {
+        const valid = this._curMenuSel?.has(ch) || ' \r\n\x1b:<>^|,.\\-~@0123456789'.includes(ch);
+        if (!valid) return true;
+        if (ch >= '0' && ch <= '9') {
+            this._mcount = (this._mcount | 0) * 10 + (ch.charCodeAt(0) - 48);
+            this._mcounting = this._mcount !== 0;
+            if (!this._mcounting) this._mcount = 0;
+            return true;
+        }
+        if (ch === '\x1b' && this._mcounting) { this._mcounting = false; this._mcount = 0; return true; }
+        this._mcounting = false; this._mcount = 0;
+        return false;
+    }
+
+    // C ref: wintty.c process_menu_window() MENU_UNSELECT_ALL ('-') / MENU_UNSELECT_PAGE ('\\'):
+    // every selected entry on the page is deselected and its '*' indicator redrawn as '-'.  The
+    // result then counts no selection, which role.c maps to the preselected Yes / Random anyway.
+    _menuUnselectAll() {
+        const disp = game.nhDisplay;
+        const offx = this._prevChargenMenu?.offx ?? 0;
+        this._curMenuLines.forEach((l, r) => {
+            if (l.sel && l.preselect && !l.deselected) {
+                l.deselected = true;
+                disp.setCell(offx + 3, r, '-', NO_COLOR, 0);
+            }
+        });
+        if (this._curMenuCursor) disp.setCursor(...this._curMenuCursor);
+    }
+
+    // C ref: wintty.c process_menu_window() MENU_SEARCH on a PICK_ONE menu — getlin "Search for:",
+    // the first item whose "<sel> - <text>" matches "*pat*" is picked; no match (or <escape>/empty)
+    // leaves the menu up.  The topline ends up cleared either way.
+    async _menuSearch() {
+        const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+        const reply = await hooked_tty_getlin('Search for:', null);
+        const disp = game.nhDisplay;
+        for (let c = 0; c < 80; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+        if (this._curMenuCursor) disp.setCursor(...this._curMenuCursor);
+        if (!reply || reply[0] === '\x1b') return null;
+        const hit = this._curMenuLines.find((l) => l.act && pmatchi(`*${reply}*`, `${l.sel} - ${l.text}`));
+        return hit ? hit.act : null;
     }
 
     // C ref: role.c plsel_startmenu() qbuf — the unselectable "role info so
@@ -1083,6 +1133,7 @@ export class NethackGame {
         let act;
         for (;;) {
             const ch = await this._readPromptKey();
+            if (this._menuPreKey(ch)) continue;
             act = this._curMenuSel.get(ch);
             if (act) break;
             if (ch === ' ' || ch === '\r' || ch === '\n' || ch === '\x1b') {
@@ -1173,6 +1224,7 @@ export class NethackGame {
         this._renderManualPrompt(sel);
         for (;;) {
             const ch = await this._readPromptKey();
+            if (this._menuPreKey(ch)) continue;
             // C ref: wintty.c process_menu_window — a PICK_ONE menu only reacts
             // to the selector letters it actually drew (case matters: the role
             // menu's 'R' for Ranger is a different entry from 'r' for Rogue),
@@ -1180,6 +1232,12 @@ export class NethackGame {
             // Everything else rings the bell and the menu stays on screen
             // unchanged — so no re-render either.
             let act = this._curMenuSel?.get(ch);
+            if (!act && (ch === '-' || ch === '\\')) { this._menuUnselectAll(); continue; }
+            if (!act && ch === ':') {
+                const hit = await this._menuSearch();
+                if (!hit) continue;
+                act = hit;
+            }
             if (!act) {
                 if (ch === '\x1b') act = { k: 'esc' };
                 else if (ch === ' ' || ch === '\r' || ch === '\n')
@@ -1536,7 +1594,10 @@ export class NethackGame {
             let act;
             for (;;) {
                 const answer = await this._readPromptKey();
+                if (this._menuPreKey(answer)) continue;
                 act = this._curMenuSel?.get(answer);
+                if (!act && answer === ':') act = await this._menuSearch();
+                if (!act && (answer === '-' || answer === '\\')) { this._menuUnselectAll(); continue; }
                 if (act) break;
                 if (answer === ' ' || answer === '\r' || answer === '\n') {
                     act = { k: 'yes' };

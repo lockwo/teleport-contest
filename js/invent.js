@@ -2344,6 +2344,10 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
         if (searchBlankTop) {
             for (let x = 0; x < game.nhDisplay.cols; x++)
                 game.nhDisplay.setCell(x, 0, ' ', NO_COLOR, 0);
+            // wintty.c toggle_menu_curr() redraws just the indicator (window column 4): a
+            // toggled first-row item leaves that character on the blanked row.
+            const first = pageEntries[0]?.item;
+            if (first?._repainted) game.nhDisplay.putstr((game._menuOffx ?? 0) + 3, 0, first._shown, NO_COLOR, 0);
         }
         let c = await nhgetch();
         let ch = String.fromCharCode(c);
@@ -2364,7 +2368,7 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             if (how === PICK_ONE) return true;
             continue;
         }
-        if (ch >= '0' && ch <= '9') {
+        if (!hit && ch >= '0' && ch <= '9') {
             // C AppendLongDigit uses a signed 64-bit long. Keep the prefix
             // exact until it is consumed, then expose the usual numeric count.
             count = count * 10n + BigInt(c - 48);
@@ -4258,7 +4262,18 @@ async function getobj_impl(word, obj_ok, ctrlflags = GETOBJ_NOFLAGS) {
             // calls getobj() (eat, drop, wield, apply, ...) re-rendered the
             // object-selection prompt as an extra frame C never produces,
             // permanently misaligning the rest of the recorded session.
+            // tty pline() shows a message at once; flush an earlier pass's ("No count allowed...")
+            // before blocking on the key.
+            if (game._yn_need_more) {
+                // tty pline() shows the message at once with the cursor just past it.
+                await flush_screen(1);
+                const msg = game._toplines || '';
+                game.nhDisplay?.setCursor?.(msg.length, 0);
+            }
+            const hadMsg = game._yn_need_more;
             key = await nhgetch();
+            // the answered pass's message is acknowledged by the key: the next pline starts a fresh line
+            if (hadMsg) { game._toplin = 0; game._yn_need_more = false; game._pending_message = ''; game._toplinSoft = null; game._toplines = ''; }
             ilet = String.fromCharCode(key);
         } else if (!canned && !oneloop && game.flags?.force_invmenu) {
             // C ref: invent.c getobj() ~1917 — force_invmenu skips the
@@ -8922,10 +8937,16 @@ function menu_sel_char(it) {
 /* it._state/_shown remember what the screen holds for an item between paints. */
 function menu_note_paint(it) {
     const state = it.selected ? it.count : 'off';
-    if (it._state === undefined)
+    if (it._state === undefined) {
         it._shown = !it.selected ? '-' : (it.count === -1 ? '*' : '#');
-    else if (it._state !== state)
+        it._repainted = false;
+    } else if (it._state !== state) {
         it._shown = menu_sel_char(it);
+        it._repainted = true;   /* toggle_menu_curr() redrew the indicator in place */
+        it._changed = true;
+    } else {
+        it._changed = false;
+    }
     it._state = state;
 }
 /* wintty.c tty_add_menu() — "<selector> <state> <description>". */
@@ -9047,12 +9068,12 @@ async function tty_select_menu(items, plan, how) {
 
     let counting = false, count = 0n, reset_count = true, cancelled = false;
     let curr_page = 0, painted_page = -1;
-    let searchBlankTop = false;
+    let searchBlankTop = false, blankMark = null;
     for (;;) {
         if (reset_count) { counting = false; count = 0n; } else reset_count = true;
         const onpage = page_items(curr_page);
         if (painted_page !== curr_page) {
-            searchBlankTop = false;
+            searchBlankTop = false; blankMark = null;
             for (const it of onpage) it._state = undefined;
         }
         painted_page = curr_page;
@@ -9082,6 +9103,11 @@ async function tty_select_menu(items, plan, how) {
         if (searchBlankTop) {
             for (let x = 0; x < game.nhDisplay.cols; x++)
                 game.nhDisplay.setCell(x, 0, ' ', NO_COLOR, 0);
+            // C ref: wintty.c toggle_menu_curr() repaints only the indicator character (column 4)
+            // in place, so a toggle of the page's first line leaves it alone on the blanked row.
+            const first = plan[npages > 1 ? curr_page * lmax : 0]?.item;
+            if (first?._changed) blankMark = first._shown;
+            if (blankMark) game.nhDisplay.putstr((game._menuOffx ?? 0) + 3, 0, blankMark, NO_COLOR, 0);
         }
         // wintty.c:1533-1551: xwaitforspace rejects keys outside resp before
         // the loop can reset a pending numeric count.
@@ -9092,7 +9118,9 @@ async function tty_select_menu(items, plan, how) {
             ch = String.fromCharCode(key);
         } while (!selectors.has(ch) && !gacc.has(ch)
                  && !" 0123456789\x1b\n\r><^|,.-\\~@:".includes(ch)
-                 && !mapped.includes(ch));
+                 && !mapped.includes(ch)
+                 /* getline.c xwaitforspace() `c == x`: ttyDisplay->dismiss_more, left at 1 by an earlier ESC */
+                 && !(game._dismissMore && key === game._dismissMore));
         /* an explicit page selector outranks the menu-command mapping */
         const explicit = selectors.has(ch);
         if (!explicit) {
@@ -10889,6 +10917,9 @@ export async function identify_pack(id_limit = 0, learning_id = false) {
 // picks everything, and the picked items are identified when the menu is
 // confirmed.
 export async function wiz_identify() {
+    // C ref: invent.c display_pickinv() `if (n == 0) { pline("%s.", not_carrying_anything); return 0; }`
+    // is reached before any wizid menu is built, so an empty inventory gets the plain message.
+    if (!inventoryArray().length) { await pline('Not carrying anything.'); return; }
     const unid_cnt = count_unidentified(inventoryArray());
     let title = 'Debug Identify';
     if (unid_cnt)

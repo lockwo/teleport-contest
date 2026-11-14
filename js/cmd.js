@@ -10,7 +10,7 @@ import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, docrt_flags, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
@@ -127,7 +127,7 @@ import { dist2 } from './hacklib.js';
 import { M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID } from './monflags_data.js';
 import { can_saddle } from './makemon.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE } from './terminal.js';
-import { create_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu } from './windows.js';
+import { create_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, menu_ctx } from './windows.js';
 
 // C ref: hack.c maybe_smudge_engr() — when the hero walks/rushes from (x1,y1)
 // to (x2,y2) and can reach the floor, any non-headstone engraving at the old
@@ -921,6 +921,9 @@ export async function rhack(key) {
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
     const hadForcefight = !!game.context?.forcefight;
+    // A #travel/#retravel that picked a destination returned ECMD_TIME in C, so rhack() runs no
+    // reset_cmd_vars() (forcefight survives) even when its first step was refused ("Pardon me").
+    let travelTimed = false;
     // C: the 'm' prefix is a PREFIXCMD recorded on CQ_REPEAT by rhack() before it loops back for the
     // command it prefixes (prefix_seen).  Here 'm' returns, so the NEXT rhack() call is that command.
     const mPrefixSeen = !!game.context?._m_seen;
@@ -1937,13 +1940,17 @@ export async function rhack(key) {
         // unconditionally dropped the remaining helpless turns of the drag, so the
         // monsters' moves for those turns ran after the NEXT key instead of
         // before the next screen (x355-hu246 step 428).
-        game.context.move = ((ecmd_note(await dotravel()) & ECMD_TIME) && game.context.move) ? 1 : 0;
+        const trRes = ecmd_note(await dotravel());
+        travelTimed = !!(trRes & ECMD_TIME);
+        game.context.move = (travelTimed && game.context.move) ? 1 : 0;
     } else if (key === 31) { // ^_ -- #retravel (cmd.c:1831 C('_'), dotravel_target)
         // invent.js's dotravel_target() answers ECMD_TIME as 3.  Like #travel
         // above, travel_walk()/travel_adjacent_step() took every elapsed turn
         // (the first forced one included) inline, so only a helpless hero's
         // leftover context.move may reach moveloop_core().
-        game.context.move = (((await dotravel_target()) & ECMD_TIME) && game.context.move) ? 1 : 0;
+        const trRes = await dotravel_target();
+        travelTimed = !!(trRes & ECMD_TIME);
+        game.context.move = (travelTimed && game.context.move) ? 1 : 0;
     } else if (ch === ';') {
         // C ref: cmd.c ';' "glance" -> pager.c do_look(1): quick farlook.
         // Cursor-positioning loop + look-at description; no game time passes.
@@ -2016,6 +2023,11 @@ export async function rhack(key) {
         if (game.context.forcefight) {
             await Norep_topl('Double fight prefix, canceled.');
             game.context.forcefight = 0;
+            game.domove_attempting = 0;
+            // C ref: do_fight() returns ECMD_CANCEL -> rhack() reset_cmd_vars(TRUE): the queued
+            // repeat (the first F) and any count are dropped, so ^A has nothing to repeat.
+            cmdq_of(CQ_REPEAT).length = 0;
+            game.multi = 0;
         } else {
             game.context.forcefight = 1;
             game.context.move = 0;
@@ -2049,6 +2061,9 @@ export async function rhack(key) {
         if (game.iflags?.menu_requested) {
             await Norep_topl(`Double m prefix, canceled.`);
             game.iflags.menu_requested = false;
+            // C ref: do_reqmenu() returns ECMD_CANCEL -> rhack() reset_cmd_vars(TRUE): the repeat queue and any count go.
+            cmdq_of(CQ_REPEAT).length = 0;
+            game.multi = 0;
         } else {
             game.iflags = game.iflags || {};
             game.iflags.menu_requested = true;
@@ -2093,6 +2108,9 @@ export async function rhack(key) {
             await Norep_topl(`Double ${ch === 'G' ? 'run' : 'rush'} prefix, canceled.`);
             game.context.run_prefix = 0;
             game.context.move = 0;
+            // C ref: rhack() — ECMD_CANCEL runs reset_cmd_vars(TRUE), which zeroes gm.multi; a
+            // count typed before the second prefix must not repeat the canceled command.
+            game.multi = 0;
         } else {
             // C ref: cmd.c do_run()/do_rush() are PREFIXCMDs: rhack marks the
             // prefix and jumps back to `got_prefix_input`, which re-enters
@@ -2241,7 +2259,10 @@ export async function rhack(key) {
     // resolved BINDING, not the `badCommand` local, since several branches
     // print "Unknown command" without setting that flag — an absent binding
     // is C's faithful "tlist == 0" test regardless of which branch handled it.
-    const repeatBind = cmdbind_get(key & 0xff)?.cmd;
+    // C ref: cmd.c rhack() records the command bound to the key AS TYPED; `key` was already
+    // rewritten to its alphabetic form (number_pad:-1 z -> y), whose own binding is another command
+    // (or none), which cleared the count of a counted move.
+    const repeatBind = cmdbind_get(origKey & 0xff)?.cmd;
     const repeatName = npExt || bindExt || repeatBind?.ef_funct;
     // C ref: cmd.c rhack():3810-3813 — a command returning ECMD_CANCEL/
     // ECMD_FAIL runs reset_cmd_vars(TRUE), clearing CQ_REPEAT the same as
@@ -2344,7 +2365,7 @@ export async function rhack(key) {
         game.travelmap = null;
     // C ref: cmd.c:3814-3816 — a completed no-time command also ends any
     // forcefight residue left by an earlier rush or unbound prefix follower.
-    if (hadForcefight && !badCommand && !npBad && repeatName && !game.context.move
+    if (hadForcefight && !badCommand && !npBad && repeatName && !game.context.move && !travelTimed
         && !(repeatBind?.flags & (PREFIXCMD | MOVEMENTCMD)))
         game.context.forcefight = 0;
     if (!badCommand && !npBad && repeatName && !game.context.move
@@ -2765,7 +2786,7 @@ export async function getdir(s) {
     if (redraw_cmd(key)) {
         game._pending_message = '';
         game._toplin = 0;
-        await docrt();
+        await docrt_flags(1 /* docrtRefresh: redraw_map(), no newsym recalculation */);
         return getdir(s);
     }
     // C ref: tty_yn_function() clean_up: gt.toplines = prompt + key2txt(key).
@@ -2985,7 +3006,7 @@ export async function doopen_indir(x, y) {
         const dirprompt = (u.utrap && u.utraptype === TT_PIT && container_at(u.ux, u.uy, false))
             ? 'Open where? [.>]' : undefined;
         const dir = await getdir(dirprompt);
-        if (!dir) { await pline('Never mind.'); return 0; }
+        if (!dir) { game.context._getobj_cancelled = false; await pline('Never mind.'); return 0; }
         cx = u.ux + dir.dx; cy = u.uy + dir.dy;
         /* get_adjacent_loc(NULL, NULL, ...) returns 0 silently for !isok */
         if (!isok(cx, cy)) return 0;
@@ -7044,6 +7065,7 @@ export async function doprev_message() {
         game._pending_message = lines.join('\n');
         game._toplinSoft = game._pending_message || null;
         if (lines.length > 1) {
+            game._toplResidue = null; /* more() clears the message window rows */
             const key = await topl_more_ext('\x10', lines);
             game._toplinSoft = null;
             game._pending_message = '';
@@ -7268,6 +7290,16 @@ export function cmdq_peek(q) {
 }
 
 // C ref: cmd.c:445 pgetchar() — courtesy of aeb@cwi.nl.
+// C ref: cmd.c handler_rebind_keys(): pline("Bind which key? "); pgetchar().  tty shows the line
+// at once and leaves the cursor just past it while it waits for the key.
+async function bind_key_prompt() {
+    const msg = "Bind which key? ";
+    await pline(msg);
+    menu_ctx.blankStatus = false; // pline() republished the status window the options menu blanked
+    await flush_screen(1);
+    game.nhDisplay?.setCursor(msg.length, 0);
+}
+
 export async function pgetchar() {
     let ch = 0;
 
@@ -7337,7 +7369,7 @@ async function extlist_waitforspace(s) {
         if (c === 10 || c === 13) return '\0';
         if (c === 27) return '\x1b';
         const ch = String.fromCharCode(c);
-        if (s.indexOf(ch) >= 0) return ch;
+        if (s.indexOf(ch) >= 0 || (game._dismissMore && c === game._dismissMore)) return ch;   // `c == x`
         // tty_nhbell(): the key is discarded, nothing is redrawn, read again.
     }
 }
@@ -7395,7 +7427,9 @@ async function extlist_select_menu(m) {
     // tty_getlin("Search for:") clears the message window, which is row 0 of a
     // full-screen menu; only a page change repaints it.
     let blankTop = false;
+    let counting = false, count = 0, resetCount = true;
     for (;;) {
+        if (resetCount) { counting = false; count = 0; } else resetCount = true;
         extlist_render_page(m, curr_page);
         if (blankTop) {
             const d = game.nhDisplay;
@@ -7404,15 +7438,23 @@ async function extlist_select_menu(m) {
         const page = m.pages[curr_page];
         const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
         let morc = await extlist_waitforspace(
-            sels + (searchAlias ? 's' : '') + ' \x1b\n\r' + mapped_menu_cmds()
+            sels + (searchAlias ? 's' : '') + ' \x1b\n\r0123456789' + mapped_menu_cmds()
             + default_menu_cmds);
         // MENU_EXPLICIT_CHOICE: a page-local selector keeps its own meaning
         // even when it also happens to be a menu command (':' vs a ':' item).
         if (sels.indexOf(morc) >= 0) return morc;
+        // C ref: process_menu_window() digits build a count; invalid keys (above) leave it alone.
+        if (morc >= '0' && morc <= '9') {
+            count = count * 10 + (morc.charCodeAt(0) - 48);
+            if (count !== 0) { counting = true; resetCount = false; }
+            continue;
+        }
         morc = map_menu_cmd(morc);
         if (morc === 's' && searchAlias) return ':';
         switch (morc) {
-        case '\x1b':                              // cancel
+        case '\x1b':                              // cancel (ESC while counting only stops the count)
+            if (counting) break;
+            return null;
         case '\0':                                // commit, nothing picked
             return null;
         case ' ':
@@ -8173,10 +8215,13 @@ export async function handler_rebind_keys_add(keyfirst) {
     const picks = [];
     let buf;
     let key = 0;
-    let cmdstr = '';
+    // cmd.c handler_rebind_keys(): `char cmdstr[BUFSZ]` is never initialized before the Strcat()s, so in the
+    // recorded build it starts non-empty and bind_key() fails for every command without a parameter
+    // ("Key binding failed?!").  A parameter command assigns it with Snprintf() and binds fine.
+    let cmdstr = '\u0001';
 
     if (keyfirst) {
-        await pline('Bind which key? ');
+        await bind_key_prompt();
         key = await pgetchar();
 
         if (!key || key === 0x1b)
@@ -8242,7 +8287,7 @@ export async function handler_rebind_keys_add(keyfirst) {
         }
         /* C label 'bindit:' */
         if (!key) {
-            await pline('Bind which key? ');
+            await bind_key_prompt();
             key = await pgetchar();
 
             if (!key || key === 0x1b)
@@ -8881,6 +8926,7 @@ export async function get_adjacent_loc(prompt, emsg, x, y, cc) {
     const u = game.u;
 
     if (!await getdir(prompt)) {
+        game.context._getobj_cancelled = false; // f: cmd.c get_adjacent_loc() prints Never mind and returns 0; its callers return ECMD_OK (not CANCEL), so the repeat queue survives
         await pline('Never mind.');
         return 0;
     }

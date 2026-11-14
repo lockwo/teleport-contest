@@ -355,7 +355,7 @@ export async function drinkfountain() {
                 await show_attributes_disclosure(0 /* ENL_GAMEINPROGRESS */, false);
             }
             exercise(A_WIS, true);
-            await update_topl('The feeling subsides.');
+            await pline('The feeling subsides.');
             break;
         case 20: /* Foul water */
             /* C ref: fountain.c:295 — a literal "water", not hliquid(): the text does not hallucinate */

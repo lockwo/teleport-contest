@@ -2202,7 +2202,15 @@ async function use_container(box, more_containers) {
             render_in_or_out_menu(box, outmaybe, inokay, used !== 0, !!more_containers,
                                   deselected);
             let ch = '';
+            // C ref: process_menu_window() loop head `if (reset_count) { counting = FALSE; count = 0; }
+            // else reset_count = TRUE;` runs once per ACCEPTED key (a digit leaves reset_count FALSE, so
+            // the very next accepted key keeps the count; the one after that clears it).
+            let resetCount = true, headPending = true;
             for (;;) { // xwaitforspace(resp): ignore keys outside the response set
+                if (headPending) {
+                    headPending = false;
+                    if (resetCount) { counting = false; cnt = 0; } else resetCount = true;
+                }
                 const key = xwaitforspace_note(await nhgetch());
                 ch = (key === 27) ? '\x1b' : String.fromCharCode(key);
                 if (respsel.includes(ch)) break;             // explicit menu choice
@@ -2210,18 +2218,19 @@ async function use_container(box, more_containers) {
                    then runs the key through map_menu_cmd() */
                 if (mapped_menu_cmds().includes(ch)) ch = map_menu_cmd(ch);
                 if (respsel.includes(ch)) break;
-                if (ch === '\x1b' && counting) { counting = false; cnt = 0; continue; }
+                if (ch === '\x1b' && counting) { headPending = true; continue; }   // ESC only stops the count
                 if (ch === '\x1b' || ch === '\n' || ch === '\r' || ch === ' ') break;
                 if (ch >= '0' && ch <= '9') {                // count prefix: no redraw
                     cnt = cnt * 10 + (ch.charCodeAt(0) - 48);
-                    if (cnt !== 0) counting = true;          // leading zeros are ignored
+                    if (cnt !== 0) { counting = true; resetCount = false; }   // leading zeros are ignored
+                    headPending = true;
                     continue;
                 }
                 if (ch === '-' || ch === '\\') {             // deselect the default
                     if (!deselected) { deselected = true; break; }
                     continue;
                 }
-                if (MENU_CMDS.includes(ch)) continue;       // no-op on a 1-page PICK_ONE
+                if (MENU_CMDS.includes(ch)) { headPending = true; continue; }   // no-op on a 1-page PICK_ONE
                 // not in resp: tty_nhbell() and read the next key
             }
             counting = false; cnt = 0;                       // any other key ends the count

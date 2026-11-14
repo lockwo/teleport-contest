@@ -12,6 +12,7 @@
 // (u.weapon_slots == 0 at experience level 1), so the menu is always the
 // non-selectable PICK_NONE "Current skills:" form dismissed with ESC.
 
+import { NO_COLOR } from './terminal.js';
 import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
 import { menuHeadAttr } from './menuattr.js';
@@ -530,9 +531,11 @@ function render_skill_menu_page(pages, idx) {
 // C ref: win/tty/wintty.c process_menu_window() — one select_menu() round.
 // Returns the picked skill, or null for a commit-with-nothing / cancel.
 async function select_skill_menu(pages, pickOne) {
-    let idx = 0, count = 0, counting = false;
+    let idx = 0, count = 0, counting = false, blankTop = false;
     for (;;) {
         render_skill_menu_page(pages, idx);
+        // tty_getlin("Search for:") cleared WIN_MESSAGE (row 0); only a page change repaints it.
+        if (blankTop) { const d = game.nhDisplay; for (let x = 0; x < d.cols; x++) d.setCell(x, 0, ' ', NO_COLOR, 0); }
         let c = await nhgetch();
         let ch = String.fromCharCode(c);
         // xwaitforspace() swallows keys outside resp (selectors, " ", digits,
@@ -561,12 +564,24 @@ async function select_skill_menu(pages, pickOne) {
         if (c === 27) { delete game._modal_screen; return null; }     // cancel
         if (c === 13 || c === 10) { delete game._modal_screen; return null; } // commit
         if (ch === ' ') {
-            if (idx < pages.length - 1) { idx++; continue; }
+            if (idx < pages.length - 1) { idx++; blankTop = false; continue; }
             delete game._modal_screen;
             return null;                                  // ' ' past last page ends
         }
-        if (ch === '>') { if (idx < pages.length - 1) idx++; continue; }
-        if (ch === '<') { if (idx > 0) idx--; continue; }
+        if (ch === ':') {
+            // C ref: wintty.c process_menu_window() MENU_SEARCH: PICK_NONE bells, otherwise getlin and
+            // the first selectable entry matching "*pat*" is chosen (PICK_ONE finishes).
+            if (!pickOne) continue;
+            const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
+            const reply = await hooked_tty_getlin('Search for:', null);
+            blankTop = true;
+            if (!reply || reply[0] === '\x1b') continue;
+            for (const pg of pages) for (const it of pg)
+                if (it.skill != null && pmatchi(`*${reply}*`, `${it.sel} - ${it.text}`)) { delete game._modal_screen; return it.skill; }
+            continue;
+        }
+        if (ch === '>') { if (idx < pages.length - 1) { idx++; blankTop = false; } continue; }
+        if (ch === '<') { if (idx > 0) { idx--; blankTop = false; } continue; }
         if (ch === '^') { idx = 0; continue; }              // MENU_FIRST_PAGE
         if (ch === '|') { idx = pages.length - 1; continue; } // MENU_LAST_PAGE
         if (pickOne) {
