@@ -15,7 +15,7 @@
 import { NO_COLOR } from './terminal.js';
 import { game, hooks } from './gstate.js';
 import { nhgetch } from './input.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
 import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
 import { y_n, update_topl, topl_more, docrt, You_feel } from './display.js';
@@ -380,7 +380,7 @@ function build_skill_menu_lines(state) {
     const lines = [];
     for (const [first, last, name] of SKILL_RANGES) {
         // Heading (ATR_INVERSE) emitted at the start of each range.
-        lines.push({ text: name, attr: menuHeadAttr() /* iflags.menu_headings.attr */ });
+        lines.push({ text: name, ...menuHeadStyle() });
         for (let i = first; i <= last; i++) {
             if (restricted(i)) continue;
             const lvl = SKILL_LEVEL_NAME[P_SKILL[i]] || 'Unknown';
@@ -452,7 +452,7 @@ function build_skill_menu_items(S, speedy) {
     }
 
     for (const [first, last, name] of SKILL_RANGES) {
-        items.push({ text: name, attr: menuHeadAttr() /* iflags.menu_headings.attr */ });
+        items.push({ text: name, ...menuHeadStyle() });
         for (let i = first; i <= last; i++) {
             if (restricted(i)) continue;
             const lvl = SKILL_LEVEL_NAME[P_SKILL[i]] || 'Unknown';
@@ -478,7 +478,7 @@ function build_skill_menu_items(S, speedy) {
         title += `  (${slots} slot${slots === 1 ? '' : 's'} available)`;
     }
     // end_menu() prepends the prompt + a blank separator line.
-    items.unshift({ text: title, attr: menuHeadAttr() }, { text: '' });
+    items.unshift({ text: title, ...menuHeadStyle() }, { text: '' });
     return { items, to_advance };
 }
 
@@ -509,17 +509,11 @@ function render_skill_menu_page(pages, idx) {
     // C ref: wintty.c tty_display_nhwindow NHW_MENU — a one-page menu shorter than
     // the screen floats as a partial-width overlay (see doenhance's PICK_NONE path).
     if (pages.length === 1 && page.length + 1 < (game.nhDisplay?.rows ?? 24)) {
-        renderMenuLines(page.map((it) => ({
-            text: it.sel ? `${it.sel} - ${it.text}` : it.text,
-            attr: it.attr || 0,
-        })), null);
+        renderMenuLines(page.map((it) => ({ text: it.sel ? `${it.sel} - ${it.text}` : it.text, attr: it.attr || 0, color: it.color, header: it.header })), null);
         game._modal_screen = 'skillwin';
         return;
     }
-    renderWindowScreen(page.map((it) => ({
-        text: it.sel ? `${it.sel} - ${it.text}` : it.text,
-        attr: it.attr || 0,
-    })), {
+    renderWindowScreen(page.map((it) => ({ text: it.sel ? `${it.sel} - ${it.text}` : it.text, attr: it.attr || 0, color: it.color, header: it.header })), {
         menu: true,
         footer: pages.length > 1 ? `(${idx + 1} of ${pages.length})` : '(end) ',
         footerRow: page.length,
@@ -679,7 +673,7 @@ export async function doenhance() {
     const { lines, title } = build_skill_menu_lines(state);
 
     // end_menu() prepends the title (ATR_INVERSE) + a blank separator line.
-    const allLines = [{ text: title, attr: menuHeadAttr() }, { text: '' }, ...lines];
+    const allLines = [{ text: title, ...menuHeadStyle() }, { text: '' }, ...lines];
 
     // C ref: win/tty/wintty.c tty_display_nhwindow NHW_MENU — cw->maxrow ==
     // nitems + 1 (the morestr row).  A menu SHORTER than the screen floats as a

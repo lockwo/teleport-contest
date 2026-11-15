@@ -9,7 +9,7 @@ import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
 import { Blind } from './vision.js';
 import { NO_COLOR } from './terminal.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadAttr, menuHeadColor, menuHeadStyle } from './menuattr.js';
 import { status_sweep, update_lastseentyp, map_location, see_nearby_objects } from './display.js';
 // C ref: do_name.c hliquid() — surface() names pools/lava through it, so the
 // Hallucination substitution (and its display-RNG draw) applies there too.
@@ -1231,11 +1231,11 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
             const e = lines[i];
             clearRow(row);
             if (e.blank) continue;
-            if (e.title) { disp.putstr(offx + 1, row, e.text, NO_COLOR, menuHeadAttr()); continue; }
+            if (e.title) { disp.putstr(offx + 1, row, e.text, menuHeadColor(), menuHeadAttr()); continue; }
             // C ref: tport_menu — an unreachable level is added with a_int==0
             // (zeroany), so the tty windowport shows no accelerator; its entry
             // text already carries the 4-space padding in place of "X - ".
-            disp.putstr(offx + 1, row, lineText(e), NO_COLOR, e.heading ? menuHeadAttr() : 0);
+            disp.putstr(offx + 1, row, lineText(e), e.heading ? menuHeadColor() : NO_COLOR, e.heading ? menuHeadAttr() : 0);
         }
         const morestr = npages > 1 ? `(${pageNo} of ${npages})` : '(end) ';
         clearRow(row);
@@ -1682,7 +1682,7 @@ export async function build_overview_lines(final = 0, how = 0) {
             // ATR_NONE there, so the live '#overview' command (final==0) and its
             // 'm' menu (final==-1) get the highlighted iflags.menu_headings.attr
             // (ATR_INVERSE).
-            lines.push({ text: buf, attr: final > 0 ? 0 : menuHeadAttr() });
+            lines.push({ text: buf, ...menuHeadStyle(final > 0) });
             lastdun = p.dnum;
         }
 

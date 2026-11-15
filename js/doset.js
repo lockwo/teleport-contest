@@ -26,7 +26,7 @@ import { nhgetch } from './input.js';
 import { vision_recalc } from './vision.js';
 import { update_topl, pline, topl_more, render_map_to_grid, docrt, reglyph_darkroom, reglyph_remembered_terrain, rogue_symset, tty_preference_update, blank_status_rows } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadAttr, menuHeadColor, menuHeadStyle } from './menuattr.js';
 import { menu_ctx } from './windows.js';
 import { display_file } from './pager.js';
 import { MENU_TRADITIONAL, MENU_COMBINATION } from './const.js';
@@ -80,7 +80,7 @@ async function runSymbolSetHandler(rogue = false) {
     const name = (rogue ? game.roguesymset : game.symset) || '';
     const width = Math.max('Default Symbols'.length, ...sets.map(set => set.name.length)) + 2;
     const entries = [
-        { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, attr: menuHeadAttr() },
+        { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, ...menuHeadStyle() },
         { text: '' },
         { text: 'Default Symbols', item: { value: '', selected: !name } },
         ...sets.map(set => ({
@@ -785,7 +785,7 @@ function renderOptionsPage(entries, page, npages, selected, counts = null, plus 
             if (text) {
                 const lead = text.match(/^ */)[0].length;
                 d.putstr(0, r, text.slice(0, lead), NO_COLOR, 0);
-                d.putstr(lead, r, text.slice(lead), NO_COLOR, e.inv ? menuHeadAttr() : 0);
+                d.putstr(lead, r, text.slice(lead), e.inv ? menuHeadColor() : NO_COLOR, e.inv ? menuHeadAttr() : 0);
             }
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
@@ -867,7 +867,7 @@ function renderPickupMenu(selected, preselected, searchBlankTop, blankStatus, co
     for (let r = 0; r < lines.length; r++) {
         clearRow(d, offx, r);
         const l = lines[r];
-        if (l.text) d.putstr(offx + 1, r, l.text, NO_COLOR, l.inv ? menuHeadAttr() : 0);
+        if (l.text) d.putstr(offx + 1, r, l.text, l.inv ? menuHeadColor() : NO_COLOR, l.inv ? menuHeadAttr() : 0);
     }
     if (searchBlankTop) clearRow(d, 0, 0);
     const footRow = lines.length;
@@ -1248,7 +1248,7 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
         if (it.type === 'title') {
             // "Options" title: no leading space, inverse, at col 1.
             d.putstr(0, r, ' ', NO_COLOR, 0);
-            d.putstr(1, r, it.name, NO_COLOR, menuHeadAttr());
+            d.putstr(1, r, it.name, menuHeadColor(), menuHeadAttr());
         } else if (it.type === 'heading') {
             // Section heading: C only paints " <name>" inverse (ESC[7m General
             // ESC[24C ESC[0m — the 24-column pad to the 32-wide field is a
@@ -1257,7 +1257,7 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             // col 0 is the plain menu leading space.
             const head = ' ' + it.name;
             d.putstr(0, r, ' ', NO_COLOR, 0);
-            d.putstr(1, r, head, NO_COLOR, menuHeadAttr());
+            d.putstr(1, r, head, menuHeadColor(), menuHeadAttr());
         } else if (it.type === 'item') {
             d.putstr(0, r, ` ${it.sel} - ${it.body}`.slice(0, 79), NO_COLOR, 0);
         } else if (it.type === 'text') {

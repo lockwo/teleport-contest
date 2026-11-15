@@ -41,8 +41,8 @@ import { Unaware,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING,
     is_pool } from './const.js';
-import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion } from './invent.js';
-import { menuHeadAttr } from './menuattr.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion, paintMenuLine } from './invent.js';
+import { menuHeadStyle } from './menuattr.js';
 import { exercise, acurr_eff, change_luck } from './attrib.js';
 import { settrack } from './track.js';
 import { nh_timeout, do_storms } from './timeout.js';
@@ -676,7 +676,7 @@ async function ask_do_tutorial() {
 
     const renderMenu = (pass) => {
         const lines = [
-            { text: 'Do you want a tutorial?', attr: menuHeadAttr() },
+            { text: 'Do you want a tutorial?', ...menuHeadStyle() },
             { text: '' },
             { text: 'y - Yes, do a tutorial' },
             { text: 'n - No, just start play' },
@@ -684,7 +684,7 @@ async function ask_do_tutorial() {
             { text: 'Put "OPTIONS=!tutorial" in .nethackrc to skip this query.' },
         ];
         if (pass > 0) lines.push({ text: "(Please choose 'y' or 'n'.)" });
-        lines.push({ text: '(end)' });
+        lines.push({ text: '(end)', morestr: true });
 
         // C ref: tty_end_menu computes cw->cols = max(strlen(str) + 2) over all
         // menu items (the +2 is a leading and trailing space).  The corner
@@ -726,7 +726,7 @@ async function ask_do_tutorial() {
         for (let i = 0; i < lines.length; i++) {
             for (let c = offx; c < cols; c++) disp.setCell(c, i, ' ', NO_COLOR, 0);
             if (lines[i].text)
-                disp.putstr(offx + 1, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
+                paintMenuLine(disp, offx + 1, i, lines[i], !lines[i].morestr);
         }
         const endRow = lines.length - 1;
         menuOffx = offx; menuEndRow = endRow;

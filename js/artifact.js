@@ -36,7 +36,7 @@ import { worn_extrinsic, worn_blocked, xname, yname, otense, killer_xname, Hate_
          hold_another_object, GETOBJ_EXCLUDE, GETOBJ_SUGGEST, GETOBJ_PROMPT,
          GETOBJ_ALLOWCNT, dropx, carried, Tobjnam, obj_extract_self, obfree } from './invent.js';
 import { healmon, is_vampshifter, fmonOrder, migrate_mon, set_ustuck, DEADMONSTER } from './mon.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import { mon_aligntyp } from './minion.js';
 import { resists_fire, resists_cold, resists_elec, resists_poison, resists_ston } from './mondata.js';
 import { nomul } from './hack.js';
@@ -2067,7 +2067,7 @@ export async function invoke_create_portal(obj) {
         const { PICK_ONE } = await import('./const.js');
         const { ATR_INVERSE } = await import('./terminal.js');
         const entries = [
-            { text: 'Open a portal to which dungeon?', attr: menuHeadAttr() },
+            { text: 'Open a portal to which dungeon?', ...menuHeadStyle() },
             { text: '' },
             ...ok_dungeons.map((dn) => ({ text: dgns[dn].dname, item: { value: dn } })),
         ];

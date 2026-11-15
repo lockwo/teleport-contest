@@ -50,7 +50,7 @@ import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trap
 import { set_utrap } from './polyself.js';
 import { doset, dosetSimple } from './doset.js';
 import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, IS_ROCK, isok, IS_DOOR,
@@ -1112,6 +1112,18 @@ export async function rhack(key) {
         if (!replay) game._cmd_key = key;
     }
 
+    // C ref: cmd.c readchar_core() returns char, so byte 0xff promotes to
+    // (char)0377 (-1). rhack():3659-3670 cancels it before binding lookup,
+    // including after a count or movement prefix. Modal keys belong to the
+    // window instead. Keep other Meta bytes intact for command resolution.
+    if (!game._modal_screen && (key === 0 || key === 0xff || key === -1)) {
+        game.context.run_prefix = 0;
+        game.context.stale_run = 0;
+        game.context.stale_rush = false;
+        reset_cmd_vars(true);
+        return;
+    }
+
 
     // Entries getobj()/getdir() append to CQ_REPEAT while this command runs
     // sit behind this index; C queues the command first, so they are moved
@@ -1404,7 +1416,7 @@ export async function rhack(key) {
         if (bent && !(await can_do_extcmd(bent))) {
             game.context.move = 0;
         } else {
-            const res = await run_extcmd_by_name(bound);
+            const res = ecmd_note(await run_extcmd_by_name(bound));
             game.context.move = res === 1 ? 1 : 0;
         }
     } else if (npBad) {
@@ -7395,9 +7407,7 @@ function extlist_paginate(flat) {
 // C ref: win/tty/wintty.c process_menu_window() page paint + dmore().
 function extlist_render_page(m, idx) {
     const page = m.pages[idx];
-    const items = page.map((ln) => ({
-        text: (ln.sel ? `${ln.sel} - ` : '') + ln.text, attr: ln.attr,
-    }));
+    const items = page.map((ln) => ({ text: (ln.sel ? `${ln.sel} - ` : '') + ln.text, attr: ln.attr, color: ln.color, header: ln.header }));
     if (m.fullscreen) {
         renderWindowScreen(items, {
             menu: true,
@@ -7576,7 +7586,7 @@ export async function doextlist() {
                 /* doing the menu heading in the inner loop like this, on
                    demand, avoids a heading with no subordinate entries */
                 if (!menushown[pass]) {
-                    push(headings[pass], menuHeadAttr());
+                    flat.push({ text: headings[pass], ...menuHeadStyle() });
                     menushown[pass] = 1;
                 }
                 buf = ' ' + efp.ef_txt.padEnd(14) + ' '

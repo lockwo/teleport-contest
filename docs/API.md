@@ -89,11 +89,31 @@ redraws the same object or monster again.
 
 ### Tty menu input parity
 
+Menu headings and prompts carry both the configured `menu_headings` foreground
+color and attribute through every renderer. Their style is not overridden by
+`MENUCOLOR` rules, including when the configured attribute is `none`.
+End-of-game disclosure suppresses class-heading colors and attributes, while
+menu prompts retain their separate prompt style.
+This includes the shared vanquished/genocided sort-order prompt. It must use
+the current prompt color and attribute rather than a fixed inverse attribute.
+Character-creation and tutorial menus use the same heading and item-color rules,
+including selection-marker repaints. NHW_TEXT discovery lists are different:
+their `putstr` class headings carry the configured attribute, not its color.
+
 Command menus follow the recorder's signed 64-bit `long` range for count
 prefixes. An overflowing digit discards the pending count, so the next
 selection is uncounted unless another digit starts a new prefix. Prefix
 arithmetic stays exact through `9223372036854775807`. Selected item counts
 are returned to callers as numbers.
+
+Meta-key and rebound command dispatch preserves cancellation results for repeat
+queue handling. Canceling the direction for `#ride` clears the repeat command,
+whereas an unsuccessful mount attempt returns normally and remains repeatable.
+
+The recorder's signed-character input treats byte `0xff` as a canceled command,
+including after a count or movement prefix. In a tty line prompt, `pgetchar`
+promotes that byte to EOF and cancels immediately, even with text already
+entered. Other high-bit bytes retain their buffer contents and Meta bindings.
 
 For wrapped `getlin` input, backspace across the left edge first calls
 `tty_curs(BASE_WINDOW, CO, previous_row)`. That API converts the one-based
@@ -107,12 +127,15 @@ container. This applies to both menu and traditional prompts.
 
 ### Recorder serialization parity
 
-The C recorder serializes its shadow grid at each capture boundary. Its
-6144-byte capture buffer can overflow even when the displayed glyphs are
-spaces, as with the Blank symbol set on a mapped swamp. Preserve those cells'
-colors and attributes, and include them in overflow accounting. Overflow is
-determined by the serialized grid, not by cumulative tty output since the
-previous input. Corrupted cursor coordinates remain part of the recording.
+The C recorder serializes its shadow grid at each capture boundary. Preserve
+the cells' colors and attributes as well as the recorded cursor.
+
+The recorder update in [official commit `6ee30e6`](https://github.com/davidbau/teleport-contest/commit/6ee30e6)
+uses one byte per input key, a larger capture buffer, and a raw-mode reset at
+terminal teardown. Rebuilding does not update older recorded fixtures, which
+can still contain the former 6,144-byte buffer's corrupted screens and cursors.
+The existing JS compatibility path for those captures is retained while the
+broader capture and teardown changes are validated separately.
 
 
 ## `input` — what the harness gives you
@@ -234,6 +257,13 @@ For example, throne healing publishes HP after its cure messages, so a
 `--More--` during those messages still shows the previous HP. Farlook must
 also follow the displayed glyph: a raised drawbridge portcullis (`DBWALL`)
 uses a drawbridge glyph, not the wall glyph implied by `IS_WALL`.
+
+When Latin-1 high bytes (`0x80` through `0xff`) occur in a string, TTY capture
+preserves their columns but does not paint them. Keep stored text unchanged.
+C's signed `char` string walkers pass negative values to `nomux_putch()`,
+which ignores them. This applies to prompt echoes and stored text displayed
+in messages or menus, not to decoded `putmixed` glyph prefixes, Unicode map
+glyphs or direct unsigned-byte output.
 
 ### `getRngLog()`
 

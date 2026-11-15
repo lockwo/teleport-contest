@@ -30,7 +30,7 @@ import { is_quest_artifact, artitouch } from './questpgr.js';
 import { WEP_HITBON } from './weapondmg_data.js';
 import { ATR_INVERSE, ATR_BOLD, ATR_UNDERLINE, CLR_GRAY, NO_COLOR } from './terminal.js';
 
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadAttr, menuHeadColor, menuHeadStyle } from './menuattr.js';
 import {
     AMULET_CLASS,
     AMULET_OF_YENDOR,
@@ -1978,12 +1978,12 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
     // C ref: windows.c:1816 add_menu_heading() — `if (program_state.gameover)
     // attr = ATR_NONE`, so the end-of-game disclosure lists draw class headers
     // PLAIN.
-    const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
+    const headStyle = menuHeadStyle(!!game.program_state?.gameover);
     const flat = [];
     const syms = objSymsShown(lines);
     for (const group of lines) {
         const [heading, ...items] = group;
-        if (heading != null) flat.push({ text: heading, attr: headAttr });
+        if (heading != null) flat.push({ text: heading, ...headStyle });
         items.forEach((item, i) => {
             const sym = syms && group.syms?.[i + 1];
             flat.push({ text: sym ? item.slice(0, 2) + sym.ch + item.slice(3) : item, attr: 0,
@@ -1997,11 +1997,11 @@ function renderMenuScreen(lines, cursor = [36, 8]) {
 // option is on, every non-heading menu item's text (without tty's "x - "
 // selector prefix) is matched against the MENUCOLOR= patterns, newest first,
 // and the first hit recolors the whole item.  Returns a bodyStyle or null.
-function menuColorStyle(line) {
-    if (line.attr || !game.flags?.menucolors || !game.menucolors?.length)
+export function menuColorStyle(line) {
+    if (line.header || line.attr || !game.flags?.menucolors || !game.menucolors?.length)
         return null;
     const m = (line.symColor !== undefined ? /^(\S) \S /
-                                           : /^(\S) [-+#] /).exec(line.text);
+                                           : /^(\S) [-+*#] /).exec(line.text);
     const str = m ? line.text.slice(4) : line.text;
     const rule = game.menucolors.find((r) => r.regex.test(str));
     if (!rule) return null;
@@ -2012,7 +2012,7 @@ function menuColorStyle(line) {
 
 // C ref: wintty.c:1478 — the object glyph char replacing the '-' is drawn in
 // the glyph's own color (CLR_GRAY is suppressed to the default by has_color()).
-function paintMenuLine(display, x, y, line, isMenu = false) {
+export function paintMenuLine(display, x, y, line, isMenu = false) {
     paintMenuLineBody(display, x, y, line, isMenu);
     if (line.symColor !== undefined)
         display.setCell(x + 2, y, line.text[2],
@@ -2034,7 +2034,7 @@ function paintMenuLineBody(display, x, y, line, isMenu = false) {
         return;
     }
     if (!line.bodyStyle) {
-        display.putstr(x, y, line.text, NO_COLOR, line.attr || 0);
+        display.putstr(x, y, line.text, line.color ?? NO_COLOR, line.attr || 0);
         if (line.attr) {
             // Tty screen serialization skips long blank runs without attributes.
             for (const run of line.text.matchAll(/ {5,}/g))
@@ -2320,6 +2320,8 @@ export async function select_command_menu(entries, { how = PICK_ANY, blankStatus
             return {
                 text: e.item ? `${e.item.sel} ${e.item._shown} ${e.text}` : e.text,
                 attr: e.attr,
+                color: e.color,
+                header: e.header,
                 bodyStyle: e.bodyStyle,
             };
         });
@@ -9084,7 +9086,7 @@ async function tty_select_menu(items, plan, how) {
         const showSyms = (game.iflags?.use_menu_glyphs ?? true)
             && (!((game.iflags?.menuobjsyms ?? 4) & 4) || plan.every((p) => p.item));
         const lines = plan.map((p) => {
-            if (!p.item) return { text: p.str, attr: p.attr || 0 };
+            if (!p.item) return { text: p.str, attr: p.attr || 0, color: p.color, header: p.header };
             const text = menu_item_line(p.item);
             if (showSyms && p.item.sym && text[2] === '-')
                 return { text: text.slice(0, 2) + p.item.sym.ch + text.slice(3),
@@ -9269,7 +9271,7 @@ export async function yn_function_menu_ask(query, resp, def) {
     else return null;
     if (r === 'ynaq') add('a', 'All');
     if (r === 'ynq' || r === 'ynaq' || r === 'hsq') add('q', 'Quit');
-    const items = [], plan = [{ str: query, attr: menuHeadAttr() }, { str: '' }];
+    const items = [], plan = [{ str: query, ...menuHeadStyle() }, { str: '' }];
     for (let i = 0; i < opts.length; i += 2) {
         items.push({ selector: opts[i], desc: opts[i + 1], selected: def === opts[i], count: -1,
                      gselector: null, skipinvert: false });
@@ -9427,7 +9429,7 @@ export async function query_category(qstr, olist, qflags, how) {
                     : 'Items you just picked up', 'P', { skipinvert: true });
 
     /* end_menu(win, qstr): the query heads the window, then a blank line */
-    plan.unshift({ str: qstr, attr: menuHeadAttr() }, { str: '' });
+    plan.unshift({ str: qstr, ...menuHeadStyle() }, { str: '' });
 
     let picked = await tty_select_menu(items, plan, how);
 
@@ -9495,8 +9497,7 @@ export async function query_objlist_menu(qstr, olist, qflags, how, allow) {
             if (sorted && curr.oclass !== oclass) continue;
             if (!allow(curr)) continue;
             if (sorted && !printed_type_name) {
-                plan.push({ str: let_to_name(curr.oclass, false, with_oc_sym),
-                            attr: menuHeadAttr() });
+                plan.push({ str: let_to_name(curr.oclass, false, with_oc_sym), ...menuHeadStyle() });
                 printed_type_name = true;
             }
             // C ref: pickup.c:1131 query_objlist() — `tmpglyph =
@@ -9523,7 +9524,7 @@ export async function query_objlist_menu(qstr, olist, qflags, how, allow) {
        deliberately without the menu_headings highlight attribute. */
     if (game.this_title) plan.unshift({ str: game.this_title });
     /* end_menu(win, qstr) skips the prompt line entirely when qstr is NULL */
-    if (qstr) plan.unshift({ str: qstr, attr: menuHeadAttr() }, { str: '' });
+    if (qstr) plan.unshift({ str: qstr, ...menuHeadStyle() }, { str: '' });
     const picked = await tty_select_menu(items, plan, how);
 
     const result = picked.map((it) => ({
@@ -9686,20 +9687,20 @@ async function menu_pick_pay_items(ibill) {
     const amt_width = String(largest_amt).length;
 
     // C ref: windows.c add_menu_heading() — ATR_INVERSE unless the game is over.
-    const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
+    const headStyle = menuHeadStyle(!!game.program_state?.gameover);
     // end_menu(win, "Pay for which items?") prepends the prompt + a blank line.
-    const plan = [{ str: 'Pay for which items?', attr: menuHeadAttr() }, { str: '' }];
+    const plan = [{ str: 'Pay for which items?', ...menuHeadStyle() }, { str: '' }];
     const items = [];                   // item.idx == ibill index
 
     // The "Used up items" heading shows whenever the (already sorted) bill
     // leads with a used-up entry, no matter what follows it.
     if (ibill[0].usedup <= PartlyUsedUp)
         plan.push({ str: `Used up item${
-            (ibillct > 1 && ibill[1].usedup <= PartlyUsedUp) ? 's' : ''}:`, attr: headAttr });
+            (ibillct > 1 && ibill[1].usedup <= PartlyUsedUp) ? 's' : ''}:`, ...headStyle });
     for (let i = 0; i < ibillct; ++i) {
         if (i > 0 && ibill[i - 1].usedup <= PartlyUsedUp
             && ibill[i].usedup >= PartlyIntact)
-            plan.push({ str: `Unpaid item${(i < ibillct - 1) ? 's' : ''}:`, attr: headAttr });
+            plan.push({ str: `Unpaid item${(i < ibillct - 1) ? 's' : ''}:`, ...headStyle });
         const otmp = ibill[i].obj;
         const save_quan = otmp.quan;
         otmp.quan = ibill[i].quan;      /* in case it's partly used */
@@ -10773,7 +10774,7 @@ export async function reroll_menu() {
           selected: false, count: -1, gselector: null, skipinvert: false },
     ];
     const plan = [
-        { str: 'Reroll this character?', attr: menuHeadAttr() }, { str: '' },
+        { str: 'Reroll this character?', ...menuHeadStyle() }, { str: '' },
         { item: items[0] }, { item: items[1] }, { str: '' },
     ];
     // C ref: u_init.c — starting gear isn't setworn()/setuwep()'d until
@@ -10935,7 +10936,7 @@ export async function wiz_identify() {
         items.push({ selector: '_', desc: prompt, obj: null, selected: false,
                      count: -1, gselector: '\x09', skipinvert: true });
         plan.push({ item: items[0] });
-        const headAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
+        const headStyle = menuHeadStyle(!!game.program_state?.gameover);
         // C ref: wizcmds.c wiz_identify() sets iflags.override_ID before calling
         // display_inventory(); objnam.c's doname()/xname() then report every
         // listed item (even ones not_fully_identified() would still filter out
@@ -10968,7 +10969,7 @@ export async function wiz_identify() {
                 for (const oclass of classOrder()) {
                     const group = sorted.filter((o) => o.oclass === oclass);
                     if (!group.length) continue;
-                    plan.push({ str: let_to_name(oclass, false, false), attr: headAttr });
+                    plan.push({ str: let_to_name(oclass, false, false), ...headStyle });
                     for (const obj of group) addItem(obj);
                 }
             }
@@ -11495,7 +11496,7 @@ function renderItemActionsMenu(otmp, entries) {
     // Row 0: the query title, drawn with the menu prompt style (= menu_headings,
     // ATR_INVERSE).
     for (let c = 0; c < title.length && textx + c < 80; c++)
-        display.setCell(textx + c, row, title[c], NO_COLOR, menuHeadAttr());
+        display.setCell(textx + c, row, title[c], menuHeadColor(), menuHeadAttr());
     row++;
     display.putstr(textx, row++, '', NO_COLOR, 0); // blank separator row
     for (const ln of itemLines) display.putstr(textx, row++, ln, NO_COLOR, 0);
@@ -11584,7 +11585,6 @@ async function itemactions(otmp, getDir) {
                 && pmatchi(`*${reply}*`, `${e.accel} - ${e.label}`));
             if (!hit) continue;
             await dismiss_invent_screen();
-            itemactions_botlx_repaint();
             return await itemactions_dispatch(otmp, hit.act, getDir);
         }
         // Return/Enter commits with nothing selected -> cancel.  C ref
@@ -11599,23 +11599,10 @@ async function itemactions(otmp, getDir) {
         // C: the menu is torn down (erase_menu_or_text) and moveloop's
         // flush_screen()/bot() runs before the canned command executes.
         await dismiss_invent_screen();
-        itemactions_botlx_repaint();
         return await itemactions_dispatch(otmp, chosen.act, getDir);
     }
 }
 
-// C ref: wintty.c docorner() left disp.botlx pending (its sweep reached the
-// status window while select_menu() held bot_disabled); the moveloop bot() of
-// the NEW moveloop_core() iteration that runs the queued canned command repaints
-// every status row in full before that command executes.
-function itemactions_botlx_repaint() {
-    if (!status_cuts_snapshot()) return;
-    const display = game.nhDisplay;
-    if (StatusRows() > 2) putStatusRow(display, 0, display.rows - 3, null);
-    putStatusRow(display, 1, 22, null);
-    putStatusRow(display, 2, 23, null);
-    game._statusCuts = null;
-}
 
 // C ref: iactions.c itemactions_pushkeys(otmp, act) — push the chosen action's
 // command (function + the object's invlet) onto the canned command queue, then
@@ -11653,6 +11640,14 @@ async function itemactions_run(otmp, act, getDir) {
     // so the queued command runs in a NEW moveloop_core() iteration, whose
     // once-per-input hallucination/warning redraw happens first.
     await moveloop_input_redraw();
+    // C ref: allmain.c:473-479 — the queued command's new input boundary
+    // consumes the menu dismissal's pending status repaint before it runs.
+    // Painting rows alone leaves botlx set and can publish a meal's hunger
+    // change at the next monster message instead of after eating finishes.
+    if (game.botl || game.botlx || game.time_botl) {
+        await bot();
+        await flush_screen(1);
+    }
     // C ref: cmd.c rhack() epilogue — the inventory command that opened the menu
     // returned ECMD_OK without ECMD_TIME, so reset_cmd_vars() already zeroed
     // svc.context.run (a run == 8 left by an earlier travel included) before the
@@ -12125,12 +12120,12 @@ function renderInventoryMenu(rows, page = 0) {
     // Flatten rows into menu lines, tagging class headers (ATR_INVERSE).
     // C ref: windows.c add_menu_heading() — suppresses the highlight
     // (attr = ATR_NONE) during end-of-game disclosure (program_state.gameover).
-    const headerAttr = game.program_state?.gameover ? 0 : (menuHeadAttr());
+    const headStyle = menuHeadStyle(!!game.program_state?.gameover);
     const lines = [];
     const syms = objSymsShown(rows);
     for (const group of rows) {
         const [heading, ...items] = group;
-        if (heading != null) lines.push({ text: heading, attr: headerAttr, header: true });
+        if (heading != null) lines.push({ text: heading, ...headStyle });
         items.forEach((it, i) => {
             const sym = syms && group.syms?.[i + 1];
             lines.push({ text: sym ? it.slice(0, 2) + sym.ch + it.slice(3) : it, attr: 0,

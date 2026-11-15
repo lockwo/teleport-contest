@@ -28,7 +28,7 @@ import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines, map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
 import { NO_COLOR, ATR_INVERSE, CLR_WHITE } from './terminal.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
@@ -609,7 +609,7 @@ export async function dohelp() {
     // The prompt/title carries iflags.menu_headings (default "no-color&inverse")
     // via tty_menu_promptstyle, so it renders ATR_INVERSE; the rest are plain.
     const lines = [];
-    lines.push({ text: 'Select one item:', attr: menuHeadAttr() });
+    lines.push({ text: 'Select one item:', ...menuHeadStyle() });
     lines.push({ text: '', attr: 0 });
     for (const it of items) lines.push({ text: `${it.accel} - ${it.text}`, attr: 0 });
 
@@ -663,7 +663,7 @@ function renderHelpMenu(offx, lines) {
     for (let r = 0; r < lines.length; r++) {
         for (let c = offx; c < COLS; c++) d.setCell(c, r, ' ', NO_COLOR, 0);
         const ln = lines[r];
-        if (ln && ln.text) d.putstr(offx + 1, r, ln.text, NO_COLOR, ln.attr || 0);
+        if (ln && ln.text) d.putstr(offx + 1, r, ln.text, ln.color ?? NO_COLOR, ln.attr || 0);
     }
     const footRow = lines.length;
     for (let c = offx; c < COLS; c++) d.setCell(c, footRow, ' ', NO_COLOR, 0);

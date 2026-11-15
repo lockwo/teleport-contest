@@ -82,7 +82,7 @@ import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
 import { coord_desc, gloc_filter_init, gloc_filter_done, gloc_same_area, getpos_sethilite, getpos_toggle_hilite_state, getpos_refresh, getpos_has_hilitefunc, goodpos_shown } from './getpos.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 
 // Run direction deltas for the capital-letter run commands (and the
 // 'G'/'g' prefix followed by a movement key).  C: xdir[]/ydir[].
@@ -3380,7 +3380,7 @@ function terrain_menu_items() {
 async function terrain_menu() {
     const items = terrain_menu_items();
     const entries = [
-        { text: 'View which?', attr: menuHeadAttr() },
+        { text: 'View which?', ...menuHeadStyle() },
         { text: '' },
         ...items.map((it, i) => ({
             text: it.desc,
@@ -3805,7 +3805,7 @@ function render_whatis_menu(items) {
     const cols = disp.cols || 80;
 
     const lines = [];
-    lines.push({ text: 'What do you want to look at:', attr: menuHeadAttr() });
+    lines.push({ text: 'What do you want to look at:', ...menuHeadStyle() });
     lines.push({ text: '' });
     for (const it of items) {
         lines.push({ text: it.blank ? '' : `${it.ch} - ${it.desc}` });
@@ -3825,7 +3825,7 @@ function render_whatis_menu(items) {
 
     for (let i = 0; i < lines.length; i++) {
         blankCols(i);
-        if (lines[i].text) disp.putstr(textCol, i, lines[i].text, NO_COLOR, lines[i].attr || 0);
+        if (lines[i].text) disp.putstr(textCol, i, lines[i].text, lines[i].color ?? NO_COLOR, lines[i].attr || 0);
     }
     const moreRow = lines.length;
     blankCols(moreRow);

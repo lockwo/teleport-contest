@@ -596,15 +596,14 @@ async function steed_monkilled(mtmp) {
     await monkilled_mm(mtmp, 0 /* -AD_PHYS */, '');
 }
 
-// C ref: steed.c doride() — the #ride command.  With no current steed, read a
-// direction and try to mount the monster there.  Returns ECMD_TIME (1) when a
-// mount succeeds (a turn passes), else ECMD_OK/ECMD_CANCEL (0, no turn).
+// C ref: steed.c doride() returns ECMD_CANCEL for a canceled/invalid direction,
+// ECMD_OK for a failed mount attempt, and ECMD_TIME for mounting or dismounting.
 export async function doride() {
     const u = game.u;
 
     if (u.usteed) {
         await dismount_steed(DISMOUNT_BYCHOICE);
-        return 1;
+        return ECMD_TIME;
     }
 
     const dir = await getdir();
@@ -620,9 +619,9 @@ export async function doride() {
             && await y_n('Force the mount to succeed?', 'yn\x1b', 'n') === 'y')
             forcemount = true;
         const ok = await mount_steed(m_at(u.ux + dir.dx, u.uy + dir.dy), forcemount);
-        return ok ? 1 : 0;
+        return ok ? ECMD_TIME : ECMD_OK;
     }
-    return 0; // ECMD_CANCEL
+    return ECMD_CANCEL;
 }
 
 // C ref: decl.h `wizard` — debug (wizard) mode, which is what gates #ride's

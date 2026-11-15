@@ -9,7 +9,7 @@
 // C does: a count (-1 when the player used ESC) and `picks`, the menu_item array
 // of { item: <the anything passed to add_menu>, count } in menu order.
 import { game } from './gstate.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import { NO_COLOR, ATR_NONE, ATR_BOLD, ATR_UNDERLINE, ATR_INVERSE } from './terminal.js';
 
 // C ref: decl.c nul_glyphinfo.
@@ -54,10 +54,11 @@ export function putstr(win, _attr, str) { win.lines.push(str); }
 export async function select_menu(win, how, picks) {
     const { select_command_menu, dismiss_invent_screen, menu_page_pending } = await import('./invent.js');
     const entries = [
-        ...(win.query ? [{ text: win.query, attr: menuHeadAttr() }, { text: '' }] : []),
+        ...(win.query ? [{ text: win.query, ...menuHeadStyle() }, { text: '' }] : []),
         ...win.items.map((it) => ({
             text: it.str,
-            attr: it.heading ? menuHeadAttr() : render_attr(it.attr),
+            ...(it.heading ? menuHeadStyle(!!game.program_state?.gameover)
+                : { attr: render_attr(it.attr) }),
             bodyStyle: it.selectable ? (() => {
                 const coloring = game.flags?.menucolors
                     ? game.menucolors?.find((rule) => rule.regex.test(it.str)) : null;

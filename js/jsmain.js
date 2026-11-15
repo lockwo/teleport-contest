@@ -25,7 +25,9 @@ import {
     PICK_RANDOM, PL_NSIZ,
 } from './const.js';
 import { bail } from './wintty.js';
-import { ATR_INVERSE, NO_COLOR } from './terminal.js';
+import { NO_COLOR } from './terminal.js';
+import { menuHeadStyle } from './menuattr.js';
+import { menuColorStyle, paintMenuLine } from './invent.js';
 import { serializeGrid } from './screen_serialize.js';
 import { NomuxRecorder } from './nomux_capture.js';
 import './light.js';   // registers game.lightsources_hook for vision_recalc
@@ -628,7 +630,7 @@ export class NethackGame {
         // tty_askname() alone: a name pinned by OPTIONS=name: gives "[ynq]".
         const renameallowed = !!game.iflags?.renameallowed;
         const lines = [
-            { text: `Is this ok? [yn${renameallowed ? 'a' : ''}q]`, attr: ATR_INVERSE },
+            { text: `Is this ok? [yn${renameallowed ? 'a' : ''}q]`, ...menuHeadStyle() },
             { text: '' },
             { text: this._plselectionPreview(sel) },
             { text: '' },
@@ -683,7 +685,7 @@ export class NethackGame {
             const l = lines[r];
             for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
             const text = l.sel ? `${l.sel} ${l.preselect ? '*' : '-'} ${l.text}` : l.text;
-            if (text) disp.putstr(offx + 1, r, text, NO_COLOR, l.attr || 0);
+            if (text) paintMenuLine(disp, offx + 1, r, { ...l, text }, !l.morestr);
         }
         disp.setCursor(offx + 7, lines.length - 1);
         this._prevChargenMenu = { offx, rows: lines.length };
@@ -729,7 +731,8 @@ export class NethackGame {
         this._curMenuLines.forEach((l, r) => {
             if (l.sel && l.preselect && !l.deselected) {
                 l.deselected = true;
-                disp.setCell(offx + 3, r, '-', NO_COLOR, 0);
+                const style = menuColorStyle({ ...l, text: `${l.sel} - ${l.text}` });
+                disp.setCell(offx + 3, r, '-', style?.color ?? NO_COLOR, style?.attr ?? 0);
             }
         });
         if (this._curMenuCursor) disp.setCursor(...this._curMenuCursor);
@@ -861,7 +864,7 @@ export class NethackGame {
         // role aspect can drop separators to fit (maybe_skip_seps).
         const excess = this._maybeSkipSeps(kind, sel, rows);
         const lines = [];
-        lines.push({ text: prompt, attr: ATR_INVERSE }); // title
+        lines.push({ text: prompt, ...menuHeadStyle() }); // title
         lines.push({ text: '' });                         // sep after title
         lines.push({ text: this._plselectionPreview(sel) }); // preview
         if (!(kind === 'role' && excess === 2))

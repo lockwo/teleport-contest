@@ -4658,8 +4658,14 @@ function _buildScreenOutput() {
         const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : topl_rows(msg);
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
-            for (let c = 0; c < Math.min(ln.length, display.cols); c++)
-                display.setCell(c, li, ln[c], NO_COLOR, 0);
+            for (let c = 0; c < Math.min(ln.length, display.cols); c++) {
+                // Plain strings use signed char, but putmixed emits its
+                // decoded leading glyph through the unsigned glyph path.
+                const code = ln.charCodeAt(c);
+                const mixedGlyph = li === 0 && c === 0 && is_dec_prefix_msg(msg);
+                if (mixedGlyph || code < 0x80 || code > 0xff)
+                    display.setCell(c, li, ln[c], NO_COLOR, 0);
+            }
         }
         // C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` touches only
         // row 0, so while a wrapped yn prompt is being recalled with ^P the prompt's
@@ -5547,6 +5553,9 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
     for (let y = 0; y < mlines.length; y++) {
         for (let x = 0; x < disp.cols; x++) disp.setCell(x, y, ' ', NO_COLOR, 0);
         disp.putstr(0, y, mlines[y], NO_COLOR, 0);
+        // putmixed's leading glyph is unsigned output, not a plain string byte.
+        if (y === 0 && mlines[y] && is_dec_prefix_msg(msg))
+            disp.setCell(0, y, mlines[y][0], NO_COLOR, 0);
     }
     let cury = mlines.length - 1;
     let curx = mlines[cury].length;   // 0-based column one past the last line

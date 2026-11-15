@@ -21,7 +21,7 @@ import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying
 import { dxdy_to_dist_descr } from './getpos.js';
 import { game, register_process_static } from './gstate.js';
 import { s_suffix, just_an, strcmpi } from './hacklib.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadAttr, menuHeadStyle } from './menuattr.js';
 import { roles, align_gname, align_str } from './role.js';
 import {
     A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA,
@@ -3414,7 +3414,6 @@ export function vanqsort_cmp(vptr1, vptr2) {
 // Returns -1 if cancelled via ESC.
 export async function set_vanq_order(for_vanq) {
     const { select_pick_one_menu } = await import('./invent.js');
-    const { ATR_INVERSE: MENU_PROMPT_ATTR } = await import('./terminal.js');
     const cur = game.flags?.vanq_sortmode | 0;
     const items = [], plan = [];
     let desc;
@@ -3438,7 +3437,7 @@ export async function set_vanq_order(for_vanq) {
     plan.unshift({ str: `Sort order for ${
         for_vanq ? 'vanquished monster counts (also genocided types)'
                  : 'genocided monster types (also vanquished counts)'}`,
-                   attr: MENU_PROMPT_ATTR }, { str: '' });
+                   ...menuHeadStyle() }, { str: '' });
 
     const selected = await select_pick_one_menu(items, plan);
     const n = selected.cancelled ? -1 : selected.length;

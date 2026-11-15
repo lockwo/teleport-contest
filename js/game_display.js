@@ -63,7 +63,15 @@ export class GameDisplay {
             noteCellFlags(this.terminal.grid[row][col], dec, dark);
         return r;
     }
-    putstr(col, row, str, color, attr) { return this.terminal.putstr(col, row, str, color, attr); }
+    putstr(col, row, str, color = CLR_GRAY, attr = 0) {
+        // C tty string walkers pass signed char to nomux_putch(), which
+        // skips negative bytes without collapsing their screen columns.
+        for (let i = 0; i < str.length && col + i < this.cols; i++) {
+            const code = str.charCodeAt(i);
+            if (code < 0x80 || code > 0xff)
+                this.terminal.setCell(col + i, row, str[i], color, attr);
+        }
+    }
     setCursor(col, row) { return this.terminal.setCursor(col, row); }
     getCursor() { return this.terminal.getCursor(); }
     clearScreen() { return this.terminal.clearScreen(); }

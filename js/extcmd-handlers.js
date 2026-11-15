@@ -12,7 +12,7 @@ import { game } from './gstate.js';
 import { nhgetch, unshiftKeys, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { pline, pline_vision_flush, StatusRows, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
-import { menuHeadAttr } from './menuattr.js';
+import { menuHeadStyle } from './menuattr.js';
 import {
     obj_doname, floor_object_name, classOrder, sortloot, SORTLOOT_LOOT, SORTLOOT_INVLET, SORTLOOT_PACK, mergable,
     name_inventory_object, call_inventory_object, doorganize, docall, call_ok, GETOBJ_EXCLUDE,
@@ -39,7 +39,7 @@ import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJE
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
 import { is_worn, wearing_armor, inventoryArray, select_off,
-         dismiss_invent_screen, query_category, splitobj, unsplitobj } from './invent.js';
+         dismiss_invent_screen, paintMenuLine, query_category, splitobj, unsplitobj } from './invent.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { rn2, rnd } from './rng.js';
@@ -388,7 +388,11 @@ function draw_getlin(query, shown, cursorCol, cursorAt = null) {
     for (let i = 0; i < line.length; i++) {
         const r = Math.floor(i / TOPL_WRAP);
         if (r >= disp.rows) break;
-        disp.setCell(i % TOPL_WRAP, r, line[i], NO_COLOR, 0);
+        // topl_putsym(char) advances for signed high bytes, but nomux_putch
+        // ignores their negative values. Keep their buffer/cursor positions.
+        const code = line.charCodeAt(i);
+        if (code < 0x80 || code > 0xff)
+            disp.setCell(i % TOPL_WRAP, r, line[i], NO_COLOR, 0);
     }
     game._getlin_rows = rows;
     game._getlin_maxrows = Math.max(game._getlin_maxrows || 1, rows);
@@ -517,8 +521,12 @@ export async function hooked_tty_getlin(query, hook) {
         game._toplines = query + ' ' + shown;
         const code = await nhgetch();
 
-        if (code === 27) { // ESC
-            if (typed.length > 0) {
+        // C cmd.c pgetchar() returns signed char: byte 0xff promotes to EOF
+        // in getline.c:85. Unlike ESC, EOF cancels even a nonempty buffer.
+        const eof = code === 0xff || code === -1;
+        if (code === 27 || eof) {
+            if (eof) (game.iflags || (game.iflags = {})).term_gone = 1;
+            if (!eof && typed.length > 0) {
                 // Clear current contents and keep prompting from the start.
                 typed = '';
                 shown = '';
@@ -534,7 +542,7 @@ export async function hooked_tty_getlin(query, hook) {
                 game._getlin_maxrows = 1;
                 continue;
             }
-            if (!suppress_hist) yn_prompt_history(`${query} `, '');
+            if (!suppress_hist) yn_prompt_history(`${query} `, eof ? shown : '');
             else game._toplines = ''; // C getline.c:217-220
             return '\x1b';
         }
@@ -656,7 +664,7 @@ export function extcmd_end_menu(items, promptStr) {
     const body = items.map((it) => ({ ...it, text: (it.sel ? it.sel + ' - ' : '') + it.text,
                                       sel: it.sel }));
     const flat = promptStr == null ? body : [
-        { text: promptStr, attr: menuHeadAttr() },
+        { text: promptStr, ...menuHeadStyle() },
         { text: '' },
         ...body,
     ];
@@ -702,7 +710,7 @@ export async function extcmd_select_menu(m) {
     const entries = m.flat.map((ln) => (ln.sel
         ? { text: ln.text.slice(ln.sel.length + 3),
             item: { value: ln.sel, sel: ln.sel, selected: false, count: -1 } }
-        : { text: ln.text, attr: ln.attr }));
+        : { text: ln.text, attr: ln.attr, color: ln.color, header: ln.header }));
     const committed = await select_command_menu(entries, { how: PICK_ONE, blankStatus: !!m.statusBlank });
     const at = committed ? entries.findIndex((e) => e.item?.selected) : -1;
     if (at < 0) return null;
@@ -1712,7 +1720,7 @@ export async function docallcmd() {
 
     const groups = { m: 'C', i: 'y', o: 'n', f: ',', d: '\\', a: 'l' };
     const entries = [
-        { text: 'What do you want to name?', attr: menuHeadAttr() },
+        { text: 'What do you want to name?', ...menuHeadStyle() },
         { text: '' },
         ...items.map(it => ({
             text: it.desc,
@@ -1914,7 +1922,7 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     }
     for (let r = 0; r < lines.length; r++) {
         const ln = lines[r];
-        if (ln && ln.text) disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
+        if (ln && ln.text) disp.putstr(textCol, r, ln.text, ln.color ?? NO_COLOR, ln.attr || 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
     if (!fullScreen) {
@@ -1965,7 +1973,7 @@ function render_in_or_out_menu(box, outokay, inokay, alreadyused, more_container
     // mnemonic o/i/b/r/s.  a.a_int (1..8) indexes the selector; element [0]
     // ('_') is a skipped placeholder.
     const sel = game?.flags?.lootabc ? '_:abcdenq' : '_:oibrsnq';
-    const lines = [{ text: title, attr: menuHeadAttr() }, { text: '' }];
+    const lines = [{ text: title, ...menuHeadStyle() }, { text: '' }];
     lines.push({ text: `${sel[1]} - Look inside ${name}` });
     if (outokay) lines.push({ text: `${sel[2]} - take something out` });
     if (inokay) lines.push({ text: `${sel[3]} - put something in` });
@@ -2845,7 +2853,7 @@ async function loot_containers_menu(boxes) {
         menu_ch = nextMenuCh(menu_ch);
     }
     const buildLines = () => {
-        const lines = [{ text: 'Loot which containers?', attr: menuHeadAttr() }, { text: '' }];
+        const lines = [{ text: 'Loot which containers?', ...menuHeadStyle() }, { text: '' }];
         for (const it of items) lines.push({ text: menuItemLine(it) });
         return lines;
     };
@@ -3468,7 +3476,7 @@ function render_overview_menu(lines) {
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
     for (let r = 0; r < lines.length; r++) {
-        disp.putstr(textCol, r, lines[r].text, NO_COLOR, lines[r].attr || 0);
+        paintMenuLine(disp, textCol, r, lines[r], true);
     }
     disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
     // C dmore: cursor parked at offx + strlen("(end) ") + 2 = textCol + 6.
@@ -3753,7 +3761,9 @@ const HANDLERS = {
     // Wrapped: the function's own ECMD_* convention needs translating to
     // doextcmd()'s res===1 rule, or it needs an argument (getdir/getlin) not
     // available to a bare zero-arg call.
-    apply: doapply,
+    // C ref: eat.c:3123, cmd.c:3819. Wielding a tin opener costs time even
+    // when the subsequent tin selection returns ECMD_TIME | ECMD_CANCEL.
+    apply: itemaction_time(doapply),
     close: doclose_extcmd,
     eat: doeat,
     exploremode: exploremode_extcmd,
@@ -4379,7 +4389,7 @@ async function doherecmdmenu() {
     if (!items.length) return 0;
     /* cmd.c there_cmd_menu_common(): a PICK_ONE select_menu(); tty's menu
        loop owns paging, counts and MENU_SEARCH. */
-    const entries = [{ text: 'What do you want to do?', attr: menuHeadAttr() }, { text: '' },
+    const entries = [{ text: 'What do you want to do?', ...menuHeadStyle() }, { text: '' },
         ...items.map((it) => ({ text: it.desc, item: { value: it, sel: it.ch, selected: false, count: -1 } }))];
     const committed = await select_command_menu(entries, { how: 1 /* PICK_ONE */ });
     await dismiss_invent_screen();
@@ -4596,7 +4606,7 @@ function wizIntrinsicEntries() {
         return t ? (t.get(game.u || {}) || 0) : (uprops[key] || 0);
     };
     const entries = [
-        { text: 'Which intrinsics?', attr: menuHeadAttr() },
+        { text: 'Which intrinsics?', ...menuHeadStyle() },
         { text: '', attr: 0 },
     ];
     // C ref: wizcmds.c:967 — command assistance, independent of verbose.
@@ -4983,7 +4993,7 @@ async function run_pickone_corner_menu(title, entries) {
     let result;
     let blankTop = false;      // getlin("Search for:") cleared the title row
     for (;;) {
-        const lines = [{ text: blankTop ? '' : title, attr: menuHeadAttr() }, { text: '' }];
+        const lines = [{ text: blankTop ? '' : title, ...menuHeadStyle() }, { text: '' }];
         for (const e of entries)
             lines.push({ text: e.sel ? `${e.sel} ${e.selected ? '*' : '-'} ${e.text}` : e.text });
         let maxcol = '(end) '.length;
