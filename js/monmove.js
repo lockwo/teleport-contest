@@ -11,7 +11,7 @@
 import { PLNMSG_HIDE_UNDER, FACE } from "./const.js";
 import { Fumbling_hero, Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, Invis_hero, See_invisible_hero, Acid_resistance_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { s_suffix } from './hacklib.js';
 import { acurr_eff as _acurr_cf, exercise } from './attrib.js';
 import { u_slip_free, expels, mdamageu, magic_negation, missmu } from './mhitu.js';
@@ -4929,7 +4929,6 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
     // flush_screen(0) -- which, with m_throw()'s "slips as ..." / "hurls ..." line
     // still unacknowledged, is what pages that --More-- over the drawn flash.
     const flash_at = async (x, y) => {
-        nh_delay_output_tick();
         if (!fglyph) return;
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } // restore previous square
         if (!cansee(x, y)) return;                     // unseen: no flash drawn
@@ -7496,7 +7495,6 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // cells behind the missile show the tether line until DISP_END.
     const tf = (fglyph && tethered_weapon) ? tmp_at_flash_cell(fglyph, true) : null;
     const flash_at = async (x, y) => {
-        nh_delay_output_tick(); /* tmp_at(x, y); nh_delay_output() */
         if (!fglyph) return;
         if (tf) return tf.step(x, y);
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } // restore previous square
@@ -7739,7 +7737,6 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
             const fl = tmp_at_flash(otmp);
             while (isok(x, y) && (x !== magr.mx || y !== magr.my)) {
                 fl.step(x, y);
-                nh_delay_output_tick();
                 x -= dx; y -= dy;
             }
             fl.end();

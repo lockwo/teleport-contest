@@ -7,7 +7,7 @@ import { Flying_hero } from './youprop.js';
 import { vtense } from './plural.js';
 import { See_invisible_hero } from './youprop.js';
 import { has_mgivenname, MGIVENNAME, has_mcorpsenm, set_mcorpsenm } from './const.js';
-import { game, hooks } from './gstate.js';
+import { game, hooks, register_process_static } from './gstate.js';
 import { rn2, rnd, d, rn1 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
 import { mon_has_special } from './monspecial.js';
@@ -1190,6 +1190,12 @@ export function rndmonst() {
 // is the maximum G_FREQ value seen within each class.
 let mongen_order = null;
 let mclass_maxf = null;
+register_process_static(() => {
+    // C rebuilds this order in each process. adj_erinys() can change the
+    // difficulty used when the preceding process first sorted the table.
+    mongen_order = null;
+    mclass_maxf = null;
+});
 
 function init_mongen_order() {
     if (mongen_order) return;

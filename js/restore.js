@@ -22,14 +22,14 @@
 import { ledger_no } from './dungeon.js';
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
-import { monster_by_pmidx, propagate, set_malign, adj_erinys,
+import { monster_by_pmidx, name_to_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
          impossible, stairway_at, display_nhwindow_message, Hallucination_u,
          note_topl, putmsghistory, reglyph_remembered_darkroom, reglyph_remembered_terrain } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
-import { Hello } from './role.js';
+import { Hello, quest_monster_fixups_for_role } from './role.js';
 import { saveFileKey, savelev, store_plname_in_file, SAVE_KEY_PREFIX } from './save.js';
 import { l_nhcore_init } from './mklev.js';
 import { rn2 } from './rng.js';
@@ -163,22 +163,29 @@ function rest_engravings_fixup(engravings) {
 }
 
 // C ref: role.c role_init(), which restore.c restgamestate() calls to "Reset the
-// initial role, race, gender, and alignment".  Only two of its steps can reach
-// the PRNG, and on a restore exactly one of them can fire:
+// initial role, race, gender, and alignment".  Two of its steps matter here:
+//   * "Fix up the quest leader / guardians / nemesis" rewrites those mons[]
+//     entries (msound, M2_PEACEFUL, M3_CLOSE, maligntyp) for the hero's role.
+//     The restoring process starts from the pristine const mons[], so this is
+//     what makes a restored Tourist's Master of Thieves the quest nemesis
+//     (mons[] ships it as the Rogue's leader).  This port keeps the tables
+//     across games in one process, so they are reapplied here from the
+//     restored role.  No RNG.
 //   * "Fix up the quest nemesis" — quest_status.nemgend is read off the species'
 //     M2_NEUTER/M2_FEMALE/M2_MALE flag and only ROLLED (rn2(100)) for a nemesis
 //     that carries none of the three.  Recorded restores bear this out: the
 //     Wizard's (whose nemesis is the Dark One) draws rn2(100) here, the
 //     Valkyrie/Monk/Knight/Priest ones draw nothing.
-//   * the god-names fixup, whose randrole() loop is gated on
-//     `flags.pantheon == -1` /* new game */ — a restored flags comes out of the
-//     save file with the pantheon already chosen, which is why the recorded
-//     Priest restore draws no randrole() even though a fresh Priest game does.
-// Only the roll is mirrored here: assigning the table's fixed gender would make
-// a restored game disagree with the newgame path (allmain.js's role_init
-// leaves quest_nemgend unset for the non-rolling roles), and the save blob
-// already carries whatever the saving segment computed.
-function role_init_nemgend() {
+// The god-names fixup is gated on `flags.pantheon == -1` /* new game */ — a
+// restored flags comes out of the save file with the pantheon already chosen,
+// which is why the recorded Priest restore draws no randrole() even though a
+// fresh Priest game does.
+// Only the roll is mirrored for the gender: assigning the table's fixed gender
+// would make a restored game disagree with the newgame path (allmain.js's
+// role_init leaves quest_nemgend unset for the non-rolling roles), and the save
+// blob already carries whatever the saving segment computed.
+function role_init_on_restore() {
+    quest_monster_fixups_for_role(game.initrole, name_to_pmidx, monster_by_pmidx);
     if (quest_nemgend_or_null() == null)
         game.quest_nemgend = (rn2(100) < 50) ? 1 : 0;
 }
@@ -330,9 +337,9 @@ const UNSAVED_GLOBALS = [
     '_dig_occupation', 'occupation', 'occupation_txt', '_prayer', '_already_found_flag',
     'in_steed_dismounting', '_dressing_obj', '_dressing_off', '_did_nothing_flag',
     '_invmenu_esc', '_cmdqAbandonRetry',
-    /* termcap.c `nomux_anim_id` (recorder static) and decl.c gh.hitmsg_mid /
-       gh.hitmsg_prev (mhitu.c hitmsg() "again"): process globals, never saved */
-    '_nomuxAnimId', '_hitmsg',
+    /* decl.c gh.hitmsg_mid / gh.hitmsg_prev (mhitu.c hitmsg() "again"):
+       process globals, never saved */
+    '_hitmsg',
     /* tty status / top-line / menu caches (wintty.c, botl.c statics; disp.*) */
     'disp', 'botl', 'botlx', 'time_botl', 'input_state', '_getposFrameValid',
     '_statusSnap', '_terrainStatusWipe', '_statusDocrt', '_toplinStale',
@@ -517,7 +524,7 @@ export async function dorestore() {
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
     // nemesis-gender roll comes first in the stream.
-    role_init_nemgend();
+    role_init_on_restore();
 
     // C ref: restore.c restgamestate() tail — `adj_erinys(u.ualign.abuse);`.
     // The Erinys's strength (level, flags, attacks) is grown in mons[] by the
@@ -1371,10 +1378,10 @@ export async function restgamestate(nhfp) {
         const { set_playmode } = await import('./options.js');
         set_playmode();
     }
-    /* role_init() — role.c is UNPORTED as a whole; role_init_nemgend() above is
-       this file's copy of the only PRNG-visible part of it, and dorestore()
+    /* role_init() — role.c is UNPORTED as a whole; role_init_on_restore() above
+       is this file's copy of the part of it that matters here, and dorestore()
        calls it at exactly this point in the stream. */
-    role_init_nemgend();
+    role_init_on_restore();
 
     game.wreserve = Sfi(nhfp, 'wreserve', 0);
     game.wtreserved = Sfi(nhfp, 'wtreserved', 0);

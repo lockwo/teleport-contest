@@ -1,0 +1,393 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "name": "untrap-refused",
+   "frames": {
+    "61": {
+     "rows": [
+      "You hear a door open.",
+      "",
+      "                         -----",
+      "                         |...|",
+      "                         |..@|",
+      "                         -.d<-",
+      "                      |........",
+      "                      |.........|",
+      "                      |.........|",
+      "                      -.--+------",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "Wizard the Stripling           St:16 Dx:13 Co:18 In:11 Wi:9 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1"
+     ],
+     "cursor": [
+      28,
+      4,
+      1
+     ]
+    }
+   },
+   "segments": [
+    {
+     "seed": 4201,
+     "datetime": "20260502120000",
+     "nethackrc": "OPTIONS=name:Probe,role:Valkyrie,race:human,gender:female,align:neutral,suppress_alert:3.4.3,playmode:debug\n",
+     "moves": "   n\u0017bear trap\n\u0017cursed two-handed sword\nkafTwg#herecmdmenu\nfs"
+    }
+   ],
+   "finals": [
+    {
+     "rows": [
+      "You hear a door open.",
+      "",
+      "                         -----",
+      "                         |...|",
+      "                         |..@|",
+      "                         -.d<-",
+      "                      |........",
+      "                      |.........|",
+      "                      |.........|",
+      "                      -.--+------",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "Wizard the Stripling           St:16 Dx:13 Co:18 In:11 Wi:9 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1"
+     ],
+     "cursor": [
+      28,
+      4,
+      1
+     ]
+    }
+   ],
+   "rngCalls": 2947,
+   "rngSha256": "799e98127d0fca5d38b3c3b10d6b3236bce4417adda65c5fc3279083cc718f4c"
+  },
+  {
+   "name": "untrap-ok",
+   "frames": {
+    "32": {
+     "rows": [
+      "You disarm your bear trap.",
+      "",
+      "                         -----",
+      "                         |...|",
+      "                         |..@|",
+      "                         -..<-",
+      "                      |........",
+      "                      |.....d...|",
+      "                      |.........|",
+      "                      -.--+------",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "Wizard the Stripling           St:16 Dx:13 Co:18 In:11 Wi:9 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1"
+     ],
+     "cursor": [
+      28,
+      4,
+      1
+     ]
+    }
+   },
+   "segments": [
+    {
+     "seed": 4201,
+     "datetime": "20260502120000",
+     "nethackrc": "OPTIONS=name:Probe,role:Valkyrie,race:human,gender:female,align:neutral,suppress_alert:3.4.3,playmode:debug\n",
+     "moves": "   n\u0017bear trap\nkaf#herecmdmenu\nfs"
+    }
+   ],
+   "finals": [
+    {
+     "rows": [
+      "You hear a door open.",
+      "",
+      "                         -----",
+      "                         |...|",
+      "                         |..@|",
+      "                         -..<-",
+      "                      |........",
+      "                      |.........|",
+      "                      |.........|",
+      "                      -.--+------",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "Wizard the Stripling           St:16 Dx:13 Co:18 In:11 Wi:9 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1"
+     ],
+     "cursor": [
+      28,
+      4,
+      1
+     ]
+    }
+   ],
+   "rngCalls": 2891,
+   "rngSha256": "c62ca18975511a01a213bf8fc143c12371908f0a3f59fb1c5f9b4452caa16503"
+  },
+  {
+   "name": "untrap-refused-then-fresh-segment",
+   "segments": [
+    {
+     "seed": 4201,
+     "datetime": "20260502120000",
+     "nethackrc": "OPTIONS=name:Probe,role:Valkyrie,race:human,gender:female,align:neutral,suppress_alert:3.4.3,playmode:debug\n",
+     "moves": "   n\u0017bear trap\n\u0017cursed two-handed sword\nkafTwg#herecmdmenu\nf"
+    },
+    {
+     "seed": 4202,
+     "datetime": "20260503120000",
+     "nethackrc": "OPTIONS=name:Probe2,role:Wizard,race:elf,gender:male,align:chaotic,suppress_alert:3.4.3\n",
+     "moves": "   ns20s"
+    }
+   ],
+   "finals": [
+    {
+     "rows": [
+      "Your hands seem to be too busy for that.",
+      "",
+      "                         -----",
+      "                         |..d|",
+      "                         |..@|",
+      "                         -..<-",
+      "                      |........",
+      "                      |.........|",
+      "                      |.........|",
+      "                      -.--+------",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "Wizard the Stripling           St:16 Dx:13 Co:18 In:11 Wi:9 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1"
+     ],
+     "cursor": [
+      28,
+      4,
+      1
+     ]
+    },
+    {
+     "rows": [
+      "The kitten picks up a gold piece.  The kitten drops a gold piece.--More--",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "                  ----------+-----",
+      "                  |.....@$.......-  d x",
+      "                  +..............|",
+      "                  |....f.......`.|",
+      "                  ----------------",
+      "",
+      "",
+      "",
+      "",
+      "Probe2 the Evoker              St:12 Dx:13 Co:15 In:17 Wi:9 Ch:9 Chaotic",
+      "Dlvl:1 $:0 HP:11(11) Pw:7(7) AC:9 Xp:1"
+     ],
+     "cursor": [
+      73,
+      0,
+      1
+     ]
+    }
+   ],
+   "rngCalls": 6300,
+   "rngSha256": "e98fecc7697f2f221e0d64285a5ecf74a7f71adf0c6f53804e682c78f6808428"
+  },
+  {
+   "name": "drink-refused-then-fresh-segment",
+   "segments": [
+    {
+     "seed": 4300,
+     "datetime": "20260502120000",
+     "nethackrc": "OPTIONS=name:Probe,role:Valkyrie,race:human,gender:female,align:neutral,suppress_alert:3.4.3,playmode:debug\n",
+     "moves": "   n\u0014  Jjj.\u0017amulet of strangulation\nPe\n#herecmdmenu\na"
+    },
+    {
+     "seed": 4202,
+     "datetime": "20260503120000",
+     "nethackrc": "OPTIONS=name:Probe2,role:Wizard,race:elf,gender:male,align:chaotic,suppress_alert:3.4.3\n",
+     "moves": "   ns20s"
+    }
+   ],
+   "finals": [
+    {
+     "rows": [
+      "If you can't breathe air, how can you drink liquid?",
+      "",
+      "",
+      "",
+      "                                        ---------",
+      "                                        |....!..|",
+      "                                        +......<|",
+      "                                        |........",
+      "                                        --- -----",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "                                       -- -------",
+      "                                       ........@|",
+      "                                       |........|",
+      "                                       .........|",
+      "                                       |...o....|",
+      "                                       ----------",
+      "",
+      "Wizard the Stripling           St:18/06 Dx:13 Co:16 In:7 Wi:7 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Strngl"
+     ],
+     "cursor": [
+      47,
+      16,
+      1
+     ]
+    },
+    {
+     "rows": [
+      "The kitten picks up a gold piece.  The kitten drops a gold piece.--More--",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "                  ----------+-----",
+      "                  |.....@$.......-  d x",
+      "                  +..............|",
+      "                  |....f.......`.|",
+      "                  ----------------",
+      "",
+      "",
+      "",
+      "",
+      "Probe2 the Evoker              St:12 Dx:13 Co:15 In:17 Wi:9 Ch:9 Chaotic",
+      "Dlvl:1 $:0 HP:11(11) Pw:7(7) AC:9 Xp:1"
+     ],
+     "cursor": [
+      73,
+      0,
+      1
+     ]
+    }
+   ],
+   "rngCalls": 6059,
+   "rngSha256": "fd3c02b79050ade6102318e2ad59df47bddb329eb3f6b2b35831dd268cd525b8"
+  },
+  {
+   "name": "drink-ok",
+   "segments": [
+    {
+     "seed": 4300,
+     "datetime": "20260502120000",
+     "nethackrc": "OPTIONS=name:Probe,role:Valkyrie,race:human,gender:female,align:neutral,suppress_alert:3.4.3,playmode:debug\n",
+     "moves": "   n\u0014  Jjj.#herecmdmenu\nas10s"
+    }
+   ],
+   "finals": [
+    {
+     "rows": [
+      "",
+      "",
+      "",
+      "",
+      "                                        ---------",
+      "                                        |....!..|",
+      "                                        +......<|",
+      "                                        |........",
+      "                                        --- -----",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "                                       -- -------",
+      "                                       ......f.@|",
+      "                                       |........|",
+      "                                       .........|",
+      "                                       |...o....|",
+      "                                       ----------",
+      "",
+      "Wizard the Stripling           St:18/06 Dx:13 Co:16 In:7 Wi:7 Ch:8 Neutral",
+      "Dlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1"
+     ],
+     "cursor": [
+      47,
+      16,
+      1
+     ]
+    }
+   ],
+   "rngCalls": 2910,
+   "rngSha256": "569c4c02e240acd444d71711f4ce5a00fa6a812c92b89c40a9c6fcdc1e59d36e"
+  }
+ ]
+}

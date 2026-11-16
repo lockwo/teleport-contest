@@ -9,7 +9,7 @@ import { nomul } from './hack.js';
 import { MENU_TRADITIONAL, EYE } from './const.js';
 import { goodpos_tmp_at_begin, goodpos_tmp_at, goodpos_tmp_at_end } from './getpos.js';
 import { game, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
          tmp_at, zapdir_to_glyph, status_hold, You_hear, You_feel, stairway_at } from './display.js';
@@ -1263,7 +1263,6 @@ const MENU_ITEMFLAGS_NONE = 0x0, MENU_ITEMFLAGS_SELECTED = 0x1;
 // convention js/apply.js:1636 uses for its jump-hilite loop.
 const DISP_BEAM = -1, DISP_CHANGE = -6, DISP_END = -7; // include/display.h
 function sp_zapdir_to_glyph(_dx, _dy, _beam_type) { return 0; }
-function sp_nh_delay_output() { nh_delay_output_tick(); }
 
 // ── small C macros/library calls with no shared port in js/.
 // C ref: hacklib.c sgn(x).
@@ -1735,7 +1734,6 @@ export async function cast_chain_lightning() {
     for (let dir = 0; dir < N_DIRS; dir++) {
         await propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
     }
-    sp_nh_delay_output();
 
     while (clq.head < clq.tail) {
         const delay_tail = clq.tail;
@@ -1803,10 +1801,7 @@ export async function cast_chain_lightning() {
             zap.dir = DIR_RIGHT2(zap.dir);
             await propagate_chain_lightning(clq, zap);
         }
-        sp_nh_delay_output();
     }
-    sp_nh_delay_output();
-    sp_nh_delay_output();
 
     await tmp_at(DISP_END, 0);
 }

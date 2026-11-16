@@ -1,0 +1,57 @@
+{
+  "version": 5,
+  "cases": [
+    {
+      "name": "tourist-restore-after-rogue",
+      "description": "wizard-mode Tourist saves, a Rogue game runs, the Tourist restores and ^G creates the Master of Thieves (quest nemesis for a Tourist: hostile and carrying the Bell of Opening)",
+      "rngSha256": "99d5d98705e7ea4ce89236a20691364d91a623475010bd751ad86b12c2791cba",
+      "draws": 7245,
+      "segments": [
+        {
+          "seed": 3101,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Tour,role:Tourist,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   Sy"
+        },
+        {
+          "seed": 3102,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Robber,role:Rogue,race:human,gender:male,align:chaotic,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   Sy"
+        },
+        {
+          "seed": 3103,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Tour,role:Tourist,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   y\u0007Master of Thieves\ny;  \nm.  "
+        }
+      ]
+    },
+    {
+      "name": "rogue-restore-after-tourist",
+      "description": "wizard-mode Rogue saves, a Tourist game runs, the Rogue restores and ^G creates the Master of Thieves (quest leader for a Rogue: peaceful, no bell)",
+      "rngSha256": "9828e444b2d403cf41818b8c967a1554da6010bb403917f4b4032763eff25c17",
+      "draws": 5465,
+      "segments": [
+        {
+          "seed": 3201,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Robber,role:Rogue,race:human,gender:male,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   Sy"
+        },
+        {
+          "seed": 3202,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Tour,role:Tourist,race:human,gender:male,align:neutral,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   Sy"
+        },
+        {
+          "seed": 3203,
+          "datetime": "20260502120000",
+          "nethackrc": "OPTIONS=name:Robber,role:Rogue,race:human,gender:male,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\n",
+          "moves": "   y\u0007Master of Thieves\ny;  \nm.  "
+        }
+      ]
+    }
+  ]
+}

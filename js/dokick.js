@@ -11,7 +11,7 @@
 import { game, hooks, register_process_static } from './gstate.js';
 import { cvt_sdoor_to_door } from './detect.js';
 import { Fumbling_hero, Wounded_legs_hero, Passes_walls_hero } from './youprop.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } from './const.js';
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
@@ -1084,7 +1084,6 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             newsym(bx, by);
         }
         await flash.step(bx, by);
-        nh_delay_output_tick(); /* zap.c:4089 */
         /* kicked objects fall in pools; physical objects fall onto sinks */
         if (is_pool_or_lava(bx, by)) break;
         if (IS_SINK(typ)) break;

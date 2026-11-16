@@ -6455,9 +6455,10 @@ export async function reset_needed_visuals() {
     }
     if (opt_need_promptstyle)
         adjust_menu_promptstyle(null, game.iflags && game.iflags.menu_headings);
-    if (game.disp && (game.disp.botl || game.disp.botlx)) {
-        const disp = await import('./display.js');
-        if (disp.bot) await disp.bot();
+    // C ref: options.c reset_needed_visuals():9006-9007.  Menu dismissal
+    // leaves the canonical botlx pending even when no visual option changed.
+    if (game.botl || game.botlx || game.disp?.botl || game.disp?.botlx) {
+        await disp.bot();
     }
     opt_need_redraw = false;
     opt_need_glyph_reset = false;

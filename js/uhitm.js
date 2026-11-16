@@ -21,7 +21,7 @@ import { makeplural } from './plural.js';
 import { Fumbling_hero, Detect_monsters_hero, Stunned_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
 import { ONAME, setONAME } from './const.js';
 import { game, hooks, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { s_suffix } from './hacklib.js';
 import { shkname, in_rooms } from './shkroom.js';
 import { roomAt } from './roomat.js';
@@ -4314,8 +4314,6 @@ export async function start_engulf(mdef) {
     await update_topl(`You `
         + `${u_digest ? 'swallow' : u_enfold ? 'enclose' : 'engulf'} `
         + `${mon_nam(mdef)}${u_digest ? ' whole' : ''}!`);
-    nh_delay_output_tick();
-    nh_delay_output_tick(); /* nh_delay_output() twice */
 }
 
 // C ref: uhitm.c:4949 end_engulf() — tear down the swallow animation.  No RNG.

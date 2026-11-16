@@ -5,7 +5,7 @@ import { has_innate } from './exper.js';
 import { mimic_obj_corpsenm } from './const.js';
 import { Blind_telepat, Detect_monsters_hero, Deaf_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { SYMBOL_BYTES } from './symset-data.js';
 import { cansee, couldsee, Blind, Infravision, vision_recalc,
          block_point, unblock_point } from './vision.js';
@@ -1448,27 +1448,6 @@ function blank_terminal_snapshot() {
         }
 }
 
-// C ref: win/tty/wintty.c g_putch() + dat/symbols DECgraphics — whether the
-// glyph at `loc` goes out in the line-drawing character set (SO/SI, "meta"
-// symbols).  `loc.disp_decgfx` is the display layer's own flag, which stays
-// false for meta symbols the frozen decoder never translates (pool/lava
-// diamond, ladders, bars, trees); the recorder's shadow buffer
-// (nomux_capture.js) still sees them inside SO.
-export function meta_glyph(loc) {
-    if (loc.disp_decgfx) return true;
-    const ch = loc.disp_ch;
-    if (!(ch === '`' || ch === 'y' || ch === 'z' || ch === 'g' || ch === '|')
-        || loc.typ === undefined || !useDECgraphics('S_pool')) return false;
-    switch (loc.typ) {
-    case POOL: case MOAT: case WATER: case LAVAPOOL: case LAVAWALL:
-        return ch === '`';
-    case LADDER: return ch === 'y' || ch === 'z';
-    case TREE: return ch === 'g';
-    case IRONBARS: return ch === '|';
-    default: return false;
-    }
-}
-
 // C ref: display.c reset_glyphmap() cmap B arm + wintty.c tty_print_glyph() — with
 // color off, lava drawn with the pool/water symbol (MG_BW_LAVA), ice drawn with the
 // floor symbol (MG_BW_ICE) and a sink drawn with the fountain symbol (MG_BW_SINK)
@@ -1552,16 +1531,21 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
         ch = ' ';
         decgfx = false;
     }
-    if (!attr && game.iflags?.use_color === false) attr = bw_terrain_attr(loc, x, y, ch);
+    // C keeps glyphmap colors until reset_needed_visuals(), even though the
+    // tty's use_color flag changes immediately.  A vision recalc must not dirty
+    // an unchanged door or object just because a color toggle is still pending.
+    const colorOn = game.iflags?.use_color !== false;
+    const glyphColorOn = game._glyphmapUseColor ?? colorOn;
+    if (!attr && !glyphColorOn) attr = bw_terrain_attr(loc, x, y, ch);
     // C ref: display.c show_glyph() sets gbuf[y][x].gnew whenever the glyph
     // differs from the stored one, and flush_screen() clears it only by writing
     // the cell: a glyph that changed and changed back between two flushes is
     // still rewritten (over any status text sitting there).
-    const newColor = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
+    const newColor = keepColor && colorOn ? color : has_color_or_default(color, glyphColorOn);
     // S_room and S_darkroom are different glyphs even when they print the same
     // symbol (DECgraphics), so a lit/dark flip is gnew too.
     const newDark = dark || (!keepColor && color === CLR_BLACK && newColor === NO_COLOR);
-    if (loc.disp_ch !== ch || loc.disp_color !== newColor
+    if (loc.disp_ch !== ch || (loc.disp_glyph_color ?? loc.disp_color) !== newColor
         || !!loc.disp_decgfx !== !!decgfx || (loc.disp_attr | 0) !== (attr | 0)
         || !!loc.disp_dark !== !!newDark)
         loc._gchg = true;
@@ -1573,12 +1557,16 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     loc.disp_objotyp = 0;
     loc.disp_hallucobj = 0;
     loc.disp_region = false;
-    loc.disp_color = keepColor && game.iflags?.use_color !== false ? color : has_color_or_default(color);
+    loc.disp_glyph_color = newColor;
+    // tty_print_glyph() suppresses color for newly written glyphs immediately.
+    // Unchanged glyphs retain the color already on the physical terminal.
+    if (game._glyphmapUseColor === undefined || loc._gchg || game._inDocrt)
+        loc.disp_color = colorOn ? newColor : NO_COLOR;
     /* has_color_or_default() folds CLR_BLACK into NO_COLOR, and the remembered
        dark-room floor (S_darkroom, CLR_BLACK) is stored with its lit colour,
        but the recorder's shadow buffer keeps both as bright-black
        (nomux_set_fg wc2_darkgray). */
-    loc.disp_dark = dark || (!keepColor && color === CLR_BLACK && loc.disp_color === NO_COLOR);
+    loc.disp_dark = newDark;
     loc.disp_decgfx = !!decgfx;
     loc.disp_attr = attr | 0;
     loc.gnew = 1;
@@ -1591,12 +1579,12 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
 // which never emit ESC[30m or ESC[37m (e.g. a goblin/Uruk-hai 'o' shows as
 // terminal default).  Map both to NO_COLOR here rather than touch the frozen
 // terminal serializer.
-function has_color_or_default(color) {
+function has_color_or_default(color, colorOn = game.iflags?.use_color !== false) {
     // C ref: display.c reset_glyphmap tail — "Turn off color if no color
     // defined, or rogue level w/o PC graphics": every glyph on the Rogue level
     // loses its colour unless HAS_ROGUE_IBM_GRAPHICS (SYMHANDLING(H_IBM)),
     // which neither the ASCII nor the DECgraphics build is.
-    if (rogue_symset() || game.iflags?.use_color === false) return NO_COLOR;
+    if (rogue_symset() || !colorOn) return NO_COLOR;
     if (color === CLR_BLACK || color === CLR_GRAY) return NO_COLOR;
     return color;
 }
@@ -4548,10 +4536,12 @@ function _mapRowAtScreen(sr) {
 // C ref: wintty.c docorner(1, cury+1, 0) — after a multi-row top line is
 // cleared, each screen row it spilled onto is blanked and its map cells are
 // redrawn from the remembered map (row_refresh).  Redraw screen row `sy` only.
+// Return the tty column after the last glyph written, or null for an empty row.
 export function render_map_row_to_grid(sy, minCol = 0, free = null) {
     const display = game?.nhDisplay;
-    if (!display?.setCell || !display.grid) return;
+    if (!display?.setCell || !display.grid) return null;
     _syncClipping();
+    let cursorCol = null;
     for (let y = 0; y < ROWNO; y++) {
         if (_mapRowOnScreen(y) !== sy) continue;
         for (let x = 1; x < COLNO; x++) {
@@ -4561,9 +4551,14 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
             if (_mapCellIsBlank(loc)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
-            display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
+            // row_refresh() really reprints these cells, so the tty's current
+            // color option applies even before the cached glyphmap is reset.
+            if (game.iflags?.use_color === false) loc.disp_color = NO_COLOR;
+            display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0));
+            cursorCol = x - clipx;
         }
     }
+    return cursorCol;
 }
 
 // Draw the map and the status rows onto the grid without touching row 0 (the
@@ -4571,7 +4566,9 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
 // renderers so a partial-width NHW_MENU shows the underlying map in the
 // columns/rows it does not cover — matching C's tty behaviour
 // (tty_display_nhwindow overwrites only the window's own cells).
-export function render_map_to_grid() {
+// changedOnly models flush_screen() while a menu is up: publish gnew cells
+// without clearing the overlay or repainting status.
+export function render_map_to_grid(changedOnly = false) {
     const display = game?.nhDisplay;
     if (!display?.setCell || !display.grid) return;
     _syncClipping();
@@ -4580,18 +4577,23 @@ export function render_map_to_grid() {
     // corner window drawn now sits over a blank map.  (The glyph buffer is blank
     // too, apart from the hero placebc() newsym()s; _screenBlankCorner draws that
     // once the window is dismissed.)
-    for (let y = 0; game._screenBlank !== true && y < ROWNO; y++) {
+    for (let y = 0; (changedOnly || game._screenBlank !== true) && y < ROWNO; y++) {
         const sy = _mapRowOnScreen(y);
         if (sy < 0) continue;
         for (let x = 1; x < COLNO; x++) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
             const loc = _displayed_loc(x, y);
-            if (_mapCellIsBlank(loc)) continue;
+            if (changedOnly ? !loc?._gchg : _mapCellIsBlank(loc)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
-            display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
+            display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0));
+            if (changedOnly) {
+                loc._gchg = false;
+                loc._termDirty = false;
+            }
         }
     }
+    if (changedOnly) return;
     if (game._screenBlank === true) {
         if (game._screenBlankStatus) renderStatusLines(display, game._screenBlankStatus);
     } else renderStatusLines(display);
@@ -4702,7 +4704,7 @@ function _buildScreenOutput() {
                 if (_mapCellIsBlank(loc)) continue;
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (ch === NUL_CELL) continue;
-                display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0), meta_glyph(loc), loc.disp_dark);
+                display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0));
             }
         }
         // Status rows
@@ -4883,9 +4885,7 @@ export function renderStatusLines(display, rows = null, rebuild = false) {
             if (terrain) {
                 // flush_screen() renders status before map.  This model rebuilds
                 // map before status, so replay just the gnew map cells here.
-                display.setCell(c, top + r, decgfxMapChar(terrain.ch, terrain.decgfx),
-                                terrain.color ?? NO_COLOR, terrain.attr | 0,
-                                meta_glyph(terrain), terrain.dark);
+                display.setCell(c, top + r, decgfxMapChar(terrain.ch, terrain.decgfx), terrain.color ?? NO_COLOR, terrain.attr | 0);
                 continue;
             }
             if (!cell) continue;
@@ -5591,7 +5591,7 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
                 if (_mapCellIsBlank(loc)) continue;
                 const mch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (mch === NUL_CELL) continue;
-                disp.setCell(x - 1, r, mch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0, meta_glyph(loc), loc.disp_dark);
+                disp.setCell(x - 1, r, mch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
             }
         }
         disp.setCursor(0, 0);
@@ -6762,7 +6762,7 @@ export function update_lastseentyp(x, y) {
 }
 // C ref: windows nh_delay_output() — a pure output pause (js/hack.js:3734 has
 // the same private shim).
-async function nh_delay_output_d() { nh_delay_output_tick(); await Promise.resolve(); }
+async function nh_delay_output_d() {  await Promise.resolve(); }
 // C ref: display.c:715 suppress_map_output() —
 // gi.in_mklev || program_state.saving || program_state.restoring.
 function _suppress_map_output() {
@@ -8188,6 +8188,7 @@ const gm_nochange = 0, gm_newgame = 1, gm_levelchange = 2, gm_optionchange = 3,
 // C ref: display.c:2739 reset_glyphmap(trigger) — recompute glyphmap[] after a
 // level change, a symbol change, an option toggle or an accessibility change.
 export function reset_glyphmap(trigger) {
+    delete game._glyphmapUseColor;
     let offset;
     let color = NO_COLOR;
     const gmaps = glyphmap_arr();

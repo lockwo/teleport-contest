@@ -15,6 +15,16 @@ what the JS port has to match.
 | 007 | `nomux-raw-print` | Route `raw_print` (early errors, banners) through nomux too | Otherwise startup banners aren't captured |
 | 008 | `nomux-deterministic-capture` | Snapshot the screen exactly when C blocks for the next key | Pins frame boundaries to `tty_nhgetch` calls |
 
+Patch 006 includes the upstream recorder corrections published in
+[`6ee30e6`](https://github.com/davidbau/teleport-contest/commit/6ee30e6):
+the larger capture buffer and raw-mode reset at terminal teardown. Input
+keys are sent as single bytes by `scripts/record-session.mjs`. Rebuild the
+recorder after updating these sources. Recordings made with the old buffer
+can contain corrupted screens and cursors on heavily colored maps. The JS
+port captures the terminal grid directly rather than emulating that overflow.
+Terminal teardown also resets raw-output tracking before the score display.
+Startup-option errors must not shift the final score message or cursor.
+
 ## Apply
 
 ```bash

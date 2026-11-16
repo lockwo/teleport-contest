@@ -88,7 +88,9 @@ async function runSymbolSetHandler(rogue = false) {
             item: { value: set.name, selected: set.name.toLowerCase() === name.toLowerCase() },
         })),
     ];
-    const committed = await select_command_menu(entries, { how: PICK_ONE, blankStatus: true });
+    const committed = await select_command_menu(entries, {
+        how: PICK_ONE, blankStatus: menu_ctx.active && menu_ctx.blankStatus,
+    });
     await dismiss_invent_screen();
     if (!committed) return;
     const picks = entries.filter(entry => entry.item?.selected);
@@ -98,6 +100,7 @@ async function runSymbolSetHandler(rogue = false) {
     if (rogue) game.roguesymset = pick?.item.value ?? name;
     else game.symset = pick?.item.value ?? name;
     // C ref: symbols.c load_symset()/assign_graphics() -> reset_glyphmap(gm_symchange)
+    delete game._glyphmapUseColor;
     reglyph_remembered_terrain(rogue, name);
     await docrt();
 }
@@ -1080,11 +1083,25 @@ async function runFruitHandler() {
     }
 }
 
+// C ref: windows.c select_menu() dismisses under bot_disabled, with a full
+// menu's docrt()+flush_screen() completed before any option is changed.
+async function dismissOptionsMenu() {
+    const { dismiss_invent_screen } = await import('./invent.js');
+    const wasDisabled = game.bot_disabled;
+    game.bot_disabled = true;
+    game._modal_screen = 'optmenu';
+    game._menuOffx = 0;
+    try {
+        await dismiss_invent_screen();
+    } finally {
+        game.bot_disabled = wasDisabled;
+    }
+}
+
 // C ref: options.c do_handler runs after tty dismisses the parent menu.  The
 // handler's menus are windows.js select_menu() calls; menu_ctx tells them the
 // parent menu's docrt() left the status window blank.
 export async function runOptionsHandler(handler, { pageAtEnd = true } = {}) {
-    const { dismiss_invent_screen } = await import('./invent.js');
     const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
     // The status window stays blank only until the next bot(): the full menu's
     // "toggled" plines (and an earlier handler's messages) repaint it.
@@ -1098,9 +1115,8 @@ export async function runOptionsHandler(handler, { pageAtEnd = true } = {}) {
     game._pending_message = '';
     game._toplin = 0;
     game._yn_need_more = false;
-    // The simple/full options menus have already returned their selection.
-    game._modal_screen = 'optmenu';
-    await dismiss_invent_screen();
+    // select_menu() already dismissed the parent.  A second synthetic
+    // dismissal would redraw unchanged map cells under pending option values.
     const savedGetlin = OPT_MENU_DRIVER.getlin;
     const savedError = OPT_MENU_DRIVER.error;
     const savedCtx = { ...menu_ctx };
@@ -1362,7 +1378,7 @@ async function dosetSimpleLoop() {
 
         // C ref: tty_dismiss_nhwindow() -> erase_menu_or_text() docrt() for the
         // full-screen menu (see doset()).
-        await docrt();
+        await dismissOptionsMenu();
         if (game._noticeQueue?.length) await hooks.flushNotices();
         if (cancelled) return 0;
         if (!pick) return 0;                              // no pick: exit menu
@@ -1388,6 +1404,7 @@ async function dosetSimpleLoop() {
             // stationary pet (newsym alone only refreshes cells that change).
             // (reset_needed_visuals(): reglyph_darkroom() before docrt().)
             if (REDRAW_ON_TOGGLE.has(it.name)) {
+                delete game._glyphmapUseColor;
                 reglyph_darkroom();
                 await docrt();
             }
@@ -1442,11 +1459,13 @@ function toggleSimpleBool(name) {
         applyBooleanToggle(name, rawBoolValue(name) !== true);
         return;
     }
+    if (name === 'color') {
+        applyBooleanToggle(name, !(rawBoolValue(name) ?? SIMPLE_BOOL_DEFAULT[name]));
+        return;
+    }
     const dflt = SIMPLE_BOOL_DEFAULT[name] ?? false;
     const cur = game.flags[name] === undefined ? dflt : !!game.flags[name];
     game.flags[name] = !cur;
-    if (name === 'color')
-        (game.iflags = game.iflags || {}).use_color = !cur;
 }
 
 // C ref: options.c doset() — the 'O' command.  Runs the full options menu,
@@ -1585,7 +1604,7 @@ async function dosetPass(skiphelp) {
     // C ref: tty_dismiss_nhwindow() -> erase_menu_or_text(): the full-screen
     // (offx == 0) menu is torn down with docrt(), which runs vision_recalc(2)
     // then (0), so spot_monsters re-announces what the hero can see.
-    await docrt();
+    await dismissOptionsMenu();
     game._optStatusPainted = false;
     if (game._noticeQueue?.length) await hooks.flushNotices();
     if (cancelled) return 0;
@@ -1683,6 +1702,7 @@ async function dosetPass(skiphelp) {
     }
     if (picks.length === 1 && gavehelp) return 'rerun';
     if (game._optNeedRedraw) {
+        delete game._glyphmapUseColor;
         // C ref: options.c reset_needed_visuals(): reglyph_darkroom(); docrt().
         reglyph_darkroom();
         await docrt();
@@ -1713,6 +1733,7 @@ function applyBooleanToggle(name, turnOn) {
     case 'mon_movement': (game.a11y = game.a11y || {}).mon_movement = turnOn; break;
     case 'cmdassist':  (game.iflags = game.iflags || {}).cmdassist = turnOn; break;
     case 'color':
+        game._glyphmapUseColor ??= game.iflags?.use_color !== false;
         game.flags.color = turnOn;
         (game.iflags = game.iflags || {}).use_color = turnOn;
         break;

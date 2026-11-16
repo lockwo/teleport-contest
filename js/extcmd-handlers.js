@@ -9,7 +9,7 @@
 // #levelchange, #pray, #enhance, #chat, #sit).
 
 import { game } from './gstate.js';
-import { nhgetch, unshiftKeys, xwaitforspace_quit, xwaitforspace_note } from './input.js';
+import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { pline, pline_vision_flush, StatusRows, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadStyle } from './menuattr.js';
@@ -39,7 +39,7 @@ import { STATUE, objects, place_object, weight, COIN_CLASS, CORPSE, STRANGE_OBJE
 import { delobj, stackobj, doddrop, yname, ysimple_name,
          flush_addinv_plines } from './invent.js';
 import { is_worn, wearing_armor, inventoryArray, select_off,
-         dismiss_invent_screen, paintMenuLine, query_category, splitobj, unsplitobj } from './invent.js';
+         dismiss_invent_screen, corner_menu_destroyed, paintMenuLine, query_category, splitobj, unsplitobj } from './invent.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { livelog_printf, LL_WISH, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { rn2, rnd } from './rng.js';
@@ -463,11 +463,11 @@ export async function hooked_tty_getlin(query, hook) {
         // flush_screen() here rebuilds the whole model screen, status rows
         // included; the real tty leaves them alone, so put them back.
         let kept = null, keptFrom = 0;
-        if (query === 'Search for:' && disp?.grid) {
-            // process_menu_window() MENU_SEARCH: a menu window is up, and tty's flush_screen() only updates
-            // the map window's cursor, it never repaints the map over the menu.  Keep every row.
+        const menuSearch = query === 'Search for:' && !!disp?.grid;
+        if (menuSearch) {
+            // C vpline() flushes changed glyphs even while a menu is up.
+            // Leave unchanged map cells and the menu's other pixels alone.
             game.bot_disabled = true;
-            kept = disp.grid.map((row) => row.map((cell) => ({ ...cell })));
         } else if (!hook && disp?.grid) {
             game.bot_disabled = true;
             kept = [];
@@ -476,7 +476,8 @@ export async function hooked_tty_getlin(query, hook) {
                 kept.push(disp.grid[r].map((cell) => ({ ...cell })));
         }
         pline_vision_flush();
-        await flush_screen(1);
+        if (menuSearch) render_map_to_grid(true);
+        else await flush_screen(1);
         game.bot_disabled = old_bot_disabled;
         if (kept)
             for (let i = 0; i < kept.length; i++)
@@ -505,6 +506,21 @@ export async function hooked_tty_getlin(query, hook) {
     const base = (query + ' ').length; // column of first input char
     let tty = { x: 0, y: 0 };  // ttyDisplay->curx/cury as last parked
     let erased = null;         // tracked cursor left by a "\b" / "\b \b" echo
+    const finish = (answer) => {
+        // C ref: getline.c:213-215 clears WIN_MESSAGE on every exit.
+        // Its cury retains wrapped rows even after backspace crosses upward.
+        const disp = game.nhDisplay;
+        for (let row = 0; row < (game._getlin_maxrows || 1); row++) {
+            disp?.clearRow(row);
+            if (row > 0) render_map_row_to_grid(row);
+        }
+        game._pending_message = '';
+        game._toplin = 0;
+        game._toplinSoft = null;
+        game._toplinStale = null;
+        game._getlin_rows = game._getlin_maxrows = 1;
+        return answer;
+    };
 
     // C ref: getline.c:63 custompline() replaces the top line with the prompt,
     // so a message left there by a previous yn_function() is gone for good.
@@ -544,7 +560,7 @@ export async function hooked_tty_getlin(query, hook) {
             }
             if (!suppress_hist) yn_prompt_history(`${query} `, eof ? shown : '');
             else game._toplines = ''; // C getline.c:217-220
-            return '\x1b';
+            return finish('\x1b');
         }
         // C ref: getline.c:106-140 — temporarily leave the reader for ^P.
         if (code === 16) {
@@ -583,7 +599,7 @@ export async function hooked_tty_getlin(query, hook) {
             // that completion (or the raw typed text when none applies).
             if (!suppress_hist) yn_prompt_history(`${query} `, shown);
             else game._toplines = ''; // C getline.c:217-220
-            return shown;
+            return finish(shown);
         }
         if (code === 8 || code === 127) { // backspace / delete-prev
             if (typed.length > 0) {
@@ -2243,6 +2259,10 @@ async function use_container(box, more_containers) {
             }
             counting = false; cnt = 0;                       // any other key ends the count
             if (ch === '-' || ch === '\\') continue;         // redraw with '-' marker
+            // C in_or_out_menu() dismisses its window before returning the action.
+            // Restore its corner before a narrower contents menu is drawn.
+            if (game._menuOffx > 0) corner_menu_destroyed();
+            else await dismiss_invent_screen();
             if (ch === sel[1]) { // ':' look inside
                 if (!box.cknown) used = 1; // gaining info costs a turn
                 await look_in_container(box, true);
@@ -4339,7 +4359,7 @@ async function doherecmdmenu() {
 
     // C ref: cmd.c:4446-4451 — drinking and dipping need can_reach_floor(FALSE).
     if ((IS_FOUNTAIN(typ) || IS_SINK(typ)) && can_reach_floor(false))
-        push(nextCh(), `Drink from the ${IS_FOUNTAIN(typ) ? 'fountain' : 'sink'}`, 'drink', 'y');
+        push(nextCh(), `Drink from the ${IS_FOUNTAIN(typ) ? 'fountain' : 'sink'}`, 'quaff', 'y');
     if (IS_FOUNTAIN(typ) && can_reach_floor(false)) push(nextCh(), 'Dip something into the fountain', 'dip');
     if (IS_THRONE(typ)) push(nextCh(), 'Sit on the throne', 'sit');
     if (IS_ALTAR(typ)) push(nextCh(), 'Sacrifice something on the altar', 'offer');
@@ -4379,7 +4399,7 @@ async function doherecmdmenu() {
     if (num_spells() > 0) push(nextCh(), 'Cast a spell', 'cast');
     const ttmp = herecmd_t_at(x, y);
     if (ttmp && ttmp.tseen && ttmp.ttyp !== VIBRATING_SQUARE)
-        push(nextCh(), 'Attempt to disarm trap', 'untrap', '>');
+        push(nextCh(), 'Attempt to disarm trap', 'untrap');
     // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"
     // only when the square does not show the ordinary hero glyph.
     // (the hero glyph is not drawn when !canspotself(): invisible w/o see invisible)
@@ -4397,14 +4417,25 @@ async function doherecmdmenu() {
     /* C ref: cmd.c:4658 act_on_act() queues the chosen command (plus canned
        answers) and rhack() runs it next; a dismissed menu costs no time. */
     if (!picked) return 0;
-    // C ref: cmd.c act_on_act() MCMD_EAT: `cmdq_add_ec(CQ_CANNED, doeat);
-    // cmdq_add_key(CQ_CANNED, 'y')` — doeat()'s floor prompt takes the canned
-    // key through yn_function(addcmdq=TRUE) without drawing itself.
-    if ((picked.cmd === 'eat' || picked.cmd === 'tip') && picked.keys) {
+    // C ref: cmd.c act_on_act() MCMD_DRINK/MCMD_EAT/MCMD_TIP: `cmdq_add_ec(
+    // CQ_CANNED, <cmd>); cmdq_add_key(CQ_CANNED, 'y')` — the command's floor
+    // prompt takes the canned key through yn_function(addcmdq=TRUE) without
+    // drawing itself.  A command that bails before prompting leaves the key
+    // queued for the next rhack(), never in a keyboard buffer that outlives the
+    // process.
+    if (picked.cmd === 'untrap') {
+        /* C ref: cmd.c act_on_act() MCMD_UNTRAP_HERE: `cmdq_add_ec(CQ_CANNED,
+           dountrap); cmdq_add_dir(CQ_CANNED, 0, 0, 1)`.  A dountrap that bails in
+           could_untrap() before its getdir() leaves the dir queued, which the next
+           rhack() pops and clears; it is not a '>' keystroke for the next prompt. */
+        const { cmdq_add_dir } = await import('./cmd.js');
+        const { CQ_CANNED } = await import('./const.js');
+        cmdq_add_dir(CQ_CANNED, 0, 0, 1);
+    } else if (picked.keys) {
         const { cmdq_add_key } = await import('./invent.js');
         const { CQ_CANNED } = await import('./const.js');
         for (const k of picked.keys) cmdq_add_key(CQ_CANNED, k);
-    } else if (picked.keys) unshiftKeys(picked.keys);
+    }
     const fn = HANDLERS[picked.cmd];
     if (!fn) return 0;
     /* doherecmdmenu() returns ECMD_OK with the command on CQ_CANNED, so it runs

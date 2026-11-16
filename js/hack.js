@@ -15,7 +15,7 @@
 
 import { Detect_monsters_hero, Passes_walls_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { lock_action } from './lock.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
 import { ok_to_quest } from './questok.js';
@@ -5414,7 +5414,7 @@ function runmode_value() {
 
 // C ref: windows nh_delay_output() — a pure output pause.  js/light.js:1005 has
 // the identical no-op (private there).
-async function nh_delay_output() { nh_delay_output_tick(); await Promise.resolve(); }
+async function nh_delay_output() {  await Promise.resolve(); }
 // C ref: windows curs_on_u() — park the cursor on the hero.  The recorded cursor
 // is placed by js/display.js flush_screen() instead.
 function curs_on_u() { /* no-op */ }

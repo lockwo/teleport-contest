@@ -29,7 +29,6 @@ import { NO_COLOR } from './terminal.js';
 import { menuHeadStyle } from './menuattr.js';
 import { menuColorStyle, paintMenuLine } from './invent.js';
 import { serializeGrid } from './screen_serialize.js';
-import { NomuxRecorder } from './nomux_capture.js';
 import './light.js';   // registers game.lightsources_hook for vision_recalc
 import {
     aligns, apply_selection, build_plselection_prompt, count_ok_race,
@@ -99,9 +98,6 @@ export class NethackGame {
         // calls; committed at each input boundary.
         this._animFramesByStep = [];
         this._pendingAnimFrames = [];
-        // The recorder process whose stdout this run is being compared with
-        // (nomux_capture.js): nomux_seq, nomux_anim_id and its static buffers.
-        this._nomuxRecorder = new NomuxRecorder();
         this._lastRngIdx = 0;
         this._nhgetchCount = 0;
         // Differential-oracle state dumps, parallel to _screens (one entry
@@ -1644,14 +1640,9 @@ export class NethackGame {
             // and compares to the C session's recorded screen.
             const disp = game?.nhDisplay;
             const term = disp?.terminal || disp;
-            // C ref: termcap.c nomux_emit_marker() — the recorded screen is the
-            // recorder's own serialization, which overruns nomux_out[6144] on a
-            // colour-heavy full-map screen (nomux_capture.js).
-            const marker = term?.grid
-                ? nhGame._nomuxRecorder.emitMarker(
-                    term, game._nomux_raw, [disp.cursorCol ?? 0, disp.cursorRow ?? 0], game._nomuxAnimId | 0)
-                : null;
-            nhGame._screens.push(marker?.screen ?? (term ? serializeGrid(term) : ''));
+            // The corrected recorder captures the terminal without overflowing
+            // into its cursor state or embedding marker headers in the screen.
+            nhGame._screens.push(term ? serializeGrid(term) : '');
             nhGame._rngSlices.push(slice);
             // Step boundary for the display-prng trace (js/disprng.js); inert
             // unless swarm/bin/dispdiff.mjs armed it.
@@ -1659,13 +1650,10 @@ export class NethackGame {
             if (globalThis.__MOVEMENT_ORACLE)
                 globalThis.__MOVEMENT_ORACLE({ ev: 'boundary', step: keyIdx + 1 });
 
-            // termcap.c nomux_get_cursor() reports the RAW writer's row/col
-            // whenever nomux_raw_active, and that flag is never cleared once a
-            // raw_print has happened — so an rc error freezes the recorded
-            // cursor for the whole session.
-            if (marker?.raw) game._nomux_raw = marker.raw;
-            const cursor = marker
-                ? marker.cursor
+            // C ref: termcap.c nomux_get_cursor() uses the raw writer's
+            // row/column while raw mode is active.
+            const raw = game._nomux_raw;
+            const cursor = raw ? [raw.col, raw.row, 1]
                 : (disp ? [disp.cursorCol ?? 0, disp.cursorRow ?? 0, 1] : null);
             nhGame._cursors.push(cursor);
 

@@ -74,6 +74,21 @@ and retain the pending gear recheck, even when a special level immediately
 equips replacement items. That recheck builds monster names for each armor
 slot and consumes display RNG while the hero is hallucinating.
 
+### Monster generation across segments
+
+`mkclass` lazily caches species order once per C process. Clear that cache
+when starting a segment, then rebuild it from current monster difficulties
+on first use. Alignment abuse changes Erinys difficulty, so an earlier game's
+ordering must not survive into a new game or restored save.
+Run `node --test scripts/monster-generation-reset.test.mjs` for the two-game
+C RNG regression.
+
+Restoring a save reapplies the saved role's quest leader, guardian and nemesis
+monster-table fixups before further monster creation. For example, the Master
+of Thieves is the Rogue's leader but the Tourist's nemesis. Neither pristine
+table defaults nor a previous game's role may override the restored role.
+`scripts/table-process-reset.test.mjs` covers both interposed-role directions.
+
 ### Door command parity
 
 Closing toward the hero's own square spends a turn with "You are in the way!"
@@ -100,11 +115,28 @@ Character-creation and tutorial menus use the same heading and item-color rules,
 including selection-marker repaints. NHW_TEXT discovery lists are different:
 their `putstr` class headings carry the configured attribute, not its color.
 
+Corner menus preserve physical map cells outside their rectangle, including
+glyph changes not yet published by `flush_screen`. Dismissal restores only the
+covered corner. Full-width menus instead run `docrt` and flush the rebuilt map
+before another window opens, with status updates disabled during selection.
+Line-input completion and cancellation clear every row the prompt wrapped onto
+and restore the underlying map before a subsequent corner menu is drawn.
+Corner restoration also moves the physical cursor: each row starts at the
+erase column, and redrawn glyphs advance it. Replayed object selection can
+read input without printing a prompt, exposing that cursor position.
+Run `node --test scripts/tty-menu-cursor.test.mjs` for the reduced regression.
+
 Command menus follow the recorder's signed 64-bit `long` range for count
 prefixes. An overflowing digit discards the pending count, so the next
 selection is uncounted unless another digit starts a new prefix. Prefix
 arithmetic stays exact through `9223372036854775807`. Selected item counts
 are returned to callers as numbers.
+
+Context-menu answers belong to `CQ_CANNED`, not the keyboard queue.
+Disarming the trap under the hero queues a direction entry, while drinking,
+eating and tipping queue their confirmation keys. If the action refuses
+before prompting, its unused answer must not become a later keyboard command
+or leak into a new game. `scripts/ui-process-reset.test.mjs` covers these paths.
 
 Meta-key and rebound command dispatch preserves cancellation results for repeat
 queue handling. Canceling the direction for `#ride` clears the repeat command,
@@ -125,17 +157,50 @@ container prompt must then rebuild its available choices from the updated
 knowledge, including removing take-out and take-out-first choices for an empty
 container. This applies to both menu and traditional prompts.
 
+Corner menus preserve the physical map outside their window. Opening or
+repainting one must not publish pending glyph-buffer changes. In particular,
+counted drop commands can reopen their menu immediately after `--More--`,
+without passing through `parse()` and its map flush.
+Dismissal restores only the vacated corner from the glyph buffer, so a
+following menu can expose the restored cells without repainting the whole map.
+The menu search prompt does flush changed glyphs before reading its text, but
+leaves unchanged menu pixels and status rows untouched.
+
+### Map option publication parity
+
+Changing `color` updates the tty option immediately, but C resets the cached
+glyphmap only after processing the selected options. An intervening vision
+recalculation must compare cached glyph colors, rather than treating the option
+toggle itself as a glyph change. Unchanged map cells retain their physical
+colors until repainted. Changed glyphs and explicit redraws use the tty's new
+color setting.
+
+The parent options menu is dismissed once before its handlers run. Opening a
+corner handler menu must not synthesize another full-map redraw while earlier
+selected option effects are still pending.
+
+After each simple-menu pick, `reset_needed_visuals()` publishes any pending
+status update, even when that option needs no map redraw. A full-screen menu's
+dismissal leaves that update pending while `select_menu()` disables `bot()`.
+Publish it before the rebuilt menu pages a monster notice from the dismissal.
+
+DEC graphics bytes enclosed by SO/SI compare as their translated glyphs.
+Literal `l`, `q`, `x`, and `~` in a raw decoded C row do not establish a
+character mismatch against Unicode box drawing and floor glyphs. Compare with
+`diffCell`, which applies the DEC translation before comparing colors and
+attributes.
+
 ### Recorder serialization parity
 
-The C recorder serializes its shadow grid at each capture boundary. Preserve
-the cells' colors and attributes as well as the recorded cursor.
+The C recorder serializes its shadow grid at each capture boundary, preserving
+colors and attributes even on spaces. The corrected recorder uses a 61,825-byte
+screen buffer rather than the old 6,144-byte buffer. The port must not emulate
+the old buffer's memory corruption or corrupted cursor coordinates.
 
-The recorder update in [official commit `6ee30e6`](https://github.com/davidbau/teleport-contest/commit/6ee30e6)
-uses one byte per input key, a larger capture buffer, and a raw-mode reset at
-terminal teardown. Rebuilding does not update older recorded fixtures, which
-can still contain the former 6,144-byte buffer's corrupted screens and cursors.
-The existing JS compatibility path for those captures is retained while the
-broader capture and teardown changes are validated separately.
+As published in [official recorder correction `6ee30e6`](https://github.com/davidbau/teleport-contest/commit/6ee30e6),
+input keys are sent as single Latin-1 bytes rather than UTF-8, and raw-output
+tracking resets after terminal exit. These changes do not resolve the separately
+observed final-save cursor discrepancy.
 
 
 ## `input` — what the harness gives you

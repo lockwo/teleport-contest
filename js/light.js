@@ -22,7 +22,7 @@
 // attributed to light.c).  Every routine here must stay RNG-free.
 
 import { game, hooks } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
     FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, W_ARM, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED,
@@ -1015,7 +1015,7 @@ function sensemon(mon) {
 // C ref: windows nh_delay_output() — the 50ms pause a transient light uses so
 // the player can see the flash.  The recorded corpora are screen-diffed, not
 // timed, so this is a yield rather than a sleep.
-async function nh_delay_output() { nh_delay_output_tick(); await Promise.resolve(); }
+async function nh_delay_output() {  await Promise.resolve(); }
 
 // C ref: vision.c:703 — vision_recalc() calls do_light_sources(next_array).
 // js/vision.js cannot import this file directly (doing so reorders ESM module

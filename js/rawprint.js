@@ -2,11 +2,13 @@
 // after the tty windows are gone (end.js topten() output, panic.js).
 import { game } from './gstate.js';
 
-// C ref: termcap.c nomux_raw_putch() — once an rc error has put the recorder's
-// raw writer in play (game._nomux_raw, never cleared) the topten() raw_print()s
-// land that many rows further down: bl019 (cursor frozen at row 1) records the
-// "score list will not be checked" line on row 3 and ends with the cursor on
-// row 6, i.e. both shifted by raw.row + 1 against the home-cursor layout.
+// C ref: tty_exit_nhwindows() calls nomux_reset_raw_mode() after suspending
+// the terminal, before topten() starts a new raw-output stream.
+export function resetRawPrint() {
+    delete game._nomux_raw;
+}
+
+// Before teardown, raw output continues from the startup-error cursor.
 export function rawPrintBias() {
     return game._nomux_raw ? game._nomux_raw.row + 1 : 0;
 }

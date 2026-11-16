@@ -4,7 +4,7 @@
 
 import { Half_physical_damage_hero, Half_spell_damage_hero, Stunned_hero, Drain_resistance_hero, Antimagic_hero, Unchanging_hero, Levitation_hero } from './youprop.js';
 import { game, register_process_static } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { ok_to_quest } from './questok.js';
 import { s_suffix } from './hacklib.js';
 import { hard_helmet } from './do_wear.js';
@@ -2689,7 +2689,6 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                 else if (!mon) unmap_invisible_zap(sx, sy);
                 if (ZAP_POS(typ) || (isok(lsx, lsy) && cansee(lsx, lsy)))
                     await drawBeam(sx, sy);
-                nh_delay_output_tick(); /* C: nh_delay_output(); wait a little */
             }
 
             /* hit() and miss() need bhitpos to match the target */

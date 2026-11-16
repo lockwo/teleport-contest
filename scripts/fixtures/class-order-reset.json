@@ -1,0 +1,18 @@
+{
+  "version": 5,
+  "segments": [
+    {
+      "seed": 2720040,
+      "datetime": "20260502120000",
+      "nethackrc": "OPTIONS=name:Probe,role:Knight,race:human,gender:female,align:lawful,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+      "moves": "   n#levelchange\n25\n           \u001b\u0017blessed amulet of life saving\nPi\u00173 blessed scrolls of magic mapping\nh#chat\na\nt\u001bFhhk\u0004kFl\u0016?\nm"
+    },
+    {
+      "seed": 5989734,
+      "datetime": "20260829093000",
+      "nethackrc": "OPTIONS=name:Dazz,role:Ranger,race:elf,gender:male,align:chaotic,playmode:debug,symset:DECgraphics\nOPTIONS=autopickup\nOPTIONS=!safe_pet\nOPTIONS=implicit_uncursed\nOPTIONS=autoquiver\nOPTIONS=!dark_room\nOPTIONS=pile_limit:2\nOPTIONS=boulder:0\n",
+      "moves": "   n#levelchange\n8\n    \u001b\u0017blessed amulet of life saving\nPg\u0017blessed +2 gray dragon scale mail\nWhFj \u0007titan\nFhFh FhFhhEa X\n     dT\u001bh\u0016?\n>><B,ib\n_  NukLjuyK.h_>.hhpkphdu\na;_>\u001bdfhqp_>.> ahpqpp_>.bjx h\u0007gray dragon\nFj FjFjFj\u001bFj j\n  nFj\nFj \u001b\u001b10s    nll lnjNUlYyj  j E- X\nqq_<,  n Fj Zb Fl _<.  n \u001645\nb_>.> pyuulpluuufupu\u001b15slukuWllllLljjjjjj10.jjjj3sjl15sj\u001bj20sj,ll#pickup\nluudcuullu, l, l, pb,\nplbh\u001bh, pyn10.hHlpalun, yy\u001636\n   \u001bj"
+    }
+  ],
+  "rngSha256": "fcb1c46d9e6e49a554686b8da46ba637a842c553e8aa3d5575c7558db4d4b841"
+}

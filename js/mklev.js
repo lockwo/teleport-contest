@@ -6,7 +6,7 @@
 // Uses the real game PRNG (not a separate layout PRNG) for bit-exact parity.
 
 import { game, hooks } from './gstate.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { GameMap } from './game.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { finish_map, flood_fill_rm, ffrm } from './mkmap.js';
@@ -7988,7 +7988,6 @@ export async function mkinvokearea() {
         }
 
         await flush_screen(1); /* make sure the new glyphs show up */
-        nh_delay_output_tick(); /* nh_delay_output() */
     }
 
     await pline('You are standing at the top of a stairwell leading down!');

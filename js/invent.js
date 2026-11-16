@@ -10,12 +10,13 @@ import { game, register_process_static } from './gstate.js';
 import { menu_ctx } from './windows.js';
 import { panic } from './panic.js';
 import { ONAME, has_oname, setONAME } from './const.js';
-import { nh_delay_output_tick } from './nomux_capture.js';
+
 import { s_suffix } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush, queue_impossible, flush_impossibles } from './display.js';
+import { render_map_row_to_grid } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -1820,8 +1821,23 @@ function compareInvlet(a, b) {
 // a corner menu picked from (select_menu()/the inventory PICK_ONE) is torn down
 // before its caller continues.  The sweep recorded by putStatusLines() stands,
 // and docorner()'s `disp.botlx = TRUE; bot();` is pending (gb.bot_disabled).
-function corner_menu_destroyed() {
+export function corner_menu_destroyed() {
     delete game._modal_screen;
+    const display = game.nhDisplay;
+    if (game._menuOffx > 0 && display?.setCell) {
+        const cut = game._menuOffx - 1;
+        const lastRow = Math.min(display.rows - 1, (game._sweepLastRow ?? 0) + 1);
+        commit_stale_glyph_buffer(cut, lastRow);
+        for (let row = 0; row <= lastRow; row++) {
+            // docorner() positions BASE_WINDOW before cl_end(), then each
+            // row_refresh() glyph advances the tty cursor.
+            display.setCursor(cut, row);
+            for (let col = cut; col < display.cols; col++)
+                display.setCell(col, row, ' ', NO_COLOR, 0);
+            const cursorCol = render_map_row_to_grid(row, cut);
+            if (cursorCol !== null) display.setCursor(cursorCol, row);
+        }
+    }
     if (status_cuts_snapshot() || status_sweep_reached()) status_sweep_botlx();
 }
 
@@ -2062,8 +2078,7 @@ function snapshotStaleTopline(display) {
 function restoreStaleTopline(display, snap) {
     if (!snap) return;
     for (let c = 0; c < snap.length; c++)
-        display.setCell(c, 0, snap[c].ch, snap[c].color, snap[c].attr | 0,
-                        !!snap[c]._fl?.dec, !!snap[c]._fl?.dark);
+        display.setCell(c, 0, snap[c].ch, snap[c].color, snap[c].attr | 0);
 }
 
 // C ref: wintty.c tty_display_nhwindow() draws only the window's own cells.
@@ -2080,8 +2095,7 @@ function keepSharedStatusRow(display) {
     return () => {
         if (!keep) return;
         for (let c = 0; c < keep.length; c++)
-            display.setCell(c, sharedRow, keep[c].ch, keep[c].color, keep[c].attr | 0,
-                            !!keep[c]._fl?.dec, !!keep[c]._fl?.dark);
+            display.setCell(c, sharedRow, keep[c].ch, keep[c].color, keep[c].attr | 0);
     };
 }
 
@@ -2091,19 +2105,13 @@ function keepSharedStatusRow(display) {
 export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
     const display = game.nhDisplay;
     if (!display?.clearScreen) return;
-    // C ref: win/tty/wintty.c tty_display_nhwindow(): an automatic
-    // end-of-game inventory menu is drawn over the existing tty display.
-    // Repainting its map would replace surviving DEC glyphs and erase the
-    // prior quit/death message in columns left of the menu window.
+    // C ref: wintty.c tty_display_nhwindow(NHW_MENU) only clears WIN_MESSAGE
+    // before drawing a corner menu. Preserve the physical map: its glyph buffer
+    // can contain monster moves that no flush_screen() has published yet.
     const inheritedTrunc = game._menuTruncCarry;
-    if (!game._disclose_inventory_auto) {
-        const keep = keepSharedStatusRow(display);
-        const staleTop = snapshotStaleTopline(display);
-        display.clearScreen();
-        render_map_to_grid();
-        restoreStaleTopline(display, staleTop);
-        keep();
-    }
+    if (!game._disclose_inventory_auto
+        && !(game._toplinStale && game._toplinStale === game._pending_message))
+        display.clearRow(0);
     const cols = display.cols ?? 80;
     const rows = display.rows ?? 24;
     // C ref: wintty.c:2729-2733 tty_end_menu() — "cut off any lines that are too
@@ -2804,7 +2812,7 @@ export async function dismiss_invent_screen(textWindow = false) {
     }
     // The same docorner() replays the glyph buffer, which a held goto_level()
     // frame (hero died on arrival) has not yet flushed to the physical screen.
-    else commit_stale_glyph_buffer(Math.max(0, game._menuOffx - 1), (game._sweepLastRow ?? 0) + 1);
+    else corner_menu_destroyed();
     // docorner() while drag_down()'s cls() left the screen blank (hero died in
     // transit): the glyph buffer is row_refresh()ed over the vacated corner.
     // flush_screen(-1) postponement: a hero who died inside goto_level() (stairs
@@ -6981,7 +6989,6 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         // boomhit(), js/dokick.js's kicked-object walker and js/mthrowu.js's
         // monster-throw walker already do this; this hero-throw walker didn't.
         await flash.step(bx, by);
-        nh_delay_output_tick(); /* zap.c:4089 */
         if (IS_SINK(typ)) break;
         /* limit range of ball so hero won't make an invalid move */
         if (crange > 0 && obj?.otyp === HEAVY_IRON_BALL_OTYP) {
@@ -7915,7 +7922,6 @@ export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
         // rn2_on_display_rng)); tmp_at(bhitpos); nh_delay_output(); DISP_END.
         const bflash = tmp_at_flash(otmp);
         await bflash.step(land.x, land.y);
-        nh_delay_output_tick();
         await bflash.end();
         await DT.breakmsg(otmp, cansee(land.x, land.y));
         otmp.owornmask = 0;
@@ -9248,7 +9254,18 @@ async function tty_select_menu(items, plan, how) {
        offx == 0 window is erased with docrt(), whose vision_recalc(0)
        newsym()s every seen square (a remembered engraving since wiped shows
        as floor again). */
-    if (!(game._menuOffx > 0)) await docrt();
+    if (!(game._menuOffx > 0)) {
+        const old_bot_disabled = game.bot_disabled;
+        game.bot_disabled = true;
+        try {
+            await docrt();
+            // erase_menu_or_text() publishes the rebuilt map before a caller
+            // opens another window. Only corner dismissals preserve its pixels.
+            await flush_screen(1);
+        } finally {
+            game.bot_disabled = old_bot_disabled;
+        }
+    }
     if (cancelled) {
         const none = [];
         none.cancelled = true;

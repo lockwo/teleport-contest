@@ -716,7 +716,7 @@ async function ask_do_tutorial() {
                 const loc = game.level.at(x, 0);
                 if (!loc?.disp_ch || loc.disp_ch === ' ') continue;
                 const ch = loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch;
-                disp.setCell(x - 1, 1, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0, loc.disp_decgfx, loc.disp_dark);
+                disp.setCell(x - 1, 1, ch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);
             }
         }
         // Overlay the menu: each row, cl_end() clears from offx (the leading
