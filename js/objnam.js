@@ -18,7 +18,8 @@ import { ONAME, has_oname, setONAME } from './const.js';
 import { rn2 } from './rng.js';
 import { game, register_process_static } from './gstate.js';
 import { panic } from './panic.js';
-import { s_suffix, just_an, strncmp, strncmpi, strcmpi } from './hacklib.js';
+import { s_suffix, just_an, an, An, plur, strncmp, strncmpi, strcmpi } from './hacklib.js';
+export { an, An };
 import {
     objects,
     MAXOCLASSES,
@@ -31,7 +32,7 @@ import {
 } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { shop_price_suffix } from './shk.js';
-import { currency, bimanual as inv_bimanual } from './invent.js';
+import { currency, bimanual as inv_bimanual, count_contents } from './invent.js';
 import { body_part } from './polyself.js';
 import { tin_variety, tintxts, vegetarian, SPINACH_TIN, ROTTEN_TIN, HOMEMADE_TIN } from './eat.js';
 import { artifact_name as arti_artifact_name, find_artifact as arti_find_artifact,
@@ -69,7 +70,7 @@ import { monster_by_pmidx } from './makemon.js';
 import { Blind } from './vision.js';
 import { observe_object } from './o_init.js';
 import { obj_pmname } from './do_name.js';
-import { mungspaces } from './hacklib.js';
+import { mungspaces, upstart } from './hacklib.js';
 import {
     is_unpaid, unpaid_cost, get_cost_of_shop_item, COST_CONTENTS,
 } from './shk.js';
@@ -562,8 +563,7 @@ function impossible(msg) {
     if (game.debugImpossible) console.warn('impossible:', msg);
 }
 
-/* hacklib.c plur(n) / ordin(n) used by objnam.c naming. */
-function plur(n) { return Number(n) === 1 ? '' : 's'; }
+/* hacklib.c ordin(n) used by objnam.c naming. */
 function ordin(n) {
     const dd = n % 10;
     return (dd === 0 || dd > 3 || Math.trunc((n % 100) / 10) === 1) ? 'th'
@@ -701,16 +701,6 @@ function tin_details(obj, mnum, buf) {
 }
 function append_price_quote(bp, otyp) { return bp + oi_append_price_quote(otyp); }
 function record_price_quote(otyp, price, buy) { oi_record_price_quote(otyp, price, buy); }
-function count_contents(container, nested, quantity, everything) {
-    /* invent.c count_contents(obj, nested, quantity, everything, newdrop) */
-    let count = 0;
-    for (const o of (container?.cobj || [])) {
-        if (nested && Has_contents(o))
-            count += count_contents(o, nested, quantity, everything);
-        if (everything || o.unpaid) count += quantity ? (o.quan || 1) : 1;
-    }
-    return count;
-}
 // not_fully_identified(): is there anything left to learn about obj?
 // C ref: objnam.c:1787.  JS objects[] rows only carry the explicit BITS()
 // oc_name_known flag, while C's init_objects() also sets it for every type with
@@ -1026,16 +1016,6 @@ export function reorder_fruit(forward) {
 /* hacklib.c digit() */
 function digit(c) { return c >= '0' && c <= '9'; }
 
-/* objnam.c:2144 an() */
-export function an(str) {
-    const buf = nextobuf();
-    if (!str) {
-        impossible(`Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);
-        return setobuf(buf, 'an []');
-    }
-    return setobuf(buf, just_an(str) + str);
-}
-
 // obj_is_pname(): is obj's user-given name a personal name (an artifact's)?
 // C ref: objnam.c:332.
 export function obj_is_pname(obj) {
@@ -1049,8 +1029,8 @@ export function obj_is_pname(obj) {
 }
 
 // the_unique_obj(): "the unique_item" rather than "a unique_item".
-// C ref: objnam.c:1105.  js/end.js:1338 and js/invent.js:8474 hold copies.
-function the_unique_obj(obj) {
+// C ref: objnam.c:1105.
+export function the_unique_obj(obj) {
     const known = (obj.known || iflags().override_ID);
     if (!obj.dknown && !iflags().override_ID)
         return false;
@@ -2067,17 +2047,27 @@ export function doname_base(obj, doname_flags) {
    file through artifact.js, so it can't be imported here).  The 'A' command
    sets context.takeoff.what instead of afternmv, and C's doffing() tests it
    too: an 'A' interrupted mid-sequence leaves the slot reading "(being doffed)". */
-function doffing(obj) {
+export function doffing(obj) {
     if (!obj) return false;
-    if (game._dressing_obj === obj && game._dressing_off) return true;
     const what = game.context?.takeoff?.what | 0;
+    /* armor slots: afternmv (tracked as _dressing_*) or 'A' takeoff.what */
     const slot = (obj === game.uarm) ? W_ARM : (obj === game.uarmu) ? W_ARMU
         : (obj === game.uarmc) ? W_ARMC : (obj === game.uarmf) ? W_ARMF
         : (obj === game.uarmh) ? W_ARMH : (obj === game.uarmg) ? W_ARMG
         : (obj === game.uarms) ? W_ARMS : 0;
-    return !!slot && what === slot;
+    if (slot)
+        return (game._dressing_obj === obj && !!game._dressing_off) || what === slot;
+    /* these 1-turn items don't need 'afternmv' checks */
+    if (obj === game.uamul) return what === W_AMUL;
+    if (obj === game.uleft) return what === W_RINGL;
+    if (obj === game.uright) return what === W_RINGR;
+    if (obj === game.ublindf) return what === W_TOOL;
+    if (obj === game.uwep) return what === W_WEP;
+    if (obj === game.uswapwep) return what === W_SWAPWEP;
+    if (obj === game.uquiver) return what === W_QUIVER;
+    return false;
 }
-function donning(obj) {
+export function donning(obj) {
     return doffing(obj) || (!!obj && game._dressing_obj === obj && !game._dressing_off);
 }
 /* youprop.h Glib — slippery fingers (js/botl.js:365 reads the same property) */
@@ -2203,7 +2193,7 @@ export function the(str) {
     }
     return (insert_the ? 'the ' : '') + str;
 }
-export function The(str) { const t = the(str); return t.charAt(0).toUpperCase() + t.slice(1); }
+export function The(str) { return upstart(the(str)); }
 
 // C ref: objnam.c simpleonames()
 export function simpleonames(obj) {

@@ -61,7 +61,7 @@
 
 import { game } from './gstate.js';
 import { panic as _panic } from './panic.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an } from './hacklib.js';
 import { rn2 } from './rng.js';
 import {
     COLNO, ROWNO, BUFSZ, LOW_PM,
@@ -265,10 +265,8 @@ function _get_trapname_bytype(ttyp) { return `trap ${ttyp}`; }
 /* mkmaze.c levltyp_to_name(typ) — the debug name of a terrain type. */
 function _levltyp_to_name(typ) { return `typ ${typ}`; }
 
-/* objnam.c an(), ing_suffix() — this port keeps only file-local copies of
-   these; the nh.* wrappers below still check their argument count exactly as
-   C does. */
-function _an(str) { return /^[aeiouAEIOU]/.test(str) ? `an ${str}` : `a ${str}`; }
+/* objnam.c ing_suffix() — this port keeps only a file-local copy; the nh.*
+   wrappers below still check their argument count exactly as C does. */
 function _ing_suffix(str) { return `${str.replace(/e$/, '')}ing`; }
 
 /* mon.c name_to_mon(str, &gend) -> pm index, NON_PM if unknown. */
@@ -326,15 +324,6 @@ function _long_to_any(v) { return { a_long: v }; }
 function _setworn(obj, mask) { setworn_mask(obj, mask); }
 function _setnotworn(obj) { setnotworn(obj); }
 
-/* eat.c init_uhunger() */
-function _init_uhunger() {
-    const u = game.u;
-    if (!u) return;
-    game.botl = true;
-    u.uhunger = 900;
-    u.uhs = 1;                                          /* NOT_HUNGRY */
-    if ((u.atemp?.a?.[0] | 0) < 0) u.atemp.a[0] = 0;    /* ATEMP(A_STR) */
-}
 
 /* mon.c mongone(mtmp) */
 async function _mongone(mtmp) {
@@ -1001,7 +990,7 @@ export function nhl_an(...args) {
     const argc = args.length;
 
     if (argc === 1)
-        return _an(_checkstring(args[0]));
+        return an(_checkstring(args[0]));
     nhl_error(null, 'Wrong args');
     return undefined;
 }
@@ -1730,7 +1719,7 @@ export async function nhl_gamestate(...args) {
             }
         /* some restored state would confuse the level change in progress */
         u.uz = cur_uz; u.uz0 = cur_uz0;
-        _init_uhunger();
+        await (await import('./eat.js')).init_uhunger();
         free_tutorial();                         /* release gg.gmst_XYZ */
         gg.gmst_stored = FALSE;
         game.spl_book = gg.gmst_spl_book;

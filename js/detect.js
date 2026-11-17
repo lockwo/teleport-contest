@@ -46,9 +46,10 @@ import { S_corr, S_room, S_darkroom, S_litcorr, S_stone, S_vwall, S_ndoor,
          S_vodoor, S_vcdoor, S_upstair, S_upladder, S_fountain, S_throne,
          S_sink, S_altar, S_grave, defsyms, def_oc_syms, def_monsyms, S_GHOST,
          MAXPCHARS, MAXMCLASSES, DEF_MIMIC, DEF_MIMIC_DEF, SYM_OFF_X, gs } from './symbols.js';
-import { SYM_BOULDER, OBJ_FLOOR, OBJ_INVENT, OBJ_MINVENT, OBJ_BURIED } from './const.js';
+import { SYM_BOULDER, OBJ_FLOOR, BURIED_TOO, CONTAINED_TOO } from './const.js';
 import { the, The } from './objnam.js';
 import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT } from './const.js';
+import { get_obj_location } from './light.js';
 
 // objclass.h obj_material_types GOLD == 15 (the blessed-scroll "any gold
 // object" scan, o_material(obj, GOLD)).
@@ -139,6 +140,9 @@ async function findone(zx, zy, found) {
     } else if (lev.invisMon) { /* unmap_invisible() */
         unmap_object(zx, zy);
         newsym(zx, zy);
+        /* flash_glyph_at(GLYPH_INVISIBLE): its even loop ends with levl[][].glyph
+           shown and no newsym(), so it overrides a gas-cloud glyph newsym() drew */
+        show_remembered_glyph_at(zx, zy);
         found.num_cleared_invis++;
     }
 }
@@ -256,9 +260,11 @@ export async function show_map_spot(x, y, cnf) {
         } else if (ep && !cnf) {                  /* C: `ep != 0 && !cnf` */
             /* C map_engraving(ep, 1) sets only the glyph, never ep->erevealed */
             const g = engraving_glyph(lev);
-            if (game.level?.flags?.hero_memory)
+            if (game.level?.flags?.hero_memory) {
+                lev.invisMon = false; /* levl[x][y].glyph replaced: a remembered 'I' is gone */
                 lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
                                          bwEngr: g.bwEngr };
+            }
             show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr(g));
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             if (game.level?.flags?.hero_memory) {
@@ -652,6 +658,10 @@ export function glyph_at(x, y, remembered = false) {
     // A remembered OBJECT glyph (display.c map_object(): levl[x][y].glyph) stays
     // an object glyph after the object is gone or moved unseen, and for a mimic
     // seen posing as an object there was never a real object behind it.
+    // A monster actually drawn here (disp_monster) outranks the remembered object
+    // underneath it: its statue shares the class letter, not the glyph.
+    if (mon && loc.disp_monster)
+        return { kind: 'monster', mon, x, y };
     const memObj = loc.remembered_glyph?.objotyp;
     if (memObj != null && sym !== ' ' && sym === loc.remembered_glyph.ch)
         return { kind: 'object', obj: null, otyp: memObj, x, y };
@@ -898,10 +908,9 @@ export async function browse_map(ter_typ, ter_explain) {
     iflags.autodescribe = true;
     iflags.terrainmode = ter_typ;
     const { browse_map_getpos } = await import('./hack.js');
-    // C ref: getpos.c:853-854 curs(WIN_MAP, cx, cy); flush_screen(0) — the
-    // detection's topline ("You feel very greedy, and sense gold!") is drawn
-    // before getpos() blocks for its first key.
-    await flush_screen(1);
+    // C ref: detect.c browse_map: getpos handles the first map flush after
+    // its first-use tip.  Furniture detection has not flushed its glyphs yet,
+    // so the pending message must still page over the previous map.
     // C ref: pager.c:1301 — a TER_MAP browse shows real map terrain, not a blank detect map.
     await browse_map_getpos(ter_explain, (ter_typ & (TER_DETECT | TER_MAP)) === TER_DETECT);
     iflags.terrainmode = 0;
@@ -1376,7 +1385,7 @@ export function detect_obj_traps(objlist, show_them, how, ft) {
     for (const otmp of (objlist || [])) {
         let x = 0, y = 0;
         if ((d_Is_box(otmp) && otmp.otrapped) || d_Has_contents(otmp)) {
-            const loc = get_obj_location(otmp);
+            const loc = get_obj_location(otmp, BURIED_TOO | CONTAINED_TOO);
             if (!loc || !isok(loc.x, loc.y)
                 || (ft && (loc.x !== ft.ft_cc.x || loc.y !== ft.ft_cc.y)))
                 continue;
@@ -1530,6 +1539,7 @@ export async function furniture_detect() {
         for (let x = 1; x < COLNO; x++) {
             const before = glyph_at(x, y);
             const loc = game.level?.at(x, y);
+            const beforeSymbol = loc?.disp_ch;
             if (loc && IS_FURNITURE(loc.typ)) {
                 ++found;
                 magic_map_background(x, y, 1);
@@ -1543,8 +1553,11 @@ export async function furniture_detect() {
                 if (!mon || !canspotmon(mon)) map_invisible(x, y);
             }
             const after = glyph_at(x, y);
+            // C ref: detect.c furniture_detect compares displayed glyph values.
+            // The hero descriptor has no symbol and otherwise hides a mapped
+            // staircase replacing the hero on a fully known level.
             if (after.kind !== before.kind || after.sym !== before.sym
-                || after.cmap !== before.cmap) ++revealed;
+                || after.cmap !== before.cmap || loc?.disp_ch !== beforeSymbol) ++revealed;
         }
 
     if (!found)
@@ -1979,9 +1992,11 @@ async function show_map_spot_cnf(x, y, cnf) {
         } else if (ep && !cnf) {
             /* C map_engraving(ep, 1) sets only the glyph, never ep->erevealed */
             const g = engraving_glyph(lev);
-            if (game.level?.flags?.hero_memory)
+            if (game.level?.flags?.hero_memory) {
+                lev.invisMon = false; /* levl[x][y].glyph replaced: a remembered 'I' is gone */
                 lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
                                          bwEngr: g.bwEngr };
+            }
             show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr(g));
         } else if (glyph_is_trap(oldglyph) || glyph_is_object(oldglyph)) {
             if (oldglyph.cell)
@@ -2012,23 +2027,6 @@ export function cvt_sdoor_to_door(lev) {
     lev.arboreal_sdoor = 0;                         /* clears 'candig' */
 }
 
-// C ref: mkobj.c get_obj_location(obj, &x, &y, BURIED_TOO|CONTAINED_TOO) — the
-// map spot an object (possibly buried, possibly nested in a container) is at.
-function get_obj_location(obj) {
-    let o = obj;
-    for (let guard = 0; o && guard < 32; guard++) {
-        if (o.where === OBJ_FLOOR
-            || o.where === OBJ_BURIED)
-            return { x: o.ox, y: o.oy };
-        if (o.where === OBJ_INVENT)
-            return { x: game.u?.ux, y: game.u?.uy };
-        if (o.where === OBJ_MINVENT)
-            return o.ocarry ? { x: o.ocarry.mx, y: o.ocarry.my } : null;
-        o = o.ocontainer;                           /* OBJ_CONTAINED */
-        if (!o) return null;
-    }
-    return null;
-}
 
 // C ref: mkobj.c findgold(chain) — the first gold pile in an inventory chain.
 function findgold(chain) {

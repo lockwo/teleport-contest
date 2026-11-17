@@ -9,6 +9,7 @@
 // #levelchange, #pray, #enhance, #chat, #sit).
 
 import { game } from './gstate.js';
+import { Deaf_hero } from './youprop.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { pline, pline_vision_flush, StatusRows, topl_more, update_topl, y_n, flush_screen, m_at, vobj_at, render_map_to_grid, render_map_row_to_grid, blank_status_rows, status_sweep, status_cuts_snapshot, apply_status_cuts, newsym, remember_topl, yn_prompt_history, msghist } from './display.js';
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
@@ -22,10 +23,10 @@ import {
     dopickup, doputon, dowieldquiver, dothrow, dotravel, dowear, dowield,
     doprinuse, dofire, ddoinv, dotypeinv, dodiscovered, dolook, doswapweapon,
     dotakeoff, doprring, doprtool, doprwep, doprgold, dopramulet,
-    doprarm, near_capacity,
+    doprarm, near_capacity, worn_extrinsic,
 } from './invent.js';
 import { pluslvl, losexp, rank_of } from './exper.js';
-import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK,
+import { MAXULEV, IS_WALL, SDOOR, BOLT_LIM, STRAT_WAITMASK, JUMPING,
          IS_FOUNTAIN, IS_SINK, IS_THRONE, IS_ALTAR, COLNO, ROWNO,
          QBUFSZ, VIBRATING_SQUARE, D_NODOOR, D_BROKEN, D_ISOPEN,
          D_CLOSED, D_LOCKED, D_TRAPPED, IS_GRAVE, TIMEOUT,
@@ -911,7 +912,7 @@ async function doturn() {
     const { is_vampshifter, aggravate, monflee } = await import('./monmove.js');
     if (((u?.ualign?.type ?? 0) !== -1 /* A_CHAOTIC */
          && ((ydata && (is_demon_flag(ydata) || is_undead_flag(ydata)))
-             || (g.youmonst && is_vampshifter(g.youmonst))))
+             || is_vampshifter({ cham: u?.mcham })))
         || (u?.ugangr | 0) > 6) {
         await pline(`For some reason, ${Gname} seems to ignore you.`);
         aggravate();
@@ -1008,19 +1009,9 @@ function turn_xlev(mcls) {
 // with is_valid_jump_pos(showmsg=TRUE) (fail -> message, no time, ECMD_FAIL); a
 // valid non-self target hurtles the hero (teleds), rolls morehungry(rnd(25)),
 // and costs a turn (ECMD_TIME).
-// C ref: youprop.h `Jumping = HJumping || EJumping`. HJumping is set
-// FROMOUTSIDE for knights (u_init.c:691); the only extrinsic source is
-// objects[JUMPING_BOOTS].oc_oprop == JUMPING, which js/mkobj.js DOES carry and
-// js/invent.js worn_extrinsics_on() now installs into the extrinsic word, so
-// this should become `worn_extrinsic(JUMPING)` when the accessor conversion
-// lands.  Until then the worn item stands in.
+// C ref: youprop.h Jumping == (HJumping || EJumping).
 function Jumping() {
-    const u = game.u;
-    if (u?.uprops?.Jumping || u?.HJumping || u?.EJumping) return true;
-    const PM_KNIGHT_ROLE = 4;                          // roles[] index
-    if ((game.urole?.mnum ?? -1) === PM_KNIGHT_ROLE) return true;
-    const JUMPING_BOOTS_OTYP = 168;                    // js/mkobj.js:137
-    return game.uarmf?.otyp === JUMPING_BOOTS_OTYP;
+    return !!(game.u?.uprops?.HJumping || worn_extrinsic(JUMPING));
 }
 
 async function dojump() {
@@ -1107,6 +1098,9 @@ export async function jump(magic) {
     // handle_tip(TIP_GETPOS) only fires a (no-op) Lua hook, it does not page.
     const u = game.u;
     await pline('Where do you want to jump?');
+    // C ref: apply.c jump() sets gj.jumping_is_magic BEFORE getpos_sethilite(), so
+    // the valid-position set the opening flush redraws already reflects `magic`.
+    set_jumping_is_magic(magic);
     // C ref: getpos() -> handle_tip(TIP_GETPOS): the FIRST getpos() use shows a
     // tty NHW_TEXT tip window, which pages the pending message first (a trailing
     // --More--) then renders the tip text via getpos_tip(); every later use
@@ -1133,7 +1127,6 @@ export async function jump(magic) {
     }
     // getpos with force=TRUE (jump/teleport targeting): unknown keys keep the
     // loop alive, the '(invalid target)' suffix uses get_valid_jump_position.
-    set_jumping_is_magic(magic);
     const cc = await getpos('the desired position', u.ux, u.uy,
                             (x, y) => get_valid_jump_position(x, y), /*force=*/true,
                             /*verbose=*/game.flags?.verbose !== false,
@@ -1431,10 +1424,7 @@ const WALLTALK = [
 // this used to test) misses every other source of !mcanmove.
 function mon_helpless(mon) { return !!(mon && (mon.msleeping || !mon.mcanmove)); }
 // C ref: youprop.h Deaf — same accessor sounds.js/mon.js already use.
-function Deaf_hero_chat() {
-    const u = game.u;
-    return ((u?.uprops?.HDeaf ?? 0) > 0) || !!u?.Deaf;
-}
+function Deaf_hero_chat() { return Deaf_hero(); }
 // C ref: mondata.h humanoid(ptr) — M1_HUMANOID, for the hero's current form.
 function humanoid_hero() {
     // u.umonnum is the ROLE number unless Upolyd (see polyself.js:353), so the
@@ -2780,9 +2770,10 @@ async function pick_lock_box(pick, box) {
         // "There is <a box> here; <verb> <it|its lock>?"  (the box is locked here)
         const it = picktyp !== LOCK_PICK;
         const verb = it ? 'unlock' : 'pick';
-        box.lknown = 1;
         if (c !== undefined) game._yn_need_more = false;
-        c = await ynq(safe_qbuf('There is ', ` here; ${verb} ${it ? 'it' : 'its lock'}?`, box, obj_doname, ansimpleoname, 'a box'));
+        const qbuf_box = safe_qbuf('There is ', ` here; ${verb} ${it ? 'it' : 'its lock'}?`, box, obj_doname, ansimpleoname, 'a box');
+        box.lknown = 1; /* C sets lknown after naming the box, so the prompt omits "locked" */
+        c = await ynq(qbuf_box);
         if (c !== 'y')
             return c === 'q' ? 0 : -1; // 'n': decided against all boxes (PICKLOCK_LEARNED_SOMETHING)
     }
@@ -4504,9 +4495,11 @@ export async function wiz_map_extcmd() {
             const lev = game.level.at(ep.engr_x, ep.engr_y);
             if (!lev) continue;
             const g = engraving_glyph(lev);
-            if (game.level.flags?.hero_memory)
+            if (game.level.flags?.hero_memory) {
+                lev.invisMon = false; /* levl[x][y].glyph replaced: a remembered 'I' is gone */
                 lev.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec,
                                          bwEngr: g.bwEngr };
+            }
             show_glyph_cell(ep.engr_x, ep.engr_y, g.ch, g.color, g.dec, bg_attr(g));
         }
         await do_mapping();

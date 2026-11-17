@@ -8,7 +8,7 @@
 // ring of poison resistance), so there is exactly one reader per property here.
 import { game } from './gstate.js';
 import { mflags1_of, M1_FLY, M1_SWIM } from './monflags_data.js';
-import { POISON_RES, TELEPAT, ACID_RES, SICK_RES, Is_waterlevel, I_SPECIAL, TIMEOUT, W_ARTI,
+import { POISON_RES, TELEPAT, ACID_RES, SICK_RES, Is_waterlevel, I_SPECIAL, TIMEOUT, FROMFORM, FROMOUTSIDE, W_ARTI,
          TT_PIT, is_pit, is_hole } from './const.js';
 import { has_innate } from './exper.js';
 import { defended } from './artifact.js';
@@ -65,10 +65,13 @@ export function Flying_hero() {
 // word, HInvis the timed/intrinsic one (mirrored by u.uinvis) or FROMFORM for a
 // stalker or black light polyform (u.formprops, polyself.js set_uasmon()), and
 // BInvis the blocked word (mummy wrapping).
+export function HInvis_hero() {
+    const u = game.u, p = u?.uprops;
+    return !!(p?.HInvis || u?.HInvis || u?.uinvis || u?.formprops?.Invis);
+}
 export function Invis_hero() {
     const u = game.u;
-    const word = (u?.uprops?.HInvis | 0) || (u?.HInvis | 0) || u?.uinvis
-        || (u?.uprops?.EInvis | 0) || (u?.EInvis | 0) || u?.formprops?.Invis
+    const word = HInvis_hero() || (u?.uprops?.EInvis | 0) || (u?.EInvis | 0)
         || ((u?.uprops_extrinsic || {})[40 /* INVIS */] | 0);
     const blocked = (u?.uprops?.BInvis | 0) || (u?.BInvis | 0) || ((u?.uprops_blocked || {})[40] | 0);
     return !!word && !blocked;
@@ -78,14 +81,17 @@ export function Invis_hero() {
 // the worn-item extrinsic word (SEE_INVIS == 29), the polymorph form (FROMFORM,
 // polyself.js set_uasmon()) and the role/race innate table (Monk XL1).  jsmain.js
 // serves this reader as the u.see_invis accessor.
+export function HSee_invisible_hero() {
+    const u = game.u, p = u?.uprops;
+    return !!(u?.formprops?.See_invisible || p?.HSee_invisible || p?.See_invisible
+              || u?.HSee_invisible || u?.See_invisible || has_innate('HSee_invisible'));
+}
 export function See_invisible_hero() {
     const u = game.u;
-    if (u?.formprops?.See_invisible) return true;
+    if (HSee_invisible_hero()) return true;
     const p = u?.uprops || {};
-    return !!(p.HSee_invisible || p.ESee_invisible || p.See_invisible
-              || u?.HSee_invisible || u?.ESee_invisible || u?.See_invisible)
-        || ((u?.uprops_extrinsic || {})[29 /* SEE_INVIS */] | 0) !== 0
-        || has_innate('HSee_invisible');
+    return !!(p.ESee_invisible || u?.ESee_invisible
+              || ((u?.uprops_extrinsic || {})[29 /* SEE_INVIS */] | 0));
 }
 // C ref: youprop.h Half_gas_damage — a wet towel worn over the face.
 export function Half_gas_damage_hero() {
@@ -194,6 +200,27 @@ export function Deaf_hero() {
               || (p?.EDeaf | 0) || eword(DEAF_P) || u?.uroleplay?.deaf);
 }
 
+// C ref: youprop.h Blind/Blinded/Blindfolded.  HBlinded is split between the
+// timeout, permanent blindness and the form bit.  Eyes of the Overworld set
+// the blocked word, while a blindfold or towel sets only the extrinsic word.
+export function HBlinded_hero() {
+    const u = game.u, p = u?.uprops;
+    return ((u?.blinded | 0) & TIMEOUT) | (p?.HBlinded | 0)
+        | (u?.permablind ? FROMOUTSIDE : 0) | (p?.BlindedFromForm ? FROMFORM : 0);
+}
+function BBlinded() {
+    return game.u?.uprops?.BBlinded || eblocked(15 /* BLINDED */);
+}
+const eblocked = (prop) => (game.u?.uprops_blocked?.[prop] | 0);
+export function Blinded_hero() { return !!HBlinded_hero() && !BBlinded(); }
+export function Blindfolded_hero() { return ext(15 /* BLINDED */); }
+export function Blindfolded_only_hero() {
+    return Blindfolded_hero() && !Blinded_hero();
+}
+export function Blind_hero() {
+    return !!(HBlinded_hero() || Blindfolded_hero()) && !BBlinded();
+}
+
 // C ref: youprop.h Stunned == HStun: the timed word (u.uprops.Stun mirrored by the
 // u.Stunned / u.ustun flags) or FROMFORM for a stalker or bat polyform
 // (u.formprops, polyself.js set_uasmon()).
@@ -201,6 +228,13 @@ export function Stunned_hero() {
     const u = game.u;
     return !!(u?.formprops?.Stunned || (u?.uprops?.Stun | 0) > 0
               || (u?.uprops?.HStun | 0) > 0 || u?.Stunned || (u?.ustun | 0) > 0);
+}
+
+// C ref: youprop.h Confusion == HConfusion.  The timeout is stored under
+// Confusion and mirrored by uconf, not in an extrinsic word.
+export function Confusion_hero() {
+    const u = game.u;
+    return !!(u?.uprops?.Confusion || u?.uprops?.HConfusion || u?.HConfusion || u?.uconf);
 }
 
 // C ref: youprop.h Acid_resistance == (HAcid_resistance || EAcid_resistance): the
@@ -260,6 +294,14 @@ export function Antimagic_hero() {
               || (p.HAntimagic | 0) || (p.Antimagic | 0) || (p.EAntimagic | 0)
               || u?.HAntimagic || u?.Antimagic || u?.EAntimagic
               || eword(ANTIMAGIC_P));
+}
+
+// C ref: youprop.h Reflecting == (HReflecting || EReflecting).
+export function Reflecting_hero() {
+    const u = game.u, p = u?.uprops;
+    return !!(p?.HReflecting || p?.Reflecting || u?.HReflecting
+              || p?.EReflecting || u?.EReflecting || eword(65 /* REFLECTING */)
+              || u?.formprops?.Reflecting);
 }
 // C ref: youprop.h Swimming == (HSwimming || ESwimming || (u.usteed &&
 // is_swimmer(u.usteed->data))), plus the polymorph form's FROMFORM bit.

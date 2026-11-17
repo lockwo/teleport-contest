@@ -11,7 +11,7 @@
 // single draw attributed to dbridge.c, so none of the three is confirmed by a
 // trace; they are transcribed straight from the C.
 
-import { Deaf_hero, Stunned_hero, Levitation_hero, Flying_hero, Wwalking_hero, Swimming_hero, Passes_walls_hero, Fumbling_hero } from './youprop.js';
+import { Deaf_hero, Stunned_hero, Levitation_hero, Flying_hero, Wwalking_hero, Swimming_hero, Passes_walls_hero, Fumbling_hero, Confusion_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { hliquid, mhe } from './do_name.js';
 import {
@@ -25,6 +25,7 @@ import {
     MAY_HIT, Unaware as Unaware_hero } from './const.js';
 import { rn2, rnd } from './rng.js';
 import { m_at, newsym, pline, canseemon_shared, You_see, You_hear } from './display.js';
+import { Hallucination_u } from './display.js';
 import { block_point, unblock_point, does_block, vision_recalc, cansee } from './vision.js';
 import { t_at, deltrap, spoteffects } from './trap.js';
 import { mksobj_at, objects } from './mkobj.js';
@@ -689,6 +690,10 @@ export async function destroy_drawbridge(x, y) {
                 await You_hear('a loud *SPLASH*!');
         }
         lev1.typ = lava ? LAVAPOOL : MOAT;
+        /* js-only marker: this liquid square used to be a drawbridge span, so a
+           remembered lowered-span glyph ('.'/'~') on it is STALE (display.js
+           shows the bridge squares from memory, pager.c lookat reads it) */
+        lev1.db_destroyed_span = true;
         lev1.drawbridgemask = 0;
         const otmp2 = sobj_at(BOULDER, x, y);
         if (otmp2) {
@@ -847,14 +852,6 @@ function canspotmon(mon) { return canseemon_shared(mon) || sensemon(mon); }
 
 // ── hero properties (youprop.h) ──
 
-function HProp(...keys) {
-    const u = game.u;
-    for (const k of keys) {
-        const v = u?.uprops?.[k] ?? u?.[k];
-        if (v) return typeof v === 'number' ? v : 1;
-    }
-    return 0;
-}
 function Levitation() { return Levitation_hero(); }
 function Flying() { return Flying_hero(); }
 function Wwalking() { return Wwalking_hero(); }
@@ -862,10 +859,10 @@ export function Swimming() { return Swimming_hero(); }
 export function Breathless() { return Breathless_hero(); }
 export function Amphibious() { return Amphibious_hero(); }
 function Passes_walls() { return Passes_walls_hero(); }
-function Confusion() { return HProp('Confusion', 'HConfusion', 'EConfusion') > 0; }
+function Confusion() { return Confusion_hero(); }
 function Stunned() { return Stunned_hero(); }
 function Fumbling() { return Fumbling_hero(); }
-function Hallucination() { return HProp('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu; }
+function Hallucination() { return Hallucination_u(); }
 // C ref: youprop.h Unaware — asleep, unconscious or otherwise not perceiving.
 function Unaware() { return Unaware_hero(); }
 function Deaf() { return Deaf_hero(); }

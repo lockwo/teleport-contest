@@ -32,6 +32,7 @@ import { midnight } from './calendar.js';
 import { Blind } from './vision.js';
 import { has_innate } from './exper.js';
 import { worn_extrinsic, worn_blocked } from './invent.js';
+import { Flying_hero, Levitation_hero } from './youprop.js';
 
 const PICK_AXE = 259, DWARVISH_MATTOCK = 71;
 // C ref: youprop.h Stealth; polyself.c steed_vs_stealth().
@@ -43,7 +44,8 @@ export function Stealth() {
         || has_innate('HStealth');
     const E = u.EStealth || p.EStealth || worn_extrinsic(STEALTH);
     const B = u.BStealth || p.BStealth || worn_blocked(STEALTH)
-        || (u.usteed && !p.Flying && !p.Levitation);
+        /* C: steed_vs_stealth() — Flying/Levitation include a flying steed. */
+        || (u.usteed && !Flying_hero() && !Levitation_hero());
     return !!(H || E) && !B;
 }
 

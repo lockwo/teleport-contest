@@ -13,10 +13,11 @@
 // preserving timeout bits beside any persistent-source flags.
 
 import { game, hooks, register_process_static } from './gstate.js';
-import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero, Deaf_hero } from './youprop.js';
+import { set_itimeout, incr_itimeout, Levitation_hero, Flying_hero, Fumbling_hero, Stunned_hero, Deaf_hero, Acid_resistance_hero, Stone_resistance_hero, Wwalking_hero, Passes_walls_hero } from './youprop.js';
+import { region_danger as region_danger_hero } from './region.js';
 import { panic as _panic } from './panic.js';
 import { NO_COLOR } from './terminal.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an, upstart } from './hacklib.js';
 import { msound_of } from './monflags_data.js';
 import { rn2, rnd, d } from './rng.js';
 import { heal_legs } from './trap.js';
@@ -26,12 +27,13 @@ import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer,
          obj_timer, obj_timer_list, set_obj_timer_list } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters, status_hold, You_feel } from './display.js';
+import { Hallucination_u } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { t_at, Flying_fu } from './trap.js';
 import { surface } from './dungeon.js';
-import { encumber_msg, inv_weight, body_part, renderMenuLines, shk_your, Yname2, youmonst_data } from './invent.js';
+import { encumber_msg, inv_weight, body_part, renderMenuLines, shk_your, Yname2, youmonst_data, Breathless_hero } from './invent.js';
 import { makeplural } from './plural.js';
 import { float_vs_flight } from './polyself.js';
 
@@ -68,9 +70,7 @@ const S_DRAGON_LET = 'D';
 
 // C ref: youprop.h Hallucination — the expiry messages swap in hallucinating
 // variants.
-function Hallucination() {
-    return ((game.u?.uprops?.Hallucination || 0) > 0);
-}
+function Hallucination() { return Hallucination_u(); }
 
 // C ref: potion.c make_confused(0L, TRUE) —
 // You_feel("less %s now.", Hallucination ? "trippy" : "confused").
@@ -102,7 +102,7 @@ async function expire_stun() {
     u.uprops.Stun = 0;
     u.Stunned = false;
     // C ref: timeout.c:741 `if (!Stunned) stop_occupation();`.
-    if (!(u.uprops.Stun || 0)) await stop_occupation();
+    if (!Stunned_hero()) await stop_occupation();
 }
 
 // C ref: timeout.c:743 case BLINDED — `set_itimeout(&HBlinded, 1L);
@@ -169,7 +169,7 @@ async function slip_or_trip() {
             && !(await import('./youprop.js')).Stone_resistance_hero()) {
             const { instapetrify } = await import('./polyself.js');
             const { monster_by_pmidx } = await import('./makemon.js');
-            const nm = `tripping over ${_an(monster_by_pmidx(otmp.corpsenm)?.name)} corpse`;
+            const nm = `tripping over ${an(monster_by_pmidx(otmp.corpsenm)?.name)} corpse`;
             await instapetrify(nm);
         }
         return;
@@ -298,7 +298,7 @@ async function vomiting_dialogue() {
         break;
     case 8:
         txt = VOMITING_TEXTS[2];
-        if (_stun() > 0) txt = "can't think straight.";
+        if (Stunned_hero()) txt = "can't think straight.";
         break;
     case 5:
         txt = VOMITING_TEXTS[3];
@@ -538,9 +538,7 @@ const TIMED_PROPS = [
     // C ref: prop.h order, the order timeout.c walks when simultaneous timers
     // expire.  Entries without a C switch arm still need their countdown.
     timed_uprop('FIRE_RES', 'HFire_resistance', async () => {
-        const p = game.u?.uprops || {};
-        if (!p.EFire_resistance && !(p.HFire_resistance & ~TIMEOUT)
-            && !game.u?.formprops?.Fire_resistance /* FROMFORM */)
+        if (!(await import('./zap.js')).Fire_resistance())
             await pline('Your temporary ability to survive burning has ended.');
     }),
     timed_uprop('COLD_RES', 'HCold_resistance'),
@@ -550,9 +548,7 @@ const TIMED_PROPS = [
     timed_uprop('POISON_RES', 'HPoison_resistance'),
     timed_uprop('ACID_RES', 'HAcid_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EAcid_resistance && !((game.u?.uprops_extrinsic || {})[7 /* ACID_RES */] | 0)
-            && !(p.HAcid_resistance & ~TIMEOUT)
-            && !game.u?.formprops?.Acid_resistance /* youprop.h: resists_acid(&youmonst) */) {
+        if (!Acid_resistance_hero()) {
             /* timeout.c:812 — extend while eating an acidic corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_ACID_RES_T)) {
                 p.HAcid_resistance = (p.HAcid_resistance & ~TIMEOUT) | 1;
@@ -564,9 +560,7 @@ const TIMED_PROPS = [
     }),
     timed_uprop('STONE_RES', 'HStone_resistance', async () => {
         const p = game.u?.uprops || {};
-        if (!p.EStone_resistance && !((game.u?.uprops_extrinsic || {})[8 /* STONE_RES */] | 0)
-            && !(p.HStone_resistance & ~TIMEOUT)
-            && !game.u?.formprops?.Stone_resistance /* FROMFORM, e.g. a green slime hero */) {
+        if (!Stone_resistance_hero()) {
             /* timeout.c:827 — extend while eating a stoning corpse */
             if ((await import('./eat.js')).eating_dangerous_corpse(P_STONE_RES_T)) {
                 p.HStone_resistance = (p.HStone_resistance & ~TIMEOUT) | 1;
@@ -609,7 +603,7 @@ const TIMED_PROPS = [
           const { make_deaf } = await import('./potion.js');
           await make_deaf(0, true);
           game.botl = true;
-          if (!(u?.uprops?.HDeaf || 0)) await stop_occupation();
+          if (!Deaf_hero()) await stop_occupation();
       } },
     timed_uprop('SICK', 'Sick', expire_sickness),
     timed_uprop('STONED', 'Stoned', expire_stoned),
@@ -655,9 +649,7 @@ const TIMED_PROPS = [
     timed_uprop('INVIS', 'HInvis', expire_invisibility),
     // C ref: timeout.c case DISPLACED -> do_wear.c toggle_displacement(NULL,0,FALSE).
     timed_uprop('DISPLACED', 'HDisplaced', async () => {
-        const p = game.u?.uprops || {};
-        if (p.EDisplaced || p.DISPLACED_intrinsic
-            || (p.HDisplaced & ~TIMEOUT)) return;
+        if ((await import('./monmove.js')).Displaced()) return;
         const { toggle_displacement } = await import('./do_wear.js');
         await toggle_displacement(null, false, false);
     }),
@@ -689,8 +681,7 @@ const TIMED_PROPS = [
       },
       expire: expire_flying },
     timed_uprop('WWALKING', 'HWwalking', async () => {
-        const p = game.u?.uprops || {};
-        if (!p.EWwalking && !(p.HWwalking & ~TIMEOUT))
+        if (!Wwalking_hero())
             await pline('Your temporary ability to walk on liquid has ended.');
     }),
     timed_uprop('SWIMMING', 'HSwimming'),
@@ -702,8 +693,7 @@ const TIMED_PROPS = [
         }),
     timed_uprop('PASSES_WALLS', 'HPasses_walls',
         async () => {
-            if (game.u?.uprops?.EPasses_walls
-                || (game.u?.uprops?.HPasses_walls & ~TIMEOUT)) return;
+            if (Passes_walls_hero()) return;
             const { stuck_in_wall } = await import('./pray.js');
             if (stuck_in_wall()) {
                 await You_feel('hemmed in again.');
@@ -720,10 +710,8 @@ const TIMED_PROPS = [
     timed_uprop('PROTECTION', 'HProtection'),
     timed_uprop('PROT_FROM_SHAPE_CHANGERS', 'HProtection_from_shape_changers',
         async () => {
-            if (game.u?.uprops?.EProtection_from_shape_changers
-                || (game.u?.uprops?.HProtection_from_shape_changers & ~TIMEOUT))
-                return;
-            const { restartcham } = await import('./mon.js');
+            const { Protection_from_shape_changers, restartcham } = await import('./mon.js');
+            if (Protection_from_shape_changers()) return;
             await restartcham();
         }),
     timed_uprop('POLYMORPH', 'HPolymorph'),
@@ -904,18 +892,6 @@ function _clear_HFast() {
 // when an ESC at an earlier --More-- suppressed further messages.
 const _urgent_pline = (msg) => urgent_topl(msg);
 
-// C ref: hacklib.c an()/upstart()/vtense().
-function _an(s) {
-    if (!s) return 'an []';
-    if (/^the /i.test(s) || /^(molten lava|iron bars|ice)$/i.test(s)) return s;
-    // C's vowel test with its named exceptions.
-    if ('aeiouAEIOU'.includes(s[0]) && !/^one-/.test(s)
-        && !/^useful/i.test(s) && !/^unicorn/i.test(s) && !/^uranium/i.test(s)
-        && !/^eucalyptus/.test(s))
-        return `an ${s}`;
-    return `a ${s}`;
-}
-function _upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // C ref: you.h:322 mhe(mtmp) == genders[pronoun_gender(mtmp, PRONOUN_HALLU)].he
 // and mondata.c:1191 pronoun_gender() — DRAWS rn2(4) whenever the hero is
@@ -938,11 +914,9 @@ function _strsubst(buf, orig, repl) { return String(buf).replace(orig, repl); }
 // separate .extrinsic field), so the E* terms of each macro are folded in.
 function _Breathless() {
     // (HMagical_breathing || EMagical_breathing || breathless(youmonst.data))
-    return _prop('HMagical_breathing') > 0 || !!game.u?.EMagical_breathing;
+    return Breathless_hero();
 }
-function _Deaf() {
-    return _prop('HDeaf') > 0 || !!game.u?.EDeaf || !!game.u?.uroleplay?.deaf;
-}
+function _Deaf() { return Deaf_hero(); }
 
 // C ref: eat.c:3920 Popeye(threat) — eat.js owns the port; reached through a
 // dynamic import because eat.js sits in a module cycle with this file.
@@ -951,20 +925,8 @@ async function Popeye(threat) {
     return await popeye(threat);
 }
 
-// C ref: region.c:1341 region_danger() — hero standing in a gas cloud that can
-// actually hurt him.  js/region.js keeps the regions on game.regions with
-// .heroInside / .insideF === 'gas' (its INSIDE_GAS_CLOUD tag).
-function _region_danger() {
-    for (const r of (game.regions || [])) {
-        if (!r.heroInside) continue;
-        if (r.insideF !== 'gas') continue;
-        if (_Breathless()) continue;
-        if (game.u?.uprops?.HPoison_resistance || game.u?.EPoison_resistance)
-            continue;
-        return true;
-    }
-    return false;
-}
+// C ref: region.c region_danger(), including all breathing and poison sources.
+function _region_danger() { return region_danger_hero(); }
 
 // otyps by their objects.h macro name, never by a literal index; resolved
 // LAZILY for the reason js/light.js:47 gives (touching `objects` at module
@@ -1222,7 +1184,7 @@ export async function sickness_dialogue() {
             /* youmonst: with Hallucination, mhe()'s mon argument is unused --
                but the rn2(4) inside pronoun_gender() is still drawn. */
             const pronoun = _mhe(u);
-            buf += `  ${_upstart(pronoun)} ${vtense(pronoun, 'are')} inviting you in.`;
+            buf += `  ${upstart(pronoun)} ${vtense(pronoun, 'are')} inviting you in.`;
         }
         await _urgent_pline(buf);
     }
@@ -1303,7 +1265,7 @@ export async function slime_dialogue() {
                 if (!Blind()) await _urgent_pline(buf.replace('%s', hcolor('green')));
             } else {
                 await _urgent_pline(buf.replace('%s',
-                    _an(Hallucination() ? rndmonnam().name : 'green slime')));
+                    an(Hallucination() ? rndmonnam().name : 'green slime')));
             }
         } else {
             await _urgent_pline(buf);
@@ -1350,7 +1312,8 @@ export async function phaze_dialogue() {
 
     /* C: EPasses_walls || (HPasses_walls & ~TIMEOUT) — an extrinsic or a
        permanent intrinsic means there is nothing timing out to talk about. */
-    if (game.u?.EPasses_walls || ((game.u?.uprops_extrinsic || {})[53 /* PASSES_WALLS */] | 0)
+    if (game.u?.formprops?.Passes_walls || game.u?.EPasses_walls
+        || ((game.u?.uprops_extrinsic || {})[53 /* PASSES_WALLS */] | 0)
         || ((game.u?.uprops?.HPasses_walls | 0) & ~TIMEOUT)) return;
 
     if ((_prop('HPasses_walls') % 2) && i > 0 && i <= phaze_texts.length)
@@ -1449,7 +1412,7 @@ export async function slimed_to_death(kptr) {
         const slimebuf = 'green slime has been genocided...';
         /* vary the message: life-save by amulet, vs declining to die */
         if (game.last_msg === C.PLNMSG_OK_DONT_DIE)
-            await _urgent_pline(`Yes, you do.  ${_upstart(slimebuf)}`);
+            await _urgent_pline(`Yes, you do.  ${upstart(slimebuf)}`);
         else
             await _urgent_pline(`Unfortunately, ${slimebuf}`);
         /* die again; no possibility of an amulet this time */
@@ -1462,31 +1425,6 @@ export async function slimed_to_death(kptr) {
 
 function _carried(obj) { return obj?.where === OBJ_INVENT; }
 
-// C ref: mkobj.c get_obj_location(obj, xp, yp, locflags) — the full switch, as
-// {x,y} or null (js/light.js:170 keeps the same private copy; js/invent.js:1192
-// has a broken one that returns obj.ox/oy for every `where`).
-function _get_obj_location(obj, locflags) {
-    if (!obj) return null;
-    switch (obj.where) {
-    case OBJ_INVENT:
-        return { x: game.u?.ux, y: game.u?.uy };
-    case OBJ_FLOOR:
-        return { x: obj.ox, y: obj.oy };
-    case OBJ_MINVENT:
-        if (obj.ocarry?.mx) return { x: obj.ocarry.mx, y: obj.ocarry.my };
-        break;      /* !mx => migrating monster */
-    case OBJ_BURIED:
-        if (locflags & C.BURIED_TOO) return { x: obj.ox, y: obj.oy };
-        break;
-    case OBJ_CONTAINED:
-        if (locflags & C.CONTAINED_TOO)
-            return _get_obj_location(obj.ocontainer, locflags);
-        break;
-    default:
-        break;
-    }
-    return null;
-}
 
 // C ref: mondata.h is_silent(ptr) — msound == MS_SILENT, and monsym.h numbers
 // MS_SILENT 0.
@@ -1539,7 +1477,8 @@ export async function hatch_egg(arg, timeout) {
 
     /* only can hatch when in INVENT, FLOOR, MINVENT; get_obj_location() fails
        for MIGRATING, and for CONTAINED/BURIED without their locflags */
-    const loc = _get_obj_location(egg, 0);
+    const { get_obj_location } = await import('./light.js');
+    const loc = get_obj_location(egg, 0);
     let x = 0, y = 0;
     if (loc) {
         x = loc.x; y = loc.y;
@@ -1585,7 +1524,7 @@ export async function hatch_egg(arg, timeout) {
         if (cansee_hatchspot) {
             /* [bug? m_monnam() yields the accurate monster type regardless of
                hallucination] */
-            monnambuf = `${siblings ? 'some ' : ''}${siblings ? makeplural(m_monnam(mon)) : _an(m_monnam(mon))}`;
+            monnambuf = `${siblings ? 'some ' : ''}${siblings ? makeplural(m_monnam(mon)) : an(m_monnam(mon))}`;
             /* we don't learn the egg type here: that needs either seeing the
                egg hatch or already being familiar with it, plus being able to
                see the resulting monster (checked below) */
@@ -1696,7 +1635,7 @@ export async function see_lamp_flicker(obj, tailer) {
         await pline(`${Yname2(obj)} flickers${tailer}.`);
         break;
     case OBJ_FLOOR:
-        await You_see(`${_an(xname(obj))} flicker${tailer}.`);
+        await You_see(`${an(xname(obj))} flicker${tailer}.`);
         break;
     default:
         break;
@@ -1771,7 +1710,7 @@ export async function burn_object(arg, timeout) {
 
     /* only interested in INVENT, FLOOR, and MINVENT */
     let canseeit, whose = '', x = 0, y = 0;
-    const loc = _get_obj_location(obj, 0);
+    const loc = L.get_obj_location(obj, 0);
     if (loc) {
         x = loc.x; y = loc.y;
         canseeit = !Blind() && cansee(x, y);
@@ -1846,7 +1785,7 @@ export async function burn_object(arg, timeout) {
                         await pline(`${Yname2(obj)} seems about to go out.`);
                         break;
                     case OBJ_FLOOR:
-                        await You_see(`${_an(xname(obj))} about to go out.`);
+                        await You_see(`${an(xname(obj))} about to go out.`);
                         break;
                     default:
                         break;
@@ -1872,7 +1811,7 @@ export async function burn_object(arg, timeout) {
                     if (obj.otyp === _BRASS_LANTERN())
                         await You_see('a lantern run out of power.');
                     else
-                        await You_see(`${_an(xname(obj))} go out.`);
+                        await You_see(`${an(xname(obj))} go out.`);
                     break;
                 default:
                     break;
@@ -1952,7 +1891,7 @@ export async function burn_object(arg, timeout) {
                         await pline(`${Yname2(obj)} ${many ? 'are' : 'is'} consumed!`);
                         break;
                     case OBJ_FLOOR:
-                        await You_see(`${many ? 'some ' : ''}${many ? xname(obj) : _an(xname(obj))} consumed!`);
+                        await You_see(`${many ? 'some ' : ''}${many ? xname(obj) : an(xname(obj))} consumed!`);
                         need_newsym = true;
                         break;
                     default:
@@ -2042,7 +1981,7 @@ export async function end_burn(obj, timer_attached) {
 // early end_burn() adds the unused time back.
 export async function begin_burn(obj, already_lit) {
     const { artifact_light, arti_light_radius, candle_light_range,
-            new_light_source, LS_OBJECT } = await import('./light.js');
+            new_light_source, LS_OBJECT, get_obj_location } = await import('./light.js');
     const { xname, update_inventory } = await import('./invent.js');
     let radius = 3;
     let turns = 0;
@@ -2110,7 +2049,7 @@ export async function begin_burn(obj, already_lit) {
     }
 
     if (obj.lamplit && !already_lit) {
-        const loc = _get_obj_location(obj, C.CONTAINED_TOO | C.BURIED_TOO);
+        const loc = get_obj_location(obj, C.CONTAINED_TOO | C.BURIED_TOO);
         if (loc)
             new_light_source(loc.x, loc.y, radius, LS_OBJECT, obj);
         else
@@ -2535,6 +2474,7 @@ function _prop_timeout(p) {
 // C ref: timeout.c:2129 timer_sanity_check() — every impossible() here is a
 // diagnostic; none of them changes state.
 export async function timer_sanity_check() {
+    const { get_obj_location } = await import('./light.js');
     for (let curr = timer_base; curr; curr = curr.next) {
         const t_id = curr.tid;
         switch (curr.kind) {
@@ -2555,7 +2495,7 @@ export async function timer_sanity_check() {
                    able to validate the location, so skip the checks */
                 break;
             }
-            const loc = _get_obj_location(obj, C.CONTAINED_TOO | C.BURIED_TOO);
+            const loc = get_obj_location(obj, C.CONTAINED_TOO | C.BURIED_TOO);
             if (!loc) {
                 /* free? or on a shop's used-up bill? */
                 await impossible(`timer sanity: can't locate obj ${obj_adr}`

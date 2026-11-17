@@ -140,6 +140,7 @@ export function priestini(lvl, sroom, sx, sy, sanctum) {
 
 // C ref: priest.c:410 intemple(roomno), called from check_special_room().
 import { pline, update_topl, newsym, canseemon_shared, Deaf_hero, m_at, You_feel, verbalize } from './display.js';
+import { Hallucination_u } from './display.js';
 import { d } from './rng.js';
 import { TEMPLE, ACH_TMPL, SPINE, In_endgame, ALL_TRAPS } from './const.js';
 import { mon_learns_traps } from './montraps.js';
@@ -863,10 +864,7 @@ function sgn_(n) { return n > 0 ? 1 : n < 0 ? -1 : 0; }
 // C ref: rm.h IS_DOOR(typ).
 function IS_DOOR_(typ) { return typ === 23 /* DOOR */; }
 // C ref: youprop.h Hallucination.
-function Hallucination_() {
-    const u = game.u;
-    return !!u?.uhallu || ((u?.uprops?.Hallucination | 0) > 0);
-}
+function Hallucination_() { return Hallucination_u(); }
 // C ref: hack.h Is_astralevel(&u.uz).
 function Is_astralevel_() {
     const uz = game.u?.uz, al = game.astral_level;

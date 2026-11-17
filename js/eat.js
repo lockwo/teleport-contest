@@ -11,15 +11,15 @@ import { s_suffix } from './hacklib.js';
 import { pline, update_topl, y_n, note_topl, status_hold, Deaf_hero, You_feel, You_hear, flush_screen, display_nhwindow_message, Hallucination_u } from './display.js';
 import { poison_strdmg, exercise, acurr_eff, adjattrib, adjalign, change_luck } from './attrib.js';
 import { A_STR, A_INT, A_DEX, A_CON, EXT_ENCUMBER, STOMACH, ALTAR, NOSE, W_ARMOR, W_TOOL, W_AMUL, W_SADDLE, W_RING, G_GENOD, Has_contents,
-         INTRINSIC, INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_DELETED, COST_BITE,
+         INTRINSIC, INVIS, SEE_INVIS, DISPLACED, UNCHANGING, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT, OBJ_DELETED, COST_BITE,
          SELL_NORMAL, SELL_DONTSELL, Is_astralevel,
     is_ice, is_pool_or_lava } from './const.js';
 import { attacktype, dmgtype, AT_MAGC, AD_STUN, AD_HALU } from './monattk_data.js';
 import { SICK, STONED, VOMITING, SLIMED, HUNGER, LIGHT_HEADED } from './const.js';
-import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
+import { mflags1_of, mflags2_of, M1_ACID, M1_CLING, M1_POIS, M1_METALLIVORE, M1_NOHANDS, M1_CARNIVORE, M1_HERBIVORE, M1_HUMANOID, M1_SEE_INVIS, M2_HUMAN, M2_WERE, M2_ELF, M2_DWARF, M2_GNOME, M2_ORC, M2_PNAME, noncorporeal }
     from './monflags_data.js';
 import { more_experienced, newexplevel, pluslvl, has_innate_fromoutside } from './exper.js';
-import { incr_itimeout, set_itimeout, Poison_resistance, Wwalking_hero, Flying_hero, Levitation_hero, Hunger_hero, Acid_resistance_hero, Sick_resistance_hero, Stone_resistance_hero, Unchanging_hero } from './youprop.js';
+import { incr_itimeout, set_itimeout, Invis_hero, See_invisible_hero, Poison_resistance, Wwalking_hero, Flying_hero, Levitation_hero, Hunger_hero, Acid_resistance_hero, Sick_resistance_hero, Stone_resistance_hero, Unchanging_hero } from './youprop.js';
 
 // NOTE on imports: mkobj.js imports set_tin_variety() from this module, so a
 // static `import ... from './mkobj.js'` (or invent.js, which imports mkobj.js)
@@ -391,7 +391,6 @@ function objName(otmp) {
 }
 
 import { an } from './hacklib.js';
-function the(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 
 // C ref: eat.c food_xname(food, the_pfx) — the name used by the "you finish
 // eating" line: a corpse becomes "<species> corpse", anything else is its
@@ -558,6 +557,19 @@ async function do_reset_eat() {
 const SATIATED = 0, NOT_HUNGRY = 1, HUNGRY = 2, WEAK = 3, FAINTING = 4,
       FAINTED = 5, STARVED = 6;
 const A_STR_EAT = A_STR;
+
+// C ref: eat.c init_uhunger() — reset nutrition and its temporary strength loss.
+export async function init_uhunger() {
+    const u = game.u;
+    game.botl = u.uhs !== NOT_HUNGRY || (u.atemp?.a?.[A_STR_EAT] | 0) < 0;
+    u.uhunger = 900;
+    u.uhs = NOT_HUNGRY;
+    if ((u.atemp?.a?.[A_STR_EAT] | 0) < 0) {
+        u.atemp.a[A_STR_EAT] = 0;
+        const { encumber_msg } = await import('./invent.js');
+        await encumber_msg();
+    }
+}
 
 // C ref: eat.c newuhs(incr) — recompute u.uhs from u.uhunger and announce any
 // change.  Ported in full: the mid-meal suppression (C stashes the hunger
@@ -1277,7 +1289,7 @@ export async function doeat() {
             const ref = { obj: otmp };
             ok = await art.retouch_object(ref, false);
             otmp = ref.obj;
-        } else ok = await art.touch_artifact(otmp, game.youmonst);
+        } else ok = await art.touch_artifact(otmp, game.u);
         if (!ok) return ECMD_TIME_;                      // got blasted so use a turn
     }
     // C ref: eat.c:2876 — a rust monster spits out rustproofed metal.
@@ -1809,12 +1821,6 @@ function type_is_pname(mnum) {
     const ptr = monster_by_pmidx(mnum);
     return !!ptr && (mflags2_of(ptr) & M2_PNAME) !== 0;
 }
-// C ref: mondata.h the_unique_pm(ptr) — a G_UNIQ species that isn't a pname.
-function the_unique_pm(mnum) {
-    const ptr = monster_by_pmidx(mnum);
-    return !!ptr && ((ptr.geno || 0) & 0x1000 /* G_UNIQ */) !== 0
-           && !type_is_pname(mnum);
-}
 // C ref: mondata.h flesh_petrifies(pm) — cockatrice, chickatrice or Medusa.
 function flesh_petrifies(mnum) {
     const nm = corpse_mon_name(mnum);
@@ -2024,10 +2030,7 @@ async function cpostfx(pm) {
             if (nm === 'stalker') {
                 const { self_invis_message } = await import('./potion.js');
                 const { newsym } = await import('./display.js');
-                /* Invis == (HInvis || EInvis) && !BInvis */
-                if (!((u.uprops.HInvis || u.HInvis
-                       || u.uprops.EInvis || _invent.worn_extrinsic(INVIS))
-                      && !_invent.worn_blocked(INVIS))) {
+                if (!Invis_hero()) {
                     u.uprops.HInvis = ((u.uprops.HInvis | 0) & ~P_TIMEOUT)
                         | rn1(100, 50);
                     if (!_vision.Blind() && !_invent.worn_blocked(INVIS))
@@ -2448,7 +2451,7 @@ async function eatcorpse(otmp) {
         let pmxnam = food_xname(otmp, false);
         if (/^the /i.test(pmxnam)) pmxnam = pmxnam.slice(4);
         const prefix = type_is_pname(mnum) ? ''
-            : the_unique_pm(mnum) ? 'The ' : 'This ';
+            : _objnam.the_unique_pm(monster_by_pmidx(mnum)) ? 'The ' : 'This ';
         const tasteWord = hallu
             ? (yummy ? (hero_is_pm('tiger') ? 'gr-r-reat' : 'gnarly')
                      : palatable ? 'copacetic' : 'grody')
@@ -3364,11 +3367,11 @@ export async function consume_tin(mesg) {
             what = T.do_name.rndmonnam().name;
         } else {
             what = nm;
-            if (the_unique_pm(mnum)) which = 2;
+            if (_objnam.the_unique_pm(ptr)) which = 2;
             else if (type_is_pname(mnum)) which = 1;
         }
         if (which === 0) what = makeplural(what);
-        else if (which === 2) what = the(what);
+        else if (which === 2) what = _objnam.the(what);
 
         if (!always_eat) {
             await pline(`It smells like ${what}.`);
@@ -3779,11 +3782,11 @@ export async function eataccessory(otmp) {
 
             switch (typ) {
             case RIN_SEE_INVISIBLE: {
-                // C: set_mimic_blocking() + see_monsters().  js/ has no
-                // set_mimic_blocking().
-                const { see_monsters } = await import('./display.js');
+                const { see_monsters, set_mimic_blocking } = await import('./display.js');
+                set_mimic_blocking();
                 await see_monsters();
-                if (u?.uprops?.HInvis && !oldprop && !_vision?.Blind?.()) {
+                if (Invis_hero() && !oldprop && !_invent.worn_extrinsic(SEE_INVIS)
+                    && !(mflags1_of(hero_data_eat()) & M1_SEE_INVIS) && !_vision.Blind()) {
                     const { newsym } = await import('./display.js');
                     newsym(u.ux, u.uy);
                     await pline('Suddenly you can see yourself.');
@@ -3792,11 +3795,9 @@ export async function eataccessory(otmp) {
                 break;
             }
             case RIN_INVISIBILITY:
-                // C: !oldprop && !EInvis && !BInvis && !See_invisible
-                // && !Blind.  This port has no EInvis/BInvis slots and reads
-                // see-invisible out of u.uprops.HSee_invisible.
-                if (!oldprop && !game.u?.uprops?.HSee_invisible
-                    && !_vision?.Blind?.()) {
+                if (!oldprop && !_invent.worn_extrinsic(INVIS)
+                    && !u.uprops?.BInvis && !_invent.worn_blocked(INVIS)
+                    && !See_invisible_hero() && !_vision.Blind()) {
                     const { newsym } = await import('./display.js');
                     newsym(u.ux, u.uy);
                     await pline(`Your body takes on a ${

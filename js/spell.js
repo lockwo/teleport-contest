@@ -28,7 +28,7 @@ import { mflags2_of, M2_UNDEAD,
          is_animal } from './monflags_data.js';
 import { discover_object, observe_object } from './o_init.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { distmin, dist2 } from './hacklib.js';
+import { distmin, dist2, an } from './hacklib.js';
 import { cansee, Blind } from './vision.js';
 import { hcolor, hliquid } from './do_name.js';
 import { find_ac } from './u_init.js';
@@ -1291,7 +1291,6 @@ function sp_enfolds(ptr) {
     return ptr?.pmidx === sp_pm('trapper') || ptr?.pmidx === sp_pm('lurker above');
 }
 // C ref: objnam.c an(str).
-function sp_an(s) { return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`; }
 // C ref: hacklib.c strcmpi(s1, s2) — case-insensitive strcmp; returns the
 // difference of the first differing (lowercased) characters.
 function sp_strcmpi(s1, s2) {
@@ -1400,7 +1399,7 @@ export async function deadbook(book2) {
         /* next handle the effect on things you're carrying */
         {
             const { unturn_dead } = await import('./zap.js');
-            await unturn_dead(game.youmonst || u);
+            await unturn_dead(u);
         }
         /* last place some monsters around you */
         {
@@ -1621,7 +1620,7 @@ export async function cast_protection() {
                            : IS_STWALL(rmtyp) ? 'stone'
                              : 'air');
                 await pline(`The ${atmosphere} around you begins to shimmer `
-                            + `with ${sp_an(hgolden)} haze.`);
+                            + `with ${an(hgolden)} haze.`);
             }
         }
         u.uspellprot = (u.uspellprot | 0) + gain;

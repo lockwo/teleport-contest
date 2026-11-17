@@ -12,7 +12,7 @@
 import { acurr_eff, exercise } from './attrib.js';
 import { create_nhwindow, start_menu, add_menu, end_menu, select_menu, destroy_nhwindow, nul_glyphinfo } from './windows.js';
 import { NO_COLOR } from './terminal.js';
-import { Levitation_hero, Flying_hero, Stunned_hero, Passes_walls_hero } from './youprop.js';
+import { Levitation_hero, Flying_hero, Stunned_hero, Passes_walls_hero, Confusion_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { rn2, rnd } from './rng.js';
 import { isok, dist2 } from './hacklib.js';
@@ -27,7 +27,7 @@ import { hero_liquid_goodpos, vault_tele, level_tele_trap, u_locomotion } from '
 import { set_utrap } from './polyself.js';
 import { In_hell, u_on_newpos, is_exclusion_zone } from './dungeon.js';
 import { noit_mon_nam } from './do_name.js';
-import { In_endgame, is_pool, is_lava } from './const.js';
+import { In_endgame, is_pool, is_lava, db_under_typ } from './const.js';
 import { Monnam, canspotmon, mon_nam } from './uhitm.js';
 import { sensemon } from './mon.js';
 import { canseemon_shared as canseemon_tele } from './display.js';
@@ -75,10 +75,12 @@ function closed_door(x, y) {
 }
 
 // C ref: monmove.c accessible(x, y) — ACCESSIBLE(SURFACE_AT(x,y)) && not a
-// closed door.  SURFACE_AT only differs in front of a closed drawbridge, which
-// the contest levels never place under a teleport destination.
+// closed door.  SURFACE_AT only differs in front of a closed drawbridge.
 function accessible(x, y) {
-    const typ = terrainTyp(x, y);
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    /* SURFACE_AT: the terrain under a raised drawbridge */
+    const typ = loc.typ === DRAWBRIDGE_UP ? db_under_typ(loc.drawbridgemask) : loc.typ;
     return typ != null && typ >= DOOR && !closed_door(x, y);
 }
 
@@ -1482,7 +1484,7 @@ function t_at_(x, y) {
 // C ref: region.c in_out_region(x, y) — js/region.js's real export.
 function in_out_region_(x, y) { return in_out_region(x, y); }
 // C ref: hack.h youmonst / mons[u.umonster].
-function youmonst_() { return game.youmonst || game.u; }
+function youmonst_() { return game.u; }
 function youmonster_data() { return youmonst_data(); }
 // C ref: mons[u.umonster] — enexto_core()'s null-mdat default.  The hero's
 // own permonst (game.u.data is only set while polymorphed).
@@ -1510,7 +1512,7 @@ function uchain_() { return game.u?.uchain || null; }
 function carried_(obj) { return obj?.where === OBJ_INVENT; }
 function Stunned_tp() { return Stunned_hero(); }
 function HStun_tp() { return game.u?.uprops?.Stun || 0; }
-function Confusion_tp() { return HProp_tp('HConfusion') > 0; }
+function Confusion_tp() { return Confusion_hero(); }
 // C ref: teleport.c:1485 make_stunned(..., FALSE); timeout.js owns recovery.
 function make_stunned_tp(xtime) {
     const u = game.u;

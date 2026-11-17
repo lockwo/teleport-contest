@@ -10,6 +10,7 @@
 // For browser play, see nethack.js (uses NethackGame directly).
 
 import { game, resetGame, reset_process_statics } from './gstate.js';
+import { an } from './hacklib.js';
 import { recorder_ubirthday } from './calendar.js';
 import { initRng, enableRngLog, getRngLog } from './rng.js';
 import { pushKey, nhgetch } from './input.js';
@@ -169,6 +170,13 @@ export class NethackGame {
                 mspeed: n(m.mspeed),
                 mstrategy: u(m.mstrategy),
                 mstate: u(m.mstate),
+                mcan: b(m.mcan),
+                minvis: b(m.minvis),
+                mtrapped: b(m.mtrapped),
+                mblinded: n(m.mblinded),
+                meating: n(m.meating),
+                mleashed: b(m.mleashed),
+                minventCount: m.minvent?.length ?? 0,
                 dead: (n(m.mhp) < 1) ? 1 : 0,
             });
         }
@@ -220,6 +228,22 @@ export class NethackGame {
             uhp: (u.uhp == null ? 0 : (u.uhp | 0)),
             uhpmax: (u.uhpmax == null ? 0 : (u.uhpmax | 0)),
             multi: (game.multi == null ? 0 : (game.multi | 0)),
+            uen: u.uen | 0,
+            uenmax: u.uenmax | 0,
+            ulevel: u.ulevel | 0,
+            uexp: u.uexp ?? 0,
+            money: (game.invent || []).reduce((sum, o) => sum + (o.oclass === 12 ? (o.quan ?? 0) : 0), 0),
+            uhunger: u.uhunger | 0,
+            uluck: u.uluck | 0,
+            alignrecord: u.ualign?.record | 0,
+            acurr: [...(u.acurr?.a || [])],
+            amax: [...(u.amax?.a || [])],
+            aexe: [...(u.aexe?.a || Array(6).fill(0))],
+            utrap: u.utrap | 0,
+            utraptype: u.utraptype | 0,
+            ustuck: u.ustuck?.m_id ?? 0,
+            usteed: u.usteed?.m_id ?? 0,
+            umonnum: u.umonnum | 0,
             mons: out,
             nmon: out.length,
             objs: fobjs,
@@ -779,7 +803,7 @@ export class NethackGame {
             if (gend === 1) nm = roles[i].name.f;
             else if (gend < 0) nm = nm + '/' + roles[i].name.f;
         }
-        return /^[aeiou]/i.test(nm) ? 'an ' + nm : 'a ' + nm;
+        return an(nm);
     }
 
     // Build the full chargen menu line list (matching C's add_menu/add_menu_str

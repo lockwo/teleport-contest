@@ -58,9 +58,10 @@ function dlb_fgets(data, pos, max) {
 // C ref: rumors.c:577 init_oracles(fp) — skip the "don't edit" comment, read
 // the count, then that many "%5lx" offsets.  Called once; oracle_loc is then
 // mutated by outoracle() as oracularities are used up.
-let _oracles = null;
+// C saves oracle_cnt and oracle_loc in savegamestate(). Keep the table on
+// game so it survives a real process boundary and resets for a new game.
 function init_oracles() {
-    if (_oracles) return _oracles;
+    if (game.oracles) return game.oracles;
     let { next } = dlb_fgets(ORACLES_DATA, 0, BUFSZ);       /* comment */
     let line;
     ({ line, next } = dlb_fgets(ORACLES_DATA, next, BUFSZ));
@@ -72,8 +73,8 @@ function init_oracles() {
             loc.push(parseInt(line.trim(), 16));
         }
     }
-    _oracles = { cnt: cnt > 0 ? cnt : 0, loc };
-    return _oracles;
+    game.oracles = { cnt: cnt > 0 ? cnt : 0, loc };
+    return game.oracles;
 }
 
 // C ref: rumors.c:640 outoracle(special, delphi).  The one draw is
@@ -538,8 +539,8 @@ export function restore_oracles(nhfp) {
             loc.push(Sfi_ulong(nhfp, 'oracle-oracle_loc'));
         game.oracle_flg = 1; /* no need to call init_oracles() */
     }
-    _oracles = { cnt, loc };
-    return _oracles;
+    game.oracles = { cnt, loc };
+    return game.oracles;
 }
 
 // ── CapMons[]: the capitalized-monster-name list the() consults ─────────────

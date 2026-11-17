@@ -23,7 +23,7 @@ import { P_NONE, P_BARE_HANDED_COMBAT, P_AXE, P_SPEAR, P_PICK_AXE,
          P_LAST_WEAPON, P_LAST_SPELL, P_NUM_SKILLS,
          P_TWO_WEAPON_COMBAT, P_RIDING, A_STR, A_DEX,
          W_ARM, W_ARMC, W_ARMU, W_ARMG, W_RINGL, W_RINGR,
-         POOL, MOAT, WATER, OBJ_INVENT, OBJ_MINVENT, TIP_ENHANCE } from './const.js';
+         is_pool as is_pool_at, OBJ_INVENT, OBJ_MINVENT, TIP_ENHANCE } from './const.js';
 import { name_to_pmidx, monster_by_pmidx, adj_lev } from './makemon.js';
 import { mon_hates_silver, is_vampshifter } from './mon.js';
 import { which_armor } from './worn.js';
@@ -116,7 +116,7 @@ import { youmonst_data } from './invent.js';
 function mdata_of(mon) {
     if (!mon) return null;
     if (mon.data) return mon.data;
-    if (mon === game.u || mon._isyou || mon === game.youmonst) {
+    if (mon === game.u || mon._isyou) {
         return youmonst_data();
     }
     return null;
@@ -163,13 +163,6 @@ export function hitval(otmp, mon) {
     return tmp;
 }
 
-// rm.h is_pool(x,y) — POOL/MOAT/WATER at that square.  Read through the live
-// level map; an off-level or unknown square is dry.
-function is_pool_at(x, y) {
-    if (x == null || y == null) return false;
-    const typ = game.level?.locations?.[x]?.[y]?.typ;
-    return typ === POOL || typ === MOAT || typ === WATER;
-}
 
 
 // C ref: weapon.c:216 dmgval(otmp, mon).
@@ -325,7 +318,7 @@ export function special_dmgval(magr, mdef, armask) {
 }
 
 function is_hero(mon) {
-    return !!mon && (mon === game.u || mon === game.youmonst || mon._isyou === true);
+    return !!mon && (mon === game.u || mon._isyou === true);
 }
 
 // C ref: weapon.c:436 silver_sears(magr, mdef, silverhit) — "Your silver rings

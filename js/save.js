@@ -21,7 +21,7 @@ import { game } from './gstate.js';
 import { GameMap } from './game.js';
 import { monster_by_pmidx } from './makemon.js';
 import { forget_temple_entry } from './priest.js';
-import { reverse_trap_chain } from './mkroom.js';
+import { restore_level_chains } from './mkroom.js';
 import { NO_COLOR } from './terminal.js';
 import { y_n, pline, docrt, getmsghistory } from './display.js';
 import { nhgetch } from './input.js';
@@ -75,6 +75,7 @@ export function serializeGameState(root) {
 
     function enc(val) {
         if (val === null) return null;
+        if (val === Symbol.for('youmonst')) return { $hero: 1 };
         const t = typeof val;
         if (t === 'number' || t === 'string' || t === 'boolean') return val;
         if (t !== 'object') return undefined; // functions / symbols / undefined
@@ -140,9 +141,9 @@ function copy_other_levels_for_save() {
     for (const key of Object.keys(store)) {
         const ent = store[key];
         if (key === cur || !ent?.level) continue;
-        /* dosave0()'s getlev()+savelev() rewrite of this level's file reverses
-           ftrap once; the revisit after the restore reverses it again */
-        reverse_trap_chain(ent.level);
+        // dosave0() reads and rewrites each inactive level file once.
+        ent.stairs = restore_level_chains(ent.level, ent.stairs);
+        ent.level.light_base?.reverse();
         const away = now - (ent.omoves | 0);
         if (away !== 0) {
             for (const mtmp of (ent.level.monsters || [])) {

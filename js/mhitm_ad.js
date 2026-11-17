@@ -42,7 +42,7 @@
 // last faithful step and says so, rather than inventing a roll: an explicit
 // screen divergence beats a silent PRNG desync.
 
-import { Half_physical_damage_hero, Levitation_hero, Flying_hero } from './youprop.js';
+import { Half_physical_damage_hero, Levitation_hero, Flying_hero, Blindfolded_hero } from './youprop.js';
 import { makeplural } from './plural.js';
 import { hliquid } from './do_name.js';
 import { game } from './gstate.js';
@@ -72,7 +72,7 @@ import { sticks } from './monattk_data.js';
 import { monster_by_pmidx, add_to_minv, name_to_pmidx as name_to_pmidx_ma } from './makemon.js';
 import { resists_fire as md_resists_fire, resists_cold as md_resists_cold, resists_elec as md_resists_elec,
     resists_acid as md_resists_acid, resists_ston as md_resists_ston, resists_poison as md_resists_poison,
-    resists_sleep as md_resists_sleep, on_fire, dmgtype_fromattack, resists_blnd_by_arti, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
+    resists_sleep as md_resists_sleep, on_fire, resists_blnd as md_resists_blnd, slimeproof, poly_when_stoned as poly_when_stoned_md } from './mondata.js';
 import { defends, artifact_hit, permapoisoned, defended } from './artifact.js';
 import {
     objects as OBJECTS, POTION_CLASS, SCROLL_CLASS, SPBOOK_CLASS,
@@ -273,12 +273,12 @@ export function can_blnd(magr, mdef, aatyp, obj, ops) {
         && pd?.name === 'raven') return false;
 
     const ublindf = game.ublindf;
-    const Blindfolded = !!ublindf && ublindf.otyp !== LENSES_OTYP;
+    const Blindfolded = Blindfolded_hero();
     switch (aatyp) {
     case AT_EXPL: case AT_BOOM: case AT_GAZE: case AT_MAGC: case AT_BREA:
         /* light-based attacks may be cancelled or resisted */
         if (magr && !is_hero(magr) && magr.mcan) return false;
-        return !resists_blnd(mdef, pd);
+        return !md_resists_blnd(is_hero(mdef) ? game.u : mdef, pd);
 
     case AT_WEAP: case AT_SPIT: case AT_NONE:
         /* an object is used (thrown/spit/other) */
@@ -327,22 +327,7 @@ export function can_blnd(magr, mdef, aatyp, obj, ops) {
     }
     return true;
 }
-// C ref: mondata.c:248 resists_blnd(mon).
-function resists_blnd(mon, ptr) {
-    const is_you = is_hero(mon);
-    if (is_you ? (Blind() || Unaware())
-               : (mon.mblinded || !mon.mcansee || !haseyes(ptr) || mon.msleeping))
-        return true;
-    /* yellow light, Archon; !dust vortex, !cobra, !raven */
-    if (dmgtype_fromattack(ptr, AD_BLND, AT_EXPL)
-        || dmgtype_fromattack(ptr, AD_BLND, AT_GAZE))
-        return true;
-    /* Sunsword */
-    if (resists_blnd_by_arti(is_you ? game.youmonst : mon)) return true;
-    return false;
-}
 const CREAM_PIE = 287, BLINDING_VENOM = 479, POT_BLINDNESS = 300;
-const LENSES_OTYP = 232;
 // C ref: mondata.h:59 flaming(ptr).
 const flaming_pd = (ptr) => ['fire vortex', 'flaming sphere', 'fire elemental', 'salamander'].includes(ptr?.name);
 // C ref: objnam.c objdescr_is(o, "visored helmet") — the SHUFFLED appearance
@@ -1826,7 +1811,7 @@ async function mhitm_ad_phys_hero(mtmp, mattk, mhm, ops) {
         }
         // C ref: uhitm.c:4059 — `mhm->damage += dmgval(otmp, mdef)` (full dmgval:
         // per-otyp bonus dice, blessed-vs-undead, erosion).
-        mhm.damage += dmgval(otmp, game.youmonst || game.u);
+        mhm.damage += dmgval(otmp, game.u);
         const marmg = wa(mtmp, W_ARMG);
         if (marmg && marmg.otyp === GAUNTLETS_OF_POWER_OTYP)
             mhm.damage += rn1(4, 3); /* 3..6 */
@@ -1835,7 +1820,7 @@ async function mhitm_ad_phys_hero(mtmp, mattk, mhm, ops) {
         if (otmp.oartifact) {
             const { artifact_hit: ahit } = await import('./artifact.js');
             const dmg = { d: mhm.damage };
-            art_hit = await ahit(mtmp, game.youmonst || game.u, otmp, dmg, mhm.dieroll);
+            art_hit = await ahit(mtmp, game.u, otmp, dmg, mhm.dieroll);
             mhm.damage = dmg.d;
         }
         if (!otmp.oartifact || !art_hit) {

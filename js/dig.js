@@ -9,11 +9,13 @@
 
 import { game, hooks } from './gstate.js';
 import { cvt_sdoor_to_door } from './detect.js';
-import { Invis_hero, Fumbling_hero, Deaf_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { Invis_hero, Fumbling_hero, Deaf_hero, Passes_walls_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { Breathless_hero } from './invent.js';
 import { rnd, rn2, rn1 } from './rng.js';
 import { align_str } from './role.js';
 import { hard_helmet } from './do_wear.js';
 import { newsym, feel_location, feel_newsym, You_hear, You_feel, show_glyph_cell, flush_screen, verbalize, stairway_at, canseemon_shared } from './display.js';
+import { Hallucination_u } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, STOMACH, Unaware, is_pool, is_lava, is_moat, is_pool_or_lava, is_ice } from './const.js';
 import { CLR_WHITE } from './terminal.js';
 import { unblock_point, recalc_block_point, cansee, couldsee, Blind } from './vision.js';
@@ -25,7 +27,7 @@ import {
     W_NONDIGGABLE, isok, Is_earthlevel,
 } from './const.js';
 import { mksobj_at, ROCK, BOULDER, STATUE, base_oc_weight,
-         objects as OBJECTS_TBL, start_object_timer, stop_object_timer } from './mkobj.js';
+         objects as OBJECTS_TBL, start_object_timer, stop_object_timer, rnd_treefruit_at } from './mkobj.js';
 import {
     DIGTYP_UNDIGGABLE, DIGTYP_ROCK, DIGTYP_STATUE, DIGTYP_BOULDER,
     DIGTYP_DOOR, DIGTYP_TREE, N_DIRS, N_DIRS_Z, TT_WEB,
@@ -237,12 +239,7 @@ function sobj_at_boulder(x, y) {
 
 // C ref: hack.h Hallucination — the timer lives under three different names in
 // this port depending on which file wrote it (see cmd.js Hallucination()).
-function Hallucination() {
-    const u = game.u;
-    if (!u) return false;
-    if ((u.HHalluc_resistance || 0) > 0) return false;
-    return !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
-}
+function Hallucination() { return Hallucination_u(); }
 
 const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 
@@ -275,15 +272,6 @@ export async function draft_message(unexpected) {
             await You_feel(`like ${DRAFT_REACTION[dridx]}.`);
         }
     }
-}
-
-// C ref: mkobj.c treefruits[] + rnd_treefruit_at() = mksobj_at(ROLL_FROM(...)),
-// i.e. an rn2(5) that mdig_tunnel/zap-dig draw whenever a felled tree drops
-// fruit.  Skipping it left the stream one rn2(5) short on every arboreal level.
-const TREEFRUITS = [277 /*APPLE*/, 278 /*ORANGE*/, 279 /*PEAR*/,
-                    281 /*BANANA*/, 276 /*EUCALYPTUS_LEAF*/];
-function rnd_treefruit_at(x, y) {
-    return mksobj_at(TREEFRUITS[rn2(TREEFRUITS.length)], x, y, true, false);
 }
 
 // C ref: hack.c losehp(n, knam, k_format) — delegates to do.js's complete port
@@ -1046,8 +1034,6 @@ async function fire_damage_chain(chain, force, here, x, y) {
 async function next_to_u() {
     return await (await import('./apply.js')).next_to_u();
 }
-// C ref: dungeon.c get_level(newlevel, levnum) / ledger_no(lev).
-function get_level(dst, levnum) { dst.dnum = game.u?.uz?.dnum ?? 0; dst.dlevel = levnum; }
 // C ref: dungeon.c:1376 ledger_no(lev).  js/bones.js:69, js/dungeon.js:1706,
 // js/dog.js:530 and js/save.js:287 keep the same private copy for the same
 // import-order reason; this one used to drop the +ledger_start term.
@@ -1412,7 +1398,7 @@ export async function dig() {
         } else if (ttmp && ttmp.ttyp === BEAR_TRAP && u.utrap) {
             if (rnl(7) > (Fumbling() ? 1 : 4)) {
                 const { dmgval, dbon } = await import('./weapon.js');
-                let dmg = dmgval(uwep, game.youmonst || null) + dbon();
+                let dmg = dmgval(uwep, game.u) + dbon();
                 if (dmg < 1) dmg = 1;
                 else if (game.uarmf) dmg = Math.trunc((dmg + 1) / 2);
                 const { body_part } = await import('./invent.js');
@@ -1881,7 +1867,8 @@ export async function digactualhole(x, y, madeby, ttyp) {
                         return;
                     } else {
                         const { depth } = await import('./hacklib.js');
-                        get_level(tolevel, depth(u.uz) + 1);
+                        const { get_level } = await import('./do.js');
+                        Object.assign(tolevel, get_level(depth(u.uz) + 1));
                     }
                     if (mtmp.isshk) {
                         const { make_angry_shk } = await import('./shk.js');
@@ -2789,7 +2776,7 @@ export async function bury_you() {
         else await pline(`The ${surface(u.ux, u.uy)} opens beneath you and you fall in!`);
 
         u.uburied = true;
-        const Breathless = false;        /* no polyform is modelled here */
+        const Breathless = Breathless_hero();
         if (!uprop('Strangled') && !Breathless) {
             u.uprops = u.uprops || {};
             u.uprops.Strangled = 6;
@@ -2829,7 +2816,7 @@ export async function escape_tomb() {
         /* C: dotele(FALSE) — calls unearth_you(); teleport.c dotele is unported */
     } else if (u.uburied) {              /* still buried after 'port attempt */
         const amorphous = !!(mflags1_(data) & M1_AMORPHOUS);
-        const Passes_walls = !!uprop('Passes_walls');
+        const Passes_walls = Passes_walls_hero();
         const unsolid = !!(mflags1_(data) & M1_UNSOLID);
         const tunnels = !!(mflags1_(data) & M1_TUNNEL);
         const needspick = !!(mflags1_(data) & M1_NEEDPICK);

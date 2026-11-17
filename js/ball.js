@@ -22,7 +22,7 @@ import { place_object, remove_object } from './mkobj.js';
 import { t_at, reset_utrap } from './trap.js';
 import { losehp_do } from './do.js';
 import { IS_OBSTRUCTED, IS_DOOR, D_CLOSED, D_LOCKED, is_pit, is_hole, POOL,
-         DRAWBRIDGE_UP, HMON_DRAGGED, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
+         is_pool as IS_POOL_AT, HMON_DRAGGED, SLT_ENCUMBER, OBJ_FREE, OBJ_FLOOR, OBJ_INVENT } from './const.js';
 import { Levitation_hero, Half_physical_damage_hero } from './youprop.js';
 
 // C ref: you.h — bit masks for u.bc_felt and the bc_control argument.
@@ -36,12 +36,6 @@ const dist2 = (x0, y0, x1, y1) => (x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1);
 const distmin = (x0, y0, x1, y1) => Math.max(Math.abs(x0 - x1), Math.abs(y0 - y1));
 
 const at = (x, y) => game.level?.at(x, y) || null;
-// C ref: rm.h IS_POOL(typ) — POOL <= typ <= DRAWBRIDGE_UP (pool, moat, water,
-// raised drawbridge), which is what ball.c's is_pool() tests.
-function IS_POOL_AT(x, y) {
-    const typ = at(x, y)?.typ;
-    return typ != null && typ >= POOL && typ <= DRAWBRIDGE_UP;
-}
 // C ref: ball.c IS_CHAIN_ROCK(x,y) — the chain may never be moved into solid
 // rock or a closed/locked door.
 function IS_CHAIN_ROCK(x, y) {
@@ -356,9 +350,7 @@ export async function drag_ball(x, y, allow_drag = true) {
     // never fired; it is ported for the geometry, minus the hmon() attack on a
     // monster standing where the hero gets yanked (which needs the full
     // hero-melee damage path).
-    // C ref: ball.c — is_pool() is IS_POOL(typ), i.e. POOL..DRAWBRIDGE_UP, not
-    // just POOL; the extra `typ == POOL || !is_pool(ball) || ball typ == POOL`
-    // clause exempts a chain that merely continues the water the ball is in.
+    // C ref: ball.c drag_ball(): continuing the same moat does not yank the hero.
     const chain_is_pool = IS_POOL_AT(uchain.ox, uchain.oy);
     const chainTrap = t_at(uchain.ox, uchain.oy);
     if ((chain_is_pool

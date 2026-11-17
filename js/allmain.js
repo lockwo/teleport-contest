@@ -4,10 +4,10 @@
 // Game start-up (newgame) and the per-turn driver.
 // Real mklev.js handles level generation for screen parity.
 
-import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero } from './youprop.js';
+import { Half_physical_damage_hero, Hunger_hero, Wounded_legs_hero, Levitation_hero, Unchanging_hero } from './youprop.js';
 import { ROLE_PM_BASE, FAST, COLNO } from './const.js';
 import { NetHackPanic, NetHackGameOver } from './panic.js';
-import { game, hooks, svc_context_run } from './gstate.js';
+import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
@@ -41,7 +41,7 @@ import { Unaware,
     A_ORIGINAL, A_CURRENT, Upolyd,
     Is_waterlevel, Is_airlevel, ismnum, POLY_NOFLAGS, TT_LAVA, In_endgame, TIMEOUT, INTRINSIC, WRITING,
     is_pool } from './const.js';
-import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion, paintMenuLine } from './invent.js';
+import { near_capacity, reroll_menu, setnotworn, freeinv, clear_splitobjs, worn_extrinsic, Slow_digestion, paintMenuLine, Breathless_hero } from './invent.js';
 import { menuHeadStyle } from './menuattr.js';
 import { exercise, acurr_eff, change_luck } from './attrib.js';
 import { settrack } from './track.js';
@@ -52,6 +52,10 @@ import { livelog_printf, LL_ACHIEVE, LL_DEBUG } from './livelog.js';
 import { check_special_room } from './shkroom.js';
 import { runtime_info_init } from './mdlib.js';
 import { map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
+
+// C ref: allmain.c mvl_change is process-local, not part of saved context.
+let mvl_change = 0;
+register_process_static(() => { mvl_change = 0; });
 
 const PM_KNIGHT = 4;
 const PM_WIZARD = 12;
@@ -350,6 +354,12 @@ async function newgame_real() {
         await bot();
     }
 
+    // C ref: allmain.c:824. Initialize skills, spell power and AC after the
+    // first bot() but before the legacy pager. The already-published status
+    // stays unchanged while the underlying hero state is ready for play.
+    u_init_skills_discoveries();
+    find_ac();
+
     // C ref: allmain.c — com_pager("legacy") when the legacy option is on.
     // The legend menu overlays the already-drawn map (clearing only its own
     // columns) and the status line underneath still shows pre-find_ac AC (0).
@@ -361,17 +371,10 @@ async function newgame_real() {
         await com_pager_legacy();
     }
 
-    // u_init_skills_discoveries() runs after the legend's bot, before welcome.
-    // find_ac() gives the real AC shown from the welcome step on; the starting-
-    // Pw floor (spellcasters' Pw forced up to SPELL_LEV_PW(1)) is applied here
-    // too, so the legend status line still shows the pre-bump (newpw) Pw value
-    // and the welcome step onward shows the bumped value (e.g. Healer Pw 3->5).
-    find_ac();
-    u_init_skills_discoveries();
-
     // C ref: allmain.c newgame():837-838 save_currentstate() under INSURANCE.
-    // Its initial savelev(WRITING) resets each engraving's text pointer to its
-    // buffer start, so the first later wipe sees any leading blanks again.
+    // savelev(WRITING) purges detached monsters before writing the chain and
+    // resets each engraving's text pointer to its buffer start.
+    if (game.iflags?.purge_monsters) await (await import('./mon.js')).dmonsfree();
     await (await import('./engrave.js')).save_engravings(WRITING);
 
     // C ref: allmain.c welcome(TRUE).
@@ -440,6 +443,11 @@ async function newgame_real() {
     // every move as a level change), context.move = 0 and in_moveloop = 1
     // (o_init.c discover_object()'s gem_learned() price hook and
     // dog.c initedog()'s first-pet livelog read it).
+    // C ref: allmain.c moveloop_preamble() `disp.botlx = TRUE;` (for STATUS_HILITES):
+    // the first moveloop_core() bot() is a full update (it is also where
+    // botl.c's rndencode/update_all hack for the gold field fires).
+    game.botlx = true;
+    if (game.disp) game.disp.botlx = true;
     {
         const { encumber_msg } = await import('./invent.js');
         await encumber_msg();
@@ -466,48 +474,31 @@ async function newgame_real() {
 // they trigger the welcome line's "--More--" prompt before being shown.
 async function moveloop_preamble_messages() {
     const g = game;
-    const moonphase = phase_of_the_moon();
     g.flags = g.flags || {};
-    g.flags.moonphase = moonphase;
-    g.flags.friday13 = friday_13th();
-    const msgs = [];
-    // C ref: sys/unix/unixmain.c main():316 — `newgame(); wd_message();` and
-    // only THEN moveloop(), so wd_message()'s explore banner is printed BEFORE
-    // moveloop_preamble()'s moon-phase greeting, not after it.  Our rc parser
-    // stores the play-mode as flags.playmode === 'explore' (see bones.js
-    // is_discover); `discover` in C is flags.explore (restore.c:583).  No luck
-    // side effect.  wave4 rc-explore step 5: C shows the explore line, this
-    // file used to show "You are lucky!  Full moon tonight." instead.
-    const f = g.flags || {};
-    if (f.explore || f.discover || f.playmode === 'explore') {
-        msgs.push('You are in non-scoring explore/discovery mode.');
+    let shown = false;
+    // unixmain.c prints the explore banner before moveloop_preamble().
+    if (g.flags.explore || g.flags.discover || g.flags.playmode === 'explore') {
+        await pline('You are in non-scoring explore/discovery mode.');
+        shown = true;
     }
-    // C ref: allmain.c moveloop_preamble() — a full moon grants +1 Luck and
-    // Friday the 13th costs -1 via change_luck().  That starting Luck feeds the
-    // rnl() bias roll (rnl() fires a secondary rn2(37+|Luck|) when Luck != 0),
-    // e.g. the door-open rnl(20) check, so we MUST apply the side-effect to keep
-    // the RNG stream in lockstep with C.  Full moon and Friday-the-13th are
-    // independent in C (separate if blocks each with its own pline), so BOTH
-    // messages are printed when both hold (e.g. a full moon that also falls on
-    // Friday the 13th) — the moon message first, then the Friday-13th warning.
-    if (moonphase === FULL_MOON) {
-        msgs.push('You are lucky!  Full moon tonight.');
+    // C ref: allmain.c:56-67. Luck changes after each pline returns, so a
+    // pager still sees the state from before the message it interrupts.
+    g.flags.moonphase = phase_of_the_moon();
+    if (g.flags.moonphase === FULL_MOON) {
+        await pline('You are lucky!  Full moon tonight.');
         change_luck(1);
-    } else if (moonphase === NEW_MOON) {
-        msgs.push('Be careful!  New moon tonight.');
+        shown = true;
+    } else if (g.flags.moonphase === NEW_MOON) {
+        await pline('Be careful!  New moon tonight.');
+        shown = true;
     }
-    if (friday_13th()) {
-        msgs.push('Watch out!  Bad things can happen on Friday the 13th.');
+    g.flags.friday13 = friday_13th();
+    if (g.flags.friday13) {
+        await pline('Watch out!  Bad things can happen on Friday the 13th.');
         change_luck(-1);
+        shown = true;
     }
-
-    if (msgs.length === 0) return false;
-
-    // C ref: allmain.c moveloop_preamble() -> pline(). The topline writer
-    // snapshots WIN_STOP before paging the previous message. Paging here first
-    // would suppress the new message when that pager is dismissed with ESC.
-    for (const m of msgs) await pline(m);
-    return true;
+    return shown;
 }
 
 // C ref: allmain.c maybe_do_tutorial() + options.c ask_do_tutorial().
@@ -571,6 +562,7 @@ async function enter_tutorial_level() {
     // starting level is kept so leaving the tutorial re-enters it (not remade).
     (g._level_store ||= {})[`${g.u.uz.dnum}:${g.u.uz.dlevel}`] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
+        billobjs: g.billobjs,
         utrack: g._utrack, utcnt: g._utcnt, utpnt: g._utpnt,
         regions: g.regions, regionMoves: g.moves ?? 0,
         updest: g.updest, dndest: g.dndest,
@@ -582,6 +574,7 @@ async function enter_tutorial_level() {
     // themed cloud room on the starting level), so it must not stay live and
     // paint gas-cloud glyphs over the tutorial map.
     clear_regions();
+    g.billobjs = [];
     g.level = g._tutorial_level;
     g.stairs = g._tutorial_stairs || null;
     g.fmon = g.level.monsters;
@@ -958,16 +951,13 @@ function youHavePolymorph() {
 
 // C ref: youprop.h Unchanging == (HUnchanging || EUnchanging).
 function youHaveUnchanging() {
-    const p = game.u?.uprops;
-    return !!(p?.HUnchanging || p?.EUnchanging);
+    return Unchanging_hero();
 }
 
-// C ref: youprop.h Breathless == (HBreathless || EBreathless).  Checked against
-// all three key spellings already used elsewhere in this port (dbridge.js,
-// do.js) since nothing here sets any of them yet.
+// C ref: youprop.h Breathless == (HMagical_breathing || EMagical_breathing ||
+// breathless(gy.youmonst.data)): invent.js Breathless_hero() carries all three.
 function youHaveBreathless() {
-    const p = game.u?.uprops;
-    return !!(p?.Breathless || p?.HBreathless || p?.EBreathless);
+    return Breathless_hero();
 }
 
 // C ref: youprop.h Half_physical_damage == (HHalf_physical_damage ||
@@ -1262,29 +1252,29 @@ export async function moveloop_turn() {
                     }
                 }
 
-                if ((g.context.mvl_change === 1 && !youHavePolymorph())
-                    || (g.context.mvl_change === 2 && !ismnum(g.u.ulycn)))
-                    g.context.mvl_change = 0;
+                if ((mvl_change === 1 && !youHavePolymorph())
+                    || (mvl_change === 2 && !ismnum(g.u.ulycn)))
+                    mvl_change = 0;
 
                 if (youHavePolymorph() && rn2(100) === 0) {
-                    g.context.mvl_change = 1;
+                    mvl_change = 1;
                 } else if (ismnum(g.u.ulycn) && !g.u.Upolyd
                            && rn2(80 - 20 * (night() ? 1 : 0)) === 0) {
-                    g.context.mvl_change = 2;
+                    mvl_change = 2;
                 }
 
-                if (g.context.mvl_change && !youHaveUnchanging()) {
+                if (mvl_change && !youHaveUnchanging()) {
                     if ((g.multi ?? 0) >= 0) {
                         const { stop_occupation } = await import('./hack.js');
                         await stop_occupation();
-                        if (g.context.mvl_change === 1) {
+                        if (mvl_change === 1) {
                             const { polyself } = await import('./polyself.js');
                             await polyself(POLY_NOFLAGS);
                         } else {
                             const { you_were } = await import('./polyself.js');
                             await you_were();
                         }
-                        g.context.mvl_change = 0;
+                        mvl_change = 0;
                     }
                 }
             }

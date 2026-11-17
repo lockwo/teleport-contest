@@ -13,12 +13,14 @@ import { mattk_of, AT_NONE, AT_BOOM, AT_CLAW, AT_BITE, AT_KICK, AT_BUTT,
     AD_MAGM, AD_SLEE, AD_DISN, AD_RBRE }
     from './monattk_data.js';
 import { game, hooks } from './gstate.js';
+import { Hallucination_u } from './display.js';
+import { Blind } from './vision.js';
 import { rn2 } from './rng.js';
 import { M2_STALK } from './monflags_data.js';
 import { species } from './worn.js';
 import { objects } from './mkobj.js';
-import { W_ARMOR, W_ACCESSORY, W_WEP, W_ARMC } from './const.js';
-import { mflags1_of, msound_of, M1_NOHEAD, mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
+import { W_ARMOR, W_ACCESSORY, W_WEP, W_ARMC, Unaware } from './const.js';
+import { mflags1_of, msound_of, M1_NOHEAD, M1_NOEYES, mflags2_of, humanoid, is_undead_flag, is_demon_flag, is_neuter_flag,
     M2_STRONG, M2_PNAME } from './monflags_data.js';
 import { monster_by_pmidx, name_to_pmidx } from './makemon.js';
 import { G_GENOD, NON_PM, PRONOUN_NO_IT, PRONOUN_HALLU,
@@ -201,7 +203,7 @@ const G_SGROUP = 0x0080, G_LGROUP = 0x0040, G_UNIQ = 0x1000;
 // C ref: monst.h MON_WEP(mon) — the monster's wielded weapon.
 function MON_WEP(mon) { return mon?.mw || null; }
 // C ref: monst.h `mon == &gy.youmonst`.
-function is_you(mon) { return !!mon && (mon === game.youmonst || mon === game.u); }
+function is_you(mon) { return !!mon && (mon === game.u); }
 // C ref: mondata.h monsndx(ptr) — mons[] index of a permonst row.
 function monsndx(ptr) { return ptr?.pmidx ?? NON_PM; }
 // C ref: youprop.h Upolyd.
@@ -242,6 +244,19 @@ export function set_mon_data(mon, ptr) {
 
 // Creation-time newcham is synchronous; the registry avoids an import cycle.
 hooks.set_mon_data = set_mon_data;
+
+// C ref: mondata.c resists_blnd(mon), shared by light attacks and engraving.
+export function resists_blnd(mon, ptr = species(mon)) {
+    const you = is_you(mon);
+    if (you ? (Blind() || Unaware())
+            : (mon.mblinded || !mon.mcansee
+               || (mflags1_of(ptr) & M1_NOEYES) !== 0 || mon.msleeping))
+        return true;
+    if (dmgtype_fromattack(ptr, AD_BLND, AT_EXPL)
+        || dmgtype_fromattack(ptr, AD_BLND, AT_GAZE))
+        return true;
+    return resists_blnd_by_arti(mon);
+}
 
 // C ref: mondata.c:278 resists_blnd_by_arti(mon) — True iff the monster resists
 // light-induced blindness because of worn/wielded magical equipment; used only
@@ -474,14 +489,7 @@ function is_neuter(ptr) { return is_neuter_flag(ptr); }
 function type_is_pname(ptr) { return (mflags2_of(ptr) & M2_PNAME) !== 0; }
 // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.  Read
 // through every spelling this port has used for the same u.uprops[] slot.
-function Hallucination() {
-    const u = game.u;
-    if (!u) return false;
-    const on = u.uhallu || u.HHallucination || u.uprops?.Hallucination
-               || u.uprops?.HHallucination;
-    const res = u.uprops?.HHalluc_resistance || u.uprops?.EHalluc_resistance;
-    return !!on && !res;
-}
+function Hallucination() { return Hallucination_u(); }
 
 // C ref: mondata.c:1228 grownups[][2] — the little/big progression table, in
 // C's order (only little_to_big cares, and its keys are unique).  js/makemon.js

@@ -2,6 +2,7 @@
 // C ref: dungeon.c - init_dungeons, init_dungeon_dungeons, place_level.
 
 import { panic } from './panic.js';
+import { makeplural } from './plural.js';
 import { within_bounded_area } from './rect.js';
 import { game } from './gstate.js';
 import { roles, align_gname } from './role.js';
@@ -951,13 +952,6 @@ function unreachable_level(M, dlev, unplaced) {
     return false;
 }
 
-// makeplural for the single word used by print_dungeon ("level" -> "levels",
-// "depth" -> "depths").  C ref: objnam.c makeplural — only these two strings
-// reach it from print_dungeon.
-function pd_makeplural(word) {
-    return word + 's';
-}
-
 // Build the ordered list of menu entries that print_dungeon would emit from
 // the given dungeon model M.  Each entry is a heading (non-selectable) or a
 // selectable level.
@@ -1006,7 +1000,7 @@ function build_levtport_menu(M) {
         const nlev = dptr.num_dunlevs;
         let buf;
         if (nlev > 1)
-            buf = `${dptr.dname}: ${pd_makeplural(descr)} ${dptr.depth_start} to `
+            buf = `${dptr.dname}: ${makeplural(descr)} ${dptr.depth_start} to `
                 + `${dptr.depth_start + nlev - 1}`;
         else
             buf = `${dptr.dname}: ${descr} ${dptr.depth_start}`;
@@ -1061,7 +1055,7 @@ export function print_dungeon_lines() {
         const nlev = dptr.num_dunlevs;
         let buf;
         if (nlev > 1)
-            buf = `${dptr.dname}: ${pd_makeplural(descr)} ${dptr.depth_start} to `
+            buf = `${dptr.dname}: ${makeplural(descr)} ${dptr.depth_start} to `
                 + `${dptr.depth_start + nlev - 1}`;
         else
             buf = `${dptr.dname}: ${descr} ${dptr.depth_start}`;
@@ -2027,11 +2021,6 @@ export function has_ceiling(lev) {
 // C ref: align.h:59/60 Amask2msa(x) / Msa2amask(x).
 function Amask2msa(x) { return ((x & AM_MASK) === 4) ? 3 : (x & AM_MASK); }
 function Msa2amask(x) { return (x === 3) ? 4 : x; }
-
-// C ref: hacklib.c mungspaces()/highc(), objnam.c plur().  Several files keep
-// the same private copies (extcmd-handlers.js:292, topten.js:188, ...).
-function highc(c) { return String(c ?? '').toUpperCase(); }
-function plur(n) { return (n === 1) ? '' : 's'; }
 
 // C ref: hack.h Race_if(pm) == (gu.urace.malenum == pm); artifact.js:114 holds
 // the same races[].malenum table.

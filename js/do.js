@@ -22,7 +22,8 @@
 // dog.c mon_arrive are not otherwise available in the JS engine).
 
 import { makeplural } from './plural.js';
-import { Fumbling_hero, Flying_hero, Levitation_hero, Half_physical_damage_hero, Passes_walls_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { the } from './objnam.js';
+import { Fumbling_hero, Flying_hero, Levitation_hero, Half_physical_damage_hero, Passes_walls_hero, Unchanging_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
 import { game } from './gstate.js';
 import { exercise } from './attrib.js';
 import { A_STR, Unaware, COST_DEGRD, is_pool, is_lava, is_pool_or_lava } from './const.js';
@@ -41,7 +42,7 @@ import { mklev, makelevel_fill_and_mineralize } from './mklev.js';
 import { fumaroles, movebubbles } from './mkmaze.js';
 const PM_ROGUE_DO = 8;     // roles[].mnum is the role index in this port (Rogue = 8), not a mons[] index
 import { clear_regions, remove_region } from './region.js';
-import { depth as depth_of_level, s_suffix } from './hacklib.js';
+import { depth as depth_of_level, s_suffix, upstart } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          STRAT_WAITMASK, STRAT_ARRIVE, IS_STWALL, W_NONPASSWALL,
          ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED, In_quest, In_mines, In_endgame,
@@ -64,11 +65,11 @@ import { docrt, flush_screen, pline, You_hear, update_topl, urgent_topl, topl_mo
          display_nhwindow_message,
          see_nearby_objects, reglyph_remembered_darkroom, map_location, m_at,
          capture_screen_for_level_change, note_departing_glyph_writes, freeze_screen_for_level_change,
-         thaw_screen_for_level_change, Deaf_hero, You_feel, You_see, stairway_at } from './display.js';
+         thaw_screen_for_level_change, Deaf_hero, Hallucination_u, You_feel, You_see, stairway_at } from './display.js';
 import { seetrap, dotrap, fill_pit, Teleport_control_fu, pooleffects, u_locomotion, reset_utrap } from './trap.js';
 import { set_utrap } from './polyself.js';
 import { check_special_room } from './shkroom.js';
-import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
+import { restore_doorindex, restore_level_chains } from './mkroom.js';
 import { forget_temple_entry } from './priest.js';
 import { enexto_gpflags, goodpos } from './teleport.js';
 import { m_in_air } from './monmove.js';
@@ -341,7 +342,7 @@ export async function losehp_do(n, knam, k_format = KILLED_BY_AN) {
             const { rehumanize } = await import('./polyself.js');
             if (rehumanize) await rehumanize();
         } else if (n > 0 && u.mh * 10 < u.mhmax
-                   && (u.uprops?.Unchanging || u.HUnchanging || u.EUnchanging)) {
+                   && Unchanging_hero()) {
             await maybe_wail();
         }
         return;
@@ -409,10 +410,7 @@ export async function maybe_wail() {
 // pair); Flying/Levitation are carried in u.uprops by polyself.js/potion.js.
 function Fumbling_do() { return Fumbling_hero(); }
 function Flying_do() { return Flying_hero(); }
-function Levitation_do() {
-    return !!(game.u?.uprops?.Levitation || worn_extrinsic(LEVITATION))
-        && !(game.u?.uprops?.BLevitation || worn_blocked(LEVITATION));
-}
+function Levitation_do() { return Levitation_hero(); }
 // C ref: youprop.h Punished — u.uball is set only while punished.
 function Punished_do() { return !!game.u?.uball; }
 
@@ -746,6 +744,8 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     (await import('./timeout.js')).savelev_timer_scan();
     g._level_store[oldLedger] = {
         level: g.level, stairs: g.stairs, omoves: g.moves ?? 0,
+        // C savelev(): used-up billed objects belong to this level file.
+        billobjs: g.billobjs,
         // C ref: track.c save_track() (from savelev()) — utrack is written to
         // the departing level's save file, then release_data() runs
         // initrack() to clear the live ring, so each level owns its own
@@ -797,6 +797,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     }
     if (cant_go_back) await (await import('./dog.js')).discard_migrations();
     clear_regions();
+    g.billobjs = []; // savelev(FREEING), not part of the destination level
     // C ref: save_track() release_data() -> initrack().  Clear the live ring so
     // a freshly-made destination (mklev, no saved track) starts with none, and a
     // reloaded destination gets its own ring back via getlev_restore().
@@ -1269,9 +1270,9 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // C ref: do.c:1967 — the arrival-only portal guard ends here.
     u.uz0 = { dnum: u.uz.dnum, dlevel: u.uz.dlevel };
     // C ref: do.c:1969 `#ifdef INSURANCE save_currentstate();` (config.h defines
-    // INSURANCE).  The checkpoint's savelev(WRITING) has one effect the game can
-    // see: save_engravings() points each engraving's text back at its buffer
-    // start, so the next wipe_engr_at() sees the leading blanks again.
+    // INSURANCE). savelev(WRITING) purges detached monsters and resets each
+    // engraving's text pointer to its buffer start.
+    if (g.iflags?.purge_monsters) await (await import('./mon.js')).dmonsfree();
     await (await import('./engrave.js')).save_engravings(WRITING);
     notice_mon_on();
     await notice_all_mons(true);
@@ -1364,21 +1365,11 @@ async function getlev_restore(ledger) {
     const store = g._level_store?.[ledger];
     if (!store) return; // level was never actually left (shouldn't happen)
     g.level = store.level;
-    g.stairs = store.stairs;
-    /* C ref: restore.c:955 rest_stairs() — savelev() writes gs.stairs head to
-       tail and every record is read back through stairway_add(), which
-       PREPENDS, so each save/restore cycle reverses the list.  Order matters:
-       stairway_find_type_dir() (wizard.c choose_stairs: a covetous monster's
-       hole-up spot) returns the FIRST match, i.e. the Sokoban/branch up stairs
-       on a fresh level but the ordinary up stairs once the level is reloaded. */
-    {
-        let rev = null;
-        for (let st = g.stairs, nxt; st; st = nxt) { nxt = st.next; st.next = rev; rev = st; }
-        g.stairs = rev;
-    }
+    g.billobjs = store.billobjs || [];
+    g.stairs = restore_level_chains(g.level, store.stairs);
+    (await import('./light.js')).restore_light_sources_order();
     g.fmon = g.level.monsters;
     restore_doorindex(g.level); /* getlev(): doorindex recomputed from the last room */
-    reverse_trap_chain(g.level); /* getlev(): ftrap rebuilt by prepending */
     clear_no_charge_on_getlev(g.level); /* find_lev_obj() -> place_object() */
     requeue_level_timers(); // restore_timers(): insert_timer() reverses equal-timeout ties
 
@@ -2329,12 +2320,7 @@ export async function dodown() {
 // copy (js/dothrow.js:74-115, js/dbridge.js:899-916, js/muse.js:275, ...)
 // because the real ones are module-private in js/invent.js / js/cmd.js.
 
-// C ref: objnam.c an(str) / the(str) / upstart(str).
 import { an } from './hacklib.js';
-function the(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
-function upstart(s) {
-    return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s;
-}
 
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
 import { vtense } from './plural.js';
@@ -2359,7 +2345,7 @@ function uprop_do(...keys) {
 }
 function Deaf_do() { return Deaf_hero(); }
 function Hallucination_do() {
-    return uprop_do('Hallucination', 'HHallucination') > 0 || !!game.u?.uhallu;
+    return Hallucination_u();
 }
 function Underwater_do() { return !!(game.u?.uinwater); }
 function Passes_walls_do() { return Passes_walls_hero(); }

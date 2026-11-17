@@ -22,7 +22,7 @@ import {
     l_selection_rect, selection_clear, selection_filter_percent, selection_getbounds,
     selection_getpoint, selection_iterate, selection_new,
 } from '../selvar.js';
-import { maketrap } from '../trap.js';
+import { maketrap, t_at, deltrap } from '../trap.js';
 import {
     SET_LIT_NOCHANGE, bigrm_get_location_dry, bigrm_level_init_solidfill,
     bigrm_load_map, bigrm_wallification, flip_level, gx, gy, percent, reset_xystart_size,
@@ -230,6 +230,11 @@ function bigrm_wallify_map(x1, y1, x2, y2) {
 // stairway_find_special_dir() threw on the array's absent .tolev).
 function bigrm_stair(up) {
     const c = splev_get_location_rnd(LOC_DRY, false, good_stair_loc);
+    /* l_create_stairway(): `if ((badtrap = t_at(x, y)) != 0) deltrap(badtrap);
+       SpLev_Map[x][y] = 1;` before mkstairs() */
+    const badtrap = t_at(c.x, c.y);
+    if (badtrap) deltrap(badtrap);
+    splev_map_mark(c.x, c.y);
     splev_mkstairs_at(c.x, c.y, up);
 }
 

@@ -29,6 +29,7 @@ import { setONAME, Unaware } from './const.js';
 import { game, register_process_static } from './gstate.js';
 import { PLNMSG_HIDE_UNDER, is_pool } from './const.js';
 import { s_suffix, an } from './hacklib.js';
+import { The } from './objnam.js';
 import { hitval, possibly_unwield } from './weapon.js';
 import { rn2, rnd, d } from './rng.js';
 import {
@@ -44,7 +45,7 @@ import { newsym, map_invisible, unmap_object, m_at, canseemon_shared, You_feel }
 import { cansee } from './vision.js';
 import { update_topl, Deaf_hero, Hallucination_u, You_hear, flush_screen } from './display.js';
 import { make_corpse, dmgval, mhitm_knockback, seemimicLocal, shade_miss as shade_miss_mm, canspotmon as mm_can_spot_mon } from './uhitm.js';
-import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER } from './const.js';
+import { DOOR, POOL, DRAWBRIDGE_UP, STRAT_WAITFORU, MM_IGNOREWATER, db_under_typ } from './const.js';
 // used only by the appended mhitm.c translations at the bottom of this file
 import { IS_OBSTRUCTED, IS_TREE, IRONBARS, D_CLOSED, D_LOCKED } from './const.js';
 import { is_animal, perceives_flag, is_elf_flag, is_orc_flag,
@@ -449,13 +450,13 @@ export async function thrwmmDeps() {
             const { IS_SINK } = await import('./const.js');
             const { otense } = await import('./invent.js');
             if (range && cansee(pos.x, pos.y) && IS_SINK(typ))
-                await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} ${
+                await emitMMmsg(`${The(MM.mshot_xname(obj))} ${
                     otense(obj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
             else if ((ms.n | 0) > 1
                      && (!game.mesg_given || pos.x !== game.u.ux || pos.y !== game.u.uy)
                      && (cansee(pos.x, pos.y)
                          || (game.marcher && mm_can_see_mon(game.marcher))))
-                await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} misses.`);
+                await emitMMmsg(`${The(MM.mshot_xname(obj))} misses.`);
         },
         make_blinded: make_blinded_hero, BlindedTimeout,
         vision_clears: async () => { await emitMMmsg('Your vision clears.'); },
@@ -467,7 +468,7 @@ export async function thrwmmDeps() {
                 await emitMMmsg(`${Monnam(mon)} misfires!`);
                 return;
             }
-            await emitMMmsg(`${MM.The_mm(MM.mshot_xname(obj))} ${otense(obj, 'slip')} as ${
+            await emitMMmsg(`${The(MM.mshot_xname(obj))} ${otense(obj, 'slip')} as ${
                 mon_nam(mon)} throws it!`);
         },
         delobj,
@@ -806,7 +807,9 @@ export function attk_protection_mm(aatyp) {
 
 // C ref: monmove.c accessible(x,y) — ACCESSIBLE(typ)==typ>=DOOR && !closed_door.
 function accessible(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
+    const lv = game.level?.at(x, y);
+    /* SURFACE_AT: the terrain under a raised drawbridge */
+    const typ = lv?.typ === DRAWBRIDGE_UP ? db_under_typ(lv.drawbridgemask) : lv?.typ;
     return typ != null && typ >= DOOR && !closed_door_mm(x, y);
 }
 
@@ -1801,7 +1804,7 @@ export function engulf_target(magr, mdef) {
 
 // Shared combat helpers use the same hero sentinel as the AD_* handlers.
 function is_youmonst_mm(mon) {
-    return mon === YOUMONST || mon === game.youmonst || mon?.isyou === true;
+    return mon === YOUMONST || mon?.isyou === true;
 }
 // C ref: you.h Passes_walls — the hero's intrinsic/extrinsic wall-walking.
 function Passes_walls_u() { return Passes_walls_hero(); }

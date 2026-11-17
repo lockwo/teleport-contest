@@ -16,6 +16,7 @@ import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } fro
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
 import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash, You_hear, You_see, stairway_at } from './display.js';
+import { Hallucination_u } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign, change_luck } from './attrib.js';
 import {
@@ -38,7 +39,7 @@ import {
     OBJ_MINVENT, STATUE_TRAP, Is_airlevel, Is_waterlevel, WT_HUMAN } from './const.js';
 import { KICKING_BOOTS, BOULDER, ROCK, DILITHIUM_CRYSTAL, LUCKSTONE,
          RING_CLASS, GEM_CLASS, EGG, BAG_OF_HOLDING, BAG_OF_TRICKS,
-         COIN_CLASS, CORPSE, LARGE_BOX, CHEST, ICE_BOX, EXPENSIVE_CAMERA,
+         COIN_CLASS, CORPSE, LARGE_BOX, CHEST, EXPENSIVE_CAMERA,
          place_object, add_to_migration,
          mkgold, mksobj_at, mkobj_at, rnd_class, objects, weight, base_oc_cost } from './mkobj.js';
 import { makemon, makemon_appears_msg, monster_by_pmidx, name_to_pmidx, mpickobj  } from './makemon.js';
@@ -48,7 +49,7 @@ import { near_capacity, sobj_at, useup, body_part, inv_weight, objects_at, obj_e
          obfree, remove_worn_item,
          obj_doname, thitmonst } from './invent.js';
 import { makeplural } from './plural.js';
-import { obj_resists } from './zap.js';
+import { obj_resists, Maybe_Half_Phys } from './zap.js';
 import { surface, hliquid, dunlevs_in_dungeon } from './dungeon.js';
 import { in_town } from './mkroom.js';
 import { attacktype, AT_ENGL } from './monattk_data.js';
@@ -81,11 +82,9 @@ import { hidden_gold, money_cnt_invent, make_happy_shk, is_unpaid,
          stolen_value, make_angry_shk } from './shk.js';
 import { currency, youmonst_data_pub as youmonst_data, poly_gender } from './invent.js';
 import { set_voice } from './sounds.js';
-import { corpse_xname, killer_xname, singular } from './objnam.js';
+import { corpse_xname, killer_xname, singular, the, The } from './objnam.js';
+import { upstart } from './hacklib.js';
 
-// C ref: hacklib.c upstart(s) — capitalise the first letter in place
-// (pickup.js/invent.js each keep the same one-liner).
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 import { ECMD_OK, ECMD_TIME, ECMD_FAIL, ECMD_CANCEL, Trap_Killed_Mon } from './const.js';
 const S_LIZARD = 58;      // defsym.h S_LIZARD, as numbered in permonst.mcls
@@ -336,13 +335,11 @@ export async function kick_ouch(x, y, kickobjnam, maploc) {
     if (rn2(3) === 0) await set_wounded_legs(RIGHT_SIDE, 5 + rnd(5));
     const dmg = rnd(ACURR(A_CON) > 15 ? 3 : 5);
     const u = game.u;
-    // losehp(Maybe_Half_Phys(dmg), kickstr(buf, kickobjnam), KILLED_BY): no hero
-    // reaching here carries Half_physical_damage, so dmg passes unhalved.
     if (u) {
         // C ref: hack.c losehp() — HP loss, death check and maybe_wail() are
         // do.js's losehp_do().  KILLED_BY (1): the killer text is verbatim.
         const { losehp_do } = await import('./do.js');
-        await losehp_do(dmg, kickstr(kickobjnam, maploc), 1);
+        await losehp_do(Maybe_Half_Phys(dmg), kickstr(kickobjnam, maploc), 1);
         // C: done(DIED) never returns; stop here rather than fabricate the
         // Levitation/hurtle roll below for a dead hero.
         if (u.uhp < 1) return;
@@ -873,7 +870,7 @@ async function kick_monster(mon, x, y) {
                 if (uattk.aatyp !== AT_KICK) continue;
 
                 const kickdieroll = rnd(20);
-                const specialdmg = special_dmgval(game.youmonst || game.u, mon, W_ARMF).bonus;
+                const specialdmg = special_dmgval(game.u, mon, W_ARMF).bonus;
                 if (is_shade(mon.data) && !specialdmg) {
                     /* doesn't matter whether it would have hit or missed, and
                        shades have no passive counterattack */
@@ -977,20 +974,12 @@ async function Norep_kick(msg) {
     await update_topl(msg);
 }
 
-// C ref: objnam.c the()/The()/upstart() (js/pickup.js:187 keeps the same copy).
-function the_k(s) {
-    const str = String(s ?? '');
-    if (/^(the |The |a |an |A |An |your |Your |his |her |its |their )/.test(str)) return str;
-    if (/^[A-Z]/.test(str)) return str;
-    return `the ${str}`;
-}
-function The_k(s) { const t = the_k(s); return t.charAt(0).toUpperCase() + t.slice(1); }
 // C ref: objnam.c Doname2(obj) — doname() with the first letter capitalized.
 function Doname2_k(obj) { const s = obj_doname(obj); return s.charAt(0).toUpperCase() + s.slice(1); }
 
-// C ref: objclass.h Is_box(o) — the three lockable floor containers.
+// C ref: obj.h Is_box(o) excludes ice boxes, which have no lock or lid trap.
 function Is_box(o) {
-    return o.otyp === LARGE_BOX || o.otyp === CHEST || o.otyp === ICE_BOX;
+    return o.otyp === LARGE_BOX || o.otyp === CHEST;
 }
 // C ref: monmove.c closed_door(x, y).
 function closed_door(x, y) {
@@ -1052,7 +1041,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
                 // C: Yname2(obj) — yname() capitalized; shk_your() resolves to
                 // "the " for a floor object outside a shop, which is every kick
                 // that can reach a web square here.
-                await update_topl(`${The_k(xname(obj))} gets stuck in a web!`);
+                await update_topl(`${The(xname(obj))} gets stuck in a web!`);
                 ttmp.tseen = 1;
                 newsym(bx, by);
             }
@@ -1061,7 +1050,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
         /* C ref: zap.c bhit() — a shade a non-silver missile passes through, and
            a mimic pretending to be an object (unless the hero knows a monster
            is there), behave as if no monster were on the square. */
-        if (mtmp && (await shade_miss(game.youmonst || game.u, mtmp, obj, true, true)
+        if (mtmp && (await shade_miss(game.u, mtmp, obj, true, true)
                      || (M_AP_TYPE(mtmp) === M_AP_OBJECT
                          && !loc?.disp_monster && !loc?.disp_warning
                          && !glyph_is_invisible(bx, by))))
@@ -1211,12 +1200,12 @@ async function really_kick_object(x, y) {
         if ((!martial() && rn2(20) > ACURR(A_DEX))
             || IS_OBSTRUCTED(uloc?.typ | 0) || closed_door(u.ux, u.uy)) {
             if (Blind()) await update_topl("It doesn't come loose.");
-            else await update_topl(`${The_k(xname(gk_kickedobj))} ${
+            else await update_topl(`${The(xname(gk_kickedobj))} ${
                 otense(gk_kickedobj, 'do')}n't come loose.`);
             return (!rn2(3) || martial()) ? 1 : 0;
         }
         if (Blind()) await update_topl('It comes loose.');
-        else await update_topl(`${The_k(xname(gk_kickedobj))} ${
+        else await update_topl(`${The(xname(gk_kickedobj))} ${
             otense(gk_kickedobj, 'come')} loose.`);
         obj_extract_self(gk_kickedobj);
         newsym(x, y);
@@ -1436,9 +1425,7 @@ function touch_petrifies_k(corpsenm) {
 }
 
 // C ref: youprop.h Hallucination.
-function Hallucination_k() {
-    return ((game.u?.uprops?.Hallucination || 0) > 0) || !!game.u?.HHallucination;
-}
+function Hallucination_k() { return Hallucination_u(); }
 
 
 export async function dokick() {
@@ -1861,7 +1848,7 @@ async function otransit_msg(otmp, nodrop, chainthere, num) {
     // C ref: Tobjnam(otmp, (char *) 0) is just The(xname(otmp)).
     const obuf = (otmp.otyp === CORPSE)
         ? upstart(corpse_xname(otmp, null, CXN_PFX_THE))
-        : The_k(xname(otmp));
+        : The(xname(otmp));
     if (num || chainthere) {
         let xbuf;
         if (num)

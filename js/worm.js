@@ -6,7 +6,7 @@
 // side below the divider is driven from monmove.js.
 
 import { game, hooks } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, plur } from './hacklib.js';
 import { rn2, rnd, rn1, d } from './rng.js';
 import { isok, COLNO, ROWNO, NORMAL_SPEED, MHPMAX, NON_PM, has_mcorpsenm, set_mcorpsenm } from './const.js';
 import { newsym, m_at, worm_seg_owner_at, show_glyph_cell, Hallucination_u, pline } from './display.js';
@@ -251,7 +251,6 @@ function distu(x, y) { return dist2(x, y, game.u?.ux ?? 0, game.u?.uy ?? 0); }
 
 
 // C ref: hack.h plur(x) — "" for 1, "s" otherwise.
-function plur(x) { return x === 1 ? '' : 's'; }
 
 // C ref: monsters.h — PM_LONG_WORM is the species wormgone() unflags, and
 // PM_LONG_WORM_TAIL (== makemon.js SPECIAL_PM) is the segment glyph species.

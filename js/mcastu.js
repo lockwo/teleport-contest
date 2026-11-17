@@ -8,6 +8,7 @@
 // carrying a spellcaster (seed0360 step 205: a gnomish wizard 7 squares away).
 
 import { Half_physical_damage_hero, Half_spell_damage_hero, Detect_monsters_hero, Stunned_hero, See_invisible_hero } from './youprop.js';
+import { Blinded_hero } from './youprop.js';
 import { acurr_eff } from './attrib.js';
 import { game } from './gstate.js';
 import { rn2, d } from './rng.js';
@@ -428,7 +429,7 @@ async function mcast_spell(mtmp, dmg, spellnum) {
 // ---------------------------------------------------------------------------
 // Small property shims.  Each names the C predicate it stands in for; all are
 // RNG-free and constant for the heroes these sessions drive.
-function Blinded() { return (game.u?.blinded | 0) > 0 || (game.u?.uprops?.BlindedFromForm | 0) > 0; }
+function Blinded() { return Blinded_hero(); }
 // C ref: youprop.h Invis/Displaced — monmove.js owns them (worn-item extrinsics included).
 import { Deaf_hero as Deaf } from './display.js';
 function perceives(mdat) { return !!mdat && perceives_flag(mdat); }
@@ -610,7 +611,7 @@ export async function mcast_summon_mons(mtmp) {
     if (!count) {
         /* nothing was created? */
     } else if (mtmp.iswiz) {
-        await update_topl(`"Destroy the thief, my pet${plur_(count)}!"`);
+        await update_topl(`"Destroy the thief, my pet${plur(count)}!"`);
     } else {
         const one = (count === 1);
         const mappear = one ? 'A monster appears' : 'Monsters appear';
@@ -881,7 +882,7 @@ export async function mcast_insects(mtmp) {
                 await You_hear(`someone summoning something, and `
                     + `${arg} ${vtense_(arg, 'appear')}.`);
             } else {
-                await update_topl(`${upstart_(arg)} ${vtense_(arg, 'appear')}.`);
+                await update_topl(`${upstart(arg)} ${vtense_(arg, 'appear')}.`);
             }
         }
     } else if (!success) {
@@ -1128,13 +1129,8 @@ function nonliving_(ptr) {
         || ptr?.mcls === 55 /* S_GOLEM */ || ptr?.mcls === 22 /* S_VORTEX */;
 }
 function is_demon_(ptr) { return is_demon_flag(ptr); }
-function plur_(n) { return (n === 1) ? '' : 's'; }
 // C ref: objnam.c an(str) — port is js/objnam.js/hack.js:2633, private there.
-import { an as an_ } from './hacklib.js';
+import { an as an_, plur, upstart } from './hacklib.js';
 // C ref: objnam.c vtense(subj, verb) — the faithful copy lives in js/plural.js.
 import { vtense } from './plural.js';
 const vtense_ = vtense;
-function upstart_(s) {
-    const str = String(s || '');
-    return str ? str[0].toUpperCase() + str.slice(1) : str;
-}

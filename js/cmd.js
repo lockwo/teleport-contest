@@ -5,7 +5,7 @@
 // Contestants should add: search, kick, eat, drink, read, zap,
 // wear, wield, drop, throw, pray, cast, and all other commands.
 
-import { Levitation_hero, uteetering_at_seen_pit, uescaped_shaft, Fumbling_hero } from './youprop.js';
+import { Levitation_hero, Swimming_hero, Passes_walls_hero, uteetering_at_seen_pit, uescaped_shaft, Fumbling_hero } from './youprop.js';
 import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
@@ -25,6 +25,7 @@ import { ddoinv, dismiss_invent_screen, dolook,
          xname, otense, inv_cnt, invlet_basic, splitobj, freeinv, obj_doname, ansimpleoname,
          obj_extract_self, youmonst_data_pub, carried_weight } from './invent.js';
 import { makeplural } from './plural.js';
+import { the, The } from './objnam.js';
 import { WEAPON_CLASS, SCROLL_CLASS, objects as OBJECTS, KICKING_BOOTS, BOULDER, place_object, STATUE,
          disturb_buried_zombies, add_to_migration, stamp_fobj, remove_object, fobj } from './mkobj.js';
 import { doeat } from './eat.js';
@@ -49,7 +50,7 @@ import { spoteffects, t_at, immune_to_trap, into_vs_onto, trap_explanation, trap
          could_untrap, untrap_at } from './trap.js';
 import { set_utrap } from './polyself.js';
 import { doset, dosetSimple } from './doset.js';
-import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message } from './hack.js';
+import { do_run, do_run_prefixed, isRunKey, RUN_DX, RUN_DY, do_farlook, do_look_full, doterrain, avoid_moving_on_trap, run_stop_for_monster_at, could_move_onto_boulder, getpos, gather_locs_interesting, set_msg_xy, cannot_push_msg, rock_disappear_msg, runmode_delay_output, nomul, handle_tip, invocation_message, cant_squeeze_thru_hero } from './hack.js';
 import { menuHeadStyle } from './menuattr.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
@@ -439,11 +440,7 @@ export function blocksMove(x, y) {
 }
 
 // C ref: youprop.h Passes_walls (FROMFORM bit from set_uasmon, or intrinsic).
-function hero_passes_walls() {
-    const p = game.u?.uprops;
-    return !!game.u?.formprops?.Passes_walls || !!p?.Passes_walls
-        || !!p?.HPasses_walls || !!p?.EPasses_walls;
-}
+function hero_passes_walls() { return Passes_walls_hero(); }
 
 // C ref: dbridge.c is_pool(x,y) — POOL/MOAT/WATER, plus a raised drawbridge
 // whose DB_UNDER terrain is DB_MOAT (the water the span crosses is still there
@@ -1864,6 +1861,9 @@ export async function rhack(key) {
         // item removes it from the floor so the pet's dog_goal fobj scan no longer
         // re-rolls obj_resists for it (the seed0002 early divergence).
         game.context.move = (await dopickup()) ? 1 : 0;
+        // C rhack() resets gm.multi when pickup returns ECMD_OK, including
+        // savelife()'s -1 after touching a corpse while building the menu.
+        if (!game.context.move) game.multi = 0;
     } else if (ch === '#') {
         // C ref: cmd.c doextcmd — read and run an extended command.
         // C ref: cmd.c rhack():3733-3740 -- `func == doextcmd` clears CQ_REPEAT
@@ -1993,6 +1993,7 @@ export async function rhack(key) {
         // Overloaded check; set_move_cmd() has already cleared context.travel.
         game.u.dx = RUN_DX[ch];
         game.u.dy = RUN_DY[ch];
+        game.u.dz = 0; // movecmd(), not domove(), clears the vertical direction
         if (!dxdy_moveok()) {
             await pline("You can't get there from here...");
             reset_cmd_vars(true);
@@ -2158,6 +2159,7 @@ export async function rhack(key) {
         // passes: reset_cmd_vars() clears context.move and the command queues.
         game.u.dx = DIR_DX[ch];
         game.u.dy = DIR_DY[ch];
+        game.u.dz = 0; // travel and continuation steps retain the previous dz
         if (!game.context.travel && !dxdy_moveok()) {
             await pline("You can't get there from here...");
             reset_cmd_vars(true);
@@ -3321,12 +3323,8 @@ const PICKLOCK_DID_NOTHING = 0, PICKLOCK_DID_SOMETHING = 1,
 function Is_box_otyp(otyp) {
     return otyp === LARGE_BOX || otyp === CHEST;
 }
-// an(name): the object's unidentified simple name with its indefinite article.
-// The tools/boxes here are never appearance-shuffled, so objects[otyp].name is
-// the displayed noun.
 function an_obj(otyp) {
-    const nm = OBJECTS[otyp]?.name || 'object';
-    return (/^[aeiou]/i.test(nm) ? 'an ' : 'a ') + nm;
+    return an(OBJECTS[otyp]?.name || 'object');
 }
 // C ref: lock.c lock_action() — the gerund phrase for the occupation messages.
 function lock_action_str(picktyp, target) {
@@ -3856,12 +3854,6 @@ async function domove_core(dx, dy, attemptTracked) {
     // parameters, so this assignment is the equivalent point.
     u.dx = dx;
     u.dy = dy;
-    // C ref: cmd.c movecmd() sets `u.dz = zdir[d]`, which is 0 for every
-    // horizontal direction, so a direction key always clears a u.dz left over
-    // by an earlier '>'/'<' getdir().  use_pick_axe2() (reached from the
-    // force-fight-with-a-pick branch of domove) branches on u.dz, so a stale
-    // u.dz > 0 made it dig downward instead of sideways.
-    u.dz = 0;
     // C ref: hack.c domove_core() — u.umoved is reset FALSE at the top of a
     // hero command and set TRUE only when the hero's position changes
     // (hack.c:2968).  u_calc_moveamt() reads it to decide whether a riding
@@ -3929,7 +3921,7 @@ async function domove_core(dx, dy, attemptTracked) {
     // might alter your actual destination".  Underwater only, so this is inert
     // on dry land; on the Plane of Water it is what makes a swim drift.
     if (u.uinwater) {
-        const wtmod = u.uprops?.Swimming ? MOD_ENCUMBER : SLT_ENCUMBER;
+        const wtmod = Swimming_hero() ? MOD_ENCUMBER : SLT_ENCUMBER;
         await water_friction();
         if (!u.dx && !u.dy) { nomul(0); return; }
         newx = u.ux + u.dx;
@@ -4563,11 +4555,8 @@ async function domove_core(dx, dy, attemptTracked) {
     // boulder/moverock block below.  In Sokoban a boulder counts as rock, so
     // squeezing diagonally between two of them is refused outright instead of
     // being attempted as a push ("You try to move the boulder, but in vain.").
-    // `!blocksMove(newx, newy)`: C's IS_OBSTRUCTED/IRONBARS/closed-door tests on
-    // the DESTINATION run first (hack.c:1030) and return FALSE silently when
-    // flags.mention_walls is off, so a diagonal aimed straight at a wall never
-    // reaches the squeeze test.  Our port does that test after the boulder push,
-    // hence the explicit guard here.
+    // C tests the destination's terrain before the squeeze and boulder arms.
+    // Our obstacle rejection is below, so guard the squeeze here as well.
     if (u.dx && u.dy && !blocksMove(newx, newy)
         && bad_rock_hero(u.ux, newy) && bad_rock_hero(newx, u.uy)) {
         const why = cant_squeeze_thru_hero();
@@ -4587,14 +4576,6 @@ async function domove_core(dx, dy, attemptTracked) {
         nomul(0);
         return;
     }
-
-    // ── push a boulder ──  C ref: hack.c test_move() DO_MOVE branch -> moverock().
-    // A boulder sits on an otherwise-passable square, so blocksMove() below would
-    // wrongly let the hero step onto it.  Instead, C tries to roll the boulder one
-    // square further in the move direction; if it can't move, test_move returns
-    // FALSE and the hero stays put (no turn elapses).  Only reached when the hero
-    // does not pass through walls (the corpus heroes never do).
-    if (await test_move_boulder(newx, newy)) return;
 
     // C ref: hack.c test_move() obstacle arm (DO_MOVE): an iron-bars square is
     // chewed by a rusting/corroding/metal-eating form and squeezed through by a
@@ -4682,6 +4663,11 @@ async function domove_core(dx, dy, attemptTracked) {
         nomul(0); // C ref: hack.c:2846
         return;
     }
+
+    // C ref: hack.c test_move(): push only after the terrain checks succeed.
+    // A boulder can share an impassable square (for example, wished iron bars).
+    // A refused step must leave that boulder untouched.
+    if (await test_move_boulder(newx, newy)) return;
 
     // ── avoid stepping into water/lava (paranoid_confirm:swim) ──  C ref:
     // hack.c domove() -> swim_move_danger(x,y), checked right after test_move()
@@ -5229,39 +5215,7 @@ export async function climb_pit() {
 // #wizintrinsic, a ring of phasing-like source) is still blocked here, so
 // impaired_movement() keeps rerolling confdir() until it lands off the wall.
 function bad_rock_hero(x, y) {
-    if (In_sokoban(game.u?.uz) && boulder_at(x, y)) return true;
-    const loc = game.level?.at(x, y);
-    const typ = loc ? loc.typ : 0;
-    if (!IS_OBSTRUCTED(typ)) return false;
-    const mdat = youmonst_data_pub();
-    const f1 = mflags1_of(mdat);
-    const may_dig_here = !((IS_STWALL(typ) || IS_TREE(typ))
-                           && ((loc?.wall_info || 0) & W_NONDIGGABLE));
-    if ((f1 & M1_TUNNEL) !== 0 && (f1 & 0x40 /* M1_NEEDPICK */) === 0 && may_dig_here)
-        return false;
-    const may_passwall = !(IS_STWALL(typ) && ((loc?.wall_info || 0) & 0x10 /* W_NONPASSWALL */));
-    return !((f1 & 0x8 /* M1_WALLWALK */) !== 0 && may_passwall);
-}
-
-// C ref: hack.c:952 cant_squeeze_thru(&youmonst) — 0 fits, 1 too big,
-// 2 carrying too much, 3 Sokoban.
-function cant_squeeze_thru_hero() {
-    const u = game.u;
-    if (hero_passes_walls()) return 0;
-    const MZ_LARGE = 3, WT_TOOMUCH_DIAGONAL = 600;  // weight.h:22
-    // C ref: the bigmonst exemption's can_fog() term cannot hold for the hero
-    // (is_vampshifter(&youmonst) needs a vampire form, none is MZ_LARGE).
-    const ptr = youmonst_data_pub();
-    if ((ptr?.msize ?? 0) >= MZ_LARGE
-        && !((mflags1_of(ptr) & M1_AMORPHOUS) !== 0
-             || ptr.mcls === 22 /* S_VORTEX (is_whirly) */
-             || ptr.name === 'air elemental'
-             || ptr.mcls === 54 /* S_GHOST (noncorporeal) */
-             || (mflags1_of(ptr) & 0x80000 /* M1_SLITHY */) !== 0))
-        return 1;
-    if (carried_weight() > WT_TOOMUCH_DIAGONAL) return 2;
-    if (In_sokoban(u?.uz)) return 3;
-    return 0;
+    return bad_rock_mon(youmonst_data_pub(), x, y);
 }
 
 // C ref: mkobj.c sobj_at(BOULDER, x, y) — the topmost boulder lying on the floor
@@ -5295,29 +5249,16 @@ function hero_throws_rocks() {
     return throws_rocks_flag({ pmidx: game.u?.umonnum });
 }
 
-// C ref: objnam.c xname() BOULDER case (objnam.c:814-826): when
-// `next_boulder === 1` the name is "next boulder" instead of plain "boulder",
-// and the flag self-clears right there so a SECOND name-request for the same
-// object (e.g. two messages about the same push) reverts to plain "boulder" -
-// matching C's one-shot "once 'next boulder' occurs, subsequent messages
-// should just use ordinary 'boulder'" comment exactly.
-function pushable_base_name(otmp) {
-    const base = OBJECTS[otmp.otyp]?.name || 'boulder';
-    if (otmp.otyp === BOULDER && otmp.next_boulder === 1) {
-        otmp.next_boulder = 0;
-        return `next ${base}`;
-    }
-    return base;
-}
+// C ref: hack.c dopush()/moverock() name the boulder with the(xname(otmp)) /
+// Tobjnam(otmp, verb) = The(xname(otmp)) + otense(): the real xname() runs for
+// its side effects (observe_object(), a priest's bknown, and the one-shot
+// next_boulder reset), so no hand-built name may stand in for it.
 function the_pushable_name(otmp) {
-    return `the ${pushable_base_name(otmp)}`;
+    return the(xname(otmp));
 }
 function The_pushable_name(otmp) {
-    return `The ${pushable_base_name(otmp)}`;
+    return The(xname(otmp));
 }
-// C ref: objnam.c Tobjnam(obj, verb): "The <obj> <verb-conjugated>".  Boulders
-// are always seen when pushed (adjacent square), so the cansee()/"Something"
-// arm of the real Tobjnam() never applies here.
 function Tobjnam_boulder(otmp, verb) {
     return `${The_pushable_name(otmp)} ${otense(otmp, verb)}`;
 }
@@ -5510,6 +5451,16 @@ async function test_move_boulder(newx, newy) {
         return true;
     }
     if (bobj) {
+        // C hack.c test_move(): tunneling forms chew before attempting a push.
+        const form = youmonst_data_pub();
+        if ((mflags1_of(form) & M1_TUNNEL) !== 0
+            && (mflags1_of(form) & 0x40 /* M1_NEEDPICK */) === 0
+            && !In_sokoban(u.uz)) {
+            if (!await still_chewing(newx, newy)) return false;
+            game.context.move = 0;
+            nomul(0);
+            return true;
+        }
         // C ref: hack.c:1001 test_move() starts with context.door_opened = FALSE;
         // moverock()'s nopick arm sets it (with context.move) when the hero
         // learned something, and domove_core() 2844 then keeps the turn.
@@ -5541,7 +5492,7 @@ async function moverock(otmp, sx, sy, dx, dy) {
         // C ref: hack.c:368 otmp->next_boulder = firstboulder ? 0 : 1 -- the
         // FIRST boulder at this square is named plainly; the second and any
         // further ones in the same pile are named "next boulder" once (see
-        // pushable_base_name()'s self-clearing read of this flag).
+        // xname()'s self-clearing read of this flag).
         otmp.next_boulder = firstboulder ? 0 : 1;
         firstboulder = false;
         // C ref: hack.c:358-362 — first feeling an undisplayed boulder

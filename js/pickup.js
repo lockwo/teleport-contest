@@ -6,13 +6,14 @@
 // branch/count logic stays here, on C's line order.
 
 import { Half_physical_damage_hero, uteetering_at_seen_pit, uescaped_shaft } from './youprop.js';
+import { upstart, plur } from './hacklib.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { Blind } from './vision.js';
 import { read_engr_at } from './engrave.js';
 import { rn2, rnd, d } from './rng.js';
 import { pline, bot, m_at, newsym, flush_screen, y_n, update_topl, urgent_topl, Hallucination_u } from './display.js';
 import { rndmonnam } from './do_name.js';
-import { short_oname, thesimpleoname } from './objnam.js';
+import { short_oname, thesimpleoname, the, The } from './objnam.js';
 import {
     isok, is_pit, is_hole, TT_PIT,
     SLT_ENCUMBER, MOD_ENCUMBER, HVY_ENCUMBER, EXT_ENCUMBER,
@@ -26,7 +27,7 @@ import {
     SCR_SCARE_MONSTER, WAN_CANCELLATION, AMULET_OF_YENDOR, BELL_OF_OPENING,
     LARGE_BOX, CHEST, ICE_BOX, BAG_OF_HOLDING, BAG_OF_TRICKS, HORN_OF_PLENTY,
     objects, weight, add_to_container, place_object, start_corpse_timeout,
-    stop_object_timer, has_omonst, get_mtraits, start_glob_timeout,
+    stop_object_timer, has_omonst, get_mtraits, start_glob_timeout, age_is_relative,
 } from './mkobj.js';
 import {
     invlet_basic, inventoryArray, near_capacity, inv_weight, xname, corpse_xname, killer_xname,
@@ -153,7 +154,7 @@ function Is_container(obj) {
 }
 function Is_box(obj) {
     const t = obj?.otyp;
-    return t === LARGE_BOX || t === CHEST || t === ICE_BOX;
+    return t === LARGE_BOX || t === CHEST;
 }
 function Is_mbag(obj) {
     return obj?.otyp === BAG_OF_HOLDING || obj?.otyp === BAG_OF_TRICKS;
@@ -189,20 +190,6 @@ function inv_cnt(incl_gold) {
         if (incl_gold || obj.oclass !== COIN_CLASS) ++n;
     return n;
 }
-/* objnam.c the() */
-function the(s) {
-    const str = String(s ?? '');
-    if (/^(the |The |a |an |A |An |your |Your |his |her |its |their )/.test(str))
-        return str;
-    if (/^[A-Z]/.test(str)) return str;
-    return `the ${str}`;
-}
-function The(s) { const t = the(s); return t.charAt(0).toUpperCase() + t.slice(1); }
-function upstart(s) {
-    const str = String(s ?? '');
-    return str.charAt(0).toUpperCase() + str.slice(1);
-}
-function plur(n) { return Number(n) === 1 ? '' : 's'; }
 
 /* objclass.h def_oc_syms[].sym, indexed by oclass */
 const def_oc_syms = [
@@ -263,15 +250,7 @@ async function losehp(n, knam, k_format) {
 function Maybe_Half_Phys(dmg) {
     return Half_physical_damage_hero() ? Math.trunc((dmg + 1) / 2) : dmg;
 }
-/* obj.h age_is_relative(o) — only lit/burnable tools track relative age. */
-const TALLOW_CANDLE = 224, WAX_CANDLE = 225, BRASS_LANTERN = 226,
-    OIL_LAMP = 227, MAGIC_LAMP = 228, POT_OIL = 321, LEASH = 236,
-    CANDELABRUM_OF_INVOCATION = 262, SPE_BOOK_OF_THE_DEAD = 409;
-function age_is_relative(obj) {
-    const t = obj?.otyp;
-    return t === TALLOW_CANDLE || t === WAX_CANDLE || t === BRASS_LANTERN
-        || t === OIL_LAMP || t === MAGIC_LAMP || t === POT_OIL;
-}
+const LEASH = 236, CANDELABRUM_OF_INVOCATION = 262, SPE_BOOK_OF_THE_DEAD = 409;
 
 /* ═══════════════════════════════════════════════════════════════════════
    pickup.c:76 simple_look()

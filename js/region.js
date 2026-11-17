@@ -28,6 +28,7 @@ import { attacktype_fordmg, AT_BREA, AD_DRST, AD_RBRE } from './monattk_data.js'
 import { has_innate } from './exper.js';
 import { Poison_resistance } from './youprop.js';
 import { You_feel, m_at } from './display.js';
+import { Hallucination_u } from './display.js';
 
 const MAX_CLOUD_SIZE = 150;
 
@@ -987,10 +988,7 @@ function Breathless() {
         return true;
     return !!u?.Upolyd && (mflags1_of(u.data) & M1_BREATHLESS) !== 0;
 }
-function Hallucination() {
-    const u = game.u;
-    return !!(u?.uhallu || u?.HHallucination || u?.uprops?.Hallucination);
-}
+function Hallucination() { return Hallucination_u(); }
 
 // C ref: region.c:1341 region_danger() — for checking troubles during prayer:
 // is the hero standing in something that can hurt her?  js/pray.js:203 and

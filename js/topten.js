@@ -31,7 +31,7 @@ import {
     ACH_TUNE, ACH_RNK1, ACH_RNK8,
 } from './const.js';
 import { game, register_process_static } from './gstate.js';
-import { depth } from './hacklib.js';
+import { depth, highc, an } from './hacklib.js';
 import { roles, genders, aligns, str2role, str2race } from './role.js';
 import { rank_of } from './exper.js';
 import { money_cnt_invent, hidden_gold } from './shk.js';
@@ -184,8 +184,6 @@ function onlyspace(s) {
 // hacklib.c:90 lcase().
 function lcase(s) { return String(s ?? '').replace(/[A-Z]/g, (c) => c.toLowerCase()); }
 
-// hacklib.c highc() — capitalise one character.
-function highc(c) { return String(c ?? '').toUpperCase(); }
 
 // hacklib.c:557 strNsubst(buf, orig, repl, 0) — replace EVERY occurrence.
 function strNsubst_all(buf, orig, repl) {
@@ -198,25 +196,6 @@ function strsubst(bp, orig, replacement) {
     return i < 0 ? bp : bp.slice(0, i) + replacement + bp.slice(i + orig.length);
 }
 
-// objnam.c:2145 an() via just_an().  Same reduction js/questpgr.js:2659 uses:
-// the general vowel rule plus the "wun"/long-'u' exceptions.
-function an(str) {
-    const s = String(str ?? '');
-    if (!s) return 'an []';           /* C: impossible("Alphabet soup") */
-    const c0 = s[0].toLowerCase();
-    if (!s[1] || s[1] === ' ') return ('aefhilmnosx'.includes(c0) ? 'an ' : 'a ') + s;
-    const low = s.toLowerCase();
-    if (low.startsWith('the ')) return s;
-    const vowel = 'aeiou'.includes(c0);
-    const wunOrLongU = low.startsWith('one') || low.startsWith('eu')
-        || low.startsWith('uke') || low.startsWith('ukulele')
-        || low.startsWith('unicorn') || low.startsWith('uranium')
-        || low.startsWith('useful');
-    if ((vowel && !wunOrLongU)
-        || (c0 === 'x' && !'aeiou'.includes((s[1] || '').toLowerCase())))
-        return `an ${s}`;
-    return `a ${s}`;
-}
 
 // insight.c:2517 sokoban_in_play() — "has the entered-Sokoban achievement been
 // recorded".  js/insight.js:959 keeps a private copy of this.

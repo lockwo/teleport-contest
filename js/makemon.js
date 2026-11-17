@@ -2652,7 +2652,7 @@ export function set_mimic_sym(mtmp) {
     // mtmp, so does_block()'s m_at() sees it; this port links it into
     // level.monsters only after the mlet switch, so test mtmp itself too.
     if (does_block(mx, my)
-        || ((!mtmp.minvis || game.u?.uprops?.See_invisible) && is_lightblocker_mappear(mtmp)))
+        || ((!mtmp.minvis || See_invisible_hero()) && is_lightblocker_mappear(mtmp)))
         block_point(mx, my);
 }
 

@@ -382,8 +382,7 @@ function money_cnt_st(list) {
 function distu_st(x, y) { return dist2(x, y, game.u.ux, game.u.uy); }
 // C ref: you.h Levitation / Flying.
 import { Levitation_hero as Levitation_st, Flying_hero as Flying_st } from './youprop.js';
-// C ref: hacklib.c upstart(s) — capitalize the first letter in place.
-function upstart_st(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+import { upstart } from './hacklib.js';
 const FOOT_ST = 5, HAND_ST = 6;
 
 // C ref: steal.c:58 stealgold(mtmp) — a leprechaun grabs the gold under (or in)
@@ -408,7 +407,7 @@ export async function stealgold(mtmp) {
         add_to_minv(mtmp, fgold);
         newsym(u.ux, u.uy);
         const { y_monnam } = await import('./do_name.js');
-        const { body_part } = await import('./invent.js');
+        const { body_part, youmonst_data_pub } = await import('./invent.js');
         const { makeplural } = await import('./plural.js');
         const { mbodypart } = await import('./monmove.js');
         if (u.usteed) {
@@ -416,7 +415,7 @@ export async function stealgold(mtmp) {
             whose = s_suffix(y_monnam(who));
             what = makeplural(mbodypart(who, FOOT_ST));
         } else {
-            who = game.youmonst;
+            who = { data: youmonst_data_pub() }; /* &gy.youmonst: the hero's current form */
             whose = 'your';
             what = makeplural(body_part(FOOT_ST));
         }
@@ -680,7 +679,7 @@ export async function maybe_absorb_item(mon, obj, ochance, achance) {
             const { makeplural } = await import('./plural.js');
             let hand_s = body_part(HAND_ST);
             if (bimanual(obj)) hand_s = makeplural(hand_s);
-            await update_topl(`${upstart_st(yname(obj))} ${
+            await update_topl(`${upstart(yname(obj))} ${
                 otense(obj, 'are')} pulled from your ${hand_s}!`);
         }
         freeinv(obj);

@@ -1246,6 +1246,14 @@ export function bcsign(otmp) {
     return (otmp?.blessed ? 1 : 0) - (otmp?.cursed ? 1 : 0);
 }
 
+// C ref: obj.h age_is_relative(). Magic lamps track an absolute age.
+export function age_is_relative(obj) {
+    return obj.otyp === BRASS_LANTERN || obj.otyp === OIL_LAMP
+        || obj.otyp === CANDELABRUM_OF_INVOCATION
+        || obj.otyp === TALLOW_CANDLE || obj.otyp === WAX_CANDLE
+        || obj.otyp === POT_OIL;
+}
+
 // C ref: mkobj.c set_bknown(obj, onoff) — the bless/curse-state-known flag,
 // which is what makes doname() print "blessed"/"cursed"/"uncursed"; a change to
 // an inventory object refreshes the open inventory window (but not during
@@ -2042,8 +2050,10 @@ export function weight(otmp) {
 // grows at its head, however the pile order places the object (a non-boulder
 // lands UNDER boulders in its pile).  Our one array can only carry one of the
 // two orders, so each placement is stamped and fobj() below sorts by it.
-let _fobj_seq = 0;
-export function stamp_fobj(otmp) { otmp.fobj_seq = ++_fobj_seq; }
+// The counter travels with its stamps so post-restore placements still prepend.
+export function stamp_fobj(otmp) {
+    otmp.fobj_seq = game._fobj_seq = (game._fobj_seq || 0) + 1;
+}
 
 // All floor objects on the level (C's `fobj` chain, rm.h `fobj` == svl.level.objlist),
 // newest placement first: C inserts each newly placed object at the HEAD of fobj

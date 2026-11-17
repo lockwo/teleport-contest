@@ -9,7 +9,7 @@ const NUMOBUF = 12; /* objnam.c:11 */
 function impossible(_msg) { /* the C message goes to the paniclog only */ }
 
 // lowc(): lower-case a single char (ASCII).  C ref: hacklib.c lowc().
-import { strncmp, strncmpi, strcmpi } from './hacklib.js';
+import { strncmp, strncmpi, strcmpi, letter } from './hacklib.js';
 export function lowc(c) {
     return c >= 'A' && c <= 'Z' ? c.toLowerCase() : c;
 }
@@ -20,7 +20,6 @@ export const vowels = 'aeiouAEIOU';
 
 // ── C string primitives (hacklib.c) ───────────────────────────────────────
 function highc(c) { return c >= 'a' && c <= 'z' ? c.toUpperCase() : c; }
-function letter(c) { return !!c && /[A-Za-z]/.test(c); }
 
 /* objnam.c:66 BSTRCMPI(base, ptr, str): TRUE (non-zero) when ptr is in front of
    base or the tail differs.  `idx` is the C pointer as an index into base. */

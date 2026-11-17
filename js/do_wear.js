@@ -12,7 +12,8 @@ import { game } from './gstate.js';
 import { hcolor } from './do_name.js';
 import { rnd } from './rng.js';
 import { pline, update_topl, newsym, see_monsters, You_feel } from './display.js';
-import { See_invisible_hero } from './youprop.js';
+import { Hallucination_u } from './display.js';
+import { See_invisible_hero, HInvis_hero } from './youprop.js';
 import { Blind } from './vision.js';
 import { objects, ARMOR_CLASS, WEAPON_CLASS, TOOL_CLASS, CORPSE, curse } from './mkobj.js';
 import { base_armcat } from './objarmor_data.js';
@@ -29,7 +30,8 @@ import {
     otense, Yname2, Tobjnam, makeknown_credit, cmdq_pop, worn_extrinsic, worn_blocked, set_worn_extrinsic, corpse_xname,
 } from './invent.js';
 import { setuwep as setuwep_c } from './wield.js';
-import { makeplural } from './plural.js';
+import { donning, doffing } from './objnam.js';
+import { makeplural, makesingular } from './plural.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
 import { weapon_descr } from './weapon.js';
 import { youmonst_data_pub, nohands_youmonst, empty_handed, cmdq_clear, encumber_msg } from './invent.js';
@@ -210,10 +212,7 @@ function HStealth() { const u = game.u || {}; return !!(u.HStealth || u.uStealth
    riding a non-flyer (polyself.js steed_vs_stealth()) plus worn blockers. */
 function BStealth() { return !!((game.u?.uprops?.BStealth | 0) || worn_blocked(42 /* STEALTH */)); }
 function HFumbling() { const u = game.u || {}; return (u.HFumbling | 0); }
-function Hallucination() {
-    const u = game.u || {};
-    return !!u.uhallu || !!u.Hallucination || ((u.uprops?.Hallucination | 0) > 0);
-}
+function Hallucination() { return Hallucination_u(); }
 function Glib() {
     const u = game.u || {};
     return (u.uprops?.Glib | 0) > 0;
@@ -433,7 +432,7 @@ export async function Cloak_on() {
         break;
     case MUMMY_WRAPPING:
         /* the wrapping is already worn, so C tests the raw Invis sources */
-        if ((game.u?.uprops?.HInvis || game.u?.HInvis || game.u?.uprops?.EInvis || game.u?.EInvis
+        if ((HInvis_hero() || game.u?.uprops?.EInvis || game.u?.EInvis
              || ((game.u?.uprops_extrinsic || {})[40 /* INVIS */] | 0)) && !Blind()) {
             newsym_here();
             await pline(`You can ${See_invisible_hero()
@@ -441,7 +440,7 @@ export async function Cloak_on() {
         }
         break;
     case CLOAK_OF_INVISIBILITY:
-        if (!oldprop_of(INVIS_P, WA_ARMC) && !game.u?.uprops?.HInvis && !Blind()) {
+        if (!oldprop_of(INVIS_P, WA_ARMC) && !HInvis_hero() && !Blind()) {
             makeknown(uarmc.otyp);
             newsym_here();                    /* C do_wear.c:360 */
             await pline(`Suddenly you can${See_invisible_hero() ? ' see through' : 'not see'} yourself.`);
@@ -492,7 +491,7 @@ export async function Cloak_off() {
         }
         break;
     case CLOAK_OF_INVISIBILITY:
-        if (!oldinvis && !game.u?.uprops?.HInvis && !Blind()) {
+        if (!oldinvis && !HInvis_hero() && !Blind()) {
             makeknown(CLOAK_OF_INVISIBILITY);
             newsym_here();                    /* C do_wear.c:417 */
             await pline(`Suddenly you can ${See_invisible_hero() ? 'no longer see through yourself' : 'see yourself'}.`);
@@ -811,11 +810,12 @@ export async function dragon_armor_handling(otmp, puton, on_purpose) {
         setE(INFRAVISION, puton);
         await see_monsters();
         break;
-    case GOLD_DRAGON_SCALES: case GOLD_DRAGON_SCALE_MAIL:
-        /* make_hallucinated(!puton, TRUE, W_ARM): the hallucination timer lives
-           in potion.js; wearing gold DSM should CLEAR hallucination. */
-        if (puton && u.uprops) u.uprops.Hallucination = 0;
+    case GOLD_DRAGON_SCALES: case GOLD_DRAGON_SCALE_MAIL: {
+        // C: resistance suppresses hallucination without deleting its timeout.
+        const { make_hallucinated } = await import('./potion.js');
+        await make_hallucinated(puton ? 0 : 1, !game.program_state?.restoring, WA_ARM);
         break;
+    }
     case ORANGE_DRAGON_SCALES: case ORANGE_DRAGON_SCALE_MAIL:
         setE(FREE_ACTION, puton);
         break;
@@ -942,25 +942,9 @@ export function reset_remarm() {
     t.disrobing = '';
 }
 
-// C ref: do_wear.c:1574 donning(otmp) / :1603 doffing(otmp).  This port drives
-// the dressing maneuver through invent.js run_dress_occupation()/start_occupation
-// rather than ga.afternmv, so the identity of the pending afternmv is recorded
-// on game._dressing_obj.
-export function donning(otmp) {
-    if (doffing(otmp)) return true;
-    return !!otmp && game._dressing_obj === otmp && !game._dressing_off;
-}
-export function doffing(otmp) {
-    if (!otmp) return false;
-    const t = takeoff_ctx();
-    if (game._dressing_obj === otmp && game._dressing_off) return true;
-    const slotbit = (otmp === game.uarm) ? WA_ARM : (otmp === game.uarmu) ? WA_ARMU
-        : (otmp === game.uarmc) ? WA_ARMC : (otmp === game.uarmf) ? WA_ARMF
-        : (otmp === game.uarmh) ? WA_ARMH : (otmp === game.uarmg) ? WA_ARMG
-        : (otmp === game.uarms) ? WA_ARMS : (otmp === game.uamul) ? W_AMUL
-        : (otmp === game.uleft) ? W_RINGL : (otmp === game.uright) ? W_RINGR : 0;
-    return !!slotbit && t.what === slotbit;
-}
+// C ref: do_wear.c:1574 donning(otmp) / :1603 doffing(otmp).  The shared copies
+// live in objnam.js (doname_base() needs them and cannot import this module).
+export { donning, doffing };
 
 // C ref: do_wear.c:1664 cancel_don()
 export function cancel_don() {
@@ -1267,7 +1251,7 @@ export async function glibr() {
     const rightfall = !!game.uright && !game.uright.cursed
         && (!uwep || !(welded(uwep) && !lefty) || !bimanual(uwep));
 
-    if (!game.uarmg && (leftfall || rightfall)) {
+    if (!game.uarmg && (leftfall || rightfall) && !nolimbs_hero()) {
         await pline(`Your ${(leftfall && rightfall) ? 'rings slip' : 'ring slips'} off your ${(leftfall && rightfall) ? fingers_or_gloves(false) : body_part(3 /*FINGER*/)}.`);
         xfl++;
         if (leftfall) {
@@ -1301,7 +1285,7 @@ export async function glibr() {
     if (otmp && otmp.otyp !== AKLYS && !welded(otmp)) {
         const savequan = otmp.quan;
         let thiswep = is_sword(otmp) ? c_sword : weapon_descr(otmp);
-        if (otherwep && thiswep !== makesingular_simple(otherwep)) otherwep = null;
+        if (otherwep && thiswep !== makesingular(otherwep)) otherwep = null;
         if ((otmp.quan | 0) > 1) {
             if (thiswep === 'food') otmp.quan = 1;
             else thiswep = makeplural(thiswep);
@@ -1316,7 +1300,6 @@ export async function glibr() {
         if (await canletgo(otmp, '')) await dropx(otmp);
     }
 }
-function makesingular_simple(s) { return String(s).replace(/s$/, ''); }
 
 // C ref: do_wear.c:3489 count_worn_armor()
 export function count_worn_armor() {

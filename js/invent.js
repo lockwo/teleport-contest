@@ -11,19 +11,20 @@ import { menu_ctx } from './windows.js';
 import { panic } from './panic.js';
 import { ONAME, has_oname, setONAME } from './const.js';
 
-import { s_suffix } from './hacklib.js';
+import { s_suffix, plur, letter } from './hacklib.js';
 import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js';
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush, queue_impossible, flush_impossibles } from './display.js';
 import { render_map_row_to_grid } from './display.js';
+import { Hallucination_u } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
 import { distmin, depth as depth_of_level } from './hacklib.js';
 import { surface, ceiling, has_ceiling, single_level_branch } from './dungeon.js';
 import { mmove_of } from './mon.js';
-import { touch_artifact_monster, touch_artifact_hero_flags, the_artifact_name,
+import { touch_artifact_monster, touch_artifact_hero_flags,
     confers_luck, set_artifact_intrinsic_core, disp_artifact_discoveries, discover_artifact,
     arti_invoke, finesse_ahriman, oname_assign, set_artifact_intrinsic, bare_artifactname } from './artifact.js';
 import { flush_hallucination_transitions } from './potion.js';
@@ -116,7 +117,7 @@ import { enlightenment_lines, record_achievement } from './insight.js';
 import { ACH_BELL, ACH_CNDL, ACH_BOOK, ACH_AMUL, ACH_MINE_PRIZE, ACH_SOKO_PRIZE } from './const.js';
 import { FREE_ACTION as FREE_ACTION_PROP, SLOW_DIGESTION as SLOW_DIGESTION_PROP } from './const.js';
 import { MELT_ICE_AWAY, COST_NOCONTENTS } from './const.js';
-import { MINV_ALL, engulfing_u } from './const.js';
+import { MINV_ALL, MINV_PICKMASK, engulfing_u } from './const.js';
 import { spot_time_left, obj_split_timers } from './timeout.js';
 import { obj_sheds_light, obj_split_light_source, obj_merge_light_sources as merge_light_sources,
          show_transient_light, transient_light_cleanup,
@@ -170,7 +171,7 @@ import { shkname } from './shkroom.js';
 // C ref: objnam.c doname_base():1648 — the shop-price suffix is formatted in
 // objnam.c, on top of shk.c's get_cost_of_shop_item()/unpaid_cost().
 import { price_suffix, add_erosion_words, cxname,
-         obj_is_pname, type_is_pname, the_unique_pm } from './objnam.js';
+         obj_is_pname, type_is_pname, the_unique_pm, the_unique_obj } from './objnam.js';
 import { makeplural, vtense } from './plural.js';
 import { shk_owns, next_shkp, fmon_head, nmon as shk_nmon, inhishop, splitbill, alter_cost, inside_shop as shk_inside_shop } from './shk.js';
 import { xname as on_xname, cxname_singular as on_cxname_singular, doname_base as on_doname_base,
@@ -217,7 +218,7 @@ import {
 import { body_part as poly_body_part, float_vs_flight } from './polyself.js';
 import { twoweapon_action_ok, setuwep as setuwep_c } from './wield.js';
 import * as DT from './dothrow.js';
-import { See_invisible_hero, Blind_telepat, Levitation_hero, Half_physical_damage_hero, Flying_hero, Stone_resistance_hero, Unchanging_hero } from './youprop.js';
+import { HInvis_hero, HSee_invisible_hero, Invis_hero, See_invisible_hero, Blind_telepat, Levitation_hero, Half_physical_damage_hero, Flying_hero, Stone_resistance_hero, Unchanging_hero, Deaf_hero, Fumbling_hero } from './youprop.js';
 // monattk_data.js is a pure data/predicate leaf (no top-level side effects), so
 // this edge cannot reorder anything observable.
 import { attacktype_fordmg, attacktype, AT_ENGL, AD_DGST } from './monattk_data.js';
@@ -1179,15 +1180,11 @@ export function Aggravate_monster() {
               || (u?.HAggravate_monster | 0) || worn_extrinsic(43 /* AGGRAVATE_MONSTER */));
 }
 
-// C ref: youprop.h `#define Free_action (HFree_action || EFree_action)`.  The
-// worn half (ring of free action, orange dragon scales, ...) lives only in the
-// extrinsic word above; the u.uprops spellings are the intrinsic/timed half
-// (and the several names this port has used for it).  Single reader for every
-// Free_action check so a worn ring is not invisible to them.
+// C ref: youprop.h Free_action == EFree_action, never the intrinsic word.
+// A debug timeout for FREE_ACTION must not protect against paralysis.
 export function Free_action() {
     const p = game.u?.uprops;
-    return !!((p?.FreeAction | 0) || (p?.HFree_action | 0) || (p?.EFree_action | 0)
-              || (p?.Free_action | 0) || (game.u?.EFree_action | 0)
+    return !!((p?.EFree_action | 0) || (game.u?.EFree_action | 0)
               || worn_extrinsic(FREE_ACTION_PROP));
 }
 
@@ -1315,6 +1312,7 @@ export function welded(obj) {
 export async function dropx(obj) {
     /* freeinv() -> freeinv_core() -> set_artifact_intrinsic(W_ART) ends an invoked power with arti_invoke() */
     if (freeinv(obj)) await arti_invoke(obj);
+    await flush_impossibles();
     const u = ustate();
     if (!u.uswallow) {
         const { ship_object } = await import('./dokick.js');
@@ -1554,7 +1552,6 @@ function obj_resists(obj, ochance, achance) {
     const chance = rn2(100);
     return chance < (obj?.oartifact ? achance : ochance);
 }
-function get_obj_location(obj, xp, yp) { if (!obj) return false; xp.x = obj.ox; yp.y = obj.oy; return true; }
 /* allow_category / add_valid_menu_class / menu_class_present /
    collect_obj_classes are pickup.c's; imported from js/pickup.js above. */
 /* query_objlist is pickup.c's; see js/pickup.js.  query_category() lives below
@@ -1603,10 +1600,7 @@ function def_char_to_objclass(sym) {
     if (typeof sym === 'number') return sym;
     return def_oc_syms.findIndex((x) => x.sym === sym);
 }
-function letter(c) { return /^[A-Za-z]$/.test(String(c)); }
 function digit(c) { return /^[0-9]$/.test(String(c)); }
-function plur(n) { return Number(n) === 1 ? '' : 's'; }
-function highc(s) { return String(s).charAt(0).toUpperCase(); }
 // C ref: hacklib.c ing_suffix() — gerund construction: split off a trailing
 // " on"/" off"/" with" particle, then double a final consonant ("tip"->"tipping"),
 // turn "ie" into "y" ("vie"->"vying"), or drop a final "e" ("grease"->"greasing").
@@ -2781,7 +2775,10 @@ export async function dismiss_invent_screen(textWindow = false) {
     delete game._disco_page;
     delete game._skill_pages;
     delete game._skill_page;
-    game._pending_message = '';
+    // C ref: wintty.c erase_menu_or_text(): only a full-width window (offx == 0)
+    // wipes the message row; a corner menu's docorner() clears from its own left
+    // edge rightward, so a stale topline to the left of it stays on the screen.
+    if (!(game._menuOffx > 0)) game._pending_message = '';
     // C ref: win/tty/wintty.c erase_menu_or_text() -> docorner() — tearing down
     // a menu whose own content reached the status window (putStatusLines
     // recorded the sweep via status_sweep) is what wrecks the status lines'
@@ -3575,9 +3572,10 @@ export async function hold_another_object(obj, drop_fmt, drop_arg, hold_msg) {
         obj_extract_self(obj);
     }
     // C ref: invent.c:1247 — a fumbling hero drops it at once.
-    if (game.u?.HFumbling || game.u?.EFumbling) {
+    if (Fumbling_hero()) {
         obj.nomerge = 1;
         obj = addinv_core0(obj, null, false);
+        await flush_artitouch();
         if (drop_fmt) await pline(String(drop_fmt).replace('%s', drop_arg ?? ''));
         obj.nomerge = 0;
         await hold_drop_it(obj);
@@ -3674,7 +3672,8 @@ export async function consume_obj_charge(obj, maybe_unpaid) {
 // would go on to call arti_invoke() to end an invoked power (the Heart of
 // Ahriman leaving inventory while levitation was invoked).  That call is async
 // (messages, float_down, spoteffects), so the async caller does it right after
-// freeinv(): `if (freeinv(obj)) await arti_invoke(obj);`.
+// freeinv(): `if (freeinv(obj)) await arti_invoke(obj);`.  Possession failures
+// use queue_impossible() because callers also include synchronous useup().
 export function freeinv_core(obj) {
     if (!obj) return false;
     // C ref: invent.c freeinv():1358-1360 — losing gold flags disp.botl, the
@@ -3684,12 +3683,23 @@ export function freeinv_core(obj) {
         return false;
     }
     let invoke_off = false;
-    if (obj.otyp === AMULET_OF_YENDOR && ustate().uhave) ustate().uhave.amulet = 0;
-    else if (obj.otyp === CANDELABRUM_OF_INVOCATION && ustate().uhave) ustate().uhave.menorah = 0;
-    else if (obj.otyp === BELL_OF_OPENING && ustate().uhave) ustate().uhave.bell = 0;
-    else if (obj.otyp === SPE_BOOK_OF_THE_DEAD && ustate().uhave) ustate().uhave.book = 0;
-    else if (obj.oartifact) {
-        if (is_quest_artifact(obj) && ustate().uhave) ustate().uhave.questart = 0;
+    if (obj.otyp === AMULET_OF_YENDOR) {
+        if (!ustate().uhave?.amulet) queue_impossible("don't have amulet?");
+        if (ustate().uhave) ustate().uhave.amulet = 0;
+    } else if (obj.otyp === CANDELABRUM_OF_INVOCATION) {
+        if (!ustate().uhave?.menorah) queue_impossible("don't have candelabrum?");
+        if (ustate().uhave) ustate().uhave.menorah = 0;
+    } else if (obj.otyp === BELL_OF_OPENING) {
+        if (!ustate().uhave?.bell) queue_impossible("don't have silver bell?");
+        if (ustate().uhave) ustate().uhave.bell = 0;
+    } else if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
+        if (!ustate().uhave?.book) queue_impossible("don't have the book?");
+        if (ustate().uhave) ustate().uhave.book = 0;
+    } else if (obj.oartifact) {
+        if (is_quest_artifact(obj)) {
+            if (!ustate().uhave?.questart) queue_impossible("don't have quest artifact?");
+            if (ustate().uhave) ustate().uhave.questart = 0;
+        }
         invoke_off = set_artifact_intrinsic_core(obj, false, W_ART_PROP);
     }
     if (obj.otyp === LOADSTONE) curse(obj);
@@ -4744,7 +4754,7 @@ export async function Ring_on(obj) {
         /* can now see invisible monsters (C ref: do_wear.c:1289-1291) */
         set_mimic_blocking(); /* do special mimic handling */
         await see_monsters();
-        if ((await import('./monmove.js')).Invis() && !oldprop && !game.u?.uprops?.HSee_invisible
+        if (Invis_hero() && !oldprop && !HSee_invisible_hero()
             && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
             await pline('Suddenly you are transparent, but there!');
@@ -4753,7 +4763,7 @@ export async function Ring_on(obj) {
         break;
     case RIN_INVISIBILITY:
         // C ref: do_wear.c Ring_on() `!oldprop && !HInvis && !BInvis && !Blind`
-        if (!oldprop && !game.u?.uprops?.HInvis && !worn_blocked(INVIS) && !Blind_for_wear()) {
+        if (!oldprop && !HInvis_hero() && !worn_blocked(INVIS) && !Blind_for_wear()) {
             learnring(obj, true);
             newsym(game.u.ux, game.u.uy);
             // C ref: do_wear.c:1303 self_invis_message() (potion.c:471) — the
@@ -4980,11 +4990,12 @@ export async function Amulet_on(amul) {
         // setworn() conferred extrinsic flying; C then float_vs_flight() and,
         // if this is new flight, makeknown + "You are now in flight."
         float_vs_flight(); /* block flying if levitating */
-        if (u && !(u.uprops?.BFlying | 0) && !worn_blocked(FLYING)) {
-            const already = !!u.uprops?.Flying;
+        if (Flying_hero()) {
+            const eflight = worn_extrinsic(FLYING);
+            set_worn_extrinsic(FLYING, eflight & ~W_AMUL);
+            const already = Flying_hero();
+            set_worn_extrinsic(FLYING, eflight);
             if (!already) {
-                if (!u.uprops) u.uprops = {};
-                u.uprops.Flying = true;
                 makeknown(AMULET_OF_FLYING);
                 await on_msg_accessory(amul);
                 on_msg_done = true;
@@ -5050,11 +5061,8 @@ export async function Blindf_on(obj) {
 function can_be_strangled_hero() {
     const ptr = youmonst_data();
     if (!ptr || (mflags1_of(ptr) & 0x8000 /* M1_NOHEAD */)) return false;
-    const p = game.u?.uprops || {};
     const nobrainer = (mflags1_of(ptr) & 0x10000 /* M1_MINDLESS */) !== 0;
-    const nonbreathing = (mflags1_of(ptr) & 0x400 /* M1_BREATHLESS */) !== 0
-        || !!(p.Breathless || p.HBreathless || p.EBreathless)
-        || game.uamul?.otyp === 209 /* AMULET_OF_MAGICAL_BREATHING */;
+    const nonbreathing = Breathless_hero();
     return !nobrainer || !nonbreathing;
 }
 export async function Blindf_off(obj) {
@@ -5126,7 +5134,7 @@ async function Ring_off_or_gone(obj, _gone) {
         break;
     case RIN_SEE_INVISIBLE:
         /* Make invisible monsters go away (C ref: do_wear.c:1386-1390) */
-        if (!worn_extrinsic(29 /* SEE_INVIS */) && !game.u?.uprops?.HSee_invisible) {
+        if (!See_invisible_hero()) {
             set_mimic_blocking(); /* do special mimic handling */
             await see_monsters();
         }
@@ -5138,7 +5146,7 @@ async function Ring_off_or_gone(obj, _gone) {
         }
         break;
     case RIN_INVISIBILITY:
-        if (!still_from_other && !game.u?.uprops?.HInvis && !worn_blocked(INVIS) && !Blind_for_wear()) {
+        if (!Invis_hero() && !worn_blocked(INVIS) && !Blind_for_wear()) {
             newsym(game.u.ux, game.u.uy);
             await pline(`Your body seems to unfade${See_invisible_hero() ? ' completely' : '..'}.`);
             learnring(obj, true);
@@ -5711,8 +5719,17 @@ async function run_dress_occupation(delay, msg, afternmv) {
         // number, not the 'I' map_invisible() stamped).  The iteration after the
         // LAST turn is the caller's own moveloop_core(), so only redraw here
         // while the hero is still helpless.
-        if (g.multi < 0) await moveloop_input_redraw();
-        else find_ac();
+        if (g.multi < 0) {
+            await moveloop_input_redraw();
+            // C ref: allmain.c:473-479 — the same iteration then runs
+            // `if (disp.botl || disp.botlx) { bot(); curs_on_u(); } else if
+            // (disp.time_botl) { timebot(); curs_on_u(); }`, so an AC change
+            // find_ac() just made is published (and its hilite clock started)
+            // on this helpless turn, not when the dressing finishes.
+            const dirty = !!(g.botl || g.botlx || g.time_botl);
+            await bot();
+            if (dirty) await flush_screen(1);
+        } else find_ac();
     }
     if (g.multi < 0) g.multi = 0; // safety: never leave the hero stuck busy
     g.multi_reason = null;
@@ -6968,7 +6985,7 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         if (mtmp) {
             const U = await import('./uhitm.js');
             const { M_AP_TYPE: ap_type, M_AP_OBJECT: ap_object } = await import('./const.js');
-            if (await U.shade_miss(game.youmonst || game.u, mtmp, obj, true, true)
+            if (await U.shade_miss(game.u, mtmp, obj, true, true)
                 || (ap_type(mtmp) === ap_object
                     && !loc?.disp_monster && !loc?.disp_warning
                     && !U.glyph_is_invisible(bx, by)))
@@ -7325,6 +7342,7 @@ async function thitmonst(mon, obj) {
 
             /* projectiles other than magic stones sometimes disappear when
                thrown */
+            const { should_mulch_missile } = await import('./monmove.js');
             if (should_mulch_missile(obj)) {
                 if (u.ushops?.[0] || obj.unpaid)
                     await DT.check_shop_obj(obj, game.bhitpos.x, game.bhitpos.y, true);
@@ -7428,20 +7446,6 @@ function is_unicorn_mon(ptr) {
     return ptr?.mcls === 21 /* S_UNICORN */ && likes_gems_flag(ptr);
 }
 
-// C ref: dothrow.c should_mulch_missile(obj).
-function should_mulch_missile(obj) {
-    if (!obj || !(is_ammo(obj) || is_missile(obj))
-        || obj.otyp === BOOMERANG || objects[obj.otyp]?.oc_magic)
-        return false;
-    const chance = 3 + greatest_erosion(obj) - (obj.spe || 0);
-    let broken = chance > 1 ? (rn2(chance) !== 0) : (rn2(4) === 0);
-    if (obj.blessed && (game.context?.mon_moving ? (rn2(3) === 0) : (rnl(4) === 0)))
-        broken = false;
-    if (((obj.oclass === GEM_CLASS && objects[obj.otyp]?.oc_tough)
-         || obj.otyp === FLINT) && rn2(2) === 0)
-        broken = false;
-    return broken;
-}
 
 // C ref: dothrow.c thitmonst() `obfree(obj, 0)` for a mulched missile — the
 // object is simply gone (no obj_resists roll, unlike delobj()).
@@ -7496,7 +7500,7 @@ async function throw_obj(obj, getDir, shotlimit = 0) {
         return unsplit_stack(ECMD_TIME);
     }
     if (!u.dx && !u.dy && !u.dz) {
-        game._pending_message = note_topl('You cannot throw an object at yourself.');
+        await update_topl('You cannot throw an object at yourself.');
         return unsplit_stack(ECMD_OK);
     }
     // C ref: dothrow.c:1146 `u_wipe_engr(2)` — throwing scuffs an engraving
@@ -7876,7 +7880,7 @@ export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
                     if (otmp.oartifact) {
                         const { artifact_hit } = await import('./artifact.js');
                         const mdmg = { d: dmg };
-                        await artifact_hit(null, game.youmonst || game.u, otmp, mdmg, 0);
+                        await artifact_hit(null, game.u, otmp, mdmg, 0);
                         dmg = mdmg.d;
                     }
                     await losehp_invent(Maybe_Half_Phys(dmg), killer_xname(otmp), 1 /* KILLED_BY */);
@@ -7930,9 +7934,7 @@ export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
         }
     }
     // C ref: dothrow.c:1794-1807 — landing damage precedes floor placement.
-    const deaf = u.uprops?.HDeaf || u.uprops?.EDeaf || u.uprops?.Deaf
-        || u.HDeaf || u.EDeaf || u.Deaf || u.uroleplay?.deaf;
-    if (!deaf && !Underwater) {
+    if (!Deaf_hero() && !Underwater) {
         const data = objects[otmp.otyp];
         const mat = data?.material;
         const flammable = ((mat <= 8 /* WOOD */ && mat !== 1 /* LIQUID */)
@@ -8097,7 +8099,7 @@ export function harmless_missile(obj) {
 // C ref: youprop.h Blind — the hero cannot see.
 function Blinded_hero() { return Blind_for_wear(); }
 // C ref: hack.h Hallucination — used by mergable()'s bknown/rknown arms.
-function Hallucination_hero() { return !!(game.u?.uhallu || game.u?.HHallucination || game.u?.uprops?.Hallucination); }
+function Hallucination_hero() { return Hallucination_u(); }
 
 // C ref: dothrow.c toss_up(obj, hitsroof) — the hero threw something straight
 // up.  Runs until the object has landed (and possibly hit the hero).
@@ -8142,7 +8144,7 @@ async function toss_up(otmp, hitsroof) {
         const { done } = await import('./end.js');
         await done(8 /* STONING */);
     };
-    const yourmon = game.youmonst || game.u;
+    const yourmon = game.u;
     if (otmp.oclass === POTION_CLASS) {
         await (await import('./potion.js')).potionhit(yourmon, otmp, 1 /* POTHIT_HERO_THROW */);
         return;
@@ -11018,7 +11020,7 @@ export async function wiz_identify() {
 // is not re-appended to the disco[] '\' list.  Looping observe_object() over
 // the whole pack instead re-encountered every born-dknown item (armor, food)
 // on each recovery and reordered the discoveries.
-export function learn_unseen_invent() {
+export async function learn_unseen_invent() {
     if (Blind_for_wear()) return;   /* sanity check */
     let invupdated = false;
     for (const otmp of inventoryArray()) {
@@ -11028,6 +11030,7 @@ export function learn_unseen_invent() {
         invupdated = true;
         xname(otmp);
         addinv_core2(otmp);
+        await flush_addinv_plines();
     }
     if (invupdated) update_inventory();
 }
@@ -11138,19 +11141,6 @@ const CREAM_PIE = 287, BULLWHIP = 82, GRAPPLING_HOOK = 260, CAN_OF_GREASE = 240,
     DRUM_OF_EARTHQUAKE = 258, LAND_MINE = 243, BEARTRAP = 244, PICK_AXE = 259,
     DWARVISH_MATTOCK = 71, TIN_OPENER = 239;
 
-// C ref: objnam.c the_unique_obj(obj) — should this object be named with "the"?
-function the_unique_obj(obj) {
-    // mksobj() in this port does not write `dknown` (C's mkobj.c sets it from
-    // the object class), so an unset field means "described" exactly as
-    // xname_core:1435 already assumes — treating it as 0 here named a freshly
-    // made Amulet of Yendor "an Amulet of Yendor" (seed0373 step 99).
-    if (obj == null) return false;
-    if (obj.dknown != null && !obj.dknown) return false;
-    const known = !!obj.known;
-    if (obj.otyp === FAKE_AMULET_OF_YENDOR_OTYP && !known) return true; /* lie */
-    return !!objects[obj.otyp]?.oc_unique
-        && (known || obj.otyp === AMULET_OF_YENDOR);
-}
 // C ref: eat.c is_edible(obj) — eat.js owns the full polyform-aware test.
 function is_edible_ia(obj) { return is_edible(obj); }
 // C ref: do_wear.c armcat_to_wornmask() + wearmask_to_obj() — the piece already
@@ -11905,7 +11895,7 @@ async function inventory_menu_dismissed() {
 
 // C ref: invent.c display_pickinv() -> select_menu(PICK_ONE).  The three
 // inventory callers differ after a pick, but share paging and menu commands.
-async function select_inventory_menu(rows, byLet) {
+async function select_inventory_menu(rows, byLet, pickNone = false) {
     let page = 0;
     let repaint = true;
     let info = null;
@@ -11964,6 +11954,10 @@ async function select_inventory_menu(rows, byLet) {
             return null;
         }
 
+        // C ref: wintty.c process_menu_window(): a PICK_NONE menu accepts no
+        // selector, count, group accelerator or ':' search (MENU_SEARCH rings the
+        // bell); only paging and dismissal keys, handled above, act.
+        if (pickNone) { repaint = false; continue; }
         const ch = String.fromCharCode(c);
         // C wintty.c:1554-1561 — a selector that exists on THIS page is an
         // explicit choice and beats the menu-command meaning of the same key.
@@ -12756,6 +12750,7 @@ function altar_description(loc) {
 // C ref: pager.c:614 ice_descr(x, y, outbuf) — "ice" (or "frozen <liquid>") when
 // the spot is far away or unseen, otherwise a thickness word from the
 // MELT_ICE_AWAY timer ("solid" when no timer is running) plus the water name.
+function db_under_typ_iced(mask) { return (mask & 28) === 8 /*DB_ICE*/ ? ICE : -1; }
 export function ice_descr(x, y) {
     const u = game.u;
     const r = (u?.xray_range > 2) ? u.xray_range : 2;
@@ -12763,7 +12758,9 @@ export function ice_descr(x, y) {
     const dx = (u?.ux ?? 0) - x, dy = (u?.uy ?? 0) - y;
     const at_hero = dx === 0 && dy === 0;
     const lev = game.level?.at?.(x, y);
-    if (lev?.typ !== ICE) return `[ice:${lev?.typ}?]`;
+    /* SURFACE_AT: the terrain under a raised drawbridge */
+    const surf = lev?.typ === 19 /*DRAWBRIDGE_UP*/ ? db_under_typ_iced(lev.drawbridgemask) : lev?.typ;
+    if (surf !== ICE) return `[ice:${lev?.typ}?]`;
     if (dx * dx + dy * dy > neardist
         || (!cansee(x, y) && (!at_hero || Levitation_hero()))) {
         return waterbody_name_for_ice(x, y);
@@ -13101,6 +13098,11 @@ export async function look_here(obj_cnt = 0, lookhere_flags = 0) {
     //           Blind ? "you feel" : "are");
     //   for (otmp...) putstr(tmpwin, 0, doname_with_price(otmp));
     //   display_nhwindow(tmpwin, TRUE);          // pages with --More--
+    // C ref: invent.c look_here() else-branch opens with
+    // display_nhwindow(WIN_MESSAGE, FALSE), so a pending message is paged with
+    // --More-- BEFORE any floor object is named; doname() below observes each
+    // object (dknown) and must not do so while that --More-- is still up.
+    await display_nhwindow_message();
     const header = `${picked_some ? 'Other things' : 'Things'} that ${Blind_for_wear() ? 'you feel' : 'are'} here:`;
     // C ref: invent.c look_here() — the listing stops at a corpse the blind
     // hero would touch ("<corpse>..."), and feel_cockatrice() follows the window.
@@ -13970,7 +13972,7 @@ export async function display_minventory(mon, dflags, title) {
         game._toplin = 0;
         game._toplinSoft = null;
     }
-    await select_inventory_menu(rows, new Map());
+    await select_inventory_menu(rows, new Map(), (dflags & MINV_PICKMASK) === PICK_NONE);
     return null;
 }
 /* C ref: hacklib.c strsubst() — replace the FIRST occurrence only. */

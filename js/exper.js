@@ -433,7 +433,7 @@ export async function losexp(drainer, emitMsg) {
         drainer = null;
     } else {
         const { resists_drli } = await import('./artifact.js');
-        if (resists_drli(game.youmonst || u)) return;
+        if (resists_drli(u)) return;
     }
     if (!emitMsg) ({ update_topl: emitMsg } = await import('./display.js'));
     if ((u.ulevel || 0) > 1 || drainer) {

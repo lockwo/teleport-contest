@@ -22,6 +22,8 @@
 // attributed to light.c).  Every routine here must stay RNG-free.
 
 import { game, hooks } from './gstate.js';
+import { Unblind_telepat } from './worn.js';
+import { dist2 } from './hacklib.js';
 
 import {
     COLNO, ROWNO, MAX_RADIUS, COULD_SEE, TEMP_LIT, RANGE_LEVEL,
@@ -173,8 +175,6 @@ export function artifact_light(obj) {
 
 // C ref: zap.c:654 get_obj_location(obj, &x, &y, locflags) — returns
 // {x, y} or null.  BURIED_TOO/CONTAINED_TOO are the locflags bits.
-// (js/invent.js:1077 has a private copy that reads obj.ox/obj.oy for every
-// `where`; this is the full switch.  Belongs to zap.c's owner.)
 const BURIED_TOO = 0x2, CONTAINED_TOO = 0x1;
 export function get_obj_location(obj, locflags) {
     if (!obj) return null;
@@ -203,7 +203,7 @@ export function get_obj_location(obj, locflags) {
 // C ref: zap.c:692 get_mon_location(mon, &x, &y, locflags).  The hero is
 // represented by game.u, not a youmonst struct, so a light source attached to
 // the hero (or to the steed she rides) carries the HERO sentinel below.
-export const HERO = Symbol('youmonst');
+export const HERO = Symbol.for('youmonst');
 function get_mon_location(mon, locflags) {
     if (mon === HERO || (game.u?.usteed && mon === game.u.usteed))
         return { x: game.u?.ux, y: game.u?.uy };
@@ -259,8 +259,6 @@ function circle_ptr(range) {
 
 function u_at(x, y) { return game.u?.ux === x && game.u?.uy === y; }
 
-// C ref: hacklib.c dist2.
-function dist2(x0, y0, x1, y1) { return (x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1); }
 
 // ── light.c proper ──
 
@@ -569,6 +567,29 @@ export function restore_light_sources(records) {
         const ls = { next: null, x: rec.x, y: rec.y, range: rec.range,
                      type: rec.type, id: rec.id, flags: rec.flags };
         light_base().unshift(ls);
+    }
+}
+
+// C dorecover() restores global lights first, then prepends the current
+// level's lights. Each saved subchain is itself read back by prepending.
+export function restore_light_sources_order() {
+    const local = [], global = [];
+    for (const ls of light_base()) {
+        if (ls.type === LS_OBJECT && !ls.id) continue; // discarded camera flashes
+        const isLocal = ls.type === LS_OBJECT ? obj_is_local(ls.id) : mon_is_local(ls.id);
+        (isLocal ? local : global).unshift(ls);
+    }
+    (game.level || game).light_base = local.concat(global);
+}
+
+// A bones file is savelev(RANGE_LEVEL), never a global-state save.
+export function discard_global_light_sources() {
+    const list = light_base();
+    for (let i = list.length - 1; i >= 0; --i) {
+        const ls = list[i];
+        if (!ls.id || (ls.type === LS_OBJECT
+            ? !obj_is_local(ls.id) : !mon_is_local(ls.id)))
+            list.splice(i, 1);
     }
 }
 
@@ -942,10 +963,7 @@ function obj_is_local(obj) {
     return true;
 }
 
-// C ref: shk.c:2777 find_oid(id) — locate an object anywhere by its o_id.  The
-// full C version also walks the migrating/buried/bones chains; this walks the
-// chains this port actually has (floor pile, hero inventory and its containers,
-// monster inventories).  Belongs in shk.c's module (see `deferred`).
+// C ref: shk.c find_oid() searches every object chain except billobjs.
 export function find_oid(id) {
     const seen = (list) => {
         for (const o of (list || [])) {
@@ -957,11 +975,15 @@ export function find_oid(id) {
     };
     let hit = seen(game.invent);
     if (hit) return hit;
-    hit = seen(game.level?.objects);
-    if (hit) return hit;
-    for (const mon of fmon()) {
-        hit = seen(mon.minvent);
+    for (const list of [game.level?.objects, game.level?.buriedobjlist, game.migrating_objs]) {
+        hit = seen(list);
         if (hit) return hit;
+    }
+    for (const list of [fmon(), game.migrating_mons, game.mydogs]) {
+        for (const mon of list || []) {
+            hit = seen(mon.minvent);
+            if (hit) return hit;
+        }
     }
     return null;
 }
@@ -990,13 +1012,13 @@ function canspotmon(mon) {
 // C ref: display.h:43 _tp_sensemon(mon) — the hero senses a monster with a mind
 // when blind+telepathic, or with a telepathy-inducing item within its range.
 function tp_sensemon(mon) {
-    const u = game.u, p = u?.uprops || {};
+    const u = game.u;
     if (mindless(mon.data)) return false;
     /* Blind_telepat is the INTRINSIC half; it only works while blind */
     const blind = Blind();
     if (blind && Blind_telepat()) return true;
     /* Unblind_telepat is the EXTRINSIC (worn/wielded) half only */
-    return !!p.ETelepat
+    return Unblind_telepat()
         && dist2(mon.mx, mon.my, u?.ux ?? 0, u?.uy ?? 0) <= (u?.unblind_telepat_range ?? -1);
 }
 

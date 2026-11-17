@@ -309,7 +309,7 @@ export async function drop_throw(obj, ohit, x, y, deps = {}) {
                 const { stackobj } = await import('./invent.js');
                 place_object(obj, x, y);
                 if (!mtmp && u_at(x, y))
-                    mtmp = game.youmonst || game.u;
+                    mtmp = game.u;
                 if (mtmp && ohit)
                     await deps.passive_obj?.(mtmp, obj, null);
                 stackobj(obj);
@@ -465,7 +465,7 @@ export async function m_throw(mon, x, y, dx, dy, range, obj, deps = {}) {
                 break;
 
             if (singleobj.oclass === POTION_CLASS) {
-                await deps.potionhit?.(game.youmonst, singleobj,
+                await deps.potionhit?.(game.u, singleobj,
                                        deps.POTHIT_MONST_THROW ?? 2);
                 break;
             }
@@ -682,7 +682,7 @@ export async function thrwmm(mtmp, mtarg, deps = {}) {
 // the DRAW happens even when the trailing term then declines to block.  A
 // monster target skips it entirely.
 export function m_lined_up(mtarg, mtmp, deps = {}) {
-    const utarget = (mtarg === game.youmonst);
+    const utarget = (mtarg === game.u);
     const tx = utarget ? mtmp.mux : mtarg.mx;
     const ty = utarget ? mtmp.muy : mtarg.my;
     const ignore_boulders = utarget
@@ -801,7 +801,7 @@ export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) 
                 const { cansee } = await import('./vision.js');
                 if (cansee(bx, by) && !nodissolve)
                     await pline('The iron bars are dissolved!');
-                else if (!game.u?.Deaf)
+                else if (!Deaf_hero())
                     await You_hear(Hallucination_u() ? 'angry snakes!'
                                                   : 'a hissing noise.');
             },
@@ -819,7 +819,7 @@ export async function hits_bars(objp, x, y, barsx, barsy, always_hit, whodidit) 
 const AD_MAGM = 1, AD_DRST = 7, AD_BLND = 11, AD_SPC2 = 10;
 
 export async function spitmm(mtmp, mattk, mtarg, deps = {}) {
-    const utarg = (mtarg === game.youmonst);
+    const utarg = (mtarg === game.u);
     const MM = await import('./monmove.js');
     if (mtmp.mcan) {
         if (!Deaf_hero() && dist2(mtmp.mx, mtmp.my, game.u.ux, game.u.uy)

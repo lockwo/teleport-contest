@@ -14,13 +14,14 @@ import {
     FOUNTAIN, SINK, ALTAR, GRAVE, THRONE, SCORR, ROOM, SDOOR, DOOR,
 } from './const.js';
 import { acurr_eff } from './attrib.js';
-import { fmonOrder } from './mon.js';
+import { fmonOrder, ceiling_hider } from './mon.js';
 import { m_at, newsym, update_topl, You_hear, You_feel, canseemon_shared as canseemon } from './display.js';
+import { Hallucination_u } from './display.js';
 import { cansee, Blind } from './vision.js';
 import { Is_stronghold, In_sokoban, In_endgame, Is_astralevel, In_V_tower, SHOPBASE, STRAT_WAITMASK } from './const.js';
 import {
     mindless, humanoid, is_flyer_flag, is_mercenary_flag, mflags1_of,
-    M1_CLING, M1_CONCEAL,
+    M1_CLING,
 } from './monflags_data.js';
 
 // C ref: objects.h otyp (js/mkobj.js OBJECT_DATA indices).
@@ -44,7 +45,7 @@ import { ECMD_OK, ECMD_TIME, TT_PIT, TT_BURIEDBALL, has_mgivenname } from './con
 import { reset_utrap } from './trap.js';
 import { set_utrap } from './polyself.js';
 const TOOL_CLASS = 6;
-const S_SNAKE = 45, S_NYMPH = 14, S_PIERCER = 16; // defsym.h MONSYM indices
+const S_SNAKE = 45, S_NYMPH = 14; // defsym.h MONSYM indices
 const PM_ARCHEOLOGIST = 0;
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
@@ -63,7 +64,7 @@ function uprop(...names) {
 function Deaf() { return Deaf_hero(); }
 function Stunned() { return Stunned_hero(); }
 function Confusion() { return uprop('Confusion', 'HConfusion') || !!game.u?.uconf; }
-function Hallucination() { return uprop('Hallucination', 'HHallucination') || !!game.u?.uhallu; }
+function Hallucination() { return Hallucination_u(); }
 function Unchanging() { return Unchanging_hero(); }
 function Underwater() { return !!game.u?.uinwater; }
 function Levitation() { return Levitation_hero(); }
@@ -427,13 +428,6 @@ async function do_earthquake(force) {
 // C ref: monst.h M_AP_TYPE(mon).
 function m_ap_type_mu(mon) { return (mon?.m_ap_type | 0) & 7; }
 
-// C ref: mondata.h ceiling_hider(ptr) == is_hider(ptr) && (mlet == S_PIERCER
-// || ptr == &mons[PM_TRAPPER] || ptr == &mons[PM_LURKER_ABOVE]).
-function ceiling_hider(p) {
-    if ((mflags1_of(p) & M1_CONCEAL) === 0 && (mflags1_of(p) & 0x100 /*M1_HIDE*/) === 0)
-        return false;
-    return p?.mcls === S_PIERCER || p?.name === 'trapper' || p?.name === 'lurker above';
-}
 
 // C ref: music.c:470 generic_lvl_desc().
 function generic_lvl_desc() {
@@ -467,8 +461,7 @@ function improvised_notes() {
 }
 
 // C ref: hacklib.c an(s) / upstart(s).
-import { an } from './hacklib.js';
-function upstart(s) { return s ? s[0].toUpperCase() + s.slice(1) : s; }
+import { an, upstart } from './hacklib.js';
 
 // C ref: music.c:503 do_improvisation(instr).
 async function do_improvisation(instr) {
@@ -640,6 +633,13 @@ async function do_improvisation(instr) {
     return 2;                                        /* that takes time */
 }
 
+// C ref: svt.tune — the 5-note castle passtune.  This port keeps it as the
+// array dungeon.js init_castle_tune() fills (5 letters, then a '\0'), so the
+// string compare/copy of music.c needs it joined.
+function castle_tune() {
+    return (game.tune || []).join('').replace(/\0/g, '');
+}
+
 // C ref: music.c:762 do_play_instrument(instr).
 export async function do_play_instrument(instr) {
     const u = game.u;
@@ -674,7 +674,7 @@ export async function do_play_instrument(instr) {
     }
     if (c === 'q') { await update_topl('Never mind.'); return ECMD_OK; }
     if (c === 'y') {
-        buf = game.tune || '';
+        buf = castle_tune();
     } else {
         const { hooked_tty_getlin } = await import('./extcmd-handlers.js');
         buf = (await hooked_tty_getlin('What tune are you playing? [5 notes, A-G]', null)) || '';
@@ -689,7 +689,7 @@ export async function do_play_instrument(instr) {
     if (Is_stronghold()) {
         const { exercise } = await import('./attrib.js');
         exercise(A_WIS, true);                       /* just for trying */
-        const tune = game.tune || '';
+        const tune = castle_tune();
         const { find_drawbridge, open_drawbridge, close_drawbridge, is_drawbridge_wall }
             = await import('./dbridge.js');
         if (buf === tune) {
@@ -697,16 +697,19 @@ export async function do_play_instrument(instr) {
                 for (let x = u.ux - 1; x <= u.ux + 1; x++) {
                     if (!isok(x, y)) continue;
                     const found = find_drawbridge(x, y);
-                    if (found) {
+                    if (found.ok) {
+                        /* C: find_drawbridge(&x, &y) moves <x,y> onto the span */
+                        x = found.x; y = found.y;
+                        /* tune now fully known */
                         u.uevent = u.uevent || {};
                         u.uevent.uheard_tune = 2;
                         /* C ref: music.c:825 record_achievement(ACH_TUNE) */
                         (await import('./insight.js')).record_achievement(31 /* ACH_TUNE */);
-                        const loc = game.level?.at?.(found.x ?? x, found.y ?? y);
+                        const loc = game.level?.at?.(x, y);
                         if (loc && loc.typ === DRAWBRIDGE_DOWN)
-                            await close_drawbridge(found.x ?? x, found.y ?? y);
+                            await close_drawbridge(x, y);
                         else
-                            await open_drawbridge(found.x ?? x, found.y ?? y);
+                            await open_drawbridge(x, y);
                         return ECMD_TIME;
                     }
                 }

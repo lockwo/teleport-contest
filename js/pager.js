@@ -22,7 +22,7 @@ import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { worm_known } from './worm.js';
-import { displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle } from './display.js';
+import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -224,16 +224,6 @@ function visctrl(c) {
     else if (c === 0o177) out += '^' + String.fromCharCode(c & ~0o100);
     else out += String.fromCharCode(c);
     return out;
-}
-
-// C ref: cmd.c key2txt() — like visctrl() but with word forms for the keys
-// whose visctrl form would be ambiguous/unreadable in a help listing.
-function key2txt(c) {
-    if (c === 0x20) return '<space>';
-    if (c === 0o33) return '<esc>';
-    if (c === 0x0a) return '<enter>';
-    if (c === 0o177) return '<del>';
-    return visctrl(c);
 }
 
 // C ref: cmd.c key2extcmddesc() — describe the command bound to a key.  Checks
@@ -831,8 +821,7 @@ async function menu_search_pick_one(items) {
 export function whatis_menu_items() {
     const lootabc = !!game?.flags?.lootabc;
     const u = game?.u;
-    const Hallucination = ((u?.uprops?.Hallucination || 0) > 0)
-                          || !!u?.HHallucination || !!u?.uhallu;
+    const Hallucination = Hallucination_u();
     const at = (ch, gsel, desc) =>
         ({ ch, gsel: lootabc ? 0 : gsel, desc, str: `${ch} - ${desc}` });
 
@@ -940,7 +929,7 @@ import { defsyms, def_oc_syms, def_monsyms, MAXPCHARS, MAXMCLASSES,
     from './symbols.js';
 import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
          update_topl, Hallucination_u, impossible as pg_impossible_async,
-         stairway_at, known_branch_stairs, stairs_go_down, mimic_object_glyph,
+         stairway_at, known_branch_stairs, stairs_go_down, mimic_object_glyph, furniture_mimic_glyph,
          is_cmap_engraving_at, engraving_glyph,
          canseemon_shared, see_with_infrared, tp_sensemon }
     from './display.js';
@@ -954,7 +943,7 @@ import { objects, BOULDER, CHEST, LARGE_BOX, STRANGE_OBJECT, ROCK_CLASS,
          VENOM_CLASS, COIN_CLASS, STATUE, CORPSE, SLIME_MOLD, LEASH,
          mksobj, mkobj, is_treefruit } from './mkobj.js';
 import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
-import { simpleonames } from './objnam.js';
+import { simpleonames, the } from './objnam.js';
 import { costly_spot } from './shk.js';
 import { rndmonnam as rndmonnam_dn, mon_pmname as mon_pmname_dn, distant_monnam, ARTICLE_NONE, mon_nam, coyotename, Mgender } from './do_name.js';
 import { visible_region_at, region_is_poisoncloud } from './region.js';
@@ -998,7 +987,6 @@ function pg_distu(x, y) {
 function pg_next2u(x, y) { return pg_distu(x, y) <= 2; }
 import { an as pg_an } from './hacklib.js';
 import { mflags1_of, mflags2_of, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON, M1_CLING, is_hider_flag, hides_under_flag, is_flyer_flag } from './monflags_data.js';
-function pg_the(s) { return s ? `the ${s}` : s; }
 function pg_strstri(hay, needle) { return String(hay).includes(String(needle)); }
 function pg_objs_at(x, y) {
     /* C's nexthere chain starts at the top of the pile; level.objects is in
@@ -1158,6 +1146,11 @@ export function pg_glyph_at(x, y) {
         if (og && og.ch === sym)
             return { kind: 'object', obj: null, otyp, corpsenm: mimic_obj_corpsenm(mon), sym, x, y };
     }
+    /* display_monster()'s M_AP_FURNITURE arm draws cmap_to_glyph(mappearance), so
+       glyph_at() is that cmap (a stairs mimic reads as the stairs it imitates) */
+    if (mon && mon.mappearance != null && pg_M_AP_TYPE(mon) === M_AP_FURNITURE
+        && furniture_mimic_glyph(mon.mappearance | 0).ch === sym)
+        return { kind: 'cmap', sym, cmap: mon.mappearance | 0, dec: !!loc.disp_decgfx, x, y };
     if (loc.mapped_trap_ttyp)
         return { kind: 'trap', trap: null, ttyp: loc.mapped_trap_ttyp, sym, x, y };
     // C ref: pager.c lookat()/object_from_map() — glyph_at() holds the RANDOM
@@ -1282,6 +1275,20 @@ function pg_glyph_is_body(g) {
 // back_to_glyph() can produce.
 function cmap_index_for(loc, x, y) {
     const t = loc.typ;
+    // The bridge squares change state while the hero cannot see them, and C reads the
+    // remembered glyph: a span/portcullis still drawn as the other state keeps that cmap.
+    if (loc.disp_ch != null) {
+        const memdot = loc.disp_ch === '.' || (loc.disp_ch === '~' && loc.disp_decgfx);
+        if (t === DOOR && loc.disp_ch === '#')
+            return loc.horizontal ? S_hcdbridge : S_vcdbridge;
+        if (t === DBWALL && memdot) return S_ndoor;
+        if (memdot && (((t === MOAT || t === LAVAPOOL) && loc.db_destroyed_span)
+                       || (t === DRAWBRIDGE_UP
+                           && ((loc.drawbridgemask & DB_UNDER) === DB_MOAT
+                               || (loc.drawbridgemask & DB_UNDER) === DB_LAVA))))
+            return loc.horizontal ? S_hodbridge : S_vodbridge;
+        if (t === DRAWBRIDGE_DOWN && (loc.disp_ch === '}' || loc.disp_ch === '`')) return S_pool;
+    }
     if (t === STONE || t === SCORR) return S_stone;
     if (t === DBWALL) return loc.horizontal ? S_hcdbridge : S_vcdbridge;
     /* C ref: display.c back_to_glyph() `idx = ptr->seenv ? wall_angle(ptr) : S_stone`:
@@ -2005,7 +2012,7 @@ export function add_cmap_descr(found, idx, glyph, article, cc, x_str, prefix,
             out_str.s = `${prefix}a trap`;
             hit_trap.v = true;
         } else {
-            out_str.s = `${prefix}${(article === 2) ? pg_the(x_str)
+            out_str.s = `${prefix}${(article === 2) ? the(x_str)
                                     : (article === 1) ? pg_an(x_str) : x_str}`;
         }
         firstmatch.s = x_str;
@@ -2018,7 +2025,7 @@ export function add_cmap_descr(found, idx, glyph, article, cc, x_str, prefix,
                    || (pg_glyph_is_trap(glyph)
                        && pg_glyph_to_trap(glyph) === VIBRATING_SQUARE))) {
         /* append unless out_str already contains the string to append */
-        found += append_str(out_str, (article === 2) ? pg_the(x_str)
+        found += append_str(out_str, (article === 2) ? the(x_str)
                                     : (article === 1) ? pg_an(x_str) : x_str);
         if (is_cmap_trap(idx) && idx !== S_vibrating_square) hit_trap.v = true;
     }

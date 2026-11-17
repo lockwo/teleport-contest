@@ -23,6 +23,7 @@
 //   drop_upon_death()     bones.c:258  — rn2(5) curse + rn2(8) give-to-mon
 
 import { m_at } from './display.js';
+import { the } from './objnam.js';
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
 import { depth as depth_of_level } from './hacklib.js';
@@ -31,11 +32,13 @@ import { roles } from './role.js';
 import { MAGIC_PORTAL, VIBRATING_SQUARE, DELPHI, ROOMOFFSET, SHOPBASE, MAXNROFROOMS,
          Is_oracle_level, In_quest, OBJ_FLOOR, OBJ_CONTAINED, ONAME, has_oname, OMONST,
          DEFUNCT_MONSTER, NON_PM, MGIVENNAME, setMGIVENNAME, has_mgivenname,
-         STAIRS, BR_STAIR, BR_NO_END1, BR_NO_END2, BR_PORTAL } from './const.js';
+         STAIRS, BR_STAIR, BR_NO_END1, BR_NO_END2, BR_PORTAL, NHF_BONESFILE } from './const.js';
 import { roomAt } from './roomat.js';
+import { restore_level_chains, restore_doorindex } from './mkroom.js';
 import { msound_of, MS_LEADER, MS_NEMESIS, mflags2_of, is_undead_flag,
          M2_GREEDY, M2_JEWELS, M2_COLLECT, M2_MAGIC } from './monflags_data.js';
 import { can_carry, DEADMONSTER } from './mon.js';
+import { is_armed } from './monattk_data.js';
 
 // ── small accessors that mirror the C globals/macros bones.c relies on ──
 
@@ -253,6 +256,11 @@ export async function getbones() {
         game.level = bundle.level;
         game.stairs = bundle.stairs ?? game.stairs;
         game.fmon = game.level.monsters;
+        game.updest = bundle.updest || null;
+        game.dndest = bundle.dndest || null;
+        game.exclusion_zones = bundle.exclusion_zones || null;
+        game.lastseentyp = bundle.lastseentyp || [];
+        game.billobjs = bundle.billobjs || [];
         game._bones_loaded = true;   // goto_level(): skip the fill/mineralize pass
 
         // C ref: restore.c:1195-1221 getlev() `for (mtmp = fmon; ...)` — with
@@ -288,6 +296,14 @@ export async function getbones() {
                 await restore_cham(m);
                 await hide_monst(m);
             }
+            // getlev() reads regions after its ghostly monster loop. Unlike a
+            // revisit, bones retain TTL and clear the dead hero's ownership.
+            const { rest_regions, remove_region } = await import('./region.js');
+            const expired = rest_regions({
+                ftype: NHF_BONESFILE, regions: bundle.regions,
+                regionTimestamp: bundle.regionTimestamp,
+            });
+            for (const region of expired) await remove_region(region);
             game.in_mklev = was_mklev;
         }
 
@@ -403,6 +419,9 @@ async function bones_getlev(blob) {
     const { rest_track } = await import('./track.js');
     const bundle = deserializeGameState(blob);
     const level = bundle.level || bundle;
+    bundle.stairs = restore_level_chains(level, bundle.stairs);
+    level.light_base?.reverse();
+    restore_doorindex(level);
 
     // C ref: restore.c:1228 getlev() -> rest_track(nhfp).  utrack lives in the
     // LEVEL file (save.c:553 savelev_core), and a bones file IS a level file, so
@@ -423,8 +442,7 @@ async function bones_getlev(blob) {
     // age it had when they died instead of looking as old as the dead game's
     // timestamp (or newborn), so dogfood()'s rotted-corpse test sees the right age.
     {
-        const { age_is_relative } = await import('./restore.js');
-        const { ICE_BOX, requeue_level_timers } = await import('./mkobj.js');
+        const { ICE_BOX, requeue_level_timers, age_is_relative } = await import('./mkobj.js');
         const elapsed = (game.moves | 0) - ((bundle.omoves ?? game.moves) | 0);
         if (elapsed) {
             const shift = (o, frozen) => {
@@ -439,6 +457,8 @@ async function bones_getlev(blob) {
                 for (const o of m.minvent || []) shift(o, false);
             for (const lt of level.level_timers || []) lt.when += elapsed;
             for (let d = level.damagelist; d; d = d.next) d.when = (d.when | 0) + elapsed;
+            if (typeof level.flags?.stasis_until === 'number')
+                level.flags.stasis_until += elapsed;
         }
         /* C ref: restore.c getlev() -> restore_timers(RANGE_LEVEL): the bones level's
            timers come back through insert_timer(), so equal-deadline ties reverse. */
@@ -522,7 +542,13 @@ async function bones_getlev(blob) {
     // (The ghostly monster loop of restore.c getlev() runs from getbones() once
     // the bones level is installed: hide_monst()/restore_cham() act on the level
     // the monster is standing in.)
-    return { level, stairs: bundle.stairs };
+    return {
+        level, stairs: bundle.stairs,
+        updest: bundle.updest, dndest: bundle.dndest,
+        exclusion_zones: bundle.exclusion_zones, lastseentyp: bundle.lastseentyp,
+        billobjs: bundle.billobjs, regions: bundle.regions,
+        regionTimestamp: bundle.regionTimestamp,
+    };
 }
 
 // ── can_make_bones (C ref: bones.c:355) ──
@@ -573,12 +599,11 @@ export function can_make_bones() {
 //
 // Reservoir-samples one object-liking monster among the (up to) 8 squares
 // around <x,y> (skipping the hero), drawing rn2(nmon) for each candidate.
-// Ported for completeness; reached only from drop_upon_death()'s 1-in-8 branch
-// during savebones(), which the harness does not exercise.
 function likes_objs_mon(m) {
-    // C ref: bones.c:243-244 — the union of all four likes_* species flags.
-    return !!(m && (mflags2_of(m.data)
-                    & (M2_GREEDY | M2_JEWELS | M2_COLLECT | M2_MAGIC)));
+    // C likes_objs() includes weapon users as well as M2_COLLECT.
+    return !!(m && ((mflags2_of(m.data)
+                     & (M2_GREEDY | M2_JEWELS | M2_COLLECT | M2_MAGIC))
+                    || is_armed(m.data)));
 }
 
 
@@ -683,10 +708,6 @@ async function remove_mon_from_bones(m, PM_MEDUSA, PM_VLAD, PM_ORACLE) {
     return false;
 }
 
-// C ref: trap.c unhideable_trap() — the traps that are always shown.
-function unhideable_trap(ttyp) {
-    return ttyp === MAGIC_PORTAL || ttyp === VIBRATING_SQUARE;
-}
 
 // ── savebones (C ref: bones.c:400) ──
 //
@@ -929,6 +950,7 @@ export async function savebones(how = 0, corpse = null) {
         }
         // C ref: bones.c:548-551 — strip trap "made by you" and re-hide every
         // trap the next hero has no business already knowing about.
+        const { unhideable_trap } = await import('./trap.js');
         for (const t of g.level?.traps || []) {
             t.madeby_u = 0;
             t.tseen = unhideable_trap(t.ttyp) ? 1 : 0;
@@ -963,6 +985,7 @@ export async function savebones(how = 0, corpse = null) {
                     loc.disp_monster = false;
                     // glyph = GLYPH_UNEXPLORED also drops a remembered 'I'
                     loc.invisMon = false;
+                    if (g.lastseentyp?.[cx]) g.lastseentyp[cx][cy] = 0;
                 }
             }
         }
@@ -1017,8 +1040,12 @@ export async function savebones(how = 0, corpse = null) {
         await (await import('./dog.js')).update_mlstmv();
         const { serializeGameState } = await import('./save.js');
         const { save_track } = await import('./track.js');
+        (await import('./light.js')).discard_global_light_sources();
         storage.setItem(key, serializeGameState({
             level: g.level, stairs: g.stairs, track: save_track(), omoves: g.moves ?? 0,
+            updest: g.updest, dndest: g.dndest,
+            exclusion_zones: g.exclusion_zones, lastseentyp: g.lastseentyp,
+            billobjs: g.billobjs, regions: g.regions, regionTimestamp: g.moves ?? 0,
         }));
     } catch { /* bones write is best-effort; never break the death sequence */ }
 }
@@ -1313,7 +1340,6 @@ export async function fix_ghostly_obj(obj) {
     obj.ghostly = 0;
 }
 // C ref: hack.h the() / URIGHTY (u.uhandedness == RIGHT_HANDED, the default).
-function the(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
 function URIGHTY() { return (game.u?.uhandedness ?? 0) === 0; }
 
 // C ref: bones.c:817 newebones(mtmp) — allocate mtmp's `struct ebones` (the

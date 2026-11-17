@@ -9,11 +9,11 @@
 // to wiz_polyself, matching that file's existing wiz_genesis/create_particular
 // split (getlin shell there, pure logic in the C-file-matching module here).
 
-import { Levitation_hero, Flying_hero, Stunned_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
+import { Levitation_hero, Flying_hero, Swimming_hero, Stunned_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
 import { game, hooks } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn1, rn2, rnd, d, rnl } from './rng.js';
-import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, hold_botl_rank, hold_botl_hp, You_feel } from './display.js';
+import { update_topl, urgent_topl, newsym, see_monsters, y_n, status_hold, hold_botl_xl, hold_botl_rank, hold_botl_hp, You_feel, Hallucination_u } from './display.js';
 // C ref: win/tty/topl.c pline()/update_topl() — this module always uses
 // update_topl() (never the simpler pline()) because every message here can be
 // immediately followed by another one from the same command (polymon()'s
@@ -26,6 +26,7 @@ import { exercise, acurr_eff } from './attrib.js';
 import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.js';
 import { encumber_msg, freeinv, dropx, xname, near_capacity,
     youmonst_data_pub, makeknown, simple_typename, worn_extrinsic, WA_ARMF, poly_gender } from './invent.js';
+import { Breathless_hero } from './invent.js';
 import { makeplural } from './plural.js';
 import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
@@ -701,7 +702,6 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     /* assume hero-as-chameleon/doppelganger/sandestin doesn't change shape */
     else if (!(u.Upolyd && was_vampshifter))
         u.mcham = NON_PM;
-    if (game.youmonst) game.youmonst.cham = u.mcham;
 
     const mr = mdat?.mresists | 0;
     const f1 = mflags1_of(mdat);
@@ -742,6 +742,10 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     };
 
     u.uprops = u.uprops || {};
+    // C ref: polyself.c:88 PROPSET(HALLUC_RES, dmgtype(mdat, AD_HALU)).
+    u.uprops.HHalluc_resistance = ((u.uprops.HHalluc_resistance | 0) & ~FROMFORM)
+        | (u.formprops.Halluc_resistance ? FROMFORM : 0);
+    u.uhallu = Hallucination_u();
     // C ref: polyself.c:99-100 PROPSET(FLYING, (is_flyer(mdat) && !is_floater(mdat))).
     // u.uprops.Flying gates trap.c immune_to_trap()/pooleffects(), timeout.c's
     // u.umoved branch and invent.c's wounded-legs term.
@@ -768,6 +772,7 @@ export function set_uasmon(polyd = game.u.umonnum !== game.u.umonster) {
     // ... and sets gu.update_all, so that bot() resends EVERY field through
     // status_update() (see display.js botl_flush).
     game._statusUpdateAll = true;
+    game._engineUpdateAll = true;
     // botl.c status_initialize() fldenabl: tty's status_activefields[] for
     // BL_XP/BL_EXP/BL_HD are fixed here and stay put until the next
     // reassessment, even if u.umonnum later changes without set_uasmon()
@@ -1109,11 +1114,10 @@ export async function polymon(mntmp) {
     }
 
     find_ac();
-    const p = u.uprops || {};
-    const Lev = !!(p.Levitation || p.HLevitation || p.ELevitation);
-    const Fly = !!(p.Flying || p.HFlying || p.EFlying);
+    const Lev = Levitation_hero();
+    const Fly = Flying_hero();
     if (((!Lev && !u.ustuck && !Fly && is_pool_or_lava(u.ux, u.uy))
-         || (u.uinwater && !fromform('Swimming')))
+         || (u.uinwater && !Swimming_hero()))
         /* if expelled above, expels() already called spoteffects() */
         && !was_expelled) {
         const { spoteffects } = await import('./trap.js');
@@ -2717,7 +2721,7 @@ export async function domonability() {
     } else if (u.umonnum === PM_GREMLIN) {
         if (IS_FOUNTAIN(game.level?.at?.(u.ux, u.uy)?.typ)) {
             const { split_mon } = await import('./potion.js');
-            if (await split_mon(game.youmonst || u, null)) {
+            if (await split_mon(u, null)) {
                 const { dryup } = await import('./fountain.js');
                 await dryup(u.ux, u.uy, true);
             }
@@ -2725,7 +2729,7 @@ export async function domonability() {
             /* is_pool: might be wearing water walking boots or amulet of
                magical breathing */
             const { split_mon } = await import('./potion.js');
-            await split_mon(game.youmonst || u, null);
+            await split_mon(u, null);
         } else {
             await pline('There is no fountain here.');
         }
@@ -2741,6 +2745,11 @@ export async function domonability() {
             (await import('./monmove.js')).aggravate();
     } else if ((mdat && is_vampire_pm(mdat)) || is_vampshifter_u()) {
         return await dopoly();
+    } else if (u.usteed && can_breathe(u.usteed.data)) {
+        /* C ref: cmd.c domonability() — a breathing steed obeys #monster */
+        const { pet_ranged_attk } = await import('./dogmove.js');
+        await pet_ranged_attk(u.usteed, true);
+        return ECMD_TIME;
     } else if (u.Upolyd) {
         await pline('Any special ability you may have is purely reflexive.');
     } else {
@@ -2851,10 +2860,7 @@ function can_be_strangled_u() {
     const ptr = youmonst_data_pub();
     if (!has_head_poly(ptr)) return false;
     const nobrainer = mindless(ptr);
-    /* Breathless: intrinsic (form) or extrinsic (amulet of magical breathing) */
-    const p = game.u?.uprops || {};
-    const nonbreathing = ((mflags1_of(ptr) & M1_BREATHLESS) !== 0)
-        || !!(p.Breathless || p.HBreathless || p.EBreathless);
+    const nonbreathing = Breathless_hero();
     return !nobrainer || !nonbreathing;
 }
 

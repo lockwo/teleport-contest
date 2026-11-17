@@ -6,7 +6,8 @@ import { Half_physical_damage_hero, Half_spell_damage_hero, Stunned_hero, Drain_
 import { game, register_process_static } from './gstate.js';
 
 import { ok_to_quest } from './questok.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an, An, upstart, plur } from './hacklib.js';
+import { get_obj_location } from './light.js';
 import { hard_helmet } from './do_wear.js';
 import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
@@ -16,7 +17,7 @@ import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_mo
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, check_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
-         display_minventory, worn_extrinsic, yname, Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
+         display_minventory, worn_extrinsic, worn_blocked, yname, Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
          set_cknown_lknown, newsym_force, display_binventory, stackobj, useupf, shk_your, Tobjnam } from './invent.js';
 import { makeplural } from './plural.js';
 import { simpleonames } from './objnam.js';
@@ -45,7 +46,7 @@ import { WAND_CLASS, GEM_CLASS, TOOL_CLASS, POTION_CLASS, SCROLL_CLASS, WEAPON_C
          CANDELABRUM_OF_INVOCATION, SPE_BOOK_OF_THE_DEAD,
          is_rider_pm, ROCK_CLASS, unbless, uncurse, container_weight,
          has_omonst, get_mtraits, has_omid, OMID, free_omid, free_omonst,
-         obj_ice_effects, dealloc_obj, eaten_stat, weight } from './mkobj.js';
+         obj_ice_effects, dealloc_obj, eaten_stat, weight, age_is_relative } from './mkobj.js';
 import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOOR, IS_ROOM, IS_WALL, isok, ROOM, STONE,
          D_CLOSED, D_LOCKED, CORPSTAT_INIT, EXT_ENCUMBER, HEADSTONE, ENGRAVE, TELEDS_TELEPORT,
          DUST, MM_NOMSG, In_mines, W_ARM, W_ARMC, W_ARMH, W_ARMS, W_ARMG,
@@ -66,7 +67,7 @@ import { A_WIS, A_STR, A_INT, A_CON, A_DEX, A_CHA, ROWNO, COLNO, ZAP_POS, IS_DOO
          M_SEEN_SLEEP, M_SEEN_DISINT, M_SEEN_ELEC, M_SEEN_ACID, STATUE_TRAP, HOLE as HOLE_Z, TRAPDOOR as TRAPDOOR_Z,
          HEAD, FACE, FOOT, W_SADDLE, ICE, VIBRATING_SQUARE, IS_FURNITURE, MHID_PREFIX, MHID_ARTICLE, MHID_ALTMON, MHID_REGION,
          MINV_ALL, MINV_NOLET, PICK_NONE, MSLOW, MFAST, MIM_REVEAL, MIM_OMIT_WAIT, NC_SHOW_MSG,
-         PICK_ONE, LEVITATION, FLYING, KILLED_BY, KILLED_BY_AN,
+         PICK_ONE, LEVITATION, FLYING, INVIS, KILLED_BY, KILLED_BY_AN,
          NO_KILLER_PREFIX, ARM, EYE, LAVAWALL, DB_UNDER, DB_FLOOR, VWALL, HWALL,
          TT_LAVA, TT_INFLOOR, PASSES_WALLS, EXPL_FIERY, STRAT_WAITMASK,
          Is_airlevel, Is_rogue_level, SDOOR, SCORR, DOOR, WM_MASK, D_NODOOR, D_BROKEN,
@@ -93,7 +94,7 @@ import { DEADMONSTER, set_ustuck, dealloc_monst, replmon,
 import { MON_WEP, is_vampshifter, monflee, Invis as Invis_hero_mm } from './monmove.js';
 import { killed, canspotmon, mon_nam, Monnam, x_monnam,
          mon_pmname, disguised_as_mon, disguised_as_non_mon, seemimicLocal } from './uhitm.js';
-import { find_mac, which_armor } from './worn.js';
+import { find_mac, which_armor, bypass_obj } from './worn.js';
 import { rnd_hallublast } from './mthrowu.js';
 import { Teleport_control_fu } from './trap.js';
 import { speed_up } from './potion.js';
@@ -683,7 +684,6 @@ export async function poly_obj(obj, id = 0 /* STRANGE_OBJECT */) {
      * ** we are now done adjusting the object (except possibly wearing it) **
      */
     {
-        const { get_obj_location } = await import('./light.js');
         const loc = get_obj_location(obj, BURIED_TOO | CONTAINED_TOO);
         if (loc) { ox = loc.x; oy = loc.y; }
     }
@@ -917,7 +917,7 @@ export async function bhito(obj, otmp) {
                     const { the } = await import('./objnam.js');
                     const { rndmonnam } = await import('./do_name.js');
                     await pline(`You aren't sure whether ${the(xname(obj))} has ${
-                        an_z(Hallucination() ? rndmonnam().name : 'cat')} or its corpse inside.`);
+                        an(Hallucination() ? rndmonnam().name : 'cat')} or its corpse inside.`);
                     obj.cknown = 0;
                 } else {
                     /* view contents (not recursively) */
@@ -1049,7 +1049,7 @@ export async function bhito(obj, otmp) {
                             && !(await import('./display.js')).Deaf_hero()
                             && !nonliving_ptr(cptr)) {
                             if (!pname)
-                                corpsname = an_z(corpsname);
+                                corpsname = an(corpsname);
                             if (!Hallucination())
                                 await You_hear(`${corpsname} reviving.`);
                             else
@@ -1751,7 +1751,7 @@ export async function bhitm(mtmp, otmp) {
                 let buf = `${s_suffix(Monnam(mtmp))} ${distant_name_pub(obj, xname)}`;
                 if (cansee(mtmp.mx, mtmp.my)) {
                     if (!canspotmon(mtmp))
-                        buf = An_z(distant_name_pub(obj, xname));
+                        buf = An(distant_name_pub(obj, xname));
                     const { surface } = await import('./dungeon.js');
                     await pline(`${buf} falls to the ${surface(mtmp.mx, mtmp.my)}.`);
                 } else if (canspotmon(mtmp)) {
@@ -1970,7 +1970,7 @@ export async function zapwrapup() {
 // restoration of the target's natural shape; only self-zaps cancel inventory.
 export async function cancel_monst(mdef, obj, youattack, allow_cancel_kill, self_cancel) {
     const u = game.u;
-    const youdefend = mdef === u || mdef === game.youmonst;
+    const youdefend = mdef === u;
     if (youdefend ? (!youattack && Antimagic())
                   : await resist(mdef, obj.oclass, 0, false))
         return false;
@@ -2289,7 +2289,7 @@ async function zap_map(x, y, obj) {
     ttmp = t_at(x, y); /* refresh in case trap was altered or is gone */
 
     if ((u.dz | 0) > 0) { /* zapping down */
-        const { engr_at, wipe_engr_at, make_engr_at, random_engraving, rloc_engr } =
+        const { engr_at, del_engr, wipe_engr_at, make_engr_at, random_engraving, rloc_engr } =
             await import('./engrave.js');
         const e = engr_at(x, y);
 
@@ -2300,7 +2300,7 @@ async function zap_map(x, y, obj) {
             case SPE_POLYMORPH: {
                 // del_engr(e) then a fresh random_engraving(): getrumor/get_rnd_text
                 // plus wipeout_text — several draws.
-                del_engr_z(x, y);
+                del_engr(e);
                 const r = random_engraving();
                 if (r) make_engr_at(x, y, r.text, r.pristine, game.moves | 0, 0); /* type 0: random, rnd(N_ENGRAVE-1) */
                 break;
@@ -2308,7 +2308,7 @@ async function zap_map(x, y, obj) {
             case WAN_CANCELLATION:
             case SPE_CANCELLATION:
             case WAN_MAKE_INVISIBLE:
-                del_engr_z(x, y);
+                del_engr(e);
                 break;
             case WAN_TELEPORTATION:
             case SPE_TELEPORT_AWAY:
@@ -2460,7 +2460,7 @@ async function zap_map(x, y, obj) {
                 const use_the = !hallu
                     ? (ttmp.ttyp === VIBRATING_SQUARE && Invocation_lev(game.u?.uz))
                     : !rn2(4);
-                await pline(`You find ${use_the ? 'the ' + ttmpname : an_z(ttmpname)}${
+                await pline(`You find ${use_the ? 'the ' + ttmpname : an(ttmpname)}${
                     use_the ? '!' : '.'}`);
                 learn_it = !hallu;
             }
@@ -2469,13 +2469,6 @@ async function zap_map(x, y, obj) {
 
     if (learn_it)
         learnwand(obj);
-}
-
-// C ref: engrave.c del_engr(ep) — drop an engraving from the level list.
-function del_engr_z(x, y) {
-    const arr = game.level?.engravings;
-    if (!arr) return;
-    game.level.engravings = arr.filter(ep => ep.engr_x !== x || ep.engr_y !== y);
 }
 
 // C ref: include/hack.h BZ_OFS_WAN(otyp) = abs(otyp - WAN_MAGIC_MISSILE) % 10.
@@ -3207,7 +3200,7 @@ export async function burn_floor_objects(x, y, give_feedback, u_caused) {
             if (delquan > 1)
                 await pline(`${delquan} ${buf2} burn.`);
             else
-                await pline(`${An_z(buf1)} burns.`);
+                await pline(`${An(buf1)} burns.`);
         }
     }
     /* This also ignites floor items, but does not change cnt
@@ -3426,7 +3419,7 @@ export async function hit(str, mon, force) {
     const { vtense } = await import('./dothrow.js');
     const { The } = await import('./objnam.js');
     const bp = game.bhitpos || { x: mon?.mx, y: mon?.my };
-    const verbosely = (mon === game.youmonst || mon === game.u)
+    const verbosely = (mon === game.u)
         || (game.flags?.verbose !== false
             && (cansee(bp.x, bp.y) || cansee(mon?.mx, mon?.my) || canspotmon(mon) || engulfing_u(mon)));
     await update_topl(`${The(str)} ${vtense(str, 'hit')} ${verbosely ? mon_nam(mon) : 'it'}${force}`);
@@ -3450,7 +3443,7 @@ export async function wakeup(mon, viaAttack) {
 export async function slept_monst(mon) {
     const u = game.u;
     if ((mon.msleeping || !(mon.mcanmove ?? 1)) && u.ustuck === mon
-        && !u.uswallow && !sticks(game.youmonst?.data || await youmonst_data_z())) {
+        && !u.uswallow && !sticks(await youmonst_data_z())) {
         await pline(`${s_suffix(Monnam(mon))} grip relaxes.`);
         await unstuck(mon);
     }
@@ -4033,7 +4026,7 @@ function invent_list() {
 // C ref: zap.c destroy_items's `objchn` (&gi.invent for the hero, &mon->minvent
 // otherwise).
 function obj_chain(carrier) {
-    return (carrier === game.u || carrier === game.youmonst)
+    return (carrier === game.u)
         ? invent_list() : (Array.isArray(carrier?.minvent) ? carrier.minvent : []);
 }
 
@@ -4077,14 +4070,14 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
     if (limit < 1) return 0;
 
     const items = new Array(limit);
-    const u_carry = mon === game.u || mon === game.youmonst;
+    const u_carry = mon === game.u;
     let elig = 0;
     // C ref: zap.c:6038 bypass_objlist(*objchn, FALSE), then nxt_unbypassed_obj()
     // marks each visited object via bypass_obj(), which raises
     // svc.context.bypasses; later corpses and bhito() honor it.
     for (const obj of objchn) obj.bypass = 0;
     for (const obj of objchn) {
-        bypass_obj_z(obj);
+        bypass_obj(obj);
         if (!destroyable(obj, dmgtyp)) continue;
         const i = (elig < limit) ? elig : rn2(elig);
         elig++;
@@ -4115,7 +4108,7 @@ export async function destroy_items(mon, dmgtyp, dmg_in) {
 }
 
 async function maybe_destroy_item(carrier, obj, dmgtyp) {
-    const u_carry = carrier === game.u || carrier === game.youmonst;
+    const u_carry = carrier === game.u;
     const visible = u_carry || canseemon_shared(carrier);
     const protection = u_carry ? u_adtyp_resistance_obj(dmgtyp) : 0;
     if (protection && rn2(100) < protection) return 0;
@@ -4265,7 +4258,7 @@ function ignitable(obj) {
 // C ref: apply.c catch_lit(obj).
 export async function catch_lit(obj) {
     if (obj.lamplit || !ignitable(obj)) return false;
-    const loc = get_obj_location_z(obj, 0);
+    const loc = get_obj_location(obj, 0);
     if (!loc) return false;
     if (((obj.otyp === MAGIC_LAMP || obj.otyp === CANDELABRUM_OF_INVOCATION)
          && (obj.spe | 0) === 0)
@@ -4297,16 +4290,6 @@ export async function catch_lit(obj) {
     const { begin_burn } = await import('./timeout.js');
     await begin_burn(obj, false);
     return true;
-}
-// C ref: obj.h age_is_relative(o) — lamps/candles burn down from obj->age.
-function age_is_relative(obj) {
-    switch (obj.otyp) {
-    case BRASS_LANTERN: case OIL_LAMP: case MAGIC_LAMP:
-    case CANDELABRUM_OF_INVOCATION: case TALLOW_CANDLE: case WAX_CANDLE:
-        return true;
-    default:
-        return false;
-    }
 }
 
 // ── losehp / death (hack.c losehp + end.c done) ──────────────────────────
@@ -4477,10 +4460,10 @@ export async function zapyourself(obj, ordinary) {
     case WAN_MAKE_INVISIBLE: {
         // msg is computed BEFORE HInvis changes (C comment); newsym() then has
         // to run after, because the hero's glyph depends on the new state.
-        const msg = !Invis() && !Blind() && !(u.uprops?.BInvis || u.BInvis);
+        const BInvis = u.uprops?.BInvis || u.BInvis || worn_blocked(INVIS);
+        const msg = !Invis() && !Blind() && !BInvis;
         if (!u.uprops) u.uprops = {};
-        if ((u.uprops.BInvis || u.BInvis) && game.uarmc
-            && game.uarmc.otyp === MUMMY_WRAPPING_Z) {
+        if (BInvis && game.uarmc && game.uarmc.otyp === MUMMY_WRAPPING_Z) {
             /* A mummy wrapping absorbs it and protects you */
             await You_feel(`rather itchy under ${yname(game.uarmc)}.`);
             break;
@@ -5033,10 +5016,6 @@ function carnivorous_z(ptr) { return !!ptr?.carnivore; }
 function digests(ptr) { return !!attacktype_fordmg(ptr, AT_ENGL, AD_DGST); }
 
 // C ref: hacklib.c upstart/an/An/plur.
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-function an_z(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
-function An_z(s) { return upstart(an_z(s)); }
-function plur_z(n) { return Number(n) === 1 ? '' : 's'; }
 
 // C ref: invent.c carried(obj) = (obj->where == OBJ_INVENT).
 function carried_z(obj) { return obj?.where === OBJ_INVENT; }
@@ -5049,14 +5028,6 @@ async function corpse_xname_z(obj, adjective, cxn_flags) {
     return corpse_xname(obj, adjective, cxn_flags);
 }
 
-// Shop billing is owned by shk.js.  Call sites import it dynamically because
-// shk.js imports zap.js.
-// C ref: worn.c:1119 bypass_obj(obj).
-function bypass_obj_z(obj) {
-    if (!obj) return;
-    obj.bypass = 1;
-    if (game.context) game.context.bypasses = true;
-}
 // C ref: attrib.h ABON(x) = u.abon.a[x]; cancel_item()/drain_item() are the
 // only reason this file needs a writer for it.
 function ABON_add_z(i, delta) {
@@ -5099,33 +5070,6 @@ function chain_of_z(head) {
     const out = [];
     for (let o = head; o; o = o.nobj) out.push(o);
     return out;
-}
-
-// C ref: zap.c:654 get_obj_location(obj, &x, &y, locflags).  js/light.js:170
-// holds a byte-for-byte twin of this switch but does not export it; when it
-// does, this copy should go away.
-function get_obj_location_z(obj, locflags) {
-    if (!obj) return null;
-    switch (obj.where) {
-    case OBJ_INVENT:
-        return { x: game.u?.ux, y: game.u?.uy };
-    case OBJ_FLOOR:
-        return { x: obj.ox, y: obj.oy };
-    case OBJ_MINVENT:
-        if (obj.ocarry?.mx)
-            return { x: obj.ocarry.mx, y: obj.ocarry.my };
-        break; /* !mx => migrating monster */
-    case OBJ_BURIED:
-        if (locflags & BURIED_TOO) return { x: obj.ox, y: obj.oy };
-        break;
-    case OBJ_CONTAINED:
-        if (locflags & CONTAINED_TOO)
-            return get_obj_location_z(obj.ocontainer, locflags);
-        break;
-    default:
-        break;
-    }
-    return null;
 }
 
 // C ref: rm.h MON_AT(x, y) — a monster here that is not buried.
@@ -5302,8 +5246,19 @@ export async function mstatusline(mtmp) {
             : (!sticks(await youmonst_data_z()) ? ', holding you'
                                                 : ', held by you');
     }
-    if (mtmp === u.usteed)
+    if (mtmp === u.usteed) {
         info += ', carrying you';
+        const up_ = u?.uprops || {};
+        const ewl_ = (up_.EWounded_legs | 0) || (u.EWounded_legs | 0);
+        if ((u.HWounded_legs | 0) || (up_.HWounded_legs | 0) || ewl_) {
+            /* EWounded_legs tracks left/right/both; HWounded_legs is the
+               timeout; both apply to steed instead of hero when mounted */
+            const { BOTH_SIDES, LEG } = await import('./const.js');
+            const { mbodypart } = await import('./polyself.js');
+            const what = mbodypart(mtmp, LEG);
+            info += `, injured ${(ewl_ & BOTH_SIDES) === BOTH_SIDES ? makeplural(what) : what}`;
+        }
+    }
     if (mtmp.mleashed)
         info += ', leashed';
 
@@ -5640,7 +5595,7 @@ export async function revive(corpse, by_hero) {
 
         /* only for invent, minvent, or floor, or if zombie, buried */
         container = null;
-        const loc = get_obj_location_z(corpse, locflags);
+        const loc = get_obj_location(corpse, locflags);
         if (loc) { x = loc.x; y = loc.y; }
     } else {
         /* deal with corpses in [possibly nested] containers */
@@ -5654,7 +5609,7 @@ export async function revive(corpse, by_hero) {
             x = game.u.ux; y = game.u.uy;
             break;
         case OBJ_FLOOR: {
-            const loc = get_obj_location_z(corpse, CONTAINED_TOO);
+            const loc = get_obj_location(corpse, CONTAINED_TOO);
             if (loc) { x = loc.x; y = loc.y; }
             break;
         }
@@ -5891,7 +5846,7 @@ export async function revive_egg(obj) {
 // revive_egg()/revive().
 export async function unturn_dead(mon) {
     let owner = '', corpse = '';
-    const is_u = (mon === game.u || mon === game.youmonst);
+    const is_u = (mon === game.u);
     let res = 0;
 
     const youseeit = is_u ? true : canseemon_z(mon);
@@ -5940,7 +5895,7 @@ export async function unturn_dead(mon) {
                    its list). */
                 await pline(`${owner}${corpse} suddenly ${
                     nonliving_zap(mtmp2) ? 'reanimates' : 'comes alive'}${
-                    different_type ? ` as ${an_z(mon_pmname(mtmp2))}` : ''}!`);
+                    different_type ? ` as ${an(mon_pmname(mtmp2))}` : ''}!`);
             else if (canseemon_z(mtmp2)) {
                 const { Amonnam } = await import('./do_name.js');
                 await pline(`${Amonnam(mtmp2)} suddenly appears!`);
@@ -6191,7 +6146,7 @@ export async function stone_to_flesh_obj(obj) {
     if (obj_resists(obj, 2, 98))
         return 0;
 
-    const loc = get_obj_location_z(obj, 0) || { x: 0, y: 0 };
+    const loc = get_obj_location(obj, 0) || { x: 0, y: 0 };
     const oox = loc.x, ooy = loc.y;
     const { makemon, newcham } = await import('./makemon.js');
     const { vegetarian } = await import('./eat.js');
@@ -6259,7 +6214,7 @@ export async function stone_to_flesh_obj(obj) {
                 for (;;) {
                     const item = Array.isArray(obj.cobj) ? obj.cobj[0] : null;
                     if (!item) break;
-                    bypass_obj_z(item); /* make stone-to-flesh miss it */
+                    bypass_obj(item); /* make stone-to-flesh miss it */
                     obj_extract_self(item);
                     place_object(item, oox, ooy);
                 }
@@ -6521,7 +6476,7 @@ export async function melt_ice(x, y, msg) {
     if (otmp) {
         const { boulder_hits_pool } = await import('./do.js');
         if (cansee(x, y))
-            await pline(`${An_z(xname(otmp))} settles...`);
+            await pline(`${An(xname(otmp))} settles...`);
         do {
             obj_extract_self(otmp); /* boulder isn't being pushed */
             if (!(await boulder_hits_pool(otmp, x, y, false)))
@@ -6708,7 +6663,7 @@ export async function wishcmdassist(triesleft) {
     const cardinal = (triesleft >= 0 && triesleft < cardinals.length)
         ? cardinals[triesleft] : too_many;
     lines.push(`If you specify an unrecognized object name ${cardinal}${
-        (triesleft < MAXWISHTRY_Z) ? ' more' : ''} time${plur_z(triesleft)},`);
+        (triesleft < MAXWISHTRY_Z) ? ' more' : ''} time${plur(triesleft)},`);
     lines.push(retry_too);
     lines.push('');
     if (game.iflags?.cmdassist !== false)

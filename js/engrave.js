@@ -28,6 +28,7 @@ import { A_WIS, P_RIDING, P_BASIC, Unaware as Unaware_hero, is_ice as is_ice_c }
 import { Levitation_hero, Flying_hero, uteetering_at_seen_pit, uescaped_shaft, Deaf_hero } from './youprop.js';
 import { Blind as isBlind } from './vision.js';
 import { You_see } from './display.js';
+import { Hallucination_u } from './display.js';
 import { mungspaces } from './hacklib.js';
 
 // Heavy UI/inventory modules (display.js, invent.js, extcmd-handlers.js) are
@@ -1166,7 +1167,7 @@ export async function doengrave() {
     }
     if (de.zapwand && (de.otmp.spe | 0) < 0) {
         const { useup } = await import('./invent.js');
-        await pline(`${await The_of(de.otmp)} ${isBlind() ? '' : 'glows violently, then '}turns to dust.`);
+        await pline(`${(await import('./objnam.js')).The(await xname_of(de.otmp))} ${isBlind() ? '' : 'glows violently, then '}turns to dust.`);
         if (!IS_GRAVE(game.level?.at(u.ux, u.uy)?.typ))
             await pline(`You are not going to get anywhere trying to write in the ${de.frosted ? 'frost' : 'dust'} with your dust.`);
         useup(de.otmp);
@@ -1345,7 +1346,7 @@ export async function doengrave() {
     game._engrave_occupation = true;
 
     if (de.post_engr_text) await pline(de.post_engr_text);
-    if (de.doblind && !resists_blnd()) {
+    if (de.doblind && !(await import('./mondata.js')).resists_blnd(game.u)) {
         const { make_blinded_hero } = await import('./potion.js');
         await pline('You are blinded by the flash!');
         await make_blinded_hero(rnd(50), false);
@@ -1547,18 +1548,6 @@ async function maybe_newsym(de) {
     newsym(game.u.ux, game.u.uy);
 }
 
-// C ref: mondata.c resists_blnd(&youmonst) — for the hero this is
-// (Blind || Unaware) plus a polyform AD_BLND explosion/gaze attack and a
-// Sunsword-style artifact; those two need mondata/artifact state this file
-// cannot reach, so only the (Blind || Unaware) clause is modelled.
-function resists_blnd() {
-    return !!(isBlind() || Unaware_hero());
-}
-
-// C ref: objnam.c The(str) — "the " prefixed and capitalised; a name that
-// already starts capitalised (proper noun) is left alone.
-function the_prefix(s) { return /^[A-Z]/.test(s) ? s : `The ${s}`; }
-async function The_of(obj) { return the_prefix(await xname_of(obj)); }
 async function otense_of(obj, verb) {
     const { otense } = await import('./invent.js');
     return otense(obj, verb);
@@ -1566,7 +1555,7 @@ async function otense_of(obj, verb) {
 
 function isConfused() { const u = game.u; return !!(u?.uprops?.Confusion || u?.uconf); }
 function isStunned() { const u = game.u; return !!(u?.uprops?.Stun || u?.ustun || u?.formprops?.Stunned); }
-function isHallu() { const u = game.u; return !!(u?.uprops?.Hallucination || u?.uhallu); }
+function isHallu() { return Hallucination_u(); }
 // C ref: youprop.h Deaf (HDeaf || EDeaf).
 function isDeaf() { return Deaf_hero(); }
 

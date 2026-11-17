@@ -291,14 +291,8 @@ export function option_help_lines() {
 // ---------------------------------------------------------------------------
 // hacklib.c / options.c string primitives that the config parsers below need.
 
-// C ref: hacklib.c highc().
-function highc(c) {
-    return (c >= 'a' && c <= 'z') ? String.fromCharCode(c.charCodeAt(0) - 32) : c;
-}
-
 // C ref: <ctype.h> via hack.h digit()/letter() — ASCII-only, like the C build.
 function digit(c) { return c >= '0' && c <= '9'; }
-function letter(c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 
 // C ref: hacklib.c trimspaces() — strips leading AND trailing whitespace.
 function trimspaces(s) {
@@ -6491,7 +6485,7 @@ export async function toggle_bool_option(p) {
 }
 
 import { ECMD_OK, ECMD_FAIL } from './const.js';
-import { mungspaces } from './hacklib.js';
+import { mungspaces, highc, letter } from './hacklib.js';
 import { alternative_palette } from './coloratt.js';
 import { fruit_from_name } from './objnam.js';
 

@@ -23,6 +23,12 @@ export function dist2(x1, y1, x2, y2) {
     return (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2);
 }
 
+// C ref: hacklib.c letter() -- '@' counts as a letter ('@' through 'Z', a-z).
+export function letter(c) {
+    return typeof c === 'string' && c.length === 1
+        && (('@' <= c && c <= 'Z') || ('a' <= c && c <= 'z'));
+}
+
 // C ref: hacklib.c s_suffix() — possessive: "it" -> "its", "you" -> "your"
 // (both case-insensitive, like strcmpi), "Xs" -> "Xs'", otherwise "X's".
 export function s_suffix(s) {
@@ -55,9 +61,34 @@ export function just_an(str) {
         return 'an ';
     return 'a ';
 }
+// C ref: objnam.c an()
 export function an(str) {
-    if (!str) return 'an []';
+    if (!str) {
+        if (game.debugImpossible)
+            console.warn(`impossible: Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);
+        return 'an []';
+    }
     return just_an(String(str)) + str;
+}
+
+// C ref: objnam.c An() -- an() with the first letter capitalized.
+export function An(str) {
+    return upstart(an(str));
+}
+
+// C ref: hacklib.c highc() -- force a single char into uppercase.
+export function highc(c) {
+    return (c >= 'a' && c <= 'z') ? c.toUpperCase() : c;
+}
+
+// C ref: hacklib.c upstart() -- capitalize the first letter of a string.
+export function upstart(s) {
+    return s ? highc(s[0]) + s.slice(1) : s;
+}
+
+// C ref: hack.h plur() -- "s" unless the count is exactly 1.
+export function plur(n) {
+    return Number(n) === 1 ? '' : 's';
 }
 
 export function depth(uz) {

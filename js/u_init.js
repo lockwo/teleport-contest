@@ -2,7 +2,7 @@
 // C ref: u_init.c
 
 import { game } from './gstate.js';
-import { ROLE_PM_BASE } from './const.js';
+import { ROLE_PM_BASE, FROMOUTSIDE } from './const.js';
 import { ARM_BONUS } from './worn.js';
 import { skill_init_snapshot } from './enhance.js';
 import { rn2, rnd, rne, rn1 } from './rng.js';
@@ -1244,6 +1244,8 @@ export function u_init_role() {
         // all armor (no RNG).
         knows_class(WEAPON_CLASS);
         knows_class(ARMOR_CLASS);
+        // C ref: u_init.c:691, separate from the role's level-based abilities.
+        (game.u.uprops ||= {}).HJumping = (game.u.uprops.HJumping | 0) | FROMOUTSIDE;
         break;
     case PM_MONK:
         ini_inv(Monk);
@@ -1374,14 +1376,9 @@ export function u_init_inventory_attrs() {
     }
 }
 
-// C ref: u_init.c u_init_skills_discoveries — runs in newgame() AFTER the
-// legend/intro is dismissed and BEFORE the welcome status line (alongside
-// find_ac).  The only RNG-free side effect that affects parity is the
-// starting-Pw floor: a hero who knows at least one spell (e.g. the Healer's
-// healing spellbooks) must start with enough power to cast their level-1
-// spell, so Pw is forced up to SPELL_LEV_PW(1)==5 when the rolled value is
-// lower.  This must NOT run earlier than the legend step, because the legend's
-// status line still shows the pre-bump (newpw) Pw value.
+// C ref: u_init.c u_init_skills_discoveries(), called after the first bot()
+// and before the legacy pager. The published status still shows the rolled
+// Pw, but the hero already has the minimum power to cast a level-1 spell.
 const SPELL_LEV_PW_1 = 5;
 
 // C ref: u_init.c ini_inv_use_obj() — the start-of-game side effects of each

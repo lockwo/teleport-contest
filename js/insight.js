@@ -4,6 +4,7 @@ import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying
          Wounded_legs_hero, Passes_walls_hero, Unchanging_hero, Polymorph_control_hero,
          Half_physical_damage_hero, Half_spell_damage_hero,
          Detect_monsters_hero } from './youprop.js';
+import { Blindfolded_hero, Blindfolded_only_hero } from './youprop.js';
 // insight.js — the ^X / end-of-game enlightenment display.
 //
 // C ref: src/insight.c enlightenment() and its section helpers
@@ -20,7 +21,7 @@ import { Half_gas_damage_hero, Lev_at_will_hero, Deaf_hero, Stunned_hero, Flying
 
 import { dxdy_to_dist_descr } from './getpos.js';
 import { game, register_process_static } from './gstate.js';
-import { s_suffix, just_an, strcmpi } from './hacklib.js';
+import { s_suffix, just_an, strcmpi, plur, highc, upstart } from './hacklib.js';
 import { menuHeadAttr, menuHeadStyle } from './menuattr.js';
 import { roles, align_gname, align_str } from './role.js';
 import {
@@ -34,7 +35,7 @@ import {
 } from './const.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
-import { update_topl, pline } from './display.js';
+import { update_topl, pline, Hallucination_u } from './display.js';
 import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON, getnow } from './calendar.js';
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
@@ -44,7 +45,7 @@ import { newuexp, has_innate, innate_source, rank_of } from './exper.js';
 import { youHaveSearching, youHaveFast, youHaveVeryFast, timet_delta } from './allmain.js';
 import { Infravision, Blind } from './vision.js';
 import { objects as OBJECTS } from './mkobj.js';
-import { simpleonames } from './objnam.js';
+import { simpleonames, the } from './objnam.js';
 import { MFLAGS2, M2_PNAME, humanoid } from './monflags_data.js';
 import { sticks } from './monattk_data.js';
 import { NOT_HUNGRY } from './const.js';
@@ -334,7 +335,6 @@ function basic_item_resistance_message(propidx, phrase, final, enlLine) {
 }
 // C ref: prop.h FAST = 64.
 const FAST_PROP = 64;
-const PM_KNIGHT = 4;
 import { LL_WISH, LL_ACHIEVE, LL_UMONST, LL_DIVINEGIFT, LL_LIFESAVE,
          LL_ARTIFACT, LL_GENOCIDE, LL_DUMP, LL_SPOILER, LL_MINORAC,
          livelog_printf } from './livelog.js';
@@ -368,22 +368,6 @@ function _fromWhatAntimagic() {
     return '';
 }
 
-// C ref: attrib.c is_innate(JUMPING).  Knight jumping is an intrinsic
-// exception installed during u_init rather than one of the role ability rows.
-function hasJumping() {
-    return haveProp(45 /* JUMPING */, 'HJumping')
-        || (game.urole?.mnum === PM_KNIGHT);
-}
-function jumpingFromWhat() {
-    const source = from_what(45, 'HJumping');
-    // C ref: attrib.c from_what() is entirely gated on `wizard` (line 914);
-    // this port's hasJumping() special-cases Knight because no HJumping bit
-    // is actually stored for the role-granted ability, but the "intrinsically"
-    // wording it stands in for is itself wizard-only, so the fallback must
-    // respect that gate too (an explore-mode Knight should read plain
-    // "You can jump.", matching bl049's recorded screen).
-    return source || (_wizard() && game.urole?.mnum === PM_KNIGHT ? ' intrinsically' : '');
-}
 // C ref: insight.c piousness(showneg, suffix) — alignment-piety adjective with
 // an optional suffix ("aligned" in attributes_enlightenment(), the alignment
 // name in ustatusline()).  A negative record with !showneg reads
@@ -525,7 +509,6 @@ function num_genocides() {
     return n;
 }
 
-function plur(n) { return n === 1 ? '' : 's'; }
 
 // C ref: insight.c N_times() — "once" / "twice" / "thrice" / "N times".
 // The `case 3: "thrice"` arm was missing; it is reachable from #conduct via
@@ -879,7 +862,7 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx } from './makemon.js';
 import { ugenocided, udeadinside, youhiding_buf } from './polyself.js';
 import { is_rider_pm, WEAPON_CLASS, GEM_CLASS } from './mkobj.js';
 import { mbodypart } from './monmove.js';
-import { mflags1_of, mflags2_of, M1_NOEYES, M1_CLING, M1_OVIPAROUS,
+import { mflags1_of, mflags2_of, M1_NOEYES, M1_CLING, M1_OVIPAROUS, M1_FLY,
          M1_BREATHLESS, M1_AMPHIBIOUS, M2_ORC, M2_ELF, M2_HUMAN, M2_DEMON,
          M2_WERE, M2_MALE, M2_FEMALE, M2_NEUTER,
          is_male_flag, is_female_flag, is_neuter_flag } from './monflags_data.js';
@@ -1027,10 +1010,7 @@ function strsubst(bp, orig, replacement) {
     const i = bp.indexOf(orig);
     return (i < 0) ? bp : bp.slice(0, i) + replacement + bp.slice(i + orig.length);
 }
-function highc(c) { return c ? c.toUpperCase() : c; }
 function lowc(c) { return c ? c.toLowerCase() : c; }
-// C ref: hacklib.c upstart() — capitalise the first character in place.
-function upstart(s) { return s ? highc(s.charAt(0)) + s.slice(1) : s; }
 function digit(c) { return c >= '0' && c <= '9'; }
 // C ref: hacklib.c ordin() — "st"/"nd"/"rd"/"th".
 function ordin(n) {
@@ -1038,8 +1018,6 @@ function ordin(n) {
     return (dd === 0 || dd > 3 || Math.trunc((n % 100) / 10) === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
-// C ref: hacklib.c the() / objnam.c the() — "the <foo>" unless already proper.
-function the_str(s) { return /^[A-Z]/.test(String(s)) ? String(s) : `the ${s}`; }
 
 // C ref: you.h Role_switch == gu.urole.mnum.
 function Role_switch() { return game.urole?.mnum; }
@@ -1075,7 +1053,7 @@ function pmname(ptr, gender) {
 // a vampire currently in bat/fog/wolf shape.  The hero's youmonst.cham is u.mcham
 // (polyself.js set_uasmon()) and youmonst.data is youmonst_data_pub().
 export function vampshifted(mon) {
-    const hero = !mon || mon === game.youmonst;
+    const hero = !mon || mon === game.u;
     const cham = hero ? game.u?.mcham : mon.cham;
     if (!ismnum(cham)) return false;
     const nm = monster_by_pmidx(cham)?.name;
@@ -1194,9 +1172,13 @@ function E_prop(propidx) {
 // C ref: youprop.h B<Prop> == u.uprops[prop].blocked.  invent.js models the
 // column that worn.c w_blocks() fills (setworn(): a mummy wrapping blocks INVIS,
 // a non-Wizard's cornuthaum CLAIRVOYANT, the Eyes of the Overworld BLINDED) as
-// worn_blocked(); the other B<Prop> words (BLevitation/BFlying/BStealth set by
-// trap.c and polyself.c) live in u.uprops and are not read here yet.
+// worn_blocked(); floor, terrain and mounted-stealth blockers also live in
+// the named u.uprops.B<Prop> words.
 function B_prop(propidx) {
+    if (propidx === STEALTH || propidx === LEVITATION || propidx === FLYING) {
+        const key = `B${PROPKEY[propidx].replace(/^H/, '')}`;
+        return (game.u?.uprops?.[key] | 0) | worn_blocked(propidx);
+    }
     return (propidx === INVIS || propidx === CLAIRVOYANT || propidx === BLINDED)
         ? worn_blocked(propidx) : 0;
 }
@@ -1219,11 +1201,12 @@ const YOUPROP_READERS = {
     [UNCHANGING]: Unchanging_hero, [POLYMORPH_CONTROL]: Polymorph_control_hero,
     [HALF_PHDAM]: Half_physical_damage_hero, [HALF_SPDAM]: Half_spell_damage_hero,
     [DETECT_MONSTERS]: Detect_monsters_hero,
+    [HALLUC]: Hallucination_u,
 };
 function Prop(propidx) {
-    return !B_prop(propidx)
-        && (E_prop(propidx) || H_prop(propidx) || F_prop(propidx)
-            || !!YOUPROP_READERS[propidx]?.());
+    const reader = YOUPROP_READERS[propidx];
+    if (reader) return reader();
+    return !B_prop(propidx) && (E_prop(propidx) || H_prop(propidx) || F_prop(propidx));
 }
 // C ref: attrib.c from_what(propidx); the port's from_what() (above) wants the
 // u.uprops key as its second argument.
@@ -1321,7 +1304,7 @@ export function trap_predicament(_outbuf, final, wizxtra) {
         outbuf = `sinking into ${final ? 'lava' : hliquid('lava')}`;
         break;
     case TT_INFLOOR:
-        outbuf = `stuck in ${the_str(surface(u.ux, u.uy))}`;
+        outbuf = `stuck in ${the(surface(u.ux, u.uy))}`;
         break;
     default: /* TT_BEARTRAP, TT_PIT, or TT_WEB */
         outbuf = 'trapped';
@@ -1495,7 +1478,7 @@ export function background_enlightenment(_unused_mode, final) {
     /* if polymorphed, report current shape before underlying role */
     if (u.Upolyd) {
         const uasmon = youmonst_data_pub();
-        const altphrasing = vampshifted(game.youmonst);
+        const altphrasing = vampshifted(game.u);
 
         tmpbuf = '';
         /* here we always use current gender, not saved role gender */
@@ -2166,17 +2149,12 @@ function Underwater() { return !!game.u?.uinwater; }
 function Punished() { return !!game.u?.uball; }
 // C ref: prop.h W_SADDLE.
 const W_SADDLE = 0x00100000;
-// C ref: youprop.h Blindfolded == (ublindf && ublindf->otyp != LENSES).
-const LENSES = 232; // js/invent.js:160
-function Blindfolded() {
-    return !!(game.ublindf && game.ublindf.otyp !== LENSES);
-}
+// C ref: youprop.h Blindfolded == EBlinded.
+function Blindfolded() { return Blindfolded_hero(); }
 // C ref: youprop.h Blindfolded_only == (Blindfolded && !Blinded), with
 // Blinded == (HBlinded && !BBlinded) and Blindfolded == EBlinded: the worn
 // blindfold's own extrinsic bit must not count as "other" blindness.
-export function Blindfolded_only() {
-    return Blindfolded() && !H_prop(BLINDED);
-}
+export function Blindfolded_only() { return Blindfolded_only_hero(); }
 // C ref: youprop.h BlindedTimeout == (HBlinded & TIMEOUT).
 function BlindedTimeout() { return H_prop(BLINDED) & TIMEOUT_MASK; }
 // C ref: mondata.h haseyes(ptr) == !(mflags1 & M1_NOEYES).
@@ -2639,23 +2617,18 @@ export function attributes_enlightenment(_unused_mode, final) {
         enl_msg('You cause', '', 'd', ' conflict', from_what_p(CONFLICT), final);
 
     /*** Transportation ***/
-    // hasJumping()/jumpingFromWhat() (above) fold in is_innate(JUMPING)'s
-    // Role_if(PM_KNIGHT) exception — a knight's innate jumping has no
-    // extrinsic/uprops source for Prop()/from_what_p() to find (regression
-    // seed4500 step 1809: "You can jump intrinsically" went missing).
-    if (hasJumping())
-        you_can('jump', jumpingFromWhat(), final);
+    if (Prop(JUMPING))
+        you_can('jump', from_what_p(JUMPING), final);
     if (Prop(TELEPORT))
         you_can('teleport', from_what_p(TELEPORT), final);
     if (Prop(TELEPORT_CONTROL))
         you_have('teleport control', from_what_p(TELEPORT_CONTROL), final);
-    /* actively levitating handled earlier as a status condition.  C zeroes
-       BLevitation, re-tests Levitation, then restores it; this port has no
-       `blocked` column (B_prop() is always 0) so the block never fires. */
+    /* Test potential levitation with BLevitation clear, as C does here.
+       H_prop/E_prop read the unblocked words without mutating live state. */
     if (B_prop(LEVITATION)) {
         const save_BLev = B_prop(LEVITATION);
 
-        if (Prop(LEVITATION)) {
+        if (H_prop(LEVITATION) || E_prop(LEVITATION)) {
             const trapped = (save_BLev & I_SPECIAL) !== 0,
                   terrain = (save_BLev & FROMOUTSIDE) !== 0;
 
@@ -2669,7 +2642,8 @@ export function attributes_enlightenment(_unused_mode, final) {
     if (B_prop(FLYING)) {
         const save_BFly = B_prop(FLYING);
 
-        if (Prop(FLYING)) {
+        if (H_prop(FLYING) || E_prop(FLYING)
+            || (u.usteed && (mflags1_of(u.usteed.data) & M1_FLY))) {
             enl_msg(You_, 'would fly', 'would have flown',
                     Prop(LEVITATION)
                        ? " if you weren't levitating"
@@ -2804,7 +2778,7 @@ export function attributes_enlightenment(_unused_mode, final) {
         && !(final === ENL_GAMEOVERDEAD
              && u.umonnum === PM_GREEN_SLIME() && !Prop(UNCHANGING))) {
         /* foreign shape (except were-form which is handled below) */
-        if (!vampshifted(game.youmonst))
+        if (!vampshifted(game.u))
             buf = `polymorphed into ${an(pmname(youmonst_data_pub(),
                        game.flags?.female ? FEMALE : MALE))}`;
         else

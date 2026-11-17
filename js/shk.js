@@ -16,7 +16,7 @@
 
 import { Invis } from './monmove.js'; /* youprop.h Invis: (HInvis || EInvis) && !BInvis */
 import { game, hooks, register_process_static } from './gstate.js';
-import { s_suffix, depth as depth_of_level, strncmp, strncmpi } from './hacklib.js';
+import { s_suffix, depth as depth_of_level, strncmp, strncmpi, plur, upstart } from './hacklib.js';
 import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          mksobj, place_object, remove_object, dealloc_obj,
          newomid, MAGIC_LAMP, OIL_LAMP, BRASS_LANTERN, MAGIC_MARKER,
@@ -25,7 +25,7 @@ import { objects, base_oc_cost, base_oc_weight, weight, next_ident,
          POT_OIL, ROCK, BOULDER, LEASH,
          CANDELABRUM_OF_INVOCATION, clear_object_timer, copy_oextra, has_omid, free_omid } from './mkobj.js';
 import { arti_cost } from './artifact.js';
-import { get_obj_location as real_get_obj_location } from './light.js';
+import { get_obj_location as real_get_obj_location, find_oid } from './light.js';
 import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
@@ -748,7 +748,6 @@ export async function shk_names_obj(shkp, obj, fmt, amt, arg) {
         discover_object(obj.otyp, true, true, true); /* hack.h makeknown() */
     }
     let obj_name = await paydoname(obj);
-    const plur = (n) => (n === 1 ? '' : 's');
     if (was_unknown) {
         // C: Sprintf(fmtbuf, "%%s; you %s", fmt) — the alternate phrasing used
         // when the transaction just revealed something.
@@ -829,7 +828,6 @@ export function Shknam(shkp) {
     return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-const plur = (n) => (n === 1 ? '' : 's');
 // C ref: monst.h DEADMONSTER(mon).
 const DEADMONSTER = (mon) => !mon || (mon.mhp != null && mon.mhp < 1);
 // C ref: you.h noit_mhe/noit_mhim/noit_mhis (js/do_name.js).
@@ -1388,7 +1386,6 @@ function on_shoplevel(eshkp) {
 }
 
 // objnam.c the()/The() are imported above.
-const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 const sgn = (x) => Math.sign(x || 0);
 const distu = (x, y) => {
     const u = game.u;
@@ -1434,24 +1431,6 @@ function money_cnt(list) {
     return 0;
 }
 
-// C ref: shk.c find_oid(id):2777 — every obj list except gb.billobjs.
-// (Real port: js/light.js, private.)
-function find_oid(id) {
-    let obj = oid_scan(game.invent, id, 0);
-    if (obj) return obj;
-    obj = oid_scan(game.level?.objects, id, 0);
-    if (obj) return obj;
-    obj = oid_scan(game.level?.buriedobjlist, id, 0);
-    if (obj) return obj;
-    obj = oid_scan(game.migrating_objs, id, 0);
-    if (obj) return obj;
-    for (const list of [fmon(), game.migrating_mons, game.mydogs])
-        for (const mon of (list || [])) {
-            obj = oid_scan(mon?.minvent, id, 0);
-            if (obj) return obj;
-        }
-    return null;
-}
 
 // C ref: shk.c setpaid(shkp):400.  gb.billobjs is an ARRAY in this port, so
 // C's "extract and dealloc each" is a truncation.

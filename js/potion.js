@@ -11,7 +11,7 @@
 // spent in place; where it would not, only the framing message is emitted.
 
 import { game, hooks, register_process_static } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an } from './hacklib.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, y_n, newsym, display_nhwindow_message,
          unmap_object, see_monsters, flush_sting_effects, set_mimic_blocking, You_feel, status_hold, hold_botl_hp, You_see, You_hear } from './display.js';
@@ -26,7 +26,7 @@ import { surface, hliquid } from './dungeon.js';
 import { can_reach_floor } from './engrave.js';
 import { heal_legs, water_damage, float_up, spoteffects } from './trap.js';
 import { monster_detect, nomul } from './hack.js';
-import { DEADMONSTER } from './mon.js';
+import { DEADMONSTER, Protection_from_shape_changers as Protection_from_shape_changers_hero } from './mon.js';
 import { Invis as Invis_mm, aggravate } from './monmove.js';
 import { exercise, acurr_eff, adjattrib, Fixed_abil } from './attrib.js';
 import { more_experienced, pluslvl, rndexp, has_innate } from './exper.js';
@@ -41,7 +41,7 @@ import { A_STR, A_INT, A_DEX, A_CON, A_WIS, A_MAX, IS_FOUNTAIN, IS_SINK,
          FIRE_RES, COLD_RES, SLEEP_RES, ACID_RES, ANTIMAGIC, UNCHANGING, LEVITATION, MM_APPARXY_BYYOU, PLNMSG_OBJ_GLOWS, M_SEEN_SLEEP, LEG,
          Is_airlevel, Is_waterlevel } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
-import { fruitname, simpleonames, thesimpleoname, short_oname } from './objnam.js';
+import { fruitname, simpleonames, thesimpleoname, short_oname, the, The, cxname } from './objnam.js';
 import { newuhs, eatmupdate } from './eat.js';
 import { Blind, Infravision, vision_recalc, cansee as vis_cansee } from './vision.js';
 // js/monattk_data.js is a generated LEAF module (no imports of its own), so
@@ -57,6 +57,7 @@ import { object_detect } from './detect.js';
 import { delayed_killer, find_delayed_killer, dealloc_killer } from './end.js';
 import { hard_helmet, fingers_or_gloves } from './do_wear.js';
 import { Poison_resistance, Half_physical_damage_hero, Detect_monsters_hero, Wounded_legs_hero, Deaf_hero, Sick_resistance_hero, Antimagic_hero, Unchanging_hero, See_invisible_hero } from './youprop.js';
+import { HInvis_hero, HSee_invisible_hero, Blindfolded_hero, Blindfolded_only_hero, Levitation_hero } from './youprop.js';
 
 // C ref: potion.c make_confused(xtime, talk) — set the HConfusion timeout.  The
 // hero's confusion timer lives on game.u.uprops.Confusion (read by isConfused()
@@ -124,8 +125,8 @@ export { Poison_resistance };
 function Sick_resistance() { return Sick_resistance_hero(); }
 // C ref: youprop.h Invis == ((HInvis || EInvis) && !BInvis): monmove.js reads the worn extrinsic/blocked words too.
 function Invis() { return Invis_mm(); }
-// C ref: youprop.h Levitation = HLevitation || ELevitation; the E half (ring, boots, invoked Heart of Ahriman) is worn_extrinsic().
-function Levitation() { return HProp('Levitation', 'HLevitation', 'ELevitation') > 0 || worn_extrinsic(LEVITATION) !== 0; }
+// C ref: youprop.h Levitation, including the blocked word.
+function Levitation() { return Levitation_hero(); }
 function Wounded_legs() { return Wounded_legs_hero(); }
 function Detect_monsters() { return Detect_monsters_hero(); }
 // C ref: youprop.h Half_gas_damage — a damp/wet towel worn over the face
@@ -233,7 +234,7 @@ async function blind_toggle_msg(clearing) {
     const permaBlind = !!((u?.uprops?.HBlinded | 0) & 0x04000000) || !!u?.permablind;
     if (eyecount(ptr) === 0 || permaBlind) {
         await strange_feeling(null, null);
-    } else if (game.ublindf && game.ublindf.otyp !== 232 /* LENSES */) {
+    } else if (Blindfolded_hero()) {
         let eyes = body_part(1 /* EYE */);
         const plural = eyecount(ptr) !== 1;
         if (plural) eyes = makeplural(eyes);
@@ -515,7 +516,7 @@ export async function potionhit_hero(obj, how) {
     // does a saddle hit".  hit_saddle is always false on the isyou path;
     // cansee(tx,ty) is the hero's own square, true unless Blind.  No RNG.
     if (obj.otyp !== POT_OIL && !Blind()) {
-        await update_topl(`The ${xname(obj)} evaporates.`);
+        await update_topl(`${Tobjnam(obj, 'evaporate')}.`);
     }
     // isyou per-otyp direct effect (potion.c:1683)
     switch (obj.otyp) {
@@ -1137,7 +1138,7 @@ async function peffect_invisibility(otmp) {
             See_invisible_hero() ? 'can see right through yourself'
                             : "can't see yourself"}.`);
     }
-    if (otmp.blessed && !rn2(HProp('HInvis') ? 15 : 30)) {
+    if (otmp.blessed && !rn2(HInvis_hero() ? 15 : 30)) {
         uprops().HInvis = (HProp('HInvis') | 0) | FROMOUTSIDE;
     } else {
         incr_itimeout('HInvis', d(6 - 3 * bcsign(otmp), 100) + 100);
@@ -1155,11 +1156,9 @@ const FROMOUTSIDE = 0x04000000;
 // C ref: potion.c peffect_see_invisible() — POT_SEE_INVISIBLE and, sharing the
 // taste messages, POT_FRUIT_JUICE (which returns before the intrinsic part).
 async function peffect_see_invisible(otmp) {
-    const msg = Invis() && !Blind();
-    /* C: HSee_invisible is nonzero for a Monk's level-1 FROMEXPER (and a Ranger's at 15) as well as
-       for a timed or FROMOUTSIDE source, so permchance starts at 4 for them. */
-    const permchance = 10 - (HProp('HInvis') ? 3 : 0)
-        - ((HProp('HSee_invisible') || has_innate('HSee_invisible')) ? 6 : 0);
+    const msg = Invis() && !See_invisible_hero() && !Blind();
+    const permchance = 10 - (HInvis_hero() ? 3 : 0)
+        - (HSee_invisible_hero() ? 6 : 0);
 
     game.potion_unkn = (game.potion_unkn || 0) + 1;
     if (otmp.cursed) {
@@ -1794,14 +1793,14 @@ async function dipsink(obj) {
         await wash_hands();
         return;
     } else if (obj.oclass !== POTION_CLASS) {
-        await update_topl(`You hold ${the_xname(obj)} under the tap.`);
+        await update_topl(`You hold ${the(xname(obj))} under the tap.`);
         if (await water_damage(obj, null, true) === ER_NOTHING)
             await update_topl('Nothing seems to happen.');
         return;
     }
 
     await update_topl(`You pour ${(obj.quan || 1) > 1 ? 'one of ' : ''}${
-        the_xname(obj)} down the drain.`);
+        the(xname(obj))} down the drain.`);
     let try_call = false;
     switch (obj.otyp) {
     case POT_POLYMORPH:
@@ -1850,11 +1849,6 @@ async function dipsink(obj) {
 }
 // C ref: youprop.h Deaf.
 function Deaf() { return Deaf_hero(); }
-// C ref: objnam.c the(xname(obj)).
-function the_xname(obj) {
-    const n = xname(obj);
-    return /^(the |a |an |your |[A-Z])/.test(n) ? n : `the ${n}`;
-}
 // ═════════════════════════════════════════════════════════════════════════════
 // The rest of src/potion.c.  INERT: no existing function above was changed and
 // nothing above calls into this block, so it is score-neutral by construction.
@@ -2038,8 +2032,8 @@ export async function make_slimed(xtime, msg) {
     if (!uprops().Slimed) {
         dealloc_killer(find_delayed_killer(SLIMED));
         /* fake appearance is set late in the turn-to-slime countdown */
-        const ym = game.youmonst;
-        if (ym && ym.m_ap_type === 3 /* M_AP_MONSTER */
+        const ym = game.u;
+        if (ym.m_ap_type === 3 /* M_AP_MONSTER */
             && ym.mappearance === name_to_pmidx('green slime')) {
             ym.m_ap_type = 0;                   /* M_AP_NOTHING */
             ym.mappearance = 0;
@@ -2265,7 +2259,7 @@ export async function H2Opotion_dip(potion, targobj, useeit, objphrase) {
             const { hcolor } = await import('./do_name.js');
             glowcolor = hcolor(glowcolor);
             if (altfmt)
-                await update_topl(`${objphrase} with ${p_an(glowcolor)} aura.`);
+                await update_topl(`${objphrase} with ${an(glowcolor)} aura.`);
             else
                 await update_topl(`${objphrase} ${glowcolor}.`);
             game.last_msg = PLNMSG_OBJ_GLOWS; /* iflags.last_msg: reset by every later pline */
@@ -2292,13 +2286,6 @@ export async function H2Opotion_dip(potion, targobj, useeit, objphrase) {
         res = true;
     }
     return res;
-}
-// C ref: objnam.c an(str) — the indefinite article.  js/invent.js exports `an`
-// under a named export list; imported lazily where it is needed and mirrored
-// here for the synchronous format above.
-function p_an(str) {
-    const s = String(str || '');
-    return /^[aeiou]/i.test(s) ? `an ${s}` : `a ${s}`;
 }
 // C ref: shk.c costly_alteration(obj, alter_type) is called directly from the
 // mutation sites below.  It is async because billing can update shop state.
@@ -2345,7 +2332,7 @@ export async function impact_arti_light(obj, worsen, seeit) {
 export async function potionhit(mon, obj, how) {
     const u = game.u;
     const botlnam = bottlename();                       /* potion.c:1627 */
-    const isyou = (mon === game.youmonst || mon === u);
+    const isyou = (mon === u);
     let tx, ty, distance;
     let saddle = null;
     let hit_saddle = false;
@@ -2668,10 +2655,7 @@ export async function potionhit(mon, obj, how) {
 // existing import line's other names untouched).
 function cansee_p(x, y) { return vis_cansee(x, y); }
 // C ref: youprop.h Protection_from_shape_changers.
-function Protection_from_shape_changers() {
-    return HProp('HProtection_from_shape_changers',
-                 'EProtection_from_shape_changers') > 0;
-}
+function Protection_from_shape_changers() { return Protection_from_shape_changers_hero(); }
 // C ref: hacklib.c upstart(), objnam.c aobjnam()/Tobjnam() — module-private
 // copies.
 function p_upstart(s) {
@@ -2900,7 +2884,7 @@ export async function potion_dip(obj, potion) {
     if (potion.otyp === POT_ACID && obj.otyp === CORPSE
         && obj.corpsenm === name_to_pmidx('lichen')) {
         const { hcolor } = await import('./do_name.js');
-        await update_topl(`${p_The(p_cxname(obj))} ${otense(obj, 'turn')} ${
+        await update_topl(`${The(cxname(obj))} ${otense(obj, 'turn')} ${
             Blind() ? 'wrinkled'
                 : potion.odiluted ? hcolor('orange') : hcolor('red')
         } around the edges.`);
@@ -2920,10 +2904,10 @@ export async function potion_dip(obj, potion) {
 
     if (p_is_poisonable(obj)) {
         if (potion.otyp === POT_SICKNESS && !obj.opoisoned) {
-            const buf = (potion.quan > 1) ? `One of ${p_the(xname(potion))}`
-                                          : p_The(xname(potion));
+            const buf = (potion.quan > 1) ? `One of ${the(xname(potion))}`
+                                          : The(xname(potion));
             await update_topl(`${buf} forms a coating on ${
-                p_the(xname(obj))}.`);
+                the(xname(obj))}.`);
             obj.opoisoned = true;
             await poof(potion);
             return ECMD_TIME;
@@ -2931,7 +2915,7 @@ export async function potion_dip(obj, potion) {
                    && (potion.otyp === POT_HEALING
                        || potion.otyp === POT_EXTRA_HEALING
                        || potion.otyp === POT_FULL_HEALING)) {
-            await update_topl(`A coating wears off ${p_the(xname(obj))}.`);
+            await update_topl(`A coating wears off ${the(xname(obj))}.`);
             obj.opoisoned = 0;
             await poof(potion);
             return ECMD_TIME;
@@ -3116,14 +3100,7 @@ async function p_obj_unpolyable(obj) {
 }
 
 // C ref: youprop.h Blindfolded_only — blind ONLY because of the blindfold.
-function Blindfolded_only() { return !!game.ublindf && !BlindedTimeout(); }
-// C ref: objnam.c cxname/Yname2/yname/The/the.
-// js/invent.js exports xname/yname/doname; the rest have only module-private
-// copies (js/pickup.js thesimpleoname, js/wield.js cxname/Yname2), so these are
-// the local shapes over xname().
-function p_cxname(obj) { return xname(obj); }
-function p_the(s) { return `the ${s}`; }
-function p_The(s) { return `The ${s}`; }
+function Blindfolded_only() { return Blindfolded_only_hero(); }
 // C ref: shk.c check_unpaid(obj) — bill an unpaid item that's being used up.
 async function p_check_unpaid(obj) { await (await import('./shk.js')).check_unpaid(obj); }
 
@@ -3298,11 +3275,11 @@ export async function split_mon(mon, mtmp) {
 
     if (mtmp) {
         const UH = await import('./uhitm.js');
-        reason = ` from ${(mtmp === game.youmonst || mtmp === u) ? 'your'
+        reason = ` from ${(mtmp === u) ? 'your'
                           : s_suffix(UH.mon_nam(mtmp))} heat`;
     }
 
-    if (mon === game.youmonst || mon === u) {
+    if (mon === u) {
         if (u.mh > u.mhmax)  /* sanity precaution */
             u.mh = u.mhmax;
         const { cloneu } = await import('./mhitu.js');

@@ -9,6 +9,7 @@ import { game, hooks } from './gstate.js';
 import { setONAME } from './const.js';
 import { rn2, rnd, rn1 } from './rng.js';
 import { pline, update_topl, newsym, m_at, y_n, display_nhwindow_message, hold_botl_gold, You_hear, You_feel, You_see } from './display.js';
+import { Hallucination_u } from './display.js';
 import { hliquid, builds_up, dunlevs_in_dungeon, level_difficulty } from './dungeon.js';
 import { water_damage, water_damage_chain, t_at, delfloortrap } from './trap.js';
 import { curse, uncurse, bless, objects, COIN_CLASS, POTION_CLASS, POT_WATER, RING_CLASS, mkobj, mkobj_at, mksobj_at,
@@ -19,7 +20,7 @@ import { fmonOrder } from './mon.js';
 import { nolimbs } from './monflags_data.js';
 import { mbodypart, body_part } from './polyself.js';
 import { Deaf_hero } from './display.js';
-import { ARM, HEAD, M_SEEN_FIRE, GP_AVOID_MONPOS } from './const.js';
+import { ARM, HEAD, HAND, M_SEEN_FIRE, GP_AVOID_MONPOS } from './const.js';
 import { monstseesu, monstunseesu } from './mondata.js';
 import { fingers_or_gloves } from './do_wear.js';
 import { makeplural } from './plural.js';
@@ -124,7 +125,7 @@ async function floating_above(what) {
 export async function wash_hands() {
     let res = ER_NOTHING;
     const was_glib = Glib();
-    await update_topl(`You wash your ${game.uarmg ? 'gloved ' : ''}hands in the `
+    await update_topl(`You wash your ${game.uarmg ? 'gloved ' : ''}${makeplural(body_part(HAND))} in the `
                       + `${hliquid('water')}.`);
     if (was_glib) {
         await (await import('./potion.js')).make_glib(0);
@@ -747,7 +748,7 @@ export async function dryup(x, y, isyou) {
 
 // ── sink interactions (fountain.c drinksink/breaksink) ──
 
-function Hallucination() { return !!game.u?.uhallu; }
+function Hallucination() { return Hallucination_u(); }
 
 
 // C ref: hack.c losehp(n, knam, k_format) — do.js owns the complete port
@@ -835,16 +836,16 @@ export async function drinksink() {
         return;
     }
     const loc = game.level?.at(u.ux, u.uy);
-    const water = hliquid('water');
+    // C ref: fountain.c drinksink() draws hliquid's display RNG only when used.
     switch (rn2(20)) {
     case 0:
-        await update_topl(`You take a sip of very cold ${water}.`);
+        await update_topl(`You take a sip of very cold ${hliquid('water')}.`);
         break;
     case 1:
-        await update_topl(`You take a sip of very warm ${water}.`);
+        await update_topl(`You take a sip of very warm ${hliquid('water')}.`);
         break;
     case 2:
-        await update_topl(`You take a sip of scalding hot ${water}.`);
+        await update_topl(`You take a sip of scalding hot ${hliquid('water')}.`);
         // C ref: fountain.c:614 — a fire-resistant hero gets "It seems quite
         // tasty." and takes NO damage, so the rnd(6) must not be drawn either.
         // monstseesu/monstunseesu (M_SEEN_FIRE) update what watching monsters
@@ -896,14 +897,14 @@ export async function drinksink() {
             exercise(A_WIS, true);
             newsym(u.ux, u.uy);
         } else {
-            await update_topl(`Some dirty ${water} backs up in the drain.`);
+            await update_topl(`Some dirty ${hliquid('water')} backs up in the drain.`);
         }
         break;
     case 6:
         await breaksink(u.ux, u.uy);
         break;
     case 7: {
-        await update_topl(`The ${water} moves as though of its own will!`);
+        await update_topl(`The ${hliquid('water')} moves as though of its own will!`);
         const pmidx = name_to_pmidx('water elemental');
         const gone = (game.mvitals?.[pmidx]?.mvflags ?? 0) & G_GONE;
         const mtmp = gone ? null : await spawnAtHeroSquare(pmidx);
@@ -911,7 +912,7 @@ export async function drinksink() {
         break;
     }
     case 8:
-        await update_topl(`Yuk, this ${water} tastes awful.`);
+        await update_topl(`Yuk, this ${hliquid('water')} tastes awful.`);
         more_experienced(1, 0);
         await newexplevel();
         break;
@@ -921,7 +922,7 @@ export async function drinksink() {
         await vomit();
         break;
     case 10: {
-        await update_topl(`This ${water} contains toxic wastes!`);
+        await update_topl(`This ${hliquid('water')} contains toxic wastes!`);
         const { polyself, Unchanging_poly } = await import('./polyself.js');
         if (!Unchanging_poly()) {
             await update_topl('You undergo a freakish metamorphosis!');
@@ -946,7 +947,7 @@ export async function drinksink() {
         }
         /* falls through */
     default:
-        await update_topl(`You take a sip of ${rn2(3) ? (rn2(2) ? 'cold' : 'warm') : 'hot'} ${water}.`);
+        await update_topl(`You take a sip of ${rn2(3) ? (rn2(2) ? 'cold' : 'warm') : 'hot'} ${hliquid('water')}.`);
         break;
     }
 }

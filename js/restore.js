@@ -36,15 +36,13 @@ import { rn2 } from './rng.js';
 import { quest_nemgend_or_null } from './questpgr.js';
 import { S_UNICORN } from './symbols.js';
 import { check_special_room } from './shkroom.js';
-import { restore_doorindex, reverse_trap_chain } from './mkroom.js';
+import { restore_doorindex, restore_level_chains } from './mkroom.js';
 import { encumber_msg, xname, useup, uwep_unweapon } from './invent.js';
 import { change_luck } from './attrib.js';
 import { read_engr_at } from './engrave.js';
 import { run_object_timers, requeue_level_timers, requeue_global_timers, place_object, next_ident, newoextra, newomonst,
          newomid, new_omailcmd, OMID, has_omid, has_omonst, free_omid,
-         SLIME_MOLD, ICE_BOX, POT_OIL, TALLOW_CANDLE, WAX_CANDLE,
-         BRASS_LANTERN, OIL_LAMP, CANDELABRUM_OF_INVOCATION,
-         clear_no_charge_on_getlev } from './mkobj.js';
+         SLIME_MOLD, ICE_BOX, age_is_relative, clear_no_charge_on_getlev } from './mkobj.js';
 import {
     COLNO, ROWNO, OBJ_FREE, W_BALL, W_CHAIN, W_WEP, FREEING, WRITING, READING,
     RANGE_GLOBAL, RANGE_LEVEL, REST_GSTATE, REST_LEVELS, REST_CURRENT_LEVEL,
@@ -74,6 +72,7 @@ export function deserializeGameState(str) {
 
     const resolve = (e) => {
         if (e === null || typeof e !== 'object') return e;
+        if ('$hero' in e) return Symbol.for('youmonst');
         if ('$r' in e) return built[e.$r];
         if ('$m' in e) return monster_by_pmidx(e.$m);
         return e;
@@ -254,29 +253,20 @@ async function resume_preamble_tail() {
 // --More-- when the prior step (e.g. wizard-mode ask_about_keeping_savefile's
 // y_n(), which leaves toplin non-NEED_MORE) needed no paging at all.
 async function restore_preamble_messages() {
-    const u = game.u || (game.u = {});
-    const moonphase = phase_of_the_moon();
-    const msgs = [];
-    // C ref: allmain.c:57/64 — flags.moonphase and flags.friday13 are
-    // re-stamped for the RESTORING process's date, and dosave0() later undoes
-    // exactly those luck adjustments.  Left stale (as the saving segment
-    // wrote them), a restore on a non-full-moon date followed by another save
-    // would wrongly subtract a Luck point.
+    // C ref: allmain.c:57-67. Refresh the restoring process's calendar flags,
+    // applying each Luck adjustment only after its message finishes paging.
     game.flags = game.flags || {};
-    game.flags.moonphase = moonphase;
-    game.flags.friday13 = friday_13th();
-    if (moonphase === FULL_MOON) {
-        msgs.push('You are lucky!  Full moon tonight.');
+    game.flags.moonphase = phase_of_the_moon();
+    if (game.flags.moonphase === FULL_MOON) {
+        await pline('You are lucky!  Full moon tonight.');
         change_luck(1);
-    } else if (moonphase === NEW_MOON) {
-        msgs.push('Be careful!  New moon tonight.');
+    } else if (game.flags.moonphase === NEW_MOON) {
+        await pline('Be careful!  New moon tonight.');
     }
-    if (friday_13th()) {
-        msgs.push('Watch out!  Bad things can happen on Friday the 13th.');
+    game.flags.friday13 = friday_13th();
+    if (game.flags.friday13) {
+        await pline('Watch out!  Bad things can happen on Friday the 13th.');
         change_luck(-1);
-    }
-    for (const m of msgs) {
-        await pline(m);
     }
 }
 
@@ -439,6 +429,12 @@ export async function dorestore() {
     game.mockStorage = keepMock;
     game.coreCtx = keepCoreCtx;
     game.iflags = keepIflags;
+    // See_invisible is a derived C property, exposed by jsmain as a
+    // non-enumerable accessor. Replacing u with its saved graph drops it.
+    const { See_invisible_hero } = await import('./youprop.js');
+    Object.defineProperty(game.u, 'see_invis', {
+        get: See_invisible_hero, configurable: true,
+    });
     // C ref: rnd.c init_random() — both RNG streams are seeded afresh by the
     // RESTORING process (sys_random_seed()), and the DISP stream (hallucination
     // glyph picks) starts at offset 0 again.  The blob would otherwise bring
@@ -519,7 +515,16 @@ export async function dorestore() {
     /* getlev() recomputes gd.doorindex from the last room (restore.c:1133); stored
        levels get the same when goto_level() reloads them (do.js getlev_restore) */
     restore_doorindex(game.level);
-    reverse_trap_chain(game.level); /* getlev(): ftrap rebuilt by prepending */
+    game.stairs = restore_level_chains(game.level, game.stairs);
+    (await import('./light.js')).restore_light_sources_order();
+    // dorecover() also unpacks every inactive level with getlev() before
+    // rewriting its level file. dosave0()'s copy already reversed these once.
+    for (const [ledger, ent] of Object.entries(game._level_store || {})) {
+        if (ledger !== `${game.u.uz.dnum}:${game.u.uz.dlevel}`) {
+            ent.stairs = restore_level_chains(ent.level, ent.stairs);
+            ent.level.light_base?.reverse();
+        }
+    }
 
     // C ref: restore.c restgamestate() — role_init() runs partway through the
     // state reload, BEFORE restore_luadata()'s Lua-state creation below, so its
@@ -556,6 +561,23 @@ export async function dorestore() {
     // boundary.  It must run AFTER the state splice above, since the blob
     // carries the SAVING segment's splev_align and this re-rolls it.
     l_nhcore_init();
+
+    // C getlev() restores shape-changing ability on the active level even
+    // when no time elapsed, including vampires created with cham == NON_PM.
+    {
+        const { restore_cham } = await import('./mon.js');
+        for (const mon of [...(game.level?.monsters || [])])
+            await restore_cham(mon);
+    }
+
+    // C ref: getlev() -> rest_regions(): allocations are rebuilt from live
+    // counts, not the saving process's spare capacity. The current level has
+    // no elapsed time, but ttl == 0 regions are still removed on restore.
+    {
+        const { rest_regions, remove_region } = await import('./region.js');
+        const expired = rest_regions({ regions: game.regions, regionTimestamp: game.moves });
+        for (const region of expired) await remove_region(region);
+    }
 
     // C ref: restore.c:1226 getlev() -> rest_bubbles() -> mkmaze.c:1750
     // restore_waterlevel(): on the Planes of Air/Water every restored bubble or
@@ -755,16 +777,6 @@ function level_seq(nhfp) {
 /* C ref: restore.c:65 #define Is_IceBox(o) */
 function Is_IceBox(o) { return o?.otyp === ICE_BOX; }
 
-// C ref: obj.h:388 age_is_relative(otmp).  NOT the same list as js/zap.js's and
-// js/pickup.js's private copies: both of those include MAGIC_LAMP (which the
-// macro's comment says it deliberately excludes) and drop POT_OIL.  Transcribed
-// from the header, because restobjchn()'s bones age shift keys on it.
-export function age_is_relative(otmp) {
-    return otmp.otyp === BRASS_LANTERN || otmp.otyp === OIL_LAMP
-        || otmp.otyp === CANDELABRUM_OF_INVOCATION
-        || otmp.otyp === TALLOW_CANDLE || otmp.otyp === WAX_CANDLE
-        || otmp.otyp === POT_OIL;
-}
 
 // C ref: worn.c setworn(obj, mask).  worn.c's setworn() is UNPORTED; the two
 // module-private reductions this port has (js/invent.js:821, js/u_init.js:602)
@@ -1386,7 +1398,6 @@ export async function restgamestate(nhfp) {
     game.wreserve = Sfi(nhfp, 'wreserve', 0);
     game.wtreserved = Sfi(nhfp, 'wtreserved', 0);
     Sfi_into(game.u, Sfi(nhfp, 'gamestate-you', null));
-    if (game.youmonst) game.youmonst.cham = game.u?.mcham;
 
     if (restoring_special && game.iflags.explore_error_flag) {
         /* savefile has wizard or explore mode, but player is no longer
@@ -1428,7 +1439,6 @@ export async function restgamestate(nhfp) {
         game.iflags.perm_invent = defer_perm_invent;
         game.flags = newgameflags;
         game.context = newgamecontext;
-        game.youmonst = {};                         /* cg.zeromonst */
         return false;
     }
     /* in case hangup save occurred in midst of level change */

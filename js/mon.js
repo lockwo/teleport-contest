@@ -9,7 +9,8 @@
 import { has_ceiling as has_ceiling_dg } from './dungeon.js';
 import { random_monster } from './disprng.js';
 import { game, hooks, register_process_static } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, an } from './hacklib.js';
+import { The } from './objnam.js';
 import { rn2, rn1, rnd, d, rnl } from './rng.js';
 import { ROLE_TOURIST } from './role.js';
 import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
@@ -77,11 +78,11 @@ export function level_specific_nocorpse(mdat) {
 }
 // C ref: mon.c:3181 corpse_chance(mon, magr, was_swallowed).  TRUE if a corpse
 // might be dropped.  magr is the killer when the victim was swallowed (the
-// hero is game.youmonst / game.u); an omitted magr falls back to
+// hero is game.u); an omitted magr falls back to
 // gm.mswallower exactly as C does.
 export async function corpse_chance(mon, magr = null, was_swallowed = false) {
     const { permonst, mattk_list } = await import('./mhitm.js');
-    const is_you = (m) => !!m && (m === game.youmonst || m === game.u || m.isyou === true);
+    const is_you = (m) => !!m && (m === game.u || m.isyou === true);
     const dat_of = async (m) => {
         if (is_you(m)) {
             const { youmonst_data } = await import('./invent.js');
@@ -1531,8 +1532,9 @@ function is_rider_pm(corpsenm) {
 // monmove.js for a two-line predicate.
 const PM_VAMPIRE = 226, PM_VAMPIRE_LEADER = 227, PM_VLAD_THE_IMPALER = 228;
 export function is_vampshifter(mon) {
-    return mon.cham === PM_VAMPIRE || mon.cham === PM_VAMPIRE_LEADER
-        || mon.cham === PM_VLAD_THE_IMPALER;
+    const cham = mon === game.u ? mon.mcham : mon.cham;
+    return cham === PM_VAMPIRE || cham === PM_VAMPIRE_LEADER
+        || cham === PM_VLAD_THE_IMPALER;
 }
 // C ref: mondata.c:517 mon_hates_silver(mon).
 export function mon_hates_silver(mon) {
@@ -1767,10 +1769,7 @@ function ordin_mon(n) {
     return (dd === 0 || dd > 3 || Math.trunc((n % 100) / 10) === 1) ? 'th'
         : (dd === 1) ? 'st' : (dd === 2) ? 'nd' : 'rd';
 }
-// C ref: objnam.c an(str) / The(str).
-import { an as an_mon } from './hacklib.js';
 import { Blind_telepat, Detect_monsters_hero, See_invisible_hero } from './youprop.js';
-function The_mon(s) { return /^[A-Z]/.test(s) ? s : `The ${s}`; }
 
 // C ref: youprop.h Hallucination / Blind_telepat, spelled the way the rest of
 // the port spells them (js/allmain.js:1415, js/mhitu.js:987).
@@ -2074,13 +2073,11 @@ export async function meatbox(mon, otmp) {
     /* contents of eaten containers become engulfed or dropped onto the floor;
        arbitrary, but otherwise g-cubes are too powerful */
     if (!engulf_contents && cansee(x, y)) {
-        const { xname } = await import('./invent.js');
+        const { xname, distant_name_pub } = await import('./invent.js');
         const { surface } = await import('./dungeon.js');
-        /* C: s_suffix(The(distant_name(otmp, xname))).  js/invent.js keeps
-           distant_name() private and exports only the doname flavour, so the
-           plain xname is used; the "far away" pretense only ever suppresses
-           BUC/enchantment detail. */
-        await pline(`${s_suffix(The_mon(xname(otmp)))} contents spill out`
+        /* C: s_suffix(The(distant_name(otmp, xname))): a far box is named
+           without observe_object(). */
+        await pline(`${s_suffix(The(distant_name_pub(otmp, xname, x, y)))} contents spill out`
             + ` onto the ${surface(x, y)}.`);
     }
     const { obj_extract_self } = await import('./invent.js');
@@ -2888,7 +2885,7 @@ export async function mon_to_stone(mtmp) {
         }
         if (await newcham_wizard_aware(mtmp, monster_by_pmidx(PM('stone golem')), 0 /* NO_NC_FLAGS */)) {
             if (canseemon_shared(mtmp))
-                await pline(`Now it's ${an_mon(mtmp.data?.name || 'golem')}.`);
+                await pline(`Now it's ${an(mtmp.data?.name || 'golem')}.`);
         } else {
             if (canseemon_shared(mtmp))
                 await pline('... and returns to normal.');
@@ -3755,7 +3752,7 @@ export async function mimic_hit_msg(mtmp, otyp) {
         if (otyp === SPE_HEALING_OTYP || otyp === SPE_EXTRA_HEALING_OTYP) {
             const { simple_typename } = await import('./invent.js');
             const color = C_OBJ_COLORS_M[OBJECTS[ap]?.oc_color | 0];
-            await pline(`${The_mon(simple_typename(ap))} seems a more vivid`
+            await pline(`${The(simple_typename(ap))} seems a more vivid`
                 + ` ${color} than before.`);
         }
         break;

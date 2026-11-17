@@ -681,7 +681,7 @@ export async function dump_glyphids() {
 // below), which returns before any game session starts (earlyarg.c:538-540):
 // no recorded session, public or held-out, can ever exercise this.  Ported
 // for completeness, not exhaustively verified against every C naming nuance
-// (CapitalMon's proper-noun form is approximated), since its output is never
+// since its output is never
 // part of any covered game.
 export async function dump_weights() {
     const { monster_by_pmidx, name_to_pmidx } = await import('./makemon.js');
@@ -692,9 +692,8 @@ export async function dump_weights() {
     const F_UNIQUE_DW = 64;    // mkobj.js's own private copy
     const worm_tail_pmidx = name_to_pmidx('long worm tail');
 
-    const an_dw = (nm) => (/^[aeiouAEIOU]/.test(nm) ? `an ${nm}` : `a ${nm}`);
-    const the_dw = (nm) => `the ${nm}`;
-    const isProperName_dw = (nm) => /^[A-Z]/.test(nm || '');
+    const { an, the } = await import('./objnam.js');
+    const { CapitalMon } = await import('./rumors.js');
 
     const weightlist = [];
     for (let i = 0; monster_by_pmidx(i); i++) {
@@ -703,8 +702,8 @@ export async function dump_weights() {
         const wt = m.cwt | 0;
         const unique = ((m.geno | 0) & G_UNIQ_DW) !== 0;
         const nm = 'the body of '
-            + (isProperName_dw(m.name) ? the_dw(m.name)
-               : unique ? m.name : an_dw(m.name));
+            + (CapitalMon(m.name) ? the(m.name)
+               : unique ? m.name : an(m.name));
         weightlist.push({ wt, nm });
     }
     for (let i = 0; i < OBJ_TABLE.length; i++) {
@@ -714,7 +713,7 @@ export async function dump_weights() {
         const wt = base_oc_weight({ otyp: i }) | 0;
         if (!wt || !ocName) continue;
         const unique = ((row.flags | 0) & F_UNIQUE_DW) !== 0;
-        const nm = unique ? the_dw(ocName) : an_dw(ocName);
+        const nm = unique ? the(ocName) : an(ocName);
         weightlist.push({ wt, nm });
     }
 

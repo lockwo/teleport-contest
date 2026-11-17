@@ -17,7 +17,7 @@
 // YOUMONST/AD_* back from it.  Every such binding is read INSIDE a function
 // body, never at module top level, so neither evaluation order hits a TDZ.
 
-import { Half_physical_damage_hero, Deaf_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero } from './youprop.js';
+import { Half_physical_damage_hero, Deaf_hero, Stone_resistance_hero, Sick_resistance_hero, See_invisible_hero, Reflecting_hero } from './youprop.js';
 import { setMGIVENNAME } from './const.js';
 import { game } from './gstate.js';
 import { s_suffix } from './hacklib.js';
@@ -55,7 +55,7 @@ import { t_at } from './mkroom.js';
 import { permonst, mattk_list, attk_protection_mm as attk_protection } from './mhitm.js';
 import { YOUMONST, paralyze_monst } from './mhitm_ad.js';
 import { make_confused as make_confused_u, make_blinded_hero as make_blinded_u, make_sick } from './potion.js';
-import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender, is_weptool } from './invent.js';
+import { youmonst_data_pub as youmonst_data, worn_extrinsic, Slow_digestion, poly_gender, is_weptool, Breathless_hero, Amphibious_hero } from './invent.js';
 import { has_innate } from './exper.js';
 import { resists_ston as md_resists_ston, resists_fire as md_resists_fire, resists_cold as md_resists_cold,
     resists_elec as md_resists_elec, resists_acid as md_resists_acid, resists_blnd_by_arti, dmgtype_fromattack, monstseesu, monstunseesu, get_atkdam_type } from './mondata.js';
@@ -64,7 +64,7 @@ import { Invis } from './monmove.js';
 import { is_art, ART_STORMBRINGER, ART_VORPAL_BLADE, protects } from './artifact.js';
 import { Acid_resistance } from './explode.js';
 import { Cold_resistance, Shock_resistance, Fire_resistance } from './zap.js';
-import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION, REFLECTING } from './const.js';
+import { SICK_RES, FIRE_RES, COLD_RES, SHOCK_RES, PROTECTION } from './const.js';
 
 const is_hero = (m) => m === YOUMONST;
 
@@ -496,7 +496,11 @@ export async function wildmiss(mtmp, mattk) {
     const unotthere = Displaced() !== 0;
     const usubmerged = Underwater() !== 0;
 
-    if (!unotseen && !unotthere && !usubmerged) return;   // C: impossible()
+    if (!unotseen && !unotthere && !usubmerged) {
+        const { Some_Monnam } = await import('./do_name.js');
+        await impossible(`${Some_Monnam(mtmp)} attacks you without knowing your location?`);
+        return;
+    }
     if (!Verbose()) return;
     if (!cansee(mtmp.mx, mtmp.my)) return;
 
@@ -793,11 +797,8 @@ export async function gulpmu(mtmp, mattk) {
     case AD_PHYS:
         physical_damage = true;
         if (mtmp.data?.name === 'fog cloud') {
-            const ep = u.uprops || {};
-            const breathless = !!(ep.Breathless || ep.HBreathless || ep.EBreathless)
-                || (mflags1_of(youmonst_data()) & M1_BREATHLESS) !== 0;
-            const amphibious = !!(ep.Amphibious || ep.HAmphibious || ep.EAmphibious)
-                || (mflags1_of(youmonst_data()) & M1_AMPHIBIOUS) !== 0;
+            const breathless = Breathless_hero();
+            const amphibious = Amphibious_hero();
             const youFlaming = flaming(youmonst_data());
             await emitU(`You are laden with moisture and ${youFlaming ? 'are smoldering out!'
                 : breathless ? 'find it mildly uncomfortable.'
@@ -1223,8 +1224,8 @@ function mdistu(mtmp) {
     const dx = mtmp.mx - u.ux, dy = mtmp.my - u.uy;
     return dx * dx + dy * dy;
 }
-// C ref: youprop.h Reflecting == EReflecting (worn amulet/shield/silver DSM) || silver dragon form.
-function Reflecting() { return !!game.u?.formprops?.Reflecting || !!game.u?.uprops?.Reflecting || !!worn_extrinsic(REFLECTING); }
+// C ref: youprop.h Reflecting, including timed and FROMFORM sources.
+function Reflecting() { return Reflecting_hero(); }
 function Confusion() { return (game.u?.uprops?.Confusion | 0) || (game.u?.uconf | 0); }
 function HConfusion() { return game.u?.uprops?.Confusion | 0; }
 function HStun() { return game.u?.uprops?.Stun | 0; }
@@ -1232,7 +1233,9 @@ function HStun() { return game.u?.uprops?.Stun | 0; }
 export async function make_stunned_u(xtime, talk) {
     const u = game.u || {};
     u.uprops = u.uprops || {};
-    const old = HStun();
+    /* C: `long old = HStun;` includes the FROMFORM bit set_uasmon() puts on a
+       stalker or bat form (the port keeps it in u.formprops) */
+    const old = HStun() || (u.formprops?.Stunned ? 1 : 0);
     if (Unaware()) talk = false;
     if (!xtime && old && talk)
         await You_feel(`${Hallucination() ? 'less wobbly' : 'a bit steadier'} now.`);
@@ -1527,7 +1530,7 @@ export async function doseduce(mon) {
             break;
         case 3: {
             const { resists_drli } = await import('./artifact.js');
-            if (!resists_drli(game.youmonst || u)) {
+            if (!resists_drli(u)) {
                 await You_feel('out of shape.');
                 await losexp('overexertion', emitU);
             } else {
@@ -1836,7 +1839,7 @@ export async function passiveum(olduasmon, mtmp, mattk) {
                 // outgrown its form's hit points splits (cloneu via split_mon).
                 if ((u.mhmax | 0) > (((youmonst_data()?.mlevel | 0) + 1) * 8)) {
                     const { split_mon } = await import('./potion.js');
-                    await split_mon(game.youmonst || u, mtmp);
+                    await split_mon(u, mtmp);
                 }
             }
             break;

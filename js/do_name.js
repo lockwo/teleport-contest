@@ -20,10 +20,11 @@ import { monster_by_pmidx, name_to_pmidx, pmname_of_pmidx,
 import { mflags2_of, M2_PNAME, msound_of } from './monflags_data.js';
 import { objects, SIR_TERRY_NOVELS } from './mkobj.js';
 import { m_at } from './display.js';
+import { Hallucination_u } from './display.js';
 import { PRONOUN_HALLU, PRONOUN_NO_IT, PL_PSIZ, NON_PM, Is_astralevel } from './const.js';
 import { PRONOUN_GENDERS } from './role.js';
 import { makeplural, vtense } from './plural.js';
-import { mungspaces } from './hacklib.js';
+import { mungspaces, upstart } from './hacklib.js';
 
 // Keep higher-level naming dependencies behind registration: a static import
 // of uhitm.js or mondata.js here creates a cycle during module initialization.
@@ -115,7 +116,7 @@ function pmname_by_idx(idx, mgender) {
 }
 // C ref: do_name.c:1289 Mgender(mtmp).
 export function Mgender(mtmp) {
-    if (mtmp === game.youmonst || mtmp === game.u)
+    if (mtmp === game.u)
         return (game.u?.Upolyd ? game.u?.mfemale : game.flags?.female)
             ? FEMALE : MALE;
     return mtmp?.female ? FEMALE : MALE;
@@ -156,7 +157,6 @@ export function obj_pmname(obj) {
 // load-bearing: SUPPRESS_SADDLE hides "saddled" for a named steed, SUPPRESS_IT
 // forces a real name for a monster the hero cannot see, AUGMENT_IT turns "it"
 // into "someone"/"something", EXACT_NAME defeats hallucination.
-const highc = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 export function l_monnam(mtmp) {
     return x_monnam(mtmp, ARTICLE_NONE, null,
@@ -176,9 +176,9 @@ export function some_mon_nam(mtmp) {
                     has_mgivenname(mtmp) ? (SUPPRESS_SADDLE | AUGMENT_IT)
                                          : AUGMENT_IT, false);
 }
-export function Monnam(mtmp) { return highc(mon_nam(mtmp)); }
-export function noit_Monnam(mtmp) { return highc(noit_mon_nam(mtmp)); }
-export function Some_Monnam(mtmp) { return highc(some_mon_nam(mtmp)); }
+export function Monnam(mtmp) { return upstart(mon_nam(mtmp)); }
+export function noit_Monnam(mtmp) { return upstart(noit_mon_nam(mtmp)); }
+export function Some_Monnam(mtmp) { return upstart(some_mon_nam(mtmp)); }
 // "a dog" rather than "Fido", honoring hallucination and visibility
 export function noname_monnam(mtmp, article) {
     return x_monnam(mtmp, article, null, SUPPRESS_NAME, false);
@@ -193,16 +193,16 @@ export function y_monnam(mtmp) {
         ? SUPPRESS_SADDLE : 0;
     return x_monnam(mtmp, prefix, null, sup, false);
 }
-export function YMonnam(mtmp) { return highc(y_monnam(mtmp)); }
+export function YMonnam(mtmp) { return upstart(y_monnam(mtmp)); }
 export function Adjmonnam(mtmp, adj) {
-    return highc(x_monnam(mtmp, ARTICLE_THE, adj,
+    return upstart(x_monnam(mtmp, ARTICLE_THE, adj,
                           has_mgivenname(mtmp) ? SUPPRESS_SADDLE : 0, false));
 }
 export function a_monnam(mtmp) {
     return x_monnam(mtmp, ARTICLE_A, null,
                     has_mgivenname(mtmp) ? SUPPRESS_SADDLE : 0, false);
 }
-export function Amonnam(mtmp) { return highc(a_monnam(mtmp)); }
+export function Amonnam(mtmp) { return upstart(a_monnam(mtmp)); }
 
 // C ref: do_name.c:1170 distant_monnam(mon, article, outbuf) — used by '/', ';'
 // and 'C' so the Astral high priest cannot be identified from across the level.
@@ -250,7 +250,7 @@ export function noit_mhim(mon) {
 export function noit_mhis(mon) {
     return PRONOUN_GENDERS[_hooks.pronoun_gender(mon, PRONOUN_NO_IT | PRONOUN_HALLU)].his;
 }
-function Hallucination() { return !!(game.u?.uhallu || game.u?.Hallucination); }
+function Hallucination() { return Hallucination_u(); }
 
 // C ref: do_name.c:1254 minimal_monnam(mon, ckloc) — debug-only naming that
 // ignores what the hero can see.
@@ -631,8 +631,6 @@ export function rndorcname() {
     }
     return s;
 }
-// C ref: hacklib.c upstart(s) — capitalize in place.
-const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // C ref: do_name.c:1557 christen_orc(mtmp, gang, other).
 export function christen_orc(mtmp, gang, other) {
     const orcname = rndorcname();

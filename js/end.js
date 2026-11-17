@@ -5,6 +5,7 @@
 // interrupted turn resumes.
 
 import { NetHackGameOver } from './panic.js';
+import { the } from './objnam.js';
 import { rawPrintBias, resetRawPrint, setFinalCursor } from './rawprint.js';
 import { MGIVENNAME, OBJ_FREE } from './const.js';
 import { setONAME } from './const.js';
@@ -49,7 +50,6 @@ const DEATHS = [
 ];
 
 // C ref: hack.h plur(x) — "" when x == 1, "s" otherwise.
-function plur(n) { return (n === 1) ? '' : 's'; }
 
 // C ref: restore.c:583 "wizard and discover are actually flags.debug and
 // flags.explore".  Our rc parser records `playmode:explore` as
@@ -471,11 +471,12 @@ async function done_object_cleanup() {
         await (await import('./restore.js')).inven_inuse(true);
         const { place_object } = await import('./mkobj.js');
         const { stackobj } = await import('./invent.js');
-        const { isok, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED } = await import('./const.js');
+        const { isok, ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED, db_under_typ } = await import('./const.js');
         // monmove.c:2188 accessible() == ACCESSIBLE(typ) && !closed_door(x,y).
         const accessible = (x, y) => {
             const lev = game.level?.at?.(x, y);
-            return !!lev && ACCESSIBLE(lev.typ)
+            /* SURFACE_AT: the terrain under a raised drawbridge */
+            return !!lev && ACCESSIBLE(lev.typ === 19 /*DRAWBRIDGE_UP*/ ? db_under_typ(lev.drawbridgemask) : lev.typ)
                 && !(IS_DOOR(lev.typ) && (lev.doormask & (D_CLOSED | D_LOCKED)));
         };
         let ox = (u.ux | 0) + (u.dx | 0), oy = (u.uy | 0) + (u.dy | 0);
@@ -1752,7 +1753,7 @@ function topten_outentry(rank, entry, so, COLNO) {
 }
 
 // C ref: objnam.c an() — indefinite article.
-import { an } from './hacklib.js';
+import { an, plur, upstart } from './hacklib.js';
 
 // C ref: end.c done_in_by() — the killer's real species survives a shape change.
 async function killer_text_for_monster(mtmp) {
@@ -1892,6 +1893,7 @@ export { done, savelife, DIED, ESCAPED };
 // in the rest separately rather than editing the existing import line.
 import { ismnum as ismnum_, TIMEOUT as TIMEOUT_ } from './const.js';
 import { rn2 as rn2_ } from './rng.js';
+import { the_unique_obj } from './objnam.js';
 import {
     objects as objects_, AMULET_CLASS as AMULET_CLASS_, GEM_CLASS as GEM_CLASS_,
     FIRST_REAL_GEM as FIRST_REAL_GEM_, LAST_REAL_GEM as LAST_REAL_GEM_,
@@ -1944,16 +1946,6 @@ function set_itimeout_(cur, val) {
     return ((cur | 0) & ~TIMEOUT_) | Math.min(val, TIMEOUT_);
 }
 
-// C ref: objnam.c the_unique_obj(obj).  js/invent.js:8468 holds the same
-// predicate but does not export it; oc_unique is `flags & F_UNIQUE` here
-// (js/mkobj.js:1190), and this port populates F_UNIQUE for only a few otyps.
-function the_unique_obj(obj) {
-    if (!obj) return false;
-    if (obj.dknown != null && !obj.dknown) return false;
-    return !!(objects_[obj.otyp]?.flags & F_UNIQUE)
-        && (!!obj.known || obj.otyp === AMULET_OF_YENDOR_);
-}
-
 // C ref: objects.h OBJ_NAME(objects[otyp]).
 function OBJ_NAME(o) { return o?.name || ''; }
 
@@ -1975,8 +1967,6 @@ function SchroedingersBox(obj) { return !!obj && obj.otyp === 216 && obj.spe ===
 
 // C ref: objnam.c the()/upstart()/thesimpleoname() — private in js/pickup.js
 // (189/202) and js/do_name.js:411.
-function the_(s) { return /^[A-Z]/.test(s || '') ? s : `the ${s}`; }
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // C ref: win/tty/wintty.c putstr — the dumplog-only call sites below pass
 // window 0 (no live dumplog window in this port), so this stays a no-op sink
@@ -2413,7 +2403,7 @@ export async function container_contents(list, identified, all_containers,
                 /* at this stage, the SchroedingerBox() flag is only set if the
                    cat inside the box is alive */
                 const cat = SchroedingersBox(box);
-                const lines = [{ text: `Contents of ${the_(I.xname(box))}:` },
+                const lines = [{ text: `Contents of ${the(I.xname(box))}:` },
                                 { text: '' }];
                 /* C: buf[0] = buf[1] = ' ' — two leading spaces per item */
                 if (box.cobj.length && !cat) {
@@ -2469,7 +2459,7 @@ export async function container_contents(list, identified, all_containers,
                                              reportempty);
             } else if (reportempty) {
                 // thesimpleoname(box) == the(xname(box)) (js/pickup.js:202)
-                await d.pline(`${upstart(the_(I.xname(box)))} is empty.`);
+                await d.pline(`${upstart(the(I.xname(box)))} is empty.`);
                 // display_nhwindow(WIN_MESSAGE, FALSE)
             }
         }

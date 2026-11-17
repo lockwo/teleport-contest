@@ -14,7 +14,8 @@ import { game, register_process_static } from './gstate.js';
 import { s_suffix } from './hacklib.js';
 import { rn2, rnz, rn1, rnl, rnd, d } from './rng.js';
 import { update_topl, y_n, newsym, see_monsters, impossible, You_feel, You_hear, set_mimic_blocking, verbalize } from './display.js';
-import { See_invisible_hero } from './youprop.js';
+import { Hallucination_u } from './display.js';
+import { HBlinded_hero, See_invisible_hero, Reflecting_hero, Deaf_hero, Passes_walls_hero } from './youprop.js';
 import { Blind_telepat, Levitation_hero, Flying_hero, Half_spell_damage_hero, Wounded_legs_hero, Unchanging_hero } from './youprop.js';
 import { align_gname, align_str, roles, aligns } from './role.js';
 import { A_CG_CONVERT, A_CG_HELM_ON, A_CG_HELM_OFF, SICK_ALL, EXT_ENCUMBER, HVY_ENCUMBER, is_pool_or_lava } from './const.js';
@@ -24,7 +25,7 @@ import { retouch_equipment, confers_luck } from './artifact.js';
 import { A_WIS, A_STR, A_CON, A_MAX, A_NONE, A_CHAOTIC, A_NEUTRAL, A_LAWFUL, A_CURRENT,
     A_ORIGINAL, AM_SHRINE, AM_SANCTUM, AM_CHAOTIC, AM_MASK, Amask2align,
     Align2amask, ALTAR, ROOM, TT_LAVA, LUCKMAX, MM_NOMSG,
-    IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, ACH_TUNE, HALF_SPDAM } from './const.js';
+    IS_OBSTRUCTED, SDOOR, SCORR, INTRINSIC, TIMEOUT, ACH_TUNE, HALF_SPDAM } from './const.js';
 import { isok } from './hacklib.js';
 import { OMONST, W_BALL, W_CHAIN, W_SADDLE, FROMOUTSIDE, FOOT, EYE, STOMACH, STRAT_APPEARMSG } from './const.js';
 import { which_armor } from './worn.js';
@@ -96,12 +97,7 @@ function Luck() {
 // depending on which file set it (js/cmd.js documents the same union); reading
 // only one of them answered FALSE for a hallucinating hero and picked the wrong
 // half of every god-mood message below.
-function Hallucination() {
-    const u = game.u;
-    if (!u) return false;
-    if ((u.HHalluc_resistance || 0) > 0) return false;
-    return !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
-}
+function Hallucination() { return Hallucination_u(); }
 
 function uprop(name) {
     const u = game.u;
@@ -145,7 +141,7 @@ function critically_low_hp(only_if_injured) {
 // rock, or boulders the hero can't push (blocked_boulder, unless polymorphed into a giant).
 export function stuck_in_wall() {
     const u = game.u;
-    if (uprop('Passes_walls')) return false;
+    if (Passes_walls_hero()) return false;
     let count = 0;
     for (let i = -1; i <= 1; i++)
         for (let j = -1; j <= 1; j++) {
@@ -275,7 +271,7 @@ function in_trouble() {
     /* can't voluntarily dismount from a cursed saddle */
     if (u.usteed && Cursed_obj(which_armor(u.usteed, W_SADDLE), 'SADDLE'))
         return TROUBLE_SADDLE;
-    if ((u.blinded | 0) > 1 && !u.uprops?.BlindedFromForm
+    if ((u.blinded | 0) > 1 && !(HBlinded_hero() & ~TIMEOUT)
         && (!u.uswallow || !attacktype_fordmg(u.ustuck?.data, AT_ENGL, AD_BLND)))
         return TROUBLE_BLIND;
     if (((u.uprops?.HDeaf | 0) || (u.HDeaf | 0)) > 1) return TROUBLE_BLIND;
@@ -564,7 +560,7 @@ async function angrygods(resp_god) {
         // C: `if (!Blind && !Antimagic)` -- a worn cloak of magic resistance
         // (a Wizard's starting cloak) suppresses the glow message.
         if (!Blind() && !(await loadPrayExtras()).zap.Antimagic())
-            await update_topl(`${upstart_pr(an_pr(hcolor('black')))} glow surrounds you.`);
+            await update_topl(`${upstart(an(hcolor('black')))} glow surrounds you.`);
         if (rn2(2) || !(await attrcurse()))
             await rndcurse();
         break;
@@ -647,19 +643,6 @@ async function Yobjnam2_local(obj, verb) {
 // off the DISPLAY rng, which js/do_name.js hcolor() already models.
 function hcolor_amber() { return hcolor('amber'); }
 
-// C ref: eat.c init_uhunger().  NOT_HUNGRY == 1.
-async function init_uhunger() {
-    const u = game.u;
-    if ((u.uhs ?? NOT_HUNGRY) !== NOT_HUNGRY || (u.atemp?.a?.[0] | 0) < 0)
-        game.botl = true;
-    u.uhunger = 900;
-    u.uhs = NOT_HUNGRY;
-    if ((u.atemp?.a?.[0] | 0) < 0) {  /* ATEMP(A_STR) */
-        u.atemp.a[0] = 0;
-        await _inv?.encumber_msg();
-    }
-}
-const NOT_HUNGRY = 1;
 
 // C ref: mondata.h nohands(ptr) — current form has no hands.
 function nohands_hero() {
@@ -716,7 +699,7 @@ async function fix_worst_trouble(trouble) {
         /* FALLTHRU — C shares the arm with TROUBLE_HUNGRY */
     case TROUBLE_HUNGRY:
         await update_topl(`Your ${(await import('./invent.js')).body_part(STOMACH)} feels content.`);
-        await init_uhunger();
+        await (await import('./eat.js')).init_uhunger();
         game.botl = true;
         break;
     case TROUBLE_SICK:
@@ -904,7 +887,7 @@ function ringglow(otmp) {
 
 // C ref: hacklib.c an(str) — indefinite article, lowercase.  Every other file
 // in this port keeps its own copy (js/do.js, js/eat.js, js/dothrow.js, ...).
-import { an as an_pr } from './hacklib.js';
+import { an, An, upstart } from './hacklib.js';
 
 // C ref: youprop.h H<Name> intrinsic words.  This port has been observed to
 // store the same timer under a bare key ('Fast') and/or an H-prefixed key
@@ -933,12 +916,8 @@ function hero_is_human_pr() {
     return (mflags2_of(ptr) & M2_HUMAN) !== 0;
 }
 
-// C ref: pline.c You_hear() Deaf gate, reduced to the same HDeaf test
-// in_trouble() above already uses (pray.js:225/712).
-function Deaf_pr() {
-    const u = game.u;
-    return (((u?.uprops?.HDeaf | 0) || (u?.HDeaf | 0)) > 1);
-}
+// C ref: youprop.h Deaf, distinct from in_trouble()'s curable HDeaf timeout.
+function Deaf_pr() { return Deaf_hero(); }
 
 // C ref: pray.c pleased(g_align) — the god grants a favor.  fix_worst_trouble()
 // is the one piece left out: it repairs the trouble in_trouble() found and its
@@ -1027,7 +1006,7 @@ async function pleased(g_align) {
                 } else if (!uwep.blessed) {
                     if (!Blind())
                         await update_topl(`${await Yobjnam2_local(uwep, 'softly glow')} `
-                            + `with ${an_pr(hcolor('light blue'))} aura${repair_buf}.`);
+                            + `with ${an(hcolor('light blue'))} aura${repair_buf}.`);
                     else
                         await You_feel(`the blessing of ${u_gname()} `
                             + `over ${_inv.yname(uwep)}.`);
@@ -1068,7 +1047,7 @@ async function pleased(g_align) {
         }
         case 2: {
             if (!Blind())
-                await update_topl(`You are surrounded by ${an_pr(hcolor('golden'))} glow.`);
+                await update_topl(`You are surrounded by ${an(hcolor('golden'))} glow.`);
             if ((u.ulevel | 0) < (u.ulevelmax | 0)) {
                 u.ulevelmax = (u.ulevelmax | 0) - 1;
                 await pluslvl(false, update_topl);
@@ -1084,7 +1063,7 @@ async function pleased(g_align) {
                 game.botl = true; /* before potential message */
                 await _inv.encumber_msg();
             }
-            if ((u.uhunger | 0) < 900) await init_uhunger();
+            if ((u.uhunger | 0) < 900) await (await import('./eat.js')).init_uhunger();
             if ((u.uluck | 0) < 0) u.uluck = 0;
             u.ucreamed = 0;
             await _pot.make_blinded_hero(0, true);
@@ -1094,7 +1073,7 @@ async function pleased(g_align) {
         case 4: {
             let any = 0;
             if (Blind()) await You_feel(`the power of ${u_gname()}.`);
-            else await update_topl(`You are surrounded by ${an_pr(hcolor('light blue'))} aura.`);
+            else await update_topl(`You are surrounded by ${an(hcolor('light blue'))} aura.`);
             for (const otmp of (game.invent || [])) {
                 if (otmp && otmp.cursed
                     && (otmp !== game.uarmh || game.uarmh.otyp !== HELM_OF_OPPOSITE_ALIGNMENT)) {
@@ -1372,7 +1351,7 @@ async function god_zaps_you(resp_god) {
             await update_topl(`${D.dnm.Monnam(u.ustuck)} seems unaffected.`);
     } else {
         await update_topl('Suddenly, a bolt of lightning strikes you!');
-        if (reflecting || uprops_has_pr('Reflecting') || u.formprops?.Reflecting) {
+        if (Reflecting_hero()) {
             await shieldeff_pr();
             if (Blind()) await update_topl("For some reason you're unaffected.");
             else await D.zap.ureflects('%s reflects from your %s.', 'It');
@@ -1431,7 +1410,6 @@ async function god_zaps_you(resp_god) {
         await verbalize(`Destroy ${uhim_pr()}, my servants!`);
     }
 }
-function uprops_has_pr(key) { return !!(game.u?.uprops?.[key] || game.u?.[key]); }
 function has_innate_pr(prop) { return innate_intrinsics().has(prop); }
 async function shieldeff_pr() {
     const D = await loadPrayExtras();
@@ -1779,7 +1757,7 @@ async function sacrifice_your_race(otmp, highaltar, altaralign) {
         if (altaralign === A_CHAOTIC && utype !== A_CHAOTIC) {
             const cloudclr = hcolor('black');
             await update_topl(`The blood floods the altar, which vanishes in ${
-                /^[aeiou]/i.test(cloudclr) ? 'an' : 'a'} ${cloudclr} cloud!`);
+                an(cloudclr)} cloud!`);
             const loc = game.level?.at(u.ux, u.uy);
             loc.typ = ROOM;
             loc.altarmask = 0;
@@ -1845,7 +1823,7 @@ async function bestow_artifact(max_giftvalue) {
     otmp.oerodeproof = true;
     let buf = Hallucination() ? 'a doodad' : Blind() ? 'an object' : _inv.ansimpleoname(otmp);
     if (!Blind()) buf += ` named ${_art.bare_artifactname(otmp)}`;
-    await at_your_feet(upstart_pr(buf));
+    await at_your_feet(upstart(buf));
     dropy_pr(_inv, otmp);
     await godvoice(u.ualign?.type ?? 0, 'Use my gift wisely!');
     u.ugifts = (u.ugifts | 0) + 1;
@@ -2025,7 +2003,7 @@ async function offer_corpse(otmp, highaltar, altaralign) {
 function corpse_article_name(otmp) {
     const nm = _mkm.monster_by_pmidx(otmp.corpsenm)?.name;
     if (!nm) return 'a corpse';
-    return `${/^[aeiou]/i.test(nm) ? 'an' : 'a'} ${nm} corpse`;
+    return an(`${nm} corpse`);
 }
 
 export async function dosacrifice() {
@@ -2133,13 +2111,6 @@ async function loadPrayExtras() {
 // C ref: objnam.c:2563 vtense(subj, verb) — the faithful copy lives in js/plural.js.
 import { vtense, makeplural as makeplural_pr } from './plural.js';
 const vtense_pr = vtense;
-// C ref: hacklib.c upstart().
-function upstart_pr(s) { return s ? String(s).charAt(0).toUpperCase() + String(s).slice(1) : s; }
-// C ref: hacklib.c An(str) — capitalised indefinite article.
-function An_pr(s) {
-    const str = String(s || '');
-    return `${/^[aeiou]/i.test(str) ? 'An' : 'A'} ${str}`;
-}
 // C ref: youprop.h Levitation.
 function Levitation_pr() { return Levitation_hero(); }
 // C ref: objects.c svb.bases[SPBOOK_CLASS] — the first real spellbook otyp.
@@ -2272,7 +2243,7 @@ export async function gcrownu() {
         D.mkb.bless(obj);
         obj.bknown = 1;               /* ok to skip set_bknown() */
         D.oin.observe_object(obj);
-        await at_your_feet(upstart_pr(D.inv.ansimpleoname(obj)));
+        await at_your_feet(upstart(D.inv.ansimpleoname(obj)));
         dropy_pr(D.inv, obj);
         u.ugifts = (u.ugifts | 0) + 1;
         livelog_printf(D.llg.LL_DIVINEGIFT | D.llg.LL_ARTIFACT | D.llg.LL_SPOILER,
@@ -2341,7 +2312,7 @@ export async function gcrownu() {
             obj = await D.inv.oname(obj, D.art.artiname(P_ART_STORMBRINGER),
                                     P_ONAME_GIFT | P_ONAME_KNOW_ARTI);
             obj.spe = 1;
-            await at_your_feet(An_pr(swordbuf));
+            await at_your_feet(An(swordbuf));
             dropy_pr(D.inv, obj);
             u.ugifts = (u.ugifts | 0) + 1;
             livelog_printf(D.llg.LL_DIVINEGIFT | D.llg.LL_ARTIFACT,
@@ -2440,7 +2411,7 @@ export async function give_spell() {
         if (otmp.otyp === P_SPE_BLANK_PAPER || !rn2(100))
             D.inv.makeknown(otmp.otyp);
         D.mkb.bless(otmp);
-        await at_your_feet(upstart_pr(D.inv.ansimpleoname(otmp)));
+        await at_your_feet(upstart(D.inv.ansimpleoname(otmp)));
         place_object(otmp, u.ux, u.uy);
         newsym(u.ux, u.uy);
     }

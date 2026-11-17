@@ -15,7 +15,7 @@ import { surface, hliquid } from './dungeon.js';
 import { t_at, dotrap, water_damage } from './trap.js';
 import { exercise } from './attrib.js';
 import { useupf, youmonst_data_pub } from './invent.js';
-import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool } from './const.js';
+import { In_V_tower, Is_waterlevel, ROOM, A_MAX, INTRINSIC, FROMOUTSIDE, SICK_ALL, NO_MM_FLAGS, UTOTYPE_NONE, KILLED_BY_AN, EYE, HEAD, FOOT, is_pool, is_lava as is_lava_at, is_ice as is_ice_at } from './const.js';
 import { amorphous_flag, mflags1_of, M1_SLITHY, M1_OVIPAROUS, M1_SWIM, is_hider_flag } from './monflags_data.js';
 import { objects, COIN_CLASS, CORPSE, WATER_WALKING_BOOTS } from './mkobj.js';
 import { xname_flags, the } from './objnam.js';
@@ -163,7 +163,8 @@ export async function dosit() {
         return await sit_in_water();
     } else if (IS_SINK(typ)) {
         await update_topl('You sit on the sink.');
-        await update_topl('Your rump gets wet.');
+        // C ref: sit.c dosit() distinguishes humanoid rumps from undersides.
+        await update_topl(`Your ${humanoid(youmonst_data_pub()) ? 'rump' : 'underside'} gets wet.`);
     } else if (IS_ALTAR(typ)) {
         await update_topl('You sit on the altar.');
         await (await import('./dokick.js')).altar_wrath(u.ux, u.uy);
@@ -211,7 +212,7 @@ async function sit_in_water() {
     const u = game.u;
     await update_topl(`You sit in the ${hliquid('water')}.`);
     if (u.Upolyd && u.umonnum === name_to_pmidx('gremlin')) {
-        if (await (await import('./potion.js')).split_mon(game.youmonst || u, null)) {
+        if (await (await import('./potion.js')).split_mon(u, null)) {
             if (game.level?.at(u.ux, u.uy)?.typ === FOUNTAIN)
                 await (await import('./fountain.js')).dryup(u.ux, u.uy, true);
         }
@@ -253,11 +254,6 @@ function isBox(obj) { return obj?.otyp === 214 || obj?.otyp === 215; }
 // objects table).
 function obj_is_cloth(obj) { return objects[obj.otyp]?.material === 6; }
 
-function is_lava_at(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === 20 /* LAVAPOOL */ || t === 21 /* LAVAWALL */;
-}
-function is_ice_at(x, y) { return game.level?.at(x, y)?.typ === ICE; }
 
 // ---- throne / egg ----------------------------------------------------------
 

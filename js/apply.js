@@ -23,13 +23,16 @@
 
 import { makeplural } from './plural.js';
 import { Levitation_hero, Fumbling_hero, Passes_walls_hero, Wounded_legs_hero, Deaf_hero, Stunned_hero, See_invisible_hero, Stone_resistance_hero } from './youprop.js';
+import { HBlinded_hero, Blinded_hero, Blindfolded_hero } from './youprop.js';
 import { game } from './gstate.js';
 import { cvt_sdoor_to_door } from './detect.js';
 import { Blind as Blind_vision } from './vision.js';
-import { s_suffix } from './hacklib.js';
+import { Hallucination_u } from './display.js';
+import { s_suffix, plur, an } from './hacklib.js';
 import { CQ_CANNED, CMDQ_KEY, CMDQ_EXTCMD, NO_KILLER_PREFIX, KILLED_BY, PARANOID_BREAKWAND, COST_SPLAT,
          ECMD_OK, ECMD_TIME, ECMD_CANCEL, ECMD_FAIL, Trap_Killed_Mon } from './const.js';
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
+import { shuffle_int_array } from './rnd.js';
 import { begin_burn, end_burn } from './timeout.js';
 
 import {
@@ -44,7 +47,7 @@ import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
     ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND, FACE, NOSE, HEAD,
-    STOMACH,
+    STOMACH, TIMEOUT,
     ZAP_POS, isok, M_AP_OBJECT,
 } from './const.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
@@ -331,14 +334,13 @@ async function use_stethoscope(obj) {
             await seemimic(mtmp);
             await update_topl(
                 `${use_plural ? 'Those' : 'That'} ${what} ${use_plural ? 'are' : 'is'} really ${mnm}.`);
-        } else if (!spotted) {
-            // C ref: apply.c:461 — `flags.verbose && !canspotmon(mtmp)`.
-            // verbose is on by default.
+        } else if (game.flags?.verbose !== false && !spotted) {
+            // C ref: apply.c use_stethoscope() gates this message on verbose.
             await update_topl(`There is ${mnm} there.`);
         }
         await (await import('./zap.js')).mstatusline(mtmp);
-        // C ref: apply.c:466 — an unspottable monster leaves an 'I' mark.
-        if (!spotted) { try { map_invisible(rx, ry); } catch (_e) { /* ignore */ } }
+        // C ref: apply.c use_stethoscope() rechecks visibility after revealing.
+        if (!_uhitm.canspotmon(mtmp)) map_invisible(rx, ry);
         return res.v;
     }
 
@@ -429,7 +431,7 @@ async function its_dead(rx, ry, resp) {
         && objs.slice(objs.indexOf(corpse) + 1).some((o) => o.otyp === CORPSE_OTYP);
     if (!corpse && !statue) return false;
 
-    const Blind = ap_Blinded();
+    const Blind = Blind_vision();
     const healer = role_is(3 /* PM_HEALER */);
     if (ap_Hallucination()) {
         let buf;
@@ -681,7 +683,7 @@ async function doapply_obj(obj) {
             return ECMD_OK;
         }
         if (obj.otrapped) {
-            await _display.pline(`You open ${the_of(obj)}...`);
+            await _display.pline(`You open ${ap_the(_invent.xname(obj))}...`);
             const { chest_trap } = await import('./trap.js');
             await chest_trap(obj, HAND, false);
             // C: even if the trap fails, this turn is used up.
@@ -862,8 +864,7 @@ async function doapply_obj(obj) {
             if (!rn2(49)) {
                 if (!_vision.Blind()) {
                     const { hcolor } = await import('./do_name.js');
-                    await _display.pline(`Your ${_invent.xname(obj)} ${
-                        _invent.otense(obj, 'glow')} ${hcolor('brown')}.`);
+                    await _display.pline(`${_invent.Yobjnam2(obj, 'glow')} ${hcolor('brown')}.`);
                     const { set_bknown } = await import('./mkobj.js');
                     set_bknown(obj, 1);
                 }
@@ -944,7 +945,7 @@ async function flip_coin(obj) {
     const { acurr_eff } = await import('./attrib.js');
     const A_DEX = 3; // attrib.h — [Str,Int,Wis,Dex,Con,Cha]
     const dex = acurr_eff(A_DEX);
-    await _display.pline(`You flip ${ap_an(_invent.cxname_singular(obj))}.`);
+    await _display.pline(`You flip ${an(_invent.cxname_singular(obj))}.`);
     let lose_coin = false;
     if (game.u?.uinwater) {
         await _display.pline('It tumbles away.');
@@ -1227,7 +1228,7 @@ async function use_cream_pie(obj) {
     // Blindfolded (ublindf other than LENSES).
     const { youmonst_data } = await import('./invent.js');
     const { eyecount } = await import('./polyself.js');
-    const blindfolded = !!(game.ublindf && game.ublindf.otyp !== 232 /* LENSES */);
+    const blindfolded = Blindfolded_hero();
     if (eyecount(youmonst_data()) !== 0 && !blindfolded) {
         const blindinc = rnd(25);
         const wascreamed = (u.ucreamed || 0) > 0;
@@ -1360,12 +1361,6 @@ function is_flimsy_obj(obj) {
     return (objects[obj?.otyp]?.material ?? 99) <= MAT_LEATHER
         || obj?.otyp === RUBBER_HOSE_OTYP;
 }
-function plur(n) { return Number(n) === 1 ? '' : 's'; }
-// C ref: objnam.c the(str) — "the " unless the name is already capitalised.
-function the_of(obj) {
-    const nm = _invent.xname(obj);
-    return /^[A-Z]/.test(nm) ? nm : `the ${nm}`;
-}
 // C ref: hack.h Role_if(pm)/Race_if(pm) — gu.urole.malenum / gu.urace.malenum.
 // This port carries the 0-based role/race indices instead of the PM_ numbers.
 const ROLE_ARCHEOLOGIST = 0, RACE_GNOME = 3;
@@ -1406,7 +1401,7 @@ async function use_stone(tstone) {
     if (!obj) return ECMD_CANCEL;
 
     if (obj === tstone && Number(obj.quan) === 1) {
-        await _display.pline(`You can't rub ${the_of(obj)} on itself.`);
+        await _display.pline(`You can't rub ${ap_the(_invent.xname(obj))} on itself.`);
         return ECMD_OK;
     }
 
@@ -1416,7 +1411,7 @@ async function use_stone(tstone) {
         if (blind) await _display.You_feel('something shatter.');
         else if (hallu) await _display.pline('Oh, wow, look at the pretty shards.');
         else await _display.pline(`A sharp crack shatters ${
-            Number(obj.quan) > 1 ? 'one of ' : ''}${the_of(obj)}.`);
+            Number(obj.quan) > 1 ? 'one of ' : ''}${ap_the(_invent.xname(obj))}.`);
         I.useup(obj);
         return ECMD_TIME;
     }
@@ -2018,12 +2013,8 @@ const cant_reach = "can't reach that spot from here.";
 const no_elbow_room = "don't have enough elbow-room to maneuver.";
 const look_str_fmt = 'look %s.';
 
-// ── Hero-property readers.  C's `u.uprops[P].intrinsic` packs a timeout in its
-// low TIMEOUT bits with the source flags (FROMOUTSIDE &c.) above them; this
-// port keeps only the timeout, under the property's H-prefixed name.  So
-// `X & ~TIMEOUT` is always 0 here, which is why use_unicorn_horn()'s
-// TimedTrouble() reduces to the plain timer and unfixable_trouble_count()'s
-// `(!is_horn || (X & ~TIMEOUT) != 0)` reduces to `!is_horn`.
+// Intrinsic timeout storage.  Blindness and form-granted stun also carry
+// non-timed sources, which the unicorn horn must exclude separately.
 function ap_prop(name) {
     const p = game.u?.uprops;
     if (!p) return 0;
@@ -2038,12 +2029,12 @@ function ap_Glib() { return ap_prop('Glib') > 0; }
 function ap_Confusion() { return ((game.u?.uconf | 0) > 0) || ap_prop('Confusion') > 0; }
 function ap_Stunned() { return Stunned_hero(); }
 function ap_Hallucination() {
-    return !!game.Hallucination || !!game.u?.uhallu || ap_prop('Hallucination') > 0;
+    return Hallucination_u();
 }
-function ap_Blinded() { return (game.u?.blinded | 0) > 0; }
+function ap_Blinded() { return Blinded_hero(); }
 function ap_Invis() { return !!_ap.monmove.Invis(); }
 function ap_See_invisible() { return See_invisible_hero(); }
-function ap_Free_action() { return ap_prop('Free_action') > 0 || !!_invent?.Free_action(); }
+function ap_Free_action() { return !!_invent?.Free_action(); }
 function ap_Passes_walls() { return Passes_walls_hero(); }
 function ap_Upolyd() { return !!game.u?.Upolyd; }
 function ap_ucreamed() { return game.u?.ucreamed | 0; }
@@ -2059,16 +2050,6 @@ function ap_isqrt(val) {
     let rt = 0, odd = 1;
     while (val >= odd) { val -= odd; odd += 2; rt += 1; }
     return rt;
-}
-// C ref: rnd.c:299 shuffle_int_array(indices, count).
-function ap_shuffle_int_array(indices, count) {
-    for (let i = count - 1; i > 0; i--) {
-        const iswap = rn2(i + 1);
-        if (iswap === i) continue;
-        const temp = indices[i];
-        indices[i] = indices[iswap];
-        indices[iswap] = temp;
-    }
 }
 // C ref: hacklib.c dist2(x1, y1, x2, y2) and mondata.h mdistu(mon).
 function ap_dist2(x1, y1, x2, y2) {
@@ -2198,7 +2179,7 @@ async function ap_bhit_beam(dx, dy, range, obj, flashed) {
         x += dx; y += dy;
         if (!isok(x, y)) break;
         const loc = game.level.at(x, y);
-        if (flashed && !ap_Blinded() && !game.ublindf)
+        if (flashed && !Blind_vision())
             await A.lightsrc.show_transient_light(null, x, y);
         let mon = A.display.m_at(x, y);
         if (flashed && mon && M_AP_TYPE(mon) === M_AP_OBJECT)
@@ -2301,7 +2282,6 @@ async function ap_xkilled(mtmp, flags) {
 // C ref: hacklib.c upstart()/an()/the() and Tobjnam-adjacent helpers; this
 // block keeps private copies of these one-liners.
 function ap_upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
-function ap_an(s) { return /^[aeiouAEIOU]/.test(s || '') ? `an ${s}` : `a ${s}`; }
 // C ref: objnam.c the().
 import { the as ap_the } from './objnam.js';
 function ap_The(s) { return ap_upstart(ap_the(s)); }
@@ -2324,7 +2304,7 @@ async function ap_Shk_Your(obj) { return ap_upstart(await ap_shk_your(obj)); }
 // C ref: objnam.c Yname2(obj) — "Your <xname>" / "The <xname>".
 async function ap_Yname2(obj) {
     const A = await ap_load();
-    return ap_upstart(`${await ap_shk_your(obj)}${A.invent.xname(obj)}`);
+    return A.invent.Yname2(obj);
 }
 // C ref: objnam.c thesimpleoname(obj) — "the " + minimal_xname().
 async function ap_thesimpleoname(obj) {
@@ -2615,7 +2595,7 @@ export async function use_magic_whistle(obj) {
         await A.display.pline(`You produce a ${ap_Underwater() ? 'very ' : ''}high-${
             Deaf() ? 'frequency vibration' : 'pitched humming noise'}.`);
         await A.cmd.wake_nearby(true);
-        if (!rn2(2) && !A.monmove.noteleport_level(game.youmonst))
+        if (!rn2(2) && !A.monmove.noteleport_level({ data: A.invent.youmonst_data() }))
             await ap_tele_to_rnd_pet();
     } else {
         /* it's magic!  it works underwater too (at a higher pitch) */
@@ -3082,7 +3062,7 @@ export async function use_mirror(obj) {
                 game.nomovemsg = 0; /* default, "you can move again" */
             }
         } else if (ap_Upolyd() && (ap_is_vampire(A.invent.youmonst_data())
-                                   || ap_is_vampshifter(game.youmonst))) {
+                                   || ap_is_vampshifter({ cham: game.u?.mcham }))) {
             await A.display.pline("You don't have a reflection.");
         } else if (u.umonnum === PM_UMBER_HULK && ap_Upolyd()) {
             await A.display.pline("Huh?  That doesn't look like you!");
@@ -3095,7 +3075,7 @@ export async function use_mirror(obj) {
             await A.display.pline(`You ${look_str_fmt.replace('%s', 'undernourished')}`);
         } else if (ap_Upolyd()) {
             await A.display.pline(`You look like ${
-                ap_an(A.makemon.monster_by_pmidx(u.umonnum)?.name || c_something)}.`);
+                an(A.makemon.monster_by_pmidx(u.umonnum)?.name || c_something)}.`);
         } else {
             await A.display.pline(`You look as ${uvisage} as ever.`);
         }
@@ -3800,7 +3780,7 @@ export async function use_tinning_kit(obj) {
     if (A.invent.touch_petrifies(corpse.corpsenm)
         && !Stone_resistance_hero() && !game.uarmg) {
         const { cxname } = await import('./objnam.js');
-        const corpse_name = ap_an(cxname(corpse));
+        const corpse_name = an(cxname(corpse));
         let kbuf = '';
         if (ap_poly_when_stoned(A.invent.youmonst_data())) {
             await A.display.pline(`You tin ${corpse_name} without wearing gloves.`);
@@ -3914,9 +3894,7 @@ export async function use_unicorn_horn(optr) {
         return;
     }
 
-    // C ref: apply.c:2303 TimedTrouble(P) — see ap_prop()'s note: this port
-    // keeps only the timeout, so the "timed but not intrinsic" test reduces to
-    // "the timer is running".
+    // C TimedTrouble excludes intrinsic source flags even when a timeout is set.
     const trouble_list = new Array(PROP_COUNT).fill(0);
     let trouble_count = 0, did_prop = 0;
     const prop_trouble = (X) => { trouble_list[trouble_count++] = X; };
@@ -3924,20 +3902,21 @@ export async function use_unicorn_horn(optr) {
     /* collect property troubles */
     if (ap_prop('Sick')) prop_trouble(P_SICK);
     if ((game.u?.blinded | 0) > ap_ucreamed()
+        && !(HBlinded_hero() & ~TIMEOUT)
         && !(game.u.uswallow
              && A.monattk.attacktype_fordmg(game.u.ustuck.data, 11 /* AT_ENGL */, 11 /* AD_BLND */)))
         prop_trouble(P_BLINDED);
     if (ap_prop('Hallucination')) prop_trouble(P_HALLUC);
     if (ap_prop('Vomiting')) prop_trouble(P_VOMITING);
     if (ap_prop('Confusion')) prop_trouble(P_CONFUSION);
-    if (ap_prop('Stun')) prop_trouble(P_STUNNED);
+    if (ap_prop('Stun') && !game.u?.formprops?.Stunned) prop_trouble(P_STUNNED);
     if (ap_prop('Deaf')) prop_trouble(P_DEAF);
 
     if (trouble_count === 0) {
         await A.display.pline(nothing_happens);
         return;
     } else if (trouble_count > 1) {
-        ap_shuffle_int_array(trouble_list, trouble_count);
+        shuffle_int_array(trouble_list, trouble_count);
     }
 
     /*
@@ -4037,7 +4016,7 @@ export async function fig_transform(arg, timeout) {
         case OBJ_FLOOR:
             if (cansee_spot && !silent) {
                 if (suppress_see)
-                    await A.display.pline(`${ap_an(A.invent.xname(figurine))} suddenly vanishes!`);
+                    await A.display.pline(`${an(A.invent.xname(figurine))} suddenly vanishes!`);
                 else
                     await A.display.You_see(`a figurine transform into ${
                         monnambuf}${and_vanish}!`);
@@ -4771,10 +4750,6 @@ export async function maybe_dunk_boulders(x, y) {
 // C ref: apply.c:4430 unfixable_trouble_count(is_horn) — how many troubles a
 // unicorn horn (or potion of restore ability) CANNOT fix; feeds the "you feel
 // great" wording.  RNG-free.
-//
-// See ap_prop()'s note: this port keeps only each property's timeout, so C's
-// `(X & ~TIMEOUT) != 0` (the "set from a non-timed source" test) is always
-// FALSE here and each clause reduces to `!is_horn`.
 export function unfixable_trouble_count(is_horn) {
     let unfixable_trbl = 0;
 
@@ -4792,7 +4767,7 @@ export function unfixable_trouble_count(is_horn) {
      * unfixable for the not-unihorn case.
      */
     if (ap_prop('Sick') && !is_horn) unfixable_trbl++;
-    if (ap_Stunned() && !is_horn) unfixable_trbl++;
+    if (ap_Stunned() && (!is_horn || game.u?.formprops?.Stunned)) unfixable_trbl++;
     if (ap_Confusion() && !is_horn) unfixable_trbl++;
     if (ap_Hallucination() && !is_horn) unfixable_trbl++;
     if (ap_prop('Vomiting') && !is_horn) unfixable_trbl++;

@@ -15,6 +15,7 @@ import { has_mgivenname } from './const.js';
 import { has_oname } from './const.js';
 import { Fumbling_hero, Half_physical_damage_hero } from './youprop.js';
 import { game } from './gstate.js';
+import { Hallucination_u } from './display.js';
 
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
@@ -589,9 +590,7 @@ function mcls_of(ptr) {
 // C ref: mondata.h is_domestic(ptr) == (mflags2 & M2_DOMESTIC).
 function is_domestic(ptr) { return (mflags2_of(ptr) & M2_DOMESTIC) !== 0; }
 function Upolyd() { return !!game.u?.Upolyd; }
-function Hallucination() {
-    return ((game.u?.uprops?.Hallucination || 0) > 0) || !!game.u?.HHallucination;
-}
+function Hallucination() { return Hallucination_u(); }
 
 // C ref: mondata.h befriend_with_obj(ptr, obj) — thrown food that a monster
 // will accept: bananas for monkeys and apes; any food for a domestic animal,
@@ -1182,7 +1181,7 @@ export async function boomhit(obj, dx, dy) {
             if (Fumbling() || rn2(20) >= acurr_eff(A_DEX)) {
                 const U = await import('./uhitm.js');
                 const dam = U.dmgval(obj, { data: I.youmonst_data_pub() });
-                await thitu(10 + (obj.spe | 0), dam, obj, 'boomerang');
+                await thitu(10 + (obj.spe | 0), Maybe_Half_Phys_hurtle(dam), obj, 'boomerang');
                 await endmultishot(true);
                 break;
             }

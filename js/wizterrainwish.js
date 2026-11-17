@@ -15,7 +15,7 @@
 
 import { game } from './gstate.js';
 import { rn2 } from './rng.js';
-import { newsym } from './display.js';
+import { feel_newsym } from './display.js';
 import { maketrap, Can_fall_thru } from './trap.js';
 import { make_grave, del_engr_at } from './engrave.js';
 import { recalc_block_point } from './vision.js';
@@ -39,7 +39,7 @@ import {
     DB_UNDER, DB_FLOOR, DB_MOAT, DB_LAVA, DB_ICE,
     is_pool, is_lava, is_ice
 } from './const.js';
-import { isok } from './hacklib.js';
+import { isok, an, An, upstart } from './hacklib.js';
 import { fix_wall_spines } from './mklev.js';
 
 // C ref: drawing.c defsyms[].explanation for S_arrow_trap..S_trapped_chest,
@@ -55,11 +55,7 @@ const TRAP_EXPLANATIONS = [
     'vibrating square', 'trapped door', 'trapped chest',
 ];
 
-import { an } from './hacklib.js';
 import { align_str } from './role.js';
-function An(s) { return upstart(an(s)); }
-// C ref: hacklib.c upstart().
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // C ref: hacklib.c BSTRCMPI(base, ptr, str) used as `!BSTRCMPI(bp, p - N, w)`
 // with N == strlen(w): the tail of bp, case-blind, must equal w.
@@ -390,7 +386,7 @@ export function wizterrainwish(d, out) {
     }
 
     if (madeterrain) {
-        newsym(x, y); /* C: feel_newsym(x, y) — map the spot */
+        feel_newsym(x, y); /* map the spot where the wish occurred */
         /* C ref: objnam.c:3876-3887 — hero started at <x,y> but might not be
            there anymore (create lava, decline to die, get teleported away). */
         out.push(async () => {

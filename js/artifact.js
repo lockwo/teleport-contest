@@ -17,16 +17,18 @@ import { inside_shop } from './shk.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { livelog_printf, LL_ARTIFACT } from './livelog.js';
 import { update_topl, see_monsters_sync, flush_sting_effects, map_invisible, shieldeff, newsym, stairway_at, You_feel } from './display.js';
+import { Hallucination_u } from './display.js';
 import { hcolor } from './do_name.js';
 import { rn2, rnd, d, rnz } from './rng.js';
 import { objects, mksobj, weight, base_oc_cost, stamp_fobj, uncurse } from './mkobj.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
-import { fuzzymatch, simple_typename, cxname, The } from './objnam.js';
+import { obj_shuffle_range } from './o_init.js';
+import { fuzzymatch, simple_typename, cxname, The, the } from './objnam.js';
 import { align_str } from './role.js';
 import { monster_by_pmidx, golemhp_js as golemhp } from './makemon.js';
 import { mon_mr } from './monmr_data.js';
 import { exercise } from './attrib.js';
-import { isok, s_suffix, depth } from './hacklib.js';
+import { isok, s_suffix, depth, upstart } from './hacklib.js';
 import { quest_artifact_num } from './questpgr.js';
 import { cansee, couldsee, Blind } from './vision.js';
 import { mon_nam, canspotmon } from './uhitm.js';
@@ -57,6 +59,7 @@ import {
 // prop.h W_* bits: const.js carries the real values.
 import { has_innate } from './exper.js';
 import { Poison_resistance, Half_physical_damage_hero, Drain_resistance_hero, Stone_resistance_hero, Antimagic_hero } from './youprop.js';
+import { HInvis_hero, HBlinded_hero, Blinded_hero, Levitation_hero } from './youprop.js';
 import { invocation_pos } from './trap.js';
 import {
     W_ART, W_ARTI, W_WEP, W_SWAPWEP, W_QUIVER, W_BALL, W_SADDLE,
@@ -459,8 +462,8 @@ export const artilist = [
 // hero / monster state accessors.  This port has no `struct you`, so each C
 // macro is spelled out once here.
 // ─────────────────────────────────────────────────────────────────────────
-function youmonst() { return game.youmonst || game.u; }
-function is_you(mon) { return !!mon && (mon === game.youmonst || mon === game.u || mon === Symbol.for('youmonst')); }
+function youmonst() { return game.u; }
+function is_you(mon) { return !!mon && (mon === game.u || mon === Symbol.for('youmonst')); }
 // C ref: youprop.h Upolyd.
 function Upolyd() { return !!game.u?.Upolyd; }
 function mon_data(mon) { return is_you(mon) ? youmonst_data() : (mon?.data || null); }
@@ -482,7 +485,7 @@ function race_hostile(ptr) {
 function ualign_type() { return game.u?.ualign?.type ?? A_NEUTRAL; }
 function ualign_record() { return game.u?.ualign?.record ?? 0; }
 function uprop(name) { return game.u?.uprops?.[name] || 0; }
-function Hallucination() { return !!(uprop('Hallucination') || game.u?.Hallucination); }
+function Hallucination() { return Hallucination_u(); }
 // C ref: youprop.h Antimagic -- zap.js's reader also sees worn extrinsics
 // (e.g. the Wizard's cloak of magic resistance).
 function Antimagic() { return Antimagic_hero(); }
@@ -944,57 +947,6 @@ export function shade_glare(obj) {
         && arti.mtype === M2_UNDEAD;
 }
 
-// C ref: o_init.c obj_shuffle_range().  js/o_init.js has this function but
-// does not export it; restrict_name() is the only caller here.  DELETE THIS
-// COPY once o_init.js exports its own.
-function obj_shuffle_range(otyp) {
-    const ocls = objects[otyp].oc_class;
-    let lo = otyp, hi = otyp;
-    const clsBase = (c) => objects.findIndex((o) => o.oc_class === c);
-    switch (ocls) {
-    case ARMOR_CLASS: {
-        const HELMET = otyp_by_name('helmet');
-        const HELM_OF_TELEPATHY = otyp_by_name('helm of telepathy');
-        const LEATHER_GLOVES = otyp_by_name('leather gloves');
-        const GAUNTLETS_OF_DEXTERITY = otyp_by_name('gauntlets of dexterity');
-        const CLOAK_OF_DISPLACEMENT = otyp_by_name('cloak of displacement');
-        const SPEED_BOOTS = otyp_by_name('speed boots');
-        const LEVITATION_BOOTS = otyp_by_name('levitation boots');
-        if (otyp >= HELMET && otyp <= HELM_OF_TELEPATHY) { lo = HELMET; hi = HELM_OF_TELEPATHY; }
-        else if (otyp >= LEATHER_GLOVES && otyp <= GAUNTLETS_OF_DEXTERITY) { lo = LEATHER_GLOVES; hi = GAUNTLETS_OF_DEXTERITY; }
-        else if (otyp >= CLOAK_OF_PROTECTION && otyp <= CLOAK_OF_DISPLACEMENT) { lo = CLOAK_OF_PROTECTION; hi = CLOAK_OF_DISPLACEMENT; }
-        else if (otyp >= SPEED_BOOTS && otyp <= LEVITATION_BOOTS) { lo = SPEED_BOOTS; hi = LEVITATION_BOOTS; }
-        break;
-    }
-    case POTION_CLASS:
-        /* potion of water has the only fixed description */
-        lo = clsBase(POTION_CLASS);
-        hi = otyp_by_name('water') - 1;
-        break;
-    case AMULET_CLASS:
-    case SCROLL_CLASS:
-    case SPBOOK_CLASS: {
-        /* exclude non-magic types and also unique ones */
-        lo = clsBase(ocls);
-        let i = lo;
-        for (; objects[i] && objects[i].oc_class === ocls; i++)
-            if (!objects[i].oc_magic || (objects[i].flags & F_UNIQUE)) break;
-        hi = i - 1;
-        break;
-    }
-    case RING_CLASS:
-    case WAND_CLASS:
-    case GEM_CLASS:
-        lo = clsBase(ocls);
-        hi = lo;
-        while (objects[hi + 1] && objects[hi + 1].oc_class === ocls) hi++;
-        break;
-    default:
-        break;
-    }
-    return [lo, hi];
-}
-
 // C ref: artifact.c restrict_name() — TRUE if `name` is reserved for otmp's
 // type, so naming an ordinary item that must fail.
 export function restrict_name(otmp, name) {
@@ -1425,25 +1377,6 @@ export function touch_artifact_hero_flags(obj) {
     return { self_willed, badclass, badalign };
 }
 
-// C ref: objnam.c the() for a proper (capitalized) name as used by
-// touch_artifact's blast: "The Orb of Fate" -> "the Orb of Fate",
-// "Frost Brand" -> "Frost Brand", "Excalibur" -> "Excalibur".
-export function the_artifact_name(str) {
-    if (/^the /i.test(str)) return str.charAt(0).toLowerCase() + str.slice(1);
-    if (!/^[A-Z]/.test(str)) return `the ${str}`;
-    const sp = str.lastIndexOf(' ');
-    const tmp = sp >= 0 ? sp : str.lastIndexOf('-');
-    if (tmp >= 0 && !/[A-Z]/.test(str.charAt(tmp + 1))) return str.includes("'") ? str : `the ${str}`;
-    if (sp >= 0 && str.indexOf(' ') < sp) {
-        const of = str.indexOf(' of ');
-        let named = str.indexOf(' named ');
-        const called = str.indexOf(' called ');
-        if (called >= 0 && (named < 0 || called < named)) named = called;
-        if (of >= 0 && (named < 0 || of < named)) return `the ${str}`;
-    }
-    return str;
-}
-
 // C ref: artifact.c touch_artifact().  RNG: rn2(4) for a hero touching a
 // badly-aligned artifact, then d(Antimagic ? 2 : 4, self_willed ? 10 : 4) and
 // a silver rnd(10) for the blast.  Returns C's 0/1.
@@ -1456,7 +1389,7 @@ export async function touch_artifact(obj, mon) {
 
     if (((badclass || badalign) && self_willed)
         || (badalign && !rn2(4))) {
-        await update_topl(`You are blasted by ${s_suffix(the_artifact_name(xname(obj)))} power!`);
+        await update_topl(`You are blasted by ${s_suffix(the(xname(obj)))} power!`);
         touch_blasted(true);
         let dmg = d(Antimagic() ? 2 : 4, self_willed ? 10 : 4);
         /* add half (maybe quarter) of the usual silver damage bonus */
@@ -1487,7 +1420,6 @@ export async function touch_artifact(obj, mon) {
 async function losehp(n, knam) {
     await (await import('./do.js')).losehp_do(n, knam, 1 /*KILLED_BY*/);
 }
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Magicbane
@@ -1951,7 +1883,7 @@ export async function invoke_healing(obj) {
     const { BlindedTimeout, make_sick, make_slimed, make_blinded_hero } = await import('./potion.js');
     const blindedTimeout = BlindedTimeout() | 0;
     const Sick = uprop('Sick'), Slimed = uprop('Slimed');
-    const Blinded = (blindedTimeout > 0 || uprop('Blinded') > 0) ? 1 : 0;
+    const Blinded = Blinded_hero() ? 1 : 0;
 
     if (Upolyd()) healamt = Math.trunc((u.mhmax + 1 - u.mh) / 2);
     if (healamt || Sick || Slimed || Blinded > creamed)
@@ -1962,7 +1894,7 @@ export async function invoke_healing(obj) {
            the message in that situation */
         await You_feel(`${
             (!healamt && !Sick && !Slimed
-             && (uprop('Blinded') & ~TIMEOUT) !== 0) ? "slightly " : ""}better.`);
+             && (HBlinded_hero() & ~TIMEOUT) !== 0) ? "slightly " : ""}better.`);
     else {
         await nothing_special(obj);
         return ECMD_TIME;
@@ -2246,7 +2178,7 @@ export async function arti_invoke_cost(obj) {
 
         if (pw_cost < 0 || game.u.uen < pw_cost) {
             /* the artifact is tired :-) */
-            await You_feel(`that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
+            await You_feel(`that ${the(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
             obj.age += d(3, 10);   /* and just got more so */
             return false;
         } else {
@@ -2324,7 +2256,7 @@ export async function arti_invoke(obj) {
     if (on && obj.age > (game.moves | 0)) {
         /* the artifact is tired :-) */
         set_extrinsic(oart.inv_prop, eprop ^ W_ARTI);
-        await You_feel(`that ${the_artifact_name(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
+        await You_feel(`that ${the(xname(obj))} ${otense(obj, 'are')} ignoring you.`);
         obj.age += d(3, 10);   /* can't just keep repeatedly trying */
         return ECMD_TIME;
     } else if (!on) {
@@ -2388,10 +2320,7 @@ export function finesse_ahriman(obj) {
     set_extrinsic(LEVITATION, saveE);
     return result;
 }
-function Levitation() {
-    return !!(intrinsic_of(LEVITATION) || extrinsic_of(LEVITATION))
-        && !(game.u?.uprops?.BLevitation | 0);
-}
+function Levitation() { return Levitation_hero(); }
 
 // C ref: artifact.c arti_speak() — talking artifacts whisper a rumor.  The RNG
 // is getrumor()'s (it picks a line from the rumor file).
@@ -2873,7 +2802,7 @@ function extrinsic_of(prop) { return (game.u?.uprops_extrinsic || {})[prop] || 0
    words this port keeps are the flat u.uprops H<prop> fields. */
 function intrinsic_of(prop) {
     if (prop === LEVITATION) return (game.u?.uprops?.Levitation | 0);
-    if (prop === INVIS) return (game.u?.uprops?.HInvis | 0);
+    if (prop === INVIS) return HInvis_hero();
     if (prop === CONFLICT) return (game.u?.uprops?.HConflict | 0) || (game.u?.HConflict | 0);
     return 0;
 }

@@ -17,6 +17,7 @@ import { In_W_tower } from './teleport.js';
 import { mon_has_amulet, mon_has_special, any_quest_artifact } from './monspecial.js';
 import { M_AP_MONSTER, MAGIC_PORTAL, MM_NOMSG, MM_NOWAIT, OBJ_FLOOR, In_endgame, Is_astralevel, LARGEST_INT } from './const.js';
 import { In_hell as dungeon_In_hell } from './dungeon.js';
+import { fmonOrder, monsterList } from './mon.js';
 
 const FAKE_AMULET_OF_YENDOR = 212;
 const AMULET_OF_YENDOR = 213;           // js/mkobj.js OBJECT_DATA index
@@ -28,7 +29,6 @@ const S_ANGEL = 27, S_DEMON = 56;       // defsym.h MONSYM indices
 
 function DEADMONSTER(m) { return !m || (m.mhp | 0) <= 0; }
 function mdata(m) { return m?.data || m?.mdat || null; }
-function monsterList() { return (game.level?.monsters || []); }
 function sgn(n) { return n > 0 ? 1 : n < 0 ? -1 : 0; }
 function distu(x, y) {
     const u = game.u;
@@ -61,7 +61,7 @@ export async function amulet() {
         }
     }
     if (!(game.context?.no_of_wizards | 0)) return;
-    for (const mtmp of monsterList()) {
+    for (const mtmp of fmonOrder()) {
         if (DEADMONSTER(mtmp)) continue;
         if (mtmp.iswiz && mtmp.msleeping && !rn2(40)) {
             mtmp.msleeping = 0;
@@ -402,7 +402,7 @@ export function mon_has_arti(mtmp, otyp) {
 // DEADMONSTER() filter here: C's comment is "no need ... since they have no
 // inventory".
 export function other_mon_has_arti(mtmp, otyp) {
-    for (const mtmp2 of [...monsterList()].reverse()) /* fmon: newest first */
+    for (const mtmp2 of fmonOrder())
         if (mtmp2 !== mtmp)
             if (mon_has_arti(mtmp2, otyp))
                 return mtmp2;

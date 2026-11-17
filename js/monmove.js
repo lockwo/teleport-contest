@@ -127,8 +127,6 @@ import { castmu, buzzmu } from './mcastu.js';
 import { dog_move, dogfood, m_cansee, could_reach_item, finish_meating, monnear, relobj } from './dogmove.js';
 import { mon_msize, mon_cwt, monster_by_pmidx, makemon, makemon_appears_msg } from './makemon.js';
 import { level_difficulty } from './dungeon.js';
-// polyself.c mbodypart needs the mlet of a pet, whose .data lacks .mcls.
-const mon_mlet = (pmidx) => monster_by_pmidx(pmidx)?.mcls;
 import { set_msg_mon, flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel, verbalize } from './display.js';
 import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs, worm_known } from './worm.js';
 import { in_town } from './mkroom.js';
@@ -139,7 +137,7 @@ import { place_object, next_ident, nextoid, BLINDING_VENOM, ACID_VENOM, VENOM_CL
     weight, base_oc_weight, BOULDER, HEAVY_IRON_BALL, WEAPON_CLASS, ARMOR_CLASS, FOOD_CLASS,
     AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS, RING_CLASS,
     SPBOOK_CLASS, BALL_CLASS } from './mkobj.js';
-import { stackobj, welded as welded_iv, bimanual as bimanual_iv,
+import { stackobj, delobj, welded as welded_iv, bimanual as bimanual_iv,
     calc_capacity as calc_capacity_iv, nohands_youmonst, otense, xname,
     carrying as carrying_mm, worn_extrinsic as worn_extrinsic_mm, Aggravate_monster,
     worn_blocked as worn_blocked_mm, splitobj, omon_adj, Tobjnam, count_unpaid, report_merge_discovery } from './invent.js';
@@ -1969,7 +1967,7 @@ export function maybe_unhide_at(x, y) {
 // hideunder_decide() is the whole decision (synchronous); hideunder() adds the
 // asynchronous announcement.
 function hideunder_decide(mtmp) {
-    if (mtmp === game.u || (game.youmonst && mtmp === game.youmonst))
+    if (mtmp === game.u)
         return { undetected: hideunder_hero_decide() };
     const ptr = mtmp.data;
     const x = mtmp.mx, y = mtmp.my;
@@ -2015,11 +2013,11 @@ function hideunder_decide(mtmp) {
     return { undetected, seenmon, seenobj, seenlocomo };
 }
 
-// C ref: mon.c:4796-4806 — commit the decision: mundetected, then newsym() when
-// the state changed.
-function hideunder_settle(mtmp, d) {
+// Commit the decision and publish the glyph only when hiding changed.
+// A caller announcing the change may already have stored the new flag.
+function hideunder_settle(mtmp, d, oldUndetected = mtmp.mundetected) {
     const { undetected } = d;
-    if (mtmp === game.u || (game.youmonst && mtmp === game.youmonst)) {
+    if (mtmp === game.u) {
         const u = game.u;
         const oldundetctd = !!u.uundetected;
         u.uundetected = undetected ? 1 : 0;
@@ -2027,7 +2025,7 @@ function hideunder_settle(mtmp, d) {
         if (undetected !== oldundetctd) newsym(u.ux, u.uy);
         return undetected;
     }
-    const oldundet = !!mtmp.mundetected;
+    const oldundet = !!oldUndetected;
     mtmp.mundetected = undetected ? 1 : 0;
     if (undetected !== oldundet) newsym(mtmp.mx, mtmp.my);
     return undetected;
@@ -2036,13 +2034,11 @@ function hideunder_settle(mtmp, d) {
 export async function hideunder(mtmp) {
     const d = hideunder_decide(mtmp);
     const { undetected, seenmon, seenobj, seenlocomo } = d;
-    // C ref: mon.c hideunder() emits You_see() BEFORE its trailing newsym().  In
-    // C the screen shown at the message's --More-- still holds the monster glyph
-    // because the tty buffer isn't rewritten until newsym() runs; the JS renderer
-    // rebuilds each frame from monster state, so we must likewise defer flipping
-    // mtmp.mundetected until AFTER the message so the monster is still drawn on
-    // the captured --More-- frame, then hide it with newsym().  (No RNG here.)
-    if (mtmp !== game.u && !(game.youmonst && mtmp === game.youmonst)
+    // C ref: mon.c:4785-4800. Store hidden state before You_see(), but leave
+    // the cached glyph alone until its trailing newsym(), after any pager.
+    const oldUndetected = mtmp.mundetected;
+    if (mtmp !== game.u) mtmp.mundetected = undetected ? 1 : 0;
+    if (mtmp !== game.u
         && undetected && seenmon && seenobj) {
         // C: `if (!locomo) locomo = locomotion(mtmp->data, "hide");` — the eel
         // arm has already set it to "dive".
@@ -2051,7 +2047,7 @@ export async function hideunder(mtmp) {
         game.last_msg = PLNMSG_HIDE_UNDER;
         game.last_hider = mtmp.m_id;
     }
-    return hideunder_settle(mtmp, d);
+    return hideunder_settle(mtmp, d, oldUndetected);
 }
 // C ref: mon.c hideunder() with mtmp == &youmonst.  Called from hack.c domove_core() after every
 // move (`if (hides_under(youmonst.data) || mlet == S_EEL || u.dx || u.dy)`) and from teleds().
@@ -2494,86 +2490,11 @@ export async function pline_mon(mon, msg) {
 // trap type; each branch reproduces exactly the RNG the monster path consumes.
 // Implemented incrementally as the sessions exercise each trap type.
 // C ref: hack.h:129 enum bodypart_types.
-const ARM = 0, EYE = 1, FINGER = 3, FINGERTIP = 4, FOOT = 5, HAND = 6,
-    HANDED = 7, HEAD = 8, LEG = 9, TOE = 13, HAIR = 14, NOSE = 17;
-// polyself.c:1974 — index order is the bodypart_types enum.
-const BP = {
-    humanoid: ['arm', 'eye', 'face', 'finger', 'fingertip', 'foot', 'hand', 'handed', 'head', 'leg', 'light headed', 'neck', 'spine', 'toe', 'hair', 'blood', 'lung', 'nose', 'stomach'],
-    jelly: ['pseudopod', 'dark spot', 'front', 'pseudopod extension', 'pseudopod extremity', 'pseudopod root', 'grasp', 'grasped', 'cerebral area', 'lower pseudopod', 'viscous', 'middle', 'surface', 'pseudopod extremity', 'ripples', 'juices', 'surface', 'sensor', 'stomach'],
-    animal: ['forelimb', 'eye', 'face', 'foreclaw', 'claw tip', 'rear claw', 'foreclaw', 'clawed', 'head', 'rear limb', 'light headed', 'neck', 'spine', 'rear claw tip', 'fur', 'blood', 'lung', 'nose', 'stomach'],
-    bird: ['wing', 'eye', 'face', 'wing', 'wing tip', 'foot', 'wing', 'winged', 'head', 'leg', 'light headed', 'neck', 'spine', 'toe', 'feathers', 'blood', 'lung', 'bill', 'stomach'],
-    horse: ['foreleg', 'eye', 'face', 'forehoof', 'hoof tip', 'rear hoof', 'forehoof', 'hooved', 'head', 'rear leg', 'light headed', 'neck', 'backbone', 'rear hoof tip', 'mane', 'blood', 'lung', 'nose', 'stomach'],
-    sphere: ['appendage', 'optic nerve', 'body', 'tentacle', 'tentacle tip', 'lower appendage', 'tentacle', 'tentacled', 'body', 'lower tentacle', 'rotational', 'equator', 'body', 'lower tentacle tip', 'cilia', 'life force', 'retina', 'olfactory nerve', 'interior'],
-    fungus: ['mycelium', 'visual area', 'front', 'hypha', 'hypha', 'root', 'strand', 'stranded', 'cap area', 'rhizome', 'sporulated', 'stalk', 'root', 'rhizome tip', 'spores', 'juices', 'gill', 'gill', 'interior'],
-    vortex: ['region', 'eye', 'front', 'minor current', 'minor current', 'lower current', 'swirl', 'swirled', 'central core', 'lower current', 'addled', 'center', 'currents', 'edge', 'currents', 'life force', 'center', 'leading edge', 'interior'],
-    snake: ['vestigial limb', 'eye', 'face', 'large scale', 'large scale tip', 'rear region', 'scale gap', 'scale gapped', 'head', 'rear region', 'light headed', 'neck', 'length', 'rear scale', 'scales', 'blood', 'lung', 'forked tongue', 'stomach'],
-    worm: ['anterior segment', 'light sensitive cell', 'clitellum', 'setae', 'setae', 'posterior segment', 'segment', 'segmented', 'anterior segment', 'posterior', 'over stretched', 'clitellum', 'length', 'posterior setae', 'setae', 'blood', 'skin', 'prostomium', 'stomach'],
-    spider: ['pedipalp', 'eye', 'face', 'pedipalp', 'tarsus', 'claw', 'pedipalp', 'palped', 'cephalothorax', 'leg', 'spun out', 'cephalothorax', 'abdomen', 'claw', 'hair', 'hemolymph', 'book lung', 'labrum', 'digestive tract'],
-    fish: ['fin', 'eye', 'premaxillary', 'pelvic axillary', 'pelvic fin', 'anal fin', 'pectoral fin', 'finned', 'head', 'peduncle', 'played out', 'gills', 'dorsal fin', 'caudal fin', 'scales', 'blood', 'gill', 'nostril', 'stomach'],
-};
-// polyself.c:2053 — humanoids whose AT_CLAW still reads as "hand".
-const NOT_CLAWS = new Set([S_HUMAN, S_MUMMY, S_ZOMBIE, S_ANGEL, S_NYMPH,
-    S_LEPRECHAUN, S_QUANTMECH, S_VAMPIRE, S_ORC, S_GIANT]);
-
-// C ref: polyself.c:1972 mbodypart(mon, part).  Branch order is load-bearing:
-// the S_DOG/S_FELINE/S_RODENT/owlbear special case runs before the humanoid
-// claw test, and slithy() before the class tests below it.
-export function mbodypart(mon, part) {
-    const mptr = mon?.data;
-    const nm = mptr?.name || '';
-    const mlet = (mptr?.mcls != null) ? mptr.mcls : mon_mlet(mptr?.pmidx);
-    if (mlet === S_DOG || mlet === S_FELINE || mlet === S_RODENT || nm === 'owlbear') {
-        switch (part) {
-        case HAND: return 'paw';
-        case HANDED: return 'pawed';
-        case FOOT: return 'rear paw';
-        case ARM: case LEG: return BP.horse[part];
-        default: break;
-        }
-    } else if (mlet === S_YETI) {
-        return BP.humanoid[part];
-    }
-    if ((part === HAND || part === HANDED)
-        && humanoid(mptr) && attacktype_claw(mptr) && !NOT_CLAWS.has(mlet)
-        && nm !== 'stone golem' && nm !== 'amorous demon')
-        return (part === HAND) ? 'claw' : 'clawed';
-    if ((nm === 'mumak' || nm === 'mastodon') && part === NOSE) return 'trunk';
-    if (nm === 'shark' && part === HAIR) return 'skin';
-    if ((nm === 'jellyfish' || nm === 'kraken')
-        && (part === ARM || part === FINGER || part === HAND || part === FOOT
-            || part === TOE))
-        return 'tentacle';
-    if (nm === 'floating eye' && part === EYE) return 'cornea';
-    if (humanoid(mptr) && (part === ARM || part === FINGER || part === FINGERTIP
-                           || part === HAND || part === HANDED))
-        return BP.humanoid[part];
-    if (mlet === S_COCKATRICE) return (part === HAIR) ? BP.snake[part] : BP.bird[part];
-    if (nm === 'raven') return BP.bird[part];
-    if (mlet === S_CENTAUR || mlet === S_UNICORN || nm === 'ki-rin'
-        || (nm === 'rothe' && part !== HAIR))
-        return BP.horse[part];
-    if (mlet === S_LIGHT) {
-        if (part === HANDED) return 'rayed';
-        if (part === ARM || part === FINGER || part === FINGERTIP || part === HAND)
-            return 'ray';
-        return 'beam';
-    }
-    if (nm === 'stalker' && part === HEAD) return 'head';
-    if (mlet === S_EEL && nm !== 'jellyfish') return BP.fish[part];
-    if (mlet === S_WORM) return BP.worm[part];
-    if (mlet === S_SPIDER) return BP.spider[part];
-    if (slithy(mptr) || (mlet === S_DRAGON && part === HAIR)) return BP.snake[part];
-    if (mlet === S_EYE) return BP.sphere[part];
-    if (mlet === S_JELLY || mlet === S_PUDDING || mlet === S_BLOB || nm === 'jellyfish')
-        return BP.jelly[part];
-    if (mlet === S_VORTEX || mlet === S_ELEMENTAL) return BP.vortex[part];
-    if (mlet === S_FUNGUS) return BP.fungus[part];
-    if (humanoid(mptr)) return BP.humanoid[part];
-    return BP.animal[part];
-}
-function attacktype_claw(mdat) {
-    return mon_attacks(mdat).some((a) => a.aatyp === AT_CLAW);
-}
+const ARM = 0, EYE = 1, FOOT = 5, HAND = 6, HEAD = 8;
+// polyself.js owns the one mbodypart(); re-exported for the callers that
+// import it from here.
+import { mbodypart } from './polyself.js';
+export { mbodypart };
 
 // C ref: trap.c:2243-2255 trapeffect_web() — a `switch (monsndx(mptr))` case
 // list, i.e. a genuine species enumeration, not a flag test.
@@ -4995,7 +4916,7 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
             // multishot volley, so no "misses." arm.
             if (singleobj && range > 0 && cansee(bx, by)
                 && terrainTyp(bx, by) === SINK)
-                await update_topl(`${The_mm(mshot_xname(singleobj))} ${otense(singleobj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
+                await update_topl(`${The(mshot_xname(singleobj))} ${otense(singleobj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
             if (singleobj) await drop_thrown_missile(mon, singleobj, bx, by, 0);
             // C ref: mthrowu.c:824-828 — the shared post-loop tmp_at(bhitpos) /
             // tmp_at(DISP_END) draws then restores the landing square, which is
@@ -5252,32 +5173,6 @@ function objPileAt(mx, my) {
     }
     return out;
 }
-// C ref: invent.c:1437 delobj_core(otmp, FALSE) — the object leaves the floor
-// for good (eaten).  The leading obj_resists(otmp, 0, 0) is NOT a no-op: only
-// the five indestructible items return early without rolling, so every other
-// meal burns an rn2(100) here and then dies anyway (`chance < 0` never holds).
-// Skipping it dropped one draw per devoured object from the stream.
-async function delobj_local(otmp) {
-    if (obj_resists(otmp, 0, 0)) {
-        otmp.in_use = 0;
-        return;
-    }
-    const arr = game.level?.objects;
-    let update_map = false;
-    if (Array.isArray(arr)) {
-        const ix = arr.indexOf(otmp);
-        if (ix >= 0) { arr.splice(ix, 1); update_map = true; }
-    }
-    otmp.where = OBJ_FREE;
-    // C ref: invent.c:1456-1459 delobj_core() — a floor object's square is
-    // redrawn once it's gone, and a hides-under monster that was hiding beneath
-    // the last object there (a pet that moved onto food and ate it) is forced
-    // out of hiding first.
-    if (update_map) {
-        await maybe_unhide_at(otmp.ox, otmp.oy);
-        newsym(otmp.ox, otmp.oy);
-    }
-}
 // C ref: mon.c meatobj() `obj_extract_self(otmp); (void) mpickobj(mtmp, otmp);`
 // -- the object leaves the floor and joins mtmp's minvent (engulfed by a
 // gelatinous cube).  mpickobj() is what makes the hero forget what it knew of
@@ -5318,7 +5213,7 @@ export async function m_consume_obj(mtmp, otmp) {
     if (otmp === game.u?.uball) {
         const { unpunish } = await import('./read.js');
         unpunish();
-        await delobj_local(otmp);
+        delobj(otmp);
     } else if (otmp === game.u?.uchain) {
         const { unpunish } = await import('./read.js');
         unpunish(); /* frees uchain */
@@ -5341,7 +5236,7 @@ export async function m_consume_obj(mtmp, otmp) {
         const heal = ofood && fcn === _name_to_pmidx_cf('nurse');
         const eyes = otyp === CARROT_OTYP;
         const mstone = mstoning_obj(otmp);
-        await delobj_local(otmp); /* munch */
+        delobj(otmp); /* munch */
         if (poly || slimer) {
             const ptr = slimer ? monster_by_pmidx(_name_to_pmidx_cf('green slime')) : null;
             await mv_newcham(mtmp, ptr, vis ? NC_SHOW_MSG : 0);
@@ -5608,10 +5503,9 @@ const MAGICAL_CLASSES = [AMULET_CLASS, POTION_CLASS, SCROLL_CLASS, WAND_CLASS,
 // luckstone is MINERAL).
 const MAT_GEMSTONE = 20, MAT_MINERAL = 21;
 
-// C ref: dungeon.h Sokoban — In_sokoban(&u.uz).  makemon.js records the branch's
-// dnum on the game object when the branch is generated.
+// C ref: rm.h Sokoban is cleared when the current puzzle is completed.
 function Sokoban() {
-    return game.sokoban_dnum != null && game.u?.uz?.dnum === game.sokoban_dnum;
+    return !!game.level?.flags?.sokoban_rules;
 }
 
 // C ref: mondata.h likes_gold/likes_gems/likes_objs/likes_magic.  Note
@@ -6601,7 +6495,7 @@ function thick_skinned_hero() {
 async function spitmu(mtmp, mattk) {
     const { spitmm } = await import('./mthrowu.js');
     const { thrwmmDeps } = await import('./mhitm.js');
-    return await spitmm(mtmp, mattk, game.youmonst, await thrwmmDeps());
+    return await spitmm(mtmp, mattk, game.u, await thrwmmDeps());
 }
 
 // C ref: hack.h BZ_OFS_AD / BZ_M_BREATH / BZ_VALID_ADTYP.
@@ -6658,7 +6552,9 @@ async function breamm(mtmp, mattk) {
             if (!utarget || !rn2(3)) mtmp.mspec_used = 8 + rn2(18);
             if (utarget && typ === AD_SLEE_MM && !(await import('./zap.js')).Sleep_resistance())
                 mtmp.mspec_used = (mtmp.mspec_used || 0) + rnd(20);
-            // (tame-breather hungrytime bookkeeping: no RNG.)
+            if (mtmp.mtame && !mtmp.isminion && mtmp.edog
+                && mtmp.edog.hungrytime >= 10)
+                mtmp.edog.hungrytime -= 10;
         }
     } else {
         return M_ATTK_MISS;
@@ -7058,7 +6954,7 @@ export async function thitu(tlev, dam, otmp) {
     const name = (otmp?.quan > 1) ? obj_doname(otmp) : mshot_xname(otmp);
     // C mthrowu.c:90-103: stacks retain their count; artifacts use "the".
     const onm = otmp && obj_is_pname(otmp) ? the(name)
-        : otmp?.quan > 1 ? name : an_name(name);
+        : otmp?.quan > 1 ? name : an(name);
     // C ref: mthrowu.c:86 thitu() — names the missile with
     // doname()/mshot_xname(), both of which route through objnam.c
     // mshot_xname():1093 -> xname() -> xname_flags():628 `if (!Blind &&
@@ -7077,7 +6973,7 @@ export async function thitu(tlev, dam, otmp) {
         // object, onm = an(name) -> "a dart"; the message is
         // pline("%s %s you.", upstart(onmbuf), vtense(onmbuf, "miss")) ->
         // "A dart misses you." (not "The dart ...").
-        else if (uac + tlev <= dieroll - 2) await update_topl(`${upstart_mm(onm)} ${vtense_mm(onm, 'miss')} you.`);
+        else if (uac + tlev <= dieroll - 2) await update_topl(`${upstart(onm)} ${vtense_mm(onm, 'miss')} you.`);
         else await update_topl(`You are almost hit by ${onm}.`);
         return 0;
     }
@@ -7102,7 +6998,7 @@ export async function thitu(tlev, dam, otmp) {
     // C ref: mthrowu.c:137-142 — a scattered potion shatters on the hero.
     if (otmp && otmp.oclass === POTION_CLASS) {
         const { potionhit } = await import('./potion.js');
-        await potionhit(game.youmonst, otmp, 3 /* POTHIT_OTHER_THROW */);
+        await potionhit(game.u, otmp, 3 /* POTHIT_OTHER_THROW */);
         return 1;
     }
     // C ref: mthrowu.c:144-148 — silver sears a silver-hating hero.
@@ -7157,26 +7053,14 @@ export function mshot_xname(otmp) {
         return `the ${ms.i}${ordin_mm(ms.i)} ${onm}`;
     return onm;
 }
-// C ref: objnam.c an()/just_an() — prefix the appropriate indefinite article,
-// none when the name already starts with "the ".
-import { an as an_name } from './hacklib.js';
-// C ref: hacklib.c upstart() — capitalize the first letter of a string.
-function upstart_mm(s) {
-    return s ? s[0].toUpperCase() + s.slice(1) : s;
-}
+import { an, upstart } from './hacklib.js';
+import { The } from './objnam.js';
 // C ref: do_name.c x_monnam() — a monster the hero cannot spot reads "it"
 // ("It is hit."), whatever species it really is.  The shared x_monnam() narrows
 // that rule to a BLIND hero on purpose (see js/uhitm.js), so the ohitmon
 // messages that C only emits for an unseen target ask for it explicitly.
 function Monnam_spot(mtmp) {
     return canspotmon(mtmp) ? Monnam(mtmp) : 'It';
-}
-// C ref: objnam.c The(str) — "The " unless the name is already capitalized
-// (an artifact / named object supplies its own article); a leading "the "
-// (mshot_xname's "the 2nd dart") is just capitalized.
-export function The_mm(s) {
-    if (/^the /i.test(s || '')) return `T${s.slice(1)}`;
-    return /^[A-Z]/.test(s || '') ? s : `The ${s}`;
 }
 // C ref: objnam.c vtense(subj, verb) — third-person-singular conjugation unless
 // the subject reads plural ("the 3 daggers hit ..." from a multishot volley);
@@ -7255,7 +7139,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
     mtmp.msleeping = 0;
     if (vis && otmp.otyp === EGG_OTYP) {
         await update_topl(`Splat!  ${Monnam(mtmp)} is hit with ${
-            otmp.known ? an_name(monster_by_pmidx(otmp.corpsenm).name) : 'an'} egg!`);
+            otmp.known ? an(monster_by_pmidx(otmp.corpsenm).name) : 'an'} egg!`);
     } else if (vis) {
         const onm = mshot_xname(otmp);
         // C ref: zap.c:3556 hit(str, mtmp, force) — "The crude dagger hits the
@@ -7264,7 +7148,7 @@ export async function ohitmon(mtmp, otmp, range, verbose, bx, by, thrower) {
         const who = (game.flags?.verbose !== false) ? mon_nam(mtmp) : 'it';
         const how = harmless
             ? ` but passes harmlessly through ${mhim(mtmp)}.` : exclam(damage);
-        await update_topl(`${The_mm(onm)} ${vtense_mm(onm, 'hit')} ${who}${how}`);
+        await update_topl(`${The(onm)} ${vtense_mm(onm, 'hit')} ${who}${how}`);
     } else if (verbose && !game.mtarget) {
         await update_topl(`${otmp.otyp === EGG_OTYP ? 'Splat!  ' : ''}${
             Monnam_spot(mtmp)} is hit${exclam(damage)}`);
@@ -7684,11 +7568,11 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
             // multishot volley announces each missile that ends without connecting.
             if (singleobj && range > 0 && cansee(bx, by)
                 && terrainTyp(bx, by) === SINK)
-                await update_topl(`${The_mm(mshot_xname(singleobj))} ${otense(singleobj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
+                await update_topl(`${The(mshot_xname(singleobj))} ${otense(singleobj, Hallucination_u() ? 'plop' : 'drop')} onto the sink.`);
             else if (singleobj && (game.m_shot?.n | 0) > 1
                 && (!game.mesg_given || bx !== u.ux || by !== u.uy)
                 && (cansee(bx, by) || (game.marcher && canseemon_mm(game.marcher))))
-                await update_topl(`${The_mm(mshot_xname(singleobj))} misses.`);
+                await update_topl(`${The(mshot_xname(singleobj))} misses.`);
             break;
         }
         // C: otherwise it draws the flight glyph at the just-crossed square
@@ -7970,7 +7854,7 @@ async function drop_thrown_missile(mon, otmp, x, y, ohit) {
     // square runs passive_obj() (acid/fire/rust passives) before stackobj().
     if (ohit) {
         let victim = m_at(x, y);
-        if (!victim && game.u?.ux === x && game.u?.uy === y) victim = game.youmonst || game.u;
+        if (!victim && game.u?.ux === x && game.u?.uy === y) victim = game.u;
         if (victim) {
             const { passive_obj } = await import('./uhitm.js');
             await passive_obj(victim, otmp, null);
@@ -8361,7 +8245,7 @@ async function thrwmu(mtmp, mdat) {
             const onm = xname(otmp);
             const { obj_is_pname, the } = await import('./objnam.js');
             await pline_mon(mtmp, `${Monnam(mtmp)} ${mswings_verb(otmp, rang <= 2)} ${
-                obj_is_pname(otmp) ? the(onm) : an_name(onm)}.`);
+                obj_is_pname(otmp) ? the(onm) : an(onm)}.`);
         }
         let dam = dmgval(otmp, u);
         let hitv = Math.max(3 - distmin(u.ux, u.uy, mtmp.mx, mtmp.my), -4);
@@ -8422,7 +8306,7 @@ async function thrwmu(mtmp, mdat) {
             const sn = mshot_basename(otmp);
             otmp.quan = savequan;
             const { obj_is_pname: pn } = await import('./objnam.js');
-            onm = pn(otmp) ? `the ${sn}` : an_name(sn);
+            onm = pn(otmp) ? `the ${sn}` : an(sn);
         }
         // C ref: mthrowu.c monshoot() —
         //   gm.m_shot.s = ammo_and_launcher(otmp, mwep) ? TRUE : FALSE;
@@ -8817,7 +8701,7 @@ export async function bee_eat_jelly(mon, obj) {
         m_delay = obj.blessed ? 3 : !obj.cursed ? 5 : 7;
         if ((obj.quan | 0) > 1) obj = splitobj(obj, 1);
         if (canseemon_mm(mon))
-            await emitU(`${Monnam(mon)} eats ${mv_an(mv_xname(obj))}.`, mon);
+            await emitU(`${Monnam(mon)} eats ${an(mv_xname(obj))}.`, mon);
         mv_delobj(obj);
 
         const qb = monster_by_pmidx(MV_PM_QUEEN_BEE);
@@ -8838,7 +8722,6 @@ export async function bee_eat_jelly(mon, obj) {
 
 // C ref: objnam.c an(str).  Six files in js/ carry this same one-liner
 // (js/hack.js:2633, js/end.js:1216, js/invent.js:1368, ...).
-function mv_an(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
 
 // C ref: monmove.c:424 gelcube_digests(mtmp) — "gelatinous cube eats something
 // from its inventory".  Returns 0 when it used up its move, -1 when there was
@@ -9131,9 +9014,9 @@ const CORR_TYP = CORR;   /* rm.h CORR */
 // carrying even a pick-axe can't squeeze under a closed door. Also blocks on
 // >100 coins or any non-empty container.
 export function stuff_prevents_passage(mtmp) {
-    /* C passes &gy.youmonst for the hero; this port has no youmonst object, so
-       a null mtmp (see can_ooze_hero) is the hero's inventory */
-    const chain = (!mtmp || mtmp === game.youmonst) ? (game.invent || [])
+    /* C passes &gy.youmonst for the hero; here that is game.u (or a null
+       mtmp, see can_ooze_hero): the hero's inventory */
+    const chain = (!mtmp || mtmp === game.u) ? (game.invent || [])
                                                     : (mtmp.minvent || []);
     for (const obj of chain) {
         const typ = obj.otyp;

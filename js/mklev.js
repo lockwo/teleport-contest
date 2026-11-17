@@ -79,6 +79,7 @@ import {
 import { shtypes } from './shtypes.js';
 import { in_rooms } from './shkroom.js';
 import { obj_resists } from './zap.js';
+import { breaktest } from './dothrow.js';
 import { spell_level } from './u_init.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, DOOR, STAIRS,
@@ -6798,38 +6799,6 @@ function find_okay_roompos(croom, crd) {
     return true;
 }
 
-// C ref: dothrow.c breaktest(obj) — used by mktrap_victim()'s PIT (exploded
-// landmine) branch to discard fragile possessions.  Rolls obj_resists(obj,1,99)
-// (rn2(100)); only the RNG side-effect + glass/potion/egg/etc verdict matter
-// here.  No glass armor reaches a trap-victim, so the ARMOR/GLASS nonbreakchance
-// tweak is irrelevant but kept faithful.
-function breaktest(otmp) {
-    const GLASS_MATERIAL = 19; // objclass.h obj_material_types GLASS
-    const POT_WATER = 322, EGG = 266, EXPENSIVE_CAMERA = 229;
-    const CREAM_PIE = 287, MELON = 280, ACID_VENOM = 480, BLINDING_VENOM = 479;
-    const od = objects[otmp.otyp] || {};
-    let nonbreakchance = 1;
-    if (otmp.oclass === ARMOR_CLASS && od.material === GLASS_MATERIAL)
-        nonbreakchance = 90;
-    if (obj_resists(otmp, nonbreakchance, 99))
-        return false;
-    if (od.material === GLASS_MATERIAL && !otmp.oartifact
-        && otmp.oclass !== GEM_CLASS)
-        return true;
-    const key = (otmp.oclass === POTION_CLASS) ? POT_WATER : otmp.otyp;
-    switch (key) {
-    case EXPENSIVE_CAMERA:
-    case POT_WATER:
-    case EGG:
-    case CREAM_PIE:
-    case MELON:
-    case ACID_VENOM:
-    case BLINDING_VENOM:
-        return true;
-    default:
-        return false;
-    }
-}
 
 // C ref: sp_lev.c calls these mklev.c routines directly; this port cannot
 // import mklev.js from sp_lev.js (that edge would cycle -- see the EXT header

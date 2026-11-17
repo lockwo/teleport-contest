@@ -30,9 +30,9 @@ import { noit_Monnam, y_monnam } from './do_name.js';
 import { splitobj, floor_object_name, obj_doname, distant_name_pub, sobj_at, stackobj, report_merge_discovery } from './invent.js';
 import { dist2, mfndpos, m_avoid_kicked_loc,
     mon_allowflags, set_apparxy, onscary, mon_wield_item, should_displace, undesirable_disp,
-    Conflict, resist_conflict, mattacku, m_digweapon_check, locomotion } from './monmove.js';
+    Conflict, resist_conflict, mattacku, m_digweapon_check, locomotion, m_avoid_soko_push_loc } from './monmove.js';
 import { goodpos } from './teleport.js';
-import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, ALLOW_M, ALLOW_MDISP, In_sokoban, SHOPBASE, W_SADDLE } from './const.js';
+import { ALLOW_TRAPS as ALLOW_TRAPS_F, ALLOW_U, ALLOW_M, ALLOW_MDISP, SHOPBASE, W_SADDLE } from './const.js';
 import { t_at } from './trap.js';
 import { mattackm, mdisplacem } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, M_ATTK_MISS } from './const.js';
@@ -49,7 +49,7 @@ import { mflags1_of, msound_of, perceives_flag, M1_NOEYES,
     is_animal, mindless, nohands, M1_TUNNEL, M1_NEEDPICK,
     passes_walls_flag, throws_rocks_flag, is_swimmer_flag,
     regenerates_flag as regenerates, is_flyer_flag, touch_petrifies } from './monflags_data.js';
-import { healmon, mon_hates_silver, max_mon_load, check_gear_next_turn, can_touch_safely } from './mon.js';
+import { healmon, mon_hates_silver, curr_mon_load, max_mon_load, check_gear_next_turn, can_touch_safely, Protection_from_shape_changers } from './mon.js';
 import { on_qstart_level } from './questok.js';
 import { max_passive_dmg, resists_ston, resists_poison, resists_acid, slimeproof } from './mondata.js';
 import { attacktype, dmgtype, mattk_of, AT_NONE, AT_ANY, AT_ENGL, AT_WEAP, AD_POLY } from './monattk_data.js';
@@ -1281,15 +1281,6 @@ function objWeight(obj) {
     return Math.max(1, obj.owt ?? 1);
 }
 
-// C ref: mon.c curr_mon_load(mtmp) — sum of minvent weights, excluding a
-// BOULDER unless the monster throws_rocks (none of the starting pets do).
-function curr_mon_load(mtmp) {
-    let load = 0;
-    for (const obj of mtmp.minvent || []) {
-        if (obj.otyp !== BOULDER || cri_throws_rocks(mtmp.data)) load += objWeight(obj);
-    }
-    return load;
-}
 
 // C ref: mon.c can_carry(mtmp, otmp).  Returns 0 (cannot) or a positive
 // quantity.  Kept separate from js/mon.js's can_carry (replacing the whole
@@ -1510,7 +1501,7 @@ function best_target(mtmp, forced) {
 // The `hungry` test used DOG_HUNGRY spelled 500; dogmove.c:10 defines it as
 // 300 (500 is DOG_WEAK), so the rn2(5) "hungry pets rarely breathe" roll was
 // suppressed for the 200-move window between the two thresholds.
-async function pet_ranged_attk(mtmp, forced) {
+export async function pet_ranged_attk(mtmp, forced) {
     const edog = mtmp.edog;
     const hungry = (!mtmp.isminion && edog)
         ? ((game.moves || 1) > ((edog.hungrytime || 0) + DOG_HUNGRY)) : false;
@@ -1546,25 +1537,15 @@ async function pet_ranged_attk(mtmp, forced) {
         // C ref: dogmove.c:962 — only a pet that actually attacked loses its move.
         if (mstatus !== M_ATTK_MISS) return MMOVE_DONE;
     }
-    // C ref: dogmove.c:964 — `else if (forced) domonnoise(mtmp);` (forced is
-    // FALSE at dog_move's only call site).
+    // C ref: dogmove.c:964 — `else if (forced) (void) domonnoise(mtmp);`
+    // (forced is only TRUE from cmd.c domonability() for a breathing steed).
+    else if (forced) {
+        const { domonnoise } = await import('./sounds.js');
+        await domonnoise(mtmp);
+    }
     return MMOVE_NOTHING;
 }
 
-// C ref: monmove.c:1313 m_avoid_soko_push_loc(mtmp, nx, ny).  Declared in
-// monmove.c but called only from dog_move() (dogmove.c:1185), so it lives here.
-// `sgn` is C's sign function; dist2 == 4 is the "exactly two squares away along
-// one axis" case, whose single intervening square is the one a boulder would be
-// pushed out of.
-function m_avoid_soko_push_loc(mtmp, nx, ny) {
-    if (!In_sokoban(game.u?.uz)) return false;
-    if (!(mtmp.mpeaceful || mtmp.mtame)) return false;
-    if (mtmp.mconf || mtmp.mstun) return false;
-    if (Conflict()) return false;
-    const ux = game.u.ux, uy = game.u.uy;
-    if (dist2(nx, ny, ux, uy) !== 4) return false;
-    return !!sobj_at(BOULDER, nx + Math.sign(ux - nx), ny + Math.sign(uy - ny));
-}
 
 // C ref: dogmove.c dog_move(mtmp, after).  Drives one pet move.
 export async function dog_move(mtmp, after) {
@@ -1971,14 +1952,17 @@ export async function dog_eat(mtmp, edog, obj, x, y, devour = false) {
         // pet's NEW square and so lost the message when it moved off-view to eat).
         const sawpet = cansee(x, y)
             && !(mtmp.minvis && !See_invisible_hero()) && !mtmp.mundetected;
-        const what = pet_doname(obj, true);
         if (sawpet || (seeobj && canspotmon(mtmp))) {
+            /* C calls distant_name() only when a message is printed, but
+               names the object for its side effects even if tunnelling */
+            const what = pet_doname(obj, true);
             // C ref: dogmove.c:286 — a tunneller "digs in" instead of eating.
             if (tunnels(mtmp.data))
                 await emit_pet_msg(`${noit_Monnam(mtmp)} digs in.`, { x: mtmp.mx, y: mtmp.my });
             else
                 await emit_pet_msg(`${noit_Monnam(mtmp)} ${devour ? 'devours' : 'eats'} ${what}.`, { x: mtmp.mx, y: mtmp.my });
         } else if (seeobj) {
+            const what = pet_doname(obj, true);
             await emit_pet_msg(`It ${devour ? 'devours' : 'eats'} ${what}.`);
         }
     }
@@ -2353,10 +2337,7 @@ export async function quickmimic(mtmp) {
     let idx = 0, trycnt = 5;
     const was_leashed = !!mtmp.mleashed;
 
-    if (game.u?.uprops?.Protection_from_shape_changers
-        || game.u?.uprops?.HProtection_from_shape_changers
-        || game.u?.uprops?.EProtection_from_shape_changers
-        || !mtmp.meating)
+    if (Protection_from_shape_changers() || !mtmp.meating)
         return;
 
     /* mimicking doesn't touch the steed's equipment; DISMOUNT_POLY's message

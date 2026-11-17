@@ -23,12 +23,13 @@
 //
 
 import { Half_spell_damage_hero, Antimagic_hero, See_invisible_hero } from './youprop.js';
+import { the } from './objnam.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { ceiling, ledger_no } from './dungeon.js';
 import { rn2, rnd, rn1, d } from './rng.js';
-import { isok, depth, s_suffix } from './hacklib.js';
-import { is_animal, mindless, nohands, mflags1_of, mflags2_of, msound_of,
-    M1_NEEDPICK, M1_FLY, M1_BREATHLESS, M1_NOHEAD, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
+import { isok, depth, s_suffix, dist2, upstart } from './hacklib.js';
+import { is_animal, mindless, nohands, mflags1_of, mflags2_of,
+    M1_NEEDPICK, M1_FLY, M1_ACID, M1_WALLWALK, M1_AMORPHOUS,
     M1_UNSOLID, M1_NOEYES, M1_NOLIMBS,
     M2_JEWELS, M2_UNDEAD, M2_MERC, M2_WERE, throws_rocks_flag, is_undead_flag } from './monflags_data.js';
 import { attacktype, dmgtype, attacktype_fordmg, AT_GAZE, AT_EXPL, AT_BREA,
@@ -37,12 +38,12 @@ import { POT_SPEED, LARGE_BOX, BAG_OF_TRICKS, BOULDER, STRANGE_OBJECT,
     objects as OBJECTS, place_object, weight, nextoid, add_to_container, unknow_object, unbless } from './mkobj.js';
 import { monster_by_pmidx, makemon, makemon_appears_msg, little_to_big, name_to_pmidx, pmname_of_pmidx, rndmonst, mpickobj } from './makemon.js';
 import { set_mon_data, slimeproof, monstseesu, monstunseesu, resists_ston as md_resists_ston,
-    resists_acid as md_resists_acid } from './mondata.js';
+    resists_acid as md_resists_acid, can_blow } from './mondata.js';
 import { mon_knows_traps, mon_learns_traps } from './montraps.js';
 import { humanoid, is_male_flag, is_female_flag, is_shapeshifter_flag }
     from './monflags_data.js';
 import { mondied_mm, monkilled_mm, mondead_mm as mondead } from './mhitm.js';
-import { find_mac as worn_find_mac, mon_set_minvis } from './worn.js';
+import { find_mac as worn_find_mac, mon_set_minvis, which_armor } from './worn.js';
 import { hard_helmet } from './do_wear.js';
 // onscary() is an `export function` declaration in monmove.js, so the
 // monmove -> muse -> monmove import cycle resolves through a hoisted binding
@@ -146,9 +147,7 @@ const P_DAGGER = 1, P_KNIFE = 2;
 const MAT_SILVER = 14;
 // C ref: defsym.h MONSYM() indices (permonst.mcls).
 const S_EYE = 5, S_GHOST = 54, S_KOP = 37, S_UNICORN = 21,
-    S_LIGHT = 25, S_VORTEX = 22, S_EEL = 57, S_GOLEM = 55, S_DRAGON = 30;
-// C ref: monflag.h MS_SILENT / MS_BUZZ.
-const MS_SILENT = 0, MS_BUZZ = 10;
+    S_LIGHT = 25, S_VORTEX = 22, S_GOLEM = 55, S_DRAGON = 30;
 // C ref: monflag.h MZ_SMALL, monst.h W_ARMG / W_ARM / W_ARMS / W_ARMH / W_AMUL.
 const MZ_SMALL = 1;
 // which_armor(mon, ...) reads a MONSTER's misc_worn_check, which js/worn.js
@@ -234,7 +233,6 @@ export const MUSE_BAG = 10;
  * that module imports this one, and an import cycle through a `const` arrow
  * function is a temporal-dead-zone crash waiting to happen.
  * ------------------------------------------------------------------------ */
-const dist2 = (x0, y0, x1, y1) => (x0 - x1) * (x0 - x1) + (y0 - y1) * (y0 - y1);
 const distmin = (x0, y0, x1, y1) => Math.max(Math.abs(x0 - x1), Math.abs(y0 - y1));
 const sgn = (n) => (n > 0 ? 1 : n < 0 ? -1 : 0);
 // C ref: include/hack.h:1477/1490 — BZ_OFS_WAN(otyp) and the monster-wand ray
@@ -284,9 +282,7 @@ function singular_ansimpleoname(obj) {
 // C ref: objnam.c an().
 import { an } from './hacklib.js';
 // C ref: objnam.c the().
-function the_(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
 // C ref: hacklib.c upstart().
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 // C ref: trap.c trapname(ttyp, override) — draws off the display rng while the
 // hero hallucinates, so it must be the real one (dynamic: trap.js is a hub).
 async function trapname(ttyp, override) {
@@ -347,28 +343,12 @@ function acidic_pm(corpsenm) {
 function is_lizard_pm(corpsenm) {
     return monster_by_pmidx(corpsenm)?.name === 'lizard';
 }
-// C ref: mon.c can_blow(mtmp) — can it blow a horn?
-function can_blow(mtmp) {
-    const ptr = mtmp.data;
-    const silent = (msound_of(ptr) === MS_SILENT) || (msound_of(ptr) === MS_BUZZ);
-    const breathless = (mflags1_of(ptr) & M1_BREATHLESS) !== 0;
-    const headless = (mflags1_of(ptr) & M1_NOHEAD) !== 0;
-    if (silent && (breathless || verysmall(ptr) || headless || ptr?.mcls === S_EEL))
-        return false;
-    return true;
-}
 // C ref: mon.c mwelded(otmp).
 function mwelded_obj(o) {
     return !!o && ((o.owornmask || 0) & W_WEP_BIT) !== 0 && !!o.cursed;
 }
 // C ref: monst.h MON_WEP(mon).
 function MON_WEP(mon) { return mon?.mw || null; }
-// C ref: worn.c which_armor(mon, slot).
-function which_armor(mon, slot) {
-    for (const o of (mon?.minvent || []))
-        if (((o.owornmask || 0) & slot) !== 0) return o;
-    return null;
-}
 // C ref: monst.h m_seenres(mon, bit) — has this monster watched the hero
 // shrug off that damage type?
 function m_seenres(mon, bit) { return ((mon?.seen_resistance | 0) & bit) !== 0; }
@@ -388,9 +368,9 @@ function SchroedingersBox(obj) {
     // level this port generates makes one, but the test costs nothing.
     return obj?.otyp === LARGE_BOX && (obj?.spe | 0) === 1;
 }
-// C ref: hack.h Sokoban.
+// C ref: rm.h Sokoban, not geographic branch membership.
 function Sokoban() {
-    return game.sokoban_dnum != null && game.u?.uz?.dnum === game.sokoban_dnum;
+    return !!game.level?.flags?.sokoban_rules;
 }
 // C ref: monst.h is_Vlad(mon).
 function is_Vlad(mon) { return mon?.data?.name === 'Vlad the Impaler'; }
@@ -496,8 +476,9 @@ async function precheck(mon, obj) {
             } else if (occupant === 'ghost') {
                 if (vis) {
                     const { rndmonnam } = await import('./do_name.js');
+                    const opener = mon_nam(mon);
                     const name = Hallucination_u() ? rndmonnam(null).name : 'ghost';
-                    await update_topl(`As ${mon_nam(mon)} opens the bottle, an enormous ${name} emerges!`);
+                    await update_topl(`As ${opener} opens the bottle, an enormous ${name} emerges!`);
                     await update_topl(`${Monnam(mon)} is frightened to death, and unable to move.`);
                 }
                 const { paralyze_monst } = await import('./mhitm_ad.js');
@@ -2480,7 +2461,7 @@ export async function use_misc(mtmp) {
             obj = game.uswapwep;
         if (!obj) break; /* shouldn't happen after find_misc() */
 
-        const the_weapon = the_(xname(obj));
+        const the_weapon = the(xname(obj));
         const { body_part, remove_worn_item, freeinv } = await import('./invent.js');
         const { makeplural } = await import('./plural.js');
         let hand = body_part(HAND);

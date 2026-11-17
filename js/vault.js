@@ -50,7 +50,7 @@ import { deltrap } from './trap.js';
 import { make_grave, del_engr_at } from './engrave.js';
 import { stop_occupation, nomul } from './hack.js';
 import { adjalign } from './attrib.js';
-import { dist2 } from './hacklib.js';
+import { dist2, upstart } from './hacklib.js';
 import { msound_of } from './monflags_data.js';
 import { yelp } from './sounds.js';
 import { attacktype, dmgtype, AT_HUGS, AD_STCK, AD_WRAP, sticks } from './monattk_data.js';
@@ -85,7 +85,6 @@ const Your = (s) => update_topl(`Your ${s}`);
 const pline_The = (s) => update_topl(`The ${s}`);
 // C ref: hacklib.c an() / upstart() / mungspaces().
 import { an } from './hacklib.js';
-const upstart = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 // C ref: do_name.c noit_Monnam / noit_mon_nam — SUPPRESS_IT, i.e. a guard is
 // named even when the hero cannot spot it.  The shim used to be mon_nam(),
 // which was indistinguishable only while x_monnam() ignored canspotmon().

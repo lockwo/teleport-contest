@@ -274,7 +274,7 @@ function shuffle(bases, o_low, o_high, domaterial) {
 
 // retrieve the range of objects that otyp shares descriptions with.
 // C ref: o_init.c obj_shuffle_range().
-function obj_shuffle_range(bases, otyp) {
+function obj_shuffle_range_in(bases, otyp) {
     const ocls = objects[otyp].oclass;
     let lo = otyp, hi = otyp;
 
@@ -313,6 +313,12 @@ function obj_shuffle_range(bases, otyp) {
     return [lo, hi];
 }
 
+// C ref: o_init.c obj_shuffle_range() for callers outside init_objects
+// (artifact.c restrict_name).  Returns [lo, hi].
+export function obj_shuffle_range(otyp) {
+    return obj_shuffle_range_in(getBases(), otyp);
+}
+
 // randomize object descriptions.  C ref: o_init.c shuffle_all().
 function shuffle_all(bases) {
     const shuffle_classes = [
@@ -323,11 +329,11 @@ function shuffle_all(bases) {
         HELMET, LEATHER_GLOVES, CLOAK_OF_PROTECTION, SPEED_BOOTS,
     ];
     for (let idx = 0; idx < shuffle_classes.length; idx++) {
-        const [first, last] = obj_shuffle_range(bases, bases[shuffle_classes[idx]]);
+        const [first, last] = obj_shuffle_range_in(bases, bases[shuffle_classes[idx]]);
         shuffle(bases, first, last, true);
     }
     for (let idx = 0; idx < shuffle_types.length; idx++) {
-        const [first, last] = obj_shuffle_range(bases, shuffle_types[idx]);
+        const [first, last] = obj_shuffle_range_in(bases, shuffle_types[idx]);
         shuffle(bases, first, last, false);
     }
 }
@@ -804,10 +810,9 @@ export const oclass_prob_totals = [];
 
 // ── local stand-ins ──
 // C ref: hack.h impossible().
-import { strncmpi, strcmpi } from './hacklib.js';
+import { strncmpi, strcmpi, upstart } from './hacklib.js';
 function disco_impossible(msg) { game._impossible = msg; }
 // C ref: hacklib.c lowc()/upstart().
-function upstart(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
 // C ref: dungeon.c ledger_no(dlev)/maxledgerno().  The LEDGER number, not
 // depth(): every Gnomish Mines level sits ~25 ledger entries below its depth
 // (see js/mkobj.js gem_lev(), which is the verified copy of this arithmetic).

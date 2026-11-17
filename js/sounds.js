@@ -6,6 +6,7 @@ import { Invis_hero as Invis_hero_yp } from './youprop.js';
 // by the current level's flags (data-driven, no per-seed special casing),
 // matching the C order exactly; the first probe that "fires" returns.
 
+import { letter } from './hacklib.js';
 import { game } from './gstate.js';
 import { p_coaligned, inhistemple } from './priest.js';
 import { roomAt } from './roomat.js';
@@ -19,6 +20,7 @@ import { inhishop } from './shk.js';
 import { in_rooms } from './shkroom.js';
 import { findgd } from './vault.js';
 import { update_topl, verbalize, You_hear, Deaf_hero } from './display.js';
+import { Hallucination_u } from './display.js';
 import {
     msound_of, mflags2_of, M2_MAGIC, is_elf_flag, is_dwarf_flag, is_gnome_flag,
     is_orc_flag, is_human_flag, is_giant_flag,
@@ -247,7 +249,7 @@ function Is_oracle_level(uz) {
     return uz.dnum === ol.dnum && uz.dlevel === ol.dlevel;
 }
 
-import { ECMD_OK, ECMD_TIME, PLINE_SPEECH, PLINE_VERBALIZE, SOUND_TRIGGER_VERBAL } from './const.js';
+import { ECMD_OK, ECMD_TIME, PLINE_SPEECH, PLINE_VERBALIZE, SOUND_TRIGGER_VERBAL, db_under_typ } from './const.js';
 
 // C ref: include/monflag.h enum ms_sounds — mons[].msound.  Driven off the
 // generated MSOUND table (monflags_data.js), never off the monster's name or
@@ -848,7 +850,7 @@ export async function domonnoise(mtmp) {
 // in another module, and rule "one file per lane" forbids exporting it there.
 
 // C ref: youprop.h Hallucination.
-const Hallucination = () => !!game.u?.uhallu;
+const Hallucination = () => Hallucination_u();
 // C ref: monst.h:251 helpless(mon) = msleeping || !mcanmove.  mcanmove is
 // undefined on some of this port's monster records, where C's default is 1.
 function helpless(mon) {
@@ -872,7 +874,6 @@ const uhis = () => (game.flags?.female ? 'her' : 'his');
 const ROLL_FROM = (arr) => arr[rn2(arr.length)];
 // C ref: hack.h letter(c) — an ASCII letter; temple_priest_sound() uses it to
 // step past the leading '*'/'#' control flags in temple_msg[].
-const letter = (c) => /[A-Za-z]/.test(c || '');
 // C ref: hack.h:558 next2u(x,y) = distu(x,y) <= 2.
 function next2u(x, y) {
     const u = game.u;
@@ -882,7 +883,9 @@ function next2u(x, y) {
 function accessible(x, y) {
     const loc = game.level?.at?.(x, y);
     if (!loc) return false;
-    return ACCESSIBLE(loc.typ) && !closed_door(x, y);
+    /* SURFACE_AT: the terrain under a raised drawbridge */
+    const typ = loc.typ === 19 /*DRAWBRIDGE_UP*/ ? db_under_typ(loc.drawbridgemask) : loc.typ;
+    return ACCESSIBLE(typ) && !closed_door(x, y);
 }
 // C ref: rm.h closed_door(x,y) = IS_DOOR(typ) && (doormask & (D_LOCKED|D_CLOSED)).
 const D_CLOSED_SND = 0x04, D_LOCKED_SND = 0x08, DOOR_TYP_SND = 23;

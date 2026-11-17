@@ -17,7 +17,7 @@
 // bot() runs, and bot() SKIPS while u.uhp == -1 (dosave()'s "game over"
 // sentinel).  Nothing here tries to improve on that.
 
-import { Wounded_legs_hero, Deaf_hero, Stunned_hero } from './youprop.js';
+import { Wounded_legs_hero, Deaf_hero, Stunned_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { Blind } from './vision.js';
 import {
@@ -52,10 +52,11 @@ import { helm_simple_name } from './do_wear.js';
 import { humanoid, mflags1_of, M1_FLY } from './monflags_data.js';
 import { sticks } from './monattk_data.js';
 import { endgamelevelname } from './dungeon.js';
-import { depth } from './hacklib.js';
+import { depth, highc, upstart } from './hacklib.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { clr2colorname, query_color, query_attr } from './coloratt.js';
-import { pline, impossible, status_hold } from './display.js';
+import { pline, impossible, status_hold, rogue_symset, symOverrideChar } from './display.js';
+import { Hallucination_u } from './display.js';
 import { pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading,
          end_menu, select_menu, nul_glyphinfo, menu_ctx } from './windows.js';
@@ -168,13 +169,10 @@ const ICE = 33;
 /* ==================================================================== */
 
 /* C ref: hacklib.c highc()/lowc() */
-function highc(c) { return c >= 'a' && c <= 'z' ? c.toUpperCase() : c; }
 function lowc(c) { return c >= 'A' && c <= 'Z' ? c.toLowerCase() : c; }
 function digit(c) { return c >= '0' && c <= '9'; }
 /* C ref: hacklib.c sgn() */
 function sgn(n) { return n < 0 ? -1 : n > 0 ? 1 : 0; }
-/* C ref: hacklib.c upstart() — capitalize in place, return the buffer. */
-function upstart(s) { return s ? highc(s.charAt(0)) + s.slice(1) : s; }
 /* C ref: hacklib.c strkitten() — append one character. */
 function strkitten(s, c) { return s + c; }
 /* C ref: hacklib.c str_start_is(str, chkstr, caseblind) */
@@ -440,21 +438,15 @@ function Confusion() {
     if (held && 'conf' in held) return !!held.conf;
     return upv('Confusion') > 0;
 }
-function Hallucination() {
-    const t = upv('Hallucination') || upv('HHallucination') || (game.u?.uhallu ? 1 : 0);
-    return t > 0 && !(upv('HHalluc_resistance') || upv('EHalluc_resistance'));
-}
+function Hallucination() { return Hallucination_u(); }
 // C ref: youprop.h — intrinsic/extrinsic flight and levitation honor blocked.
 // the extrinsic half is invent.js's worn_extrinsic() store (prop.h
 // LEVITATION=48, FLYING=49), which the flat u.uprops fields never mirror.
-function Levitation() { return !!(upv('Levitation') || worn_extrinsic(48)) && !upv('BLevitation'); }
+function Levitation() { return Levitation_hero(); }
 function Flying() {
     const held = game._statusHold;
     if (held && 'fly' in held) return !!held.fly;
-    /* C ref: youprop.h Flying includes a flying steed */
-    const u = game.u;
-    return !!(upv('Flying') || worn_extrinsic(49)
-              || (u?.usteed && (mflags1_of(u.usteed.data) & M1_FLY))) && !upv('BFlying');
+    return Flying_hero();
 }
 function Glib() { return upv('Glib') > 0; }
 function Wounded_legs() { return Wounded_legs_hero(); }
@@ -1100,20 +1092,73 @@ function status_engine_init() {
    port state.  'transient' substitutes the hero's state at the very first
    bot() of a new game, which C runs before the starting inventory exists. */
 let _transient = null;
+
+/* The live renderer polls this engine on every screen build, but C only runs
+   bot_via_windowport() inside bot()/timebot(): a poll that is not a committed
+   bot() must not consume the engine's "changed" bookkeeping (blstats[].chg/
+   .time, the prev/now toggle, gu.update_all), or a highlight whose change C
+   publishes at a later bot() would already be spent (and timed out) by then.
+   So a preview poll runs against a copy and puts the state back. */
+function engine_snapshot() {
+    return {
+        bl: gb.blstats.map((a) => a.map((e) => ({ ...e, a: { ...e.a }, rawval: { ...e.rawval } }))),
+        idx: gn.now_or_before_idx, ua: gu.update_all,
+        hl: { color: tty_hl.color.slice(), attr: tty_hl.attr.slice(), condbits: tty_hl.condbits,
+              colormasks: tty_hl.colormasks, hpbar_percent: tty_hl.hpbar_percent,
+              hpbar_crit: tty_hl.hpbar_crit },
+        old: [_oldrndencode, _oldgoldsym],
+        cache: [cache_avail.slice(), cache_reslt.slice(), cache_nomovemsg, cache_multi_reason],
+    };
+}
+function engine_restore(sv) {
+    for (let k = 0; k < sv.bl.length; k++)
+        for (let f = 0; f < sv.bl[k].length; f++) {
+            const e = gb.blstats[k][f];
+            for (const key of Object.keys(e)) if (!(key in sv.bl[k][f])) delete e[key];
+            Object.assign(e, sv.bl[k][f]);
+        }
+    gn.now_or_before_idx = sv.idx; gu.update_all = sv.ua;
+    Object.assign(tty_hl, sv.hl);
+    [_oldrndencode, _oldgoldsym] = sv.old;
+    for (let k = 0; k < 3; k++) { cache_avail[k] = sv.cache[0][k]; cache_reslt[k] = sv.cache[1][k]; }
+    cache_nomovemsg = sv.cache[2]; cache_multi_reason = sv.cache[3];
+}
+function tty_hl_copy() {
+    return { ...tty_hl, color: tty_hl.color.slice(), attr: tty_hl.attr.slice() };
+}
+
 export function status_hilite_poll(transient) {
     if (!_engine_ready) status_engine_init();
+    /* a committed bot() is the display flush (display.js botl_flush) or the very
+       first bot() of a new game; anything else is a preview */
+    const commit = !!(game._ttyCommit || transient);
+    const saved = commit ? null : engine_snapshot();
+    /* C ref: polyself.c set_uasmon() -> status_initialize(REASSESS_ONLY) sets
+       gu.update_all, so the next bot() resends every field (HP last, which
+       re-arms the hitpointbar's inverse attr on the title) */
+    if (game._engineUpdateAll) {
+        gu.update_all = true;
+        if (commit) game._engineUpdateAll = false;
+    }
     const flags = [game.botl, game.botlx, game.time_botl];
     const dflags = game.disp ? [game.disp.botl, game.disp.botlx, game.disp.time_botl] : null;
     status_update_hook.fn = tty_hl_update;
     _transient = transient || null;
+    let out = tty_hl;
     try {
-        bot_via_windowport();
+        /* C ref: timebot() -> stat_update_time() evaluates only BL_TIME: a field
+           that changed without disp.botl (e.g. u.uhs mid-meal) stays pending for
+           the next full bot() */
+        if (game._ttyCommit?.timeOnly) stat_update_time();
+        else bot_via_windowport();
+        if (saved) out = tty_hl_copy();
     } finally {
         _transient = null;
         [game.botl, game.botlx, game.time_botl] = flags;
         if (dflags) [game.disp.botl, game.disp.botlx, game.disp.time_botl] = dflags;
+        if (saved) engine_restore(saved);
     }
-    return tty_hl;
+    return out;
 }
 
 /* C ref: decl.c cg.zeroany */
@@ -1494,7 +1539,10 @@ export function eval_notify_windowport_field(fld, valsetlist, idx) {
      * gu.update_all instead.
      */
     if (fld === BL_GOLD) {
-        const goldsym = game.showsyms?.[COIN_CLASS + (game.SYM_OFF_O | 0)];
+        /* C: gs.showsyms[COIN_CLASS + SYM_OFF_O]; the port keeps the live symbol
+           in display.js (same expression as the status line's gold label), so
+           entering or leaving the Rogue level changes it */
+        const goldsym = symOverrideChar('S_coin') ?? (rogue_symset() ? '*' : '$');
         if ((game.context?.rndencode | 0) !== _oldrndencode || goldsym !== _oldgoldsym) {
             gu.update_all = true; /* chg = 2; */
             _oldrndencode = game.context?.rndencode | 0;

@@ -3,7 +3,7 @@
 
 import { has_innate } from './exper.js';
 import { mimic_obj_corpsenm } from './const.js';
-import { Blind_telepat, Detect_monsters_hero, Deaf_hero, See_invisible_hero } from './youprop.js';
+import { Blind_telepat, Detect_monsters_hero, Deaf_hero, Invis_hero, See_invisible_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 
 import { SYMBOL_BYTES } from './symset-data.js';
@@ -34,7 +34,7 @@ import {
     // used only by the inert display.c glyph-layer port at the end of this file
     DB_FLOOR, MAX_TYPE, MAXTCHARS, MAXEXPCHARS, BOLT_LIM,
     M_AP_NOTHING, M_AP_FURNITURE, M_AP_OBJECT, M_AP_MONSTER, M_AP_TYPMASK,
-    In_mines, Is_waterlevel,
+    In_mines, Is_waterlevel, is_pool, is_pool_or_lava as is_pool_or_lava_d, is_ice as is_ice_d,
     GPCOORDS_NONE, GPCOORDS_COMFULL, Unaware, MON_DETACH, MON_STILL_ARRIVING,
 } from './const.js';
 import {
@@ -632,7 +632,7 @@ function worm_tail_glyph() {
 // as the terrain that cmap index stands for.  cmap_to_glyph(S_altar) is
 // altar_to_glyph(AM_NEUTRAL), and no stairway lookup is made: the disguise
 // carries its own up/down/branch variant in the index.
-function furniture_mimic_glyph(sym) {
+export function furniture_mimic_glyph(sym) {
     const dec = useDECgraphics('S_upladder');
     if (sym <= S_trwall) return wall_cmap_glyph(sym);
     if (sym >= S_upstair && sym <= S_brdnladder) {
@@ -2174,12 +2174,7 @@ export function canspotself() {
     const u = game.u || {};
     if (Blind() || u.uswallow) return true;
     const p = u.uprops || {};
-    // EInvis: the worn-item extrinsic store (prop.h INVIS=40) as well as the
-    // flat aliases, so a worn ring/cloak of invisibility really hides the hero.
-    const invis = (p.HInvis || u.HInvis || p.EInvis || u.EInvis
-        || ((u.uprops_extrinsic || {})[40 /*INVIS*/] | 0))
-        && !(p.BInvis || u.BInvis || ((u.uprops_blocked || {})[40 /*INVIS*/] | 0)); // mummy wrapping
-    if (!(invis && !See_invisible_hero()) && !u.uundetected) return true;
+    if (!(Invis_hero() && !See_invisible_hero()) && !u.uundetected) return true;
     /* senseself(): Unblind_telepat is ETelepat (worn helm of telepathy / amulet
        of ESP live in the extrinsic store), Detect_monsters either half */
     const ex = u.uprops_extrinsic || {};
@@ -2203,7 +2198,9 @@ export function Hallucination_u() {
     const u = game.u || {};
     const t = (u.uprops?.Hallucination || 0) || (u.uprops?.HHallucination || 0)
         || (u.HHallucination || 0) || (u.uhallu ? 1 : 0);
-    const res = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0);
+    const res = u.formprops?.Halluc_resistance || u.HHalluc_resistance
+        || u.uprops?.HHalluc_resistance || u.uprops?.EHalluc_resistance
+        || u.uprops_extrinsic?.[24 /* HALLUC_RES */];
     return t > 0 && !res;
 }
 const SWALLOW_SYMS = [
@@ -2301,15 +2298,13 @@ function remember_bg(loc, bg) {
 
 // Value identity of loc.remembered_glyph, standing in for C's `lev->glyph`
 // integer comparison (lock.c doopen/doclose/pick_lock: `door->glyph != oldglyph`).
-// Glyph records come from several constructors (remember_bg adds female/
-// objotyp/hallucotyp/corpsenm defaults that older records lack), so a raw
-// JSON.stringify compare reports "changed" when only that shape differs, which
-// made a blind "You feel no door there." cost a turn C never charged
-// (seed n602 nz13 step 396).
+// Glyph records come from several constructors, with different defaults and
+// rendering colors. Color belongs to glyphinfo, not the glyph number: mapping
+// a dark room and then feeling it must not count as learning a new glyph.
 export function remembered_glyph_sig(loc) {
     const r = loc?.remembered_glyph;
     if (!r) return null;
-    return JSON.stringify([r.ch, r.color, !!r.decgfx, !!r.pile, !!r.bwEngr, !!r.female,
+    return JSON.stringify([r.ch, !!r.decgfx, !!r.pile, !!r.bwEngr, !!r.female,
         !!r.darkroom, r.objotyp || 0, r.hallucotyp || 0, r.corpsenm ?? null]);
 }
 
@@ -3198,6 +3193,20 @@ export function hero_glyph() {
     return { ch: mlet_sym({ mlet: '@', mcls: S_HUMAN_CLASS }, '@'), color: CLR_WHITE, attr: hero_female_attr() };
 }
 
+// The symbol currently DRAWN on the hero's square.  hero_glyph() re-rolls a
+// random species on every call while a hallucinating hero rides a visible
+// steed (display.h ridden_mon_to_glyph(.., rn2_on_display_rng)), which both
+// advances the display RNG and yields a char that is not the one on screen, so
+// callers that only need to know what is drawn read the map cell instead.
+export function hero_drawn_char() {
+    const u = game.u;
+    if (u?.usteed && mon_visible(u.usteed) && Hallucination_u()) {
+        const dc = game.level?.at(u.ux, u.uy)?.disp_ch;
+        if (dc != null && dc !== ' ') return dc;
+    }
+    return hero_glyph().ch;
+}
+
 // C ref: display.c `show_glyph(mon->mx, mon->my, mon_to_glyph(mon, rn2_on_display_rng))`
 // followed by display_self() — the post-cls() "this monster and me" frame that
 // muse.c you_aggravate() shows.  Plain (non-detected) glyph attribute: only the
@@ -3441,40 +3450,23 @@ function _botConditions() {
     // the --More-- frame keeps the bot() published at "You return to ... form!".
     // C ref: youprop.h Blind — a worn blindfold/towel counts, lenses do not, and
     // the Eyes of the Overworld (BBlinded) override everything.
-    const bf = game.ublindf;
-    const eyes_ow = !!bf && bf.oartifact === 26;
     // status_hold('blind', v): the Blind condition bot() last published, kept until the next bot()
     // (Blindf_on/Blindf_off: setworn() changes Blind well before toggle_blindness() sets disp.botl).
     const blindHeld = status_held('blind', null);
-    if (blindHeld === true
-        || (blindHeld !== false && !eyes_ow && ((u.blinded || 0) > 0
-                     || (bf && (bf.otyp === 233 || bf.otyp === 234))
-                     || (u.uprops?.BlindedFromForm | 0) > 0))) out.push('Blind');
+    if (blindHeld === true || (blindHeld !== false && Blind())) out.push('Blind');
     if ((u.uprops?.Confusion || 0) > 0) out.push('Conf');
     // C ref: youprop.h Deaf — HDeaf || EDeaf (mon.js Deaf()).
     // _deafPending: incr_itimeout(&HDeaf) happens INSIDE the drum's pline, so
     // the --More-- frame that carries "You beat a deafening row!" still shows
     // the pre-drum status; bot() clears the flag at the next real refresh.
-    if (((u.uprops?.HDeaf || 0) > 0 || u.Deaf) && !game._deafPending) out.push('Deaf');
-    // C ref: youprop.h Flying/Levitation — (H<prop> || E<prop>).  The EXTRINSIC
-    // half lives in u.uprops_extrinsic[prop] (invent.js worn_extrinsics_on/off,
-    // prop.h LEVITATION=48/FLYING=49), a store the flat u.uprops fields never
-    // mirror: without it a worn ring of levitation / levitation boots / amulet
-    // of flying showed no condition at all on the status line.  Read directly
-    // rather than via invent.js's worn_extrinsic() — display.js is imported BY
-    // invent.js, so a static import back would be a cycle.
-    const wornExtrinsic = (prop) => ((u.uprops_extrinsic || {})[prop] | 0);
+    if (Deaf_hero() && !game._deafPending) out.push('Deaf');
+    // C ref: youprop.h Flying/Levitation, including all source and blocker words.
     const flyHeld = status_held('fly', null);
-    if (flyHeld === true
-        || (flyHeld !== false && (u.uprops?.Flying || wornExtrinsic(49 /*FLYING*/)
-            || (u.usteed && (mflags1_of(u.usteed.data) & M1_FLY))) && !u.uprops?.BFlying)) out.push('Fly');
+    if (flyHeld === true || (flyHeld !== false && Flying_hero())) out.push('Fly');
     // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.
     // potion.js set_hallucination() writes the timer to four aliases at once.
-    const halluTime = (u.uprops?.Hallucination || 0) || (u.uprops?.HHallucination || 0)
-        || (u.HHallucination || 0) || (u.uhallu ? 1 : 0);
-    const halluRes = (u.uprops?.HHalluc_resistance || 0) || (u.uprops?.EHalluc_resistance || 0);
-    if (halluTime > 0 && !halluRes) out.push('Hallu');
-    if ((u.uprops?.Levitation || wornExtrinsic(48 /*LEVITATION*/)) && !u.uprops?.BLevitation) out.push('Lev');
+    if (Hallucination_u()) out.push('Hallu');
+    if (Levitation_hero()) out.push('Lev');
     // steed.c mount_steed()/dismount_steed() flip u.usteed ahead of the "You aren't
     // stealthy anymore." / "You seem less noisy now." plines and set disp.botl
     // only afterwards, so those frames keep the Ride state bot() last published.
@@ -4568,6 +4560,27 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
 // (tty_display_nhwindow overwrites only the window's own cells).
 // changedOnly models flush_screen() while a menu is up: publish gnew cells
 // without clearing the overlay or repainting status.
+// C ref: display.c flush_screen() walks the glyph buffer row by row and tty
+// print_glyph()s every gnew cell, so the tty cursor is left one column past the
+// LAST (highest row, then highest column) pending cell.  Returns that terminal
+// [col,row], or null when no map cell is pending.  Call it BEFORE the flush.
+export function pending_glyph_cursor() {
+    _syncClipping();
+    let last = null;
+    for (let y = 0; y < ROWNO; y++) {
+        const sy = _mapRowOnScreen(y);
+        if (sy < 0) continue;
+        for (let x = 1; x < COLNO; x++) {
+            if (clipping && (x <= clipx || x >= clipxmax)) continue;
+            const loc = _displayed_loc(x, y);
+            if (!loc?._gchg) continue;
+            if (decgfxMapChar(loc.disp_ch, loc.disp_decgfx) === NUL_CELL) continue;
+            last = [x - clipx, sy];
+        }
+    }
+    return last;
+}
+
 export function render_map_to_grid(changedOnly = false) {
     const display = game?.nhDisplay;
     if (!display?.setCell || !display.grid) return;
@@ -5274,14 +5287,17 @@ export function yn_prompt_history(prompt, answer) {
     game._toplines = prompt + answer;
 }
 
-// C ref: hacklib.c key2txt() — printable name of a keystroke.
+// C ref: cmd.c key2txt() and hacklib.c visctrl().
 export function key2txt(c) {
     if (c === 27) return '<esc>';
     if (c === 32) return '<space>';
-    if (c === 10 || c === 13) return '<enter>';
+    if (c === 10) return '<enter>';
     if (c === 127) return '<del>';
-    if (c < 32) return `^${String.fromCharCode(c + 64)}`;
-    return String.fromCharCode(c);
+    const prefix = (c & 0x80) ? 'M-' : '';
+    c &= 0x7f;
+    if (c < 32) return `${prefix}^${String.fromCharCode(c | 0x40)}`;
+    if (c === 127) return `${prefix}^?`;
+    return prefix + String.fromCharCode(c);
 }
 
 // ── pline ──
@@ -5773,7 +5789,7 @@ export function timebot_sync() {
     /* timebot() flushes the tty status window too */
     if (game.flags?.time && game.u && !game._staleFrame && !game._botlFrozen
         && game.u.uhp !== -1 && !game._statusClsBlank) {
-        game._ttyCommit = { force: false };
+        game._ttyCommit = { force: false, timeOnly: true };
         try {
             game._botlLast = _renderStatus();
         } finally {
@@ -5795,7 +5811,7 @@ export async function Norep(msg) {
 // prefixes it with the direction ("(3south,4east): ").  Callers keep their
 // own pline()/update_topl() call right after it.
 export function set_msg_mon(mtmp) {
-    if (mtmp && mtmp !== game.youmonst)
+    if (mtmp && mtmp !== game.u)
         (game.a11y || (game.a11y = {})).msg_loc = { x: mtmp.mx, y: mtmp.my };
 }
 
@@ -6689,7 +6705,7 @@ function _sensemon(mon) {
     const u = game.u || {}, p = u.uprops || {};
     if (u.uswallow && mon !== u.ustuck) return false;
     if (u.uinwater
-        && !(mdistu_d(mon) <= 2 && IS_POOL(game.level?.at(mon.mx, mon.my)?.typ)))
+        && !(mdistu_d(mon) <= 2 && is_pool(mon.mx, mon.my)))
         return false;
     return Detect_monsters_hero()
         || tp_sensemon(mon) || match_warn_of_mon(mon);
@@ -6718,12 +6734,6 @@ function t_at_d(x, y) {
     for (const t of traps) if (t && t.tx === x && t.ty === y) return t;
     return null;
 }
-// C ref: rm.h is_pool_or_lava(x,y) / is_ice(x,y).
-function is_pool_or_lava_d(x, y) {
-    const typ = game.level?.at(x, y)?.typ;
-    return IS_POOL(typ) || IS_LAVA(typ);
-}
-function is_ice_d(x, y) { return game.level?.at(x, y)?.typ === ICE; }
 // C ref: mkroom.c:912 cmap_to_type(sym) — display symbol back to topology type,
 // used only for a mimic posing as furniture.  STONE is the catchall.
 const _CMAP_TO_TYPE = {

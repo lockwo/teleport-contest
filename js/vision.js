@@ -16,6 +16,7 @@ import { infravision, monster_by_pmidx } from './makemon.js';
 import { races } from './roles.js';
 import { has_innate } from './exper.js';
 import { M_AP_TYPE, M_AP_FURNITURE, M_AP_OBJECT, MON_DETACH } from './const.js';
+import { Blind_hero, See_invisible_hero } from './youprop.js';
 
 const COULD_SEE = 0x1;
 const IN_SIGHT = 0x2;
@@ -169,7 +170,7 @@ function _blocks(level, x, y) {
             if (!m || m.mx !== x || m.my !== y) continue;
             /* m_at() grid: not a steed, nor off-grid/dead monster still in fmon */
             if (m.mridden || m.mgridoff || ((m.mstate | 0) & MON_DETACH)) continue;
-            if (m.minvis && !game.u?.uprops?.See_invisible) continue;
+            if (m.minvis && !See_invisible_hero()) continue;
             if (is_lightblocker_mappear(m)) return true;
         }
     }
@@ -918,32 +919,8 @@ export function vision_recalc(control = 0) {
     if (game.flags?.spot_monsters) hooks.noticeQueue?.(true);
 }
 
-// C ref: youprop.h Blind ((HBlinded || EBlinded) && !BBlinded).  The JS hero
-// has no blindness-blocking property, so blindness is simply the temporary
-// HBlinded timer (set by e.g. use_cream_pie; game.u.blinded) or a worn
-// blindfold.  The worn-eyewear slot lives on `game` (game.ublindf), alongside
-// the other worn-slot pointers (game.uarm, game.uarmg, ...).
-export function Blind() {
-    const u = game.u;
-    // C ref: youprop.h Blinded — HBlinded carries a FROMFORM bit that
-    // polyself.c set_uasmon() sets for an eyeless polymorph form; js/polyself.js
-    // keeps that source in its own field because u.blinded is a countdown.
-    // C ref: youprop.h:95 "worn blindfold (or towel; lenses don't set
-    // [BLINDED].extrinsic)", and the Eyes of the Overworld (artifact lenses,
-    // oartifact 26) set BBlinded, which overrides every other source.
-    const bf = game.ublindf;
-    // C ref: youprop.h Blindfolded is EBlinded (u.uprops[BLINDED].extrinsic),
-    // not "ublindf is set": nhlua.c nhl_gamestate() restores `struct u` over the
-    // setworn() that re-wore a towel/blindfold, leaving ublindf set with the
-    // extrinsic bit gone, so the hero is not Blind after leaving the tutorial.
-    const blindfolded = !!bf && (bf.otyp === 233 /* BLINDFOLD */
-                                 || bf.otyp === 234 /* TOWEL */)
-        && ((u?.uprops_extrinsic?.[15 /* BLINDED */] | 0) !== 0);
-    const eyes_of_overworld = !!bf && bf.oartifact === 26;
-    return !!u && !eyes_of_overworld
-        && ((u.blinded || 0) > 0 || blindfolded || !!u.permablind
-            || (u.uprops?.BlindedFromForm | 0) > 0);
-}
+// C ref: youprop.h Blind, including intrinsic, worn and blocked sources.
+export function Blind() { return Blind_hero(); }
 
 // C ref: youprop.h Infravision and polyself.c set_uasmon().  The form source
 // replaces racial infravision while polymorphed, without clearing other sources.

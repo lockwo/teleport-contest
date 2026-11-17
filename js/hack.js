@@ -24,28 +24,28 @@ import { t_at as t_at_hk, trapname as trapname_hk, crawl_destination, Levitation
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR } from './const.js';
+import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR, JUMPING, INTRINSIC } from './const.js';
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
-import { cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
+import { pending_glyph_cursor, cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, furniture_mimic_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta } from './pager.js';
 import { is_drawbridge_wall } from './dbridge.js';
-import { fruit_from_name } from './objnam.js';
-import { def_monsyms, defsyms, S_WORM_TAIL, S_air, S_cloud, S_water } from './symbols.js';
+import { fruit_from_name, the, The } from './objnam.js';
+import { def_monsyms, defsyms, S_WORM_TAIL, S_GHOST, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
-         inventoryArray, is_pick, ansimpleoname,
+         inventoryArray, is_pick, ansimpleoname, worn_extrinsic,
          floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
-import { Invis, m_everyturn_effect, can_ooze_hero, passes_bars } from './monmove.js';
+import { Invis, m_everyturn_effect, can_ooze_hero, passes_bars, bad_rock as bad_rock_mon } from './monmove.js';
 import { Unblind_telepat } from './worn.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { is_safemon, canspotmon } from './uhitm.js';
 import { ARTICLE_NONE, a_monnam, rndmonnam as rndmonnam_dn } from './do_name.js';
-import { dist2, distmin } from './hacklib.js';
+import { dist2, distmin, upstart } from './hacklib.js';
 import { worm_cross } from './worm.js';
 import { monster_by_pmidx, pmname_of_pmidx } from './makemon.js';
-import { amorphous_flag, throws_rocks_flag } from './monflags_data.js';
+import { amorphous_flag, is_whirly, M1_SLITHY, throws_rocks_flag } from './monflags_data.js';
 import { roles, races } from './role.js';
 import { DATABASE_ENTRIES } from './data_base_data.js';
 import { NO_COLOR, ATR_INVERSE, DEC_TO_UNICODE, CLR_WHITE, CLR_BRIGHT_GREEN } from './terminal.js';
@@ -54,7 +54,7 @@ import { COLNO, ROWNO, STONE, ROOM, CORR, DOOR, ICE, STAIRS, LADDER, FOUNTAIN,
          POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
          D_CLOSED, D_LOCKED, D_ISOPEN, D_BROKEN, D_NODOOR, IRONBARS,
          TREE, SDOOR, SCORR, THRONE, SINK, GRAVE, ALTAR,
-         DRAWBRIDGE_UP, DRAWBRIDGE_DOWN, DBWALL,
+         DRAWBRIDGE_UP, DRAWBRIDGE_DOWN, DBWALL, DB_UNDER, DB_MOAT, DB_LAVA, DB_ICE,
          AM_MASK, AM_SANCTUM, Amask2align, A_LAWFUL, A_NEUTRAL, A_CHAOTIC, A_NONE,
          IS_WALL, IS_DOOR, IS_STWALL, IS_OBSTRUCTED, IS_FURNITURE, IS_AIR, IS_POOL, IS_LAVA,
          IS_WATERWALL, In_sokoban, Is_rogue_level, CLOUD, AIR, Is_airlevel, Is_astralevel,
@@ -77,7 +77,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts, wall_angle } from './display.js';
+import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, hero_drawn_char, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts, wall_angle } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -730,32 +730,21 @@ function hero_tunnels_unpicked() {
 }
 
 function bad_rock(x, y) {
-    const loc = game.level?.at(x, y);
-    const typ = loc ? loc.typ : STONE;
-    if (In_sokoban(game.u?.uz) && boulder_at(x, y)) return true;
-    if (!IS_OBSTRUCTED(typ)) return false;
-    // C ref: hack.c:937 `(IS_OBSTRUCTED && (!tunnels(mdat) || needspick(mdat)
-    // || !may_dig(x, y)) && !(passes_walls(mdat) && may_passwall(x, y)))` —
-    // passes_walls(mdat) is the hero's FORM (M1_WALLWALK), not the Passes_walls
-    // property, so a phasing hero in his own shape is still blocked here.
-    // may_dig() is false for undiggable (W_NONDIGGABLE) walls.
-    /* may_dig(): only STWALL/TREE can be undiggable */
-    if (hero_tunnels_unpicked() && !((IS_STWALL(typ) || typ === TREE) && loc && (loc.wall_info & 0x08 /* W_NONDIGGABLE */))) return false;
-    const f1 = mflags1_of(youmonst_data());
-    const may_passwall = !(IS_STWALL(typ) && ((loc?.wall_info | 0) & 0x10 /* W_NONPASSWALL */));
-    return !((f1 & 0x8 /* M1_WALLWALK */) !== 0 && may_passwall);
+    return bad_rock_mon(youmonst_data(), x, y);
 }
 
-// C ref: hack.c:952 cant_squeeze_thru(&youmonst) — 0 can squeeze, 1 too big,
-// 2 possessions won't fit, 3 Sokoban.  is_whirly/noncorporeal/slithy/can_fog
-// only matter for a bigmonst polyform (they let a large gaseous form through);
-// amorphous covers the ones this port can actually produce.
-function cant_squeeze_thru_hero() {
+// C ref: hack.c cant_squeeze_thru(&youmonst) — 0 fits, 1 too big,
+// 2 possessions won't fit, 3 Sokoban. Vampire forms eligible for can_fog()
+// are smaller than MZ_LARGE, so that exemption cannot affect the hero.
+export function cant_squeeze_thru_hero() {
     if (Passes_walls()) return 0;
     const ptr = youmonst_data();
-    if (ptr && (ptr.msize ?? 0) >= MZ_LARGE && !amorphous_flag(ptr)) return 1;
+    if (ptr && (ptr.msize ?? 0) >= MZ_LARGE
+        && !(amorphous_flag(ptr) || is_whirly(ptr) || ptr.mcls === S_GHOST
+             || (mflags1_of(ptr) & M1_SLITHY) !== 0))
+        return 1;
     if (carried_weight() > WT_TOOMUCH_DIAGONAL) return 2;
-    if (In_sokoban(game.u?.uz)) return 3;
+    if (game.level?.flags?.sokoban_rules) return 3;
     return 0;
 }
 
@@ -1081,7 +1070,7 @@ export async function travel_adjacent_step(tx, ty) {
     // stops the hero without a swing.  Without this gate we took the fast path,
     // cleared run to 0 and attacked instead.
     if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1 && crawl_destination(tx, ty)) {
-        u.dx = dx; u.dy = dy; u.dz = 0;
+        u.dx = dx; u.dy = dy;
         // C ref: hack.c findtravelpath():1276 — when the fast path's test_move()
         // refuses the step C does NOT abandon the command: it sets
         // context.run = 8 and falls through to the same call's BFS, so an
@@ -1147,7 +1136,6 @@ async function travel_walk(fastPathFailed = false) {
         game.multi = 0;
     } else if (!game.multi) game.multi = Math.max(COLNO, ROWNO);
     u.last_str_turn = 0;
-    u.dz = 0;
     c.mv = true;
     game._travel_unsure = false;
 
@@ -1763,6 +1751,7 @@ function unseen_creature_desc(x, y, terrainMode) {
 // (glyph_is_unexplored) regardless of what's actually there.  Our model:
 // loc.disp_ch unset == GLYPH_UNEXPLORED; "never revealed" == seenv==0 with no
 // remembered_glyph (such cells are only ever painted as blank S_stone).
+let _td_full = false;
 function terrain_description(x, y, full = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return 'solid stone';
@@ -1776,7 +1765,8 @@ function terrain_description(x, y, full = false) {
             return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
         const saved = loc.seenv;
         loc.seenv = 0xff;
-        try { return terrain_description(x, y); } finally { loc.seenv = saved; }
+        _td_full = true;
+        try { return terrain_description(x, y); } finally { _td_full = false; loc.seenv = saved; }
     }
     if (!loc.seenv && loc.remembered_glyph == null) return 'unexplored area';
     // A square drawn BLANK is S_stone (S_darkroom's symbol is '.', not ' ', so
@@ -1820,7 +1810,33 @@ function terrain_description(x, y, full = false) {
     // through while out of sight (typ now CORR/DOOR) still reads "wall".
     if (loc.remembered_glyph?.wall && loc.remembered_glyph.ch === loc.disp_ch
         && !is_cmap_engraving_at(x, y)) return 'wall';
-    const typ = loc.typ;
+    // C ref: display.c back_to_glyph() DRAWBRIDGE_UP — the span of a raised
+    // drawbridge is DISPLAYED as the S_pool/S_lava/S_ice/S_room beneath it, so
+    // lookat() describes that terrain, not "raised drawbridge".
+    const typ = loc.typ !== DRAWBRIDGE_UP ? loc.typ
+        : (loc.drawbridgemask & DB_UNDER) === DB_MOAT ? MOAT
+        : (loc.drawbridgemask & DB_UNDER) === DB_LAVA ? LAVAPOOL
+        : (loc.drawbridgemask & DB_UNDER) === DB_ICE ? ICE : ROOM;
+    // C ref: pager.c lookat() dispatches on glyph_at(), the REMEMBERED glyph, and the
+    // bridge squares change state (raise/lower/destroy) while the hero cannot see
+    // them (blind, far away): what is described is what was last drawn there.
+    // [back_to_glyph(): DBWALL S_?cdbridge '#', open portcullis S_ndoor, span
+    // S_?odbridge '.' ('~' DEC), moat S_pool]
+    if (!_td_full && loc.disp_ch != null) {
+        const memdot = loc.disp_ch === '.' || (loc.disp_ch === '~' && loc.disp_decgfx);
+        if (loc.typ === DOOR && loc.disp_ch === '#')
+            return 'raised drawbridge';
+        if (loc.typ === DBWALL && memdot)
+            return 'open drawbridge portcullis';
+        /* a span still remembered as lowered, now moat again (raised or destroyed) */
+        if ((typ === MOAT || typ === LAVAPOOL) && memdot
+            && (loc.typ === DRAWBRIDGE_UP || loc.db_destroyed_span))
+            return 'lowered drawbridge';
+        /* S_pool glyph over a span that is now DRAWBRIDGE_DOWN: waterbody_name()
+           finds no liquid terrain and answers its default "water" */
+        if (loc.typ === DRAWBRIDGE_DOWN && (loc.disp_ch === '}' || loc.disp_ch === '`'))
+            return waterbody_name(x, y);
+    }
     // The same holds for a remembered iron-bars glyph whose bars were dissolved
     // out of sight (dissolve_bars(): typ now ROOM/CORR).
     if (loc.remembered_glyph?.bars && loc.remembered_glyph.ch === loc.disp_ch
@@ -1957,7 +1973,6 @@ function terrain_description(x, y, full = false) {
     if (typ === SDOOR) return 'wall';
     // pager.c:788 groups SCORR with STONE in the same "stone" arm.
     if (typ === SCORR) return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
-    if (typ === DRAWBRIDGE_UP) return 'raised drawbridge';
     if (typ === DRAWBRIDGE_DOWN) return 'lowered drawbridge';
     return 'floor of a room';
 }
@@ -2009,6 +2024,14 @@ function shows_mimic_object(mtmp, x, y) {
     if (!mtmp || mtmp.mappearance == null) return false;
     if (M_AP_TYPE(mtmp) !== M_AP_OBJECT) return false;
     return mimic_object_glyph(mtmp).glyph?.ch === game.level?.at(x, y)?.disp_ch;
+}
+
+// C ref: display.c display_monster() M_AP_FURNITURE arm — a mimic posing as
+// furniture draws cmap_to_glyph(mappearance), so glyph_at() is that cmap.
+function shows_mimic_furniture(mtmp, x, y) {
+    if (!mtmp || mtmp.mappearance == null) return false;
+    if (M_AP_TYPE(mtmp) !== M_AP_FURNITURE) return false;
+    return furniture_mimic_glyph(mtmp.mappearance | 0).ch === game.level?.at(x, y)?.disp_ch;
 }
 
 function look_at_object_here(x, y, describing = false) {
@@ -2185,13 +2208,13 @@ function check_jump(traj, x, y) {
 // the failure message (null when the jump is valid) so callers choose whether
 // to emit it.  Every failure message is a real pline()/You()/There() call
 // (apply.c:1900,1904,1908,1912,1951) routed through update_topl's
-// merge-or-page logic.  HJumping & ~INTRINSIC (timed jumping) is not modelled;
-// EJumping is the worn jumping boots (the knight's own jumping is intrinsic,
-// hence restricted to the knight's move).
+// merge-or-page logic. Only permanent intrinsic jumping is restricted to a
+// knight's move. A timeout or an extrinsic permits the full jump range.
 function jump_pos_problem(x, y, magic) {
     const u = game.u;
-    const EJumping = game.uarmf?.otyp === 168; /* JUMPING_BOOTS, js/mkobj.js */
-    if (!magic && !EJumping && distu(x, y) !== 5) return 'Illegal move!';
+    const EJumping = worn_extrinsic(JUMPING);
+    if (!magic && !((u?.uprops?.HJumping | 0) & ~INTRINSIC)
+        && !EJumping && distu(x, y) !== 5) return 'Illegal move!';
     if (distu(x, y) > (magic ? 6 + magic * 3 : 9)) return 'Too far!';
     if (!isok(x, y)) return 'You cannot jump there!';
     if (!cansee(x, y)) return 'You cannot see where to land!';
@@ -2510,10 +2533,22 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     // background of lastseentyp[][] (or the seen trap), not as the object.
     const strip = !terrainFull ? gloc_terrain_strip(x, y, loc) : null;
     const shownTyp = strip === 'background' ? (game.lastseentyp?.[x]?.[y] ?? loc.typ) : loc.typ;
+    // A bridge square that changed state out of the hero's sight keeps its
+    // remembered glyph, so the displayed cmap (not levl typ) decides: a portcullis
+    // still drawn '#' is a drawbridge cmap, a span still drawn as moat is not.
+    let dbShown = null;
+    if (!terrainFull && !strip && loc.disp_ch != null) {
+        const memdot = loc.disp_ch === '.' || (loc.disp_ch === '~' && loc.disp_decgfx);
+        if (loc.typ === DOOR && loc.disp_ch === '#') dbShown = true;
+        else if (loc.typ === DRAWBRIDGE_DOWN) dbShown = !(loc.disp_ch === '}' || loc.disp_ch === '`');
+        else if (((loc.typ === MOAT || loc.typ === LAVAPOOL) ? !!loc.db_destroyed_span : loc.typ === DRAWBRIDGE_UP) && memdot)
+            dbShown = true;
+    }
     const isDoorSym = explored && !stoneGlyph && strip !== 'trap'
-                      && ((shownTyp === DOOR && (strip || gloc_remembers_door(loc, x, y)))
-                          || shownTyp === 12 /*DBWALL*/
-                          || shownTyp === 34 /*DRAWBRIDGE_DOWN*/);
+                      && (dbShown != null ? dbShown
+                          : ((shownTyp === DOOR && (strip || gloc_remembers_door(loc, x, y)))
+                             || shownTyp === 12 /*DBWALL*/
+                             || shownTyp === 34 /*DRAWBRIDGE_DOWN*/));
     const terrainmode = game.iflags?.terrainmode || 0;
     const showMonsters = !terrainmode || (terrainmode & 0x08 /* TER_MON */) !== 0;
     const mtmp = showMonsters ? m_at(x, y) : null;
@@ -2587,7 +2622,10 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         if (loc.disp_monster) return true;
         // Warning and remembered invisible glyphs are interesting, but
         // neither is a monster target for GLOC_MONS.
-        if (showMonsters && (loc.invisMon || loc.disp_warning)) return true;
+        // detect.c do_mapping()'s browse_map(TER_DETECT|...) leaves the remembered
+        // 'I' and warning glyphs on the screen; reveal_terrain() replaces them.
+        if ((showMonsters || (terrainmode & 0x20 /* TER_DETECT */))
+            && (loc.invisMon || loc.disp_warning)) return true;
         if (!explored || stoneGlyph) return false;
         if (shows_mimic_object(mtmp, x, y)) return true;
         const rememberedObj = loc.remembered_glyph;
@@ -2753,7 +2791,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         && (!tm0 || (tm0 & 0x08 /* TER_MON */)) && canspotself()) {
         desc = self_lookat() + self_seen_suffix();
     } else if (u && x === u.ux && y === u.uy && tm0 && canspotself()
-               && game.level?.at(x, y)?.disp_ch === hero_glyph().ch) {
+               && game.level?.at(x, y)?.disp_ch === hero_drawn_char()) {
         // C ref: pager.c do_screen_description(): with a terrainmode that lacks
         // TER_MON the displayed hero glyph ('@') matches no monster class, and no
         // object/cmap symbol either, so found == 0 and getpos.c auto_describe()
@@ -2962,11 +3000,21 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         msgGiven = true;
         if (!showGoal) {
             // No goal message will be drawn; render the verbose line now so the
-            // first readchar's capture shows it (cursor parked on the hero).
+            // first readchar's capture shows it (cursor parked on the hero, or one
+            // past the last glyph the opening flush_screen(0) had to redraw).
+            const pend = pending_glyph_cursor();
             await flush_screen(1);
             const disp = game.nhDisplay;
-            if (disp?.setCursor) disp.setCursor(cx - 1, cy + 1);
+            if (disp?.setCursor) disp.setCursor(pend ? pend[0] : cx - 1, pend ? pend[1] : cy + 1);
         }
+    } else if (!showGoal && gp_iflags().terrainmode) {
+        // C ref: getpos.c getpos, curs()/flush_screen(0) after handle_tip().
+        // browse_map leaves its detection message pending.  Publish it here
+        // when neither the tip nor a verbose prompt will render a frame.
+        const pend = pending_glyph_cursor();
+        await flush_screen(0);
+        const disp = game.nhDisplay;
+        if (pend && disp?.setCursor) disp.setCursor(pend[0], pend[1]);
     }
 
     // C: auto_describe(cx,cy) — see getpos_describe().
@@ -3398,10 +3446,13 @@ async function terrain_menu() {
     return which;
 }
 
-// C ref: cmd.c doterrain().  recalc_mapseen() has no display effect for our
-// model, so it is skipped; the normal-play menu selects a TER_* subset and
-// hands off to reveal_terrain().  Returns ECMD_OK (no game time).
+// C ref: cmd.c doterrain().  recalc_mapseen() first ("this used to be done each
+// time vision was recalculated, so would always be up to date; now we do it on
+// demand"), which refreshes the #overview flags (bigroom, features) while the hero
+// can still see; the normal-play menu selects a TER_* subset and hands off to
+// reveal_terrain().  Returns ECMD_OK (no game time).
 export async function doterrain() {
+    { const { recalc_mapseen } = await import('./dungeon.js'); await recalc_mapseen(); }
     const which = await terrain_menu();
     if (which < 0) return 0; // ESC-cancelled: no display change
     // C ref: cmd.c doterrain()'s switch — cases 5/6 leave reveal_terrain()
@@ -3883,7 +3934,7 @@ function look_pick_description_raw(x, y) {
     // finds the trap while lookat() still appends self_lookat() (u_at && canspotself).
     const heroDrawn = (() => {
         const l = game.level?.at(x, y);
-        return !l || l.disp_ch == null || l.disp_ch === ' ' || l.disp_ch === hero_glyph().ch;
+        return !l || l.disp_ch == null || l.disp_ch === ' ' || l.disp_ch === hero_drawn_char();
     })();
     if (u && x === u.ux && y === u.uy && canspotself() && heroDrawn) {
         // '@' matches S_HUMAN ("human or elf"); need_to_look => lookat() appends
@@ -3899,7 +3950,13 @@ function look_pick_description_raw(x, y) {
         // C ref: showrace draws a non-polymorphed hero with its race's monster letter
         // ('h' dwarf, 'G' gnome, 'o' orc), which keys the class lookup the same way
         // (and `sym == def_monsyms[S_HUMAN].sym` for "or you" no longer holds).
-        const heroSym = u.Upolyd ? u.data?.mlet : (game.flags?.showrace ? hero_glyph().ch : '@');
+        // A visible steed's glyph is drawn on the hero's square (display.h
+        // maybe_display_usteed): its class letter, or while hallucinating the
+        // random species letter already on screen (hero_drawn_char() reads it
+        // back without re-rolling).
+        const steedShown = !!(u.usteed && mon_visible(u.usteed));
+        const heroSym = steedShown ? hero_drawn_char()
+            : u.Upolyd ? u.data?.mlet : (game.flags?.showrace ? hero_glyph().ch : '@');
         if (heroSym && heroSym !== '@') {
             const pcls = def_monsyms.filter((d) => d.sym === heroSym && d.explain);
             if (pcls.length)
@@ -3907,17 +3964,6 @@ function look_pick_description_raw(x, y) {
                     text: `${heroSym}        ${pcls.map((d) => an(d.explain)).join(' or ')} (${self})`,
                     firstmatch: self,
                     found: pcls.length,
-                };
-        }
-        // C ref: display.c display_self() draws a visible steed's (ridden) glyph at the
-        // hero's location (maybe_display_usteed), so the class symbol is the steed's.
-        if (!u.Upolyd && u.usteed && mon_visible(u.usteed) && u.usteed.data?.mlet) {
-            const scls = def_monsyms.find((d) => d.sym === u.usteed.data.mlet && d.explain);
-            if (scls)
-                return {
-                    text: `${u.usteed.data.mlet}        ${an(scls.explain)} (${self})`,
-                    firstmatch: self,
-                    found: 1,
                 };
         }
         const showsYou = !(game.urace?.mnum === 0 /* PM_HUMAN */
@@ -3982,7 +4028,7 @@ function look_pick_description_raw(x, y) {
                      firstmatch: specific, found: 1 };
         }
     }
-    if (shows_mimic_object(mtmp, x, y)) {
+    if (shows_mimic_object(mtmp, x, y) || shows_mimic_furniture(mtmp, x, y)) {
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x, y }, true, '', text, firstmatch, {});
         return { text: text.s, firstmatch: firstmatch.s, found };
@@ -4105,6 +4151,18 @@ function look_pick_description_raw(x, y) {
         };
     }
 
+    // C ref: do_screen_description() — a square drawn BLANK is S_stone, whose
+    // symbol ' ' is shared by more than four cmap entries (every unlit/undrawn
+    // cmap row), so found > 4 and the line reads "can be many things".
+    if (look_prefix_char(loc) === ' ') {
+        const look = terrain_description(x, y);
+        return {
+            text: `${prefix}can be many things (${look})`,
+            firstmatch: look,
+            found: 1,
+        };
+    }
+
     // C ref: pager.c do_screen_description() is_swallow_sym(sym) branch — sym
     // is the CURRENTLY DISPLAYED symbol (glyph_at), not the terrain type: a
     // secret door drawn as a wall, or a wall that has since become a doorway
@@ -4167,8 +4225,18 @@ function look_pick_description_raw(x, y) {
     // floor symbol '~' ('.' in ASCII) is shared by S_ndoor/S_room/S_darkroom/
     // S_ice; the corridor '#' is shared by enough entries to read "can be many
     // things" (found>4).  lookat() then appends the actual terrain noun.
+    // A lowered drawbridge span (S_vodbridge/S_hodbridge) and the span of a raised
+    // bridge over ice/floor are drawn with the same DECgraphics code (\xfe) as
+    // floor, doorway and ice, so they share the list too (pager.c add_cmap_descr()
+    // drops the drawbridge entries themselves once found >= 3).
     if (typ === ROOM || typ === ICE
-        || (typ === DOOR && !(loc.doormask & (D_CLOSED | D_LOCKED | D_ISOPEN)))) {
+        || (loc.disp_decgfx && (typ === DRAWBRIDGE_DOWN || typ === DRAWBRIDGE_UP))
+        /* a raised portcullis still remembered as the open doorway, a raised or
+           destroyed span still remembered as the lowered bridge */
+        || ((typ === DBWALL || ((typ === MOAT || typ === LAVAPOOL) && loc.db_destroyed_span))
+            && loc.disp_decgfx && loc.disp_ch === '~')
+        /* a portcullis still remembered as the raised bridge ('#') shares '#' instead */
+        || (typ === DOOR && loc.disp_ch !== '#' && !(loc.doormask & (D_CLOSED | D_LOCKED | D_ISOPEN)))) {
         // C ref: pager.c do_screen_description() builds the symbol-sharing list from
         // the live symbol table; the Rogue level draws doorways '+', so the shared
         // list is the one the full port computes (pager.js showsym()).
@@ -4192,18 +4260,6 @@ function look_pick_description_raw(x, y) {
     }
     if (typ === CORR) {
         // '#' matches many cmap entries (>4) -> "can be many things".
-        const look = terrain_description(x, y);
-        return {
-            text: `${prefix}can be many things (${look})`,
-            firstmatch: look,
-            found: 1,
-        };
-    }
-
-    // C ref: do_screen_description() — a square drawn BLANK is S_stone, whose
-    // symbol ' ' is shared by more than four cmap entries (every unlit/undrawn
-    // cmap row), so found > 4 and the line reads "can be many things".
-    if (look_prefix_char(loc) === ' ') {
         const look = terrain_description(x, y);
         return {
             text: `${prefix}can be many things (${look})`,
@@ -4620,7 +4676,7 @@ async function do_look_traps(nearby) {
             const tg = trap_glyph(t);
             // The displayed symbol; the hero (not stored in the map memory) is
             // drawn as '@' or the polyform's class letter.
-            const cover = (x === u.ux && y === u.uy && canspotself()) ? hero_glyph().ch
+            const cover = (x === u.ux && y === u.uy && canspotself()) ? hero_drawn_char()
                 : (loc && loc.disp_ch)
                     ? (loc.disp_decgfx ? (DEC_TO_UNICODE[loc.disp_ch] || loc.disp_ch) : loc.disp_ch)
                     : ' ';
@@ -4692,7 +4748,7 @@ async function do_look_engrs(nearby) {
             // memory's display char is the top glyph.
             let coverChar, coverDropped = false;
             if (x === u.ux && y === u.uy && canspotself()) {
-                coverChar = hero_glyph().ch; // the hero's displayed symbol ('@', or the polyform's class letter)
+                coverChar = hero_drawn_char(); // the hero's displayed symbol ('@', or the polyform's class letter)
             } else {
                 // The encglyph() escape is decoded by tty's text window into the
                 // raw DECgraphics byte (high bit set), which the terminal drops:
@@ -4723,11 +4779,6 @@ async function do_look_engrs(nearby) {
         await display_dbase_window(await wrap_text_lines(lines), /*forceFull=*/true);
     else
         await pline(`No engravings seen or remembered${nearby ? ' nearby' : ''}.`);
-}
-
-// C ref: hacklib.c upstart() — capitalize the first letter of a string.
-function upstart(s) {
-    return s ? s[0].toUpperCase() + s.slice(1) : s;
 }
 
 // C ref: pager.c look_all() — list monsters (do_mons) or objects (!do_mons) in
@@ -5074,10 +5125,6 @@ export { getpos_tip, getpos, getpos_render, jump_landing, is_valid_jump_pos, get
 
 // ── shared local helpers ────────────────────────────────────────────────────
 
-// C ref: objnam.c the(str) / The(str).  js/eat.js:378 and js/do_name.js:460 each
-// carry the same private one-liner; the real fix is one shared export.
-function the_(s) { return /^[A-Z]/.test(s) ? s : `the ${s}`; }
-function The_(s) { return upstart(the_(s)); }
 // C ref: do_name.h YMonnam(mtmp) — upstart(y_monnam(mtmp)).
 function YMonnam(mtmp) { return upstart(y_monnam(mtmp)); }
 // C ref: mondata.h type_is_pname(ptr).  Private at js/do_name.js:57.
@@ -5142,7 +5189,7 @@ export function monst_to_any(mtmp) {
 // line, after cannot_push() has decided the hero can't get past it either.
 export async function cannot_push_msg(otmp, sx, sy) {
     const u = game.u;
-    const what = the_(xname(otmp));
+    const what = the(xname(otmp));
 
     if (u.usteed)
         await pline(`${YMonnam(u.usteed)} tries to move ${what}, but cannot.`);
@@ -5156,7 +5203,7 @@ export async function cannot_push_msg(otmp, sx, sy) {
 // destination square swallows (pit, hole, water, trapdoor).
 export async function rock_disappear_msg(otmp) {
     const u = game.u;
-    const what = the_(xname(otmp));
+    const what = the(xname(otmp));
 
     if (u.usteed)
         await pline(`${YMonnam(u.usteed)} pushes ${what} and suddenly it disappears!`);
@@ -5519,7 +5566,7 @@ export async function invocation_message() {
         await You_feel(`a strange vibration ${buf}.`);
         (u.uevent = u.uevent || {}).uvibrated = 1;
         if (otmp && otmp.spe === 7 && otmp.lamplit)
-            await pline(`${The_(xname(otmp))} ${
+            await pline(`${The(xname(otmp))} ${
                 Blind() ? 'throbs palpably' : 'glows with a strange light'}!`);
     }
 }

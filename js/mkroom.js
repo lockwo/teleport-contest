@@ -320,15 +320,24 @@ export function restore_doorindex(level) {
     }
 }
 
-// C ref: restore.c getlev():1146-1161 — the trap chain is rebuilt by reading
-// records and PREPENDING each (`trap->ntrap = gf.ftrap; gf.ftrap = trap`), while
-// save.c savetrapchn() wrote it head first.  So every save+load of a level
-// reverses gf.ftrap: a level revisited through goto_level(), the current level
-// of a restored game, and each other level once more for the getlev()+savelev()
-// copy dosave0() makes.  level.traps is the chain read tail-first (maketrap()
-// pushes, C prepends), so the same reversal is an in-place Array.reverse().
-// Order is observable only where a pass over the chain draws RNG per trap, e.g.
-// detect.c trap_detect() -> sense_trap() while hallucinating.
-export function reverse_trap_chain(level) {
+// C ref: getlev() rebuilds these chains by prepending records written
+// head-first by savelev(). Apply this on each actual level-file read,
+// including savefile copying/unpacking and bones, not just level revisits.
+export function restore_level_chains(level, stairs) {
     level?.traps?.reverse();
+    level?.engravings?.reverse();
+    let damage = null;
+    for (let node = level?.damagelist, next; node; node = next) {
+        next = node.next;
+        node.next = damage;
+        damage = node;
+    }
+    if (level) level.damagelist = damage;
+    let reversed = null;
+    for (let node = stairs, next; node; node = next) {
+        next = node.next;
+        node.next = reversed;
+        reversed = node;
+    }
+    return reversed;
 }

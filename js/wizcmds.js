@@ -42,7 +42,7 @@ import { Invocation_lev } from './trap.js';
 import { display_text_window } from './pager.js';
 import { S_vwall } from './symbols.js';
 import { rogue_symset } from './display.js';
-import { NHW_MENU, MENU_BEHAVE_STANDARD, MENU_ITEMFLAGS_NONE, NH_BASIC_COLOR } from './const.js';
+import { NHW_MENU, ARM, MENU_BEHAVE_STANDARD, MENU_ITEMFLAGS_NONE, NH_BASIC_COLOR } from './const.js';
 import { ATR_INVERSE, ATR_NONE, NO_COLOR } from './terminal.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
 import {
@@ -51,10 +51,10 @@ import {
 } from './glyphs.js';
 import { SYMSET_META, GLYPH_WALL_COLORS } from './symset-data.js';
 import { within_bounded_area } from './rect.js';
-import { depth } from './hacklib.js';
+import { depth, plur, upstart } from './hacklib.js';
 import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
-import { check_invent_gold, inventoryArray, ynq, youmonst_data } from './invent.js';
+import { check_invent_gold, inventoryArray, ynq, youmonst_data, body_part } from './invent.js';
 import {
     monsterList, fmonOrder, DEADMONSTER, dmonsfree, mon_sanity_check, usmellmon, mongone,
 } from './mon.js';
@@ -96,7 +96,6 @@ async function unavail(ecname) {
 const Never_mind = 'Never mind.';
 
 // C ref: hacklib.c plur(n).
-function plur(n) { return (n === 1) ? '' : 's'; }
 
 // C ref: mondata.h nonliving(ptr) == is_undead || PM_MANES || weirdnonliving
 // (is_golem || mlet == S_VORTEX); same decomposition js/explode.js uses.
@@ -415,10 +414,6 @@ function set_killer(name, format) {
 }
 
 // C ref: hacklib.c upstart(s) — capitalize the first character in place.
-function upstart(s) {
-    s = String(s ?? '');
-    return s ? s[0].toUpperCase() + s.slice(1) : s;
-}
 
 /* ------------------------------------------------------------------ */
 /*  #wizloadlua / #wizloaddes                                         */
@@ -854,7 +849,7 @@ export async function wiz_smell() {
         /* Is it a monster? */
         if (mptr) {
             if (is_you)
-                await pline(`You surreptitiously sniff under your ${body_part_ARM()}.`);
+                await pline(`You surreptitiously sniff under your ${body_part(ARM)}.`);
             if (!(await usmellmon(mptr)))
                 await pline(`${is_you ? 'You seem' : 'That monster seems'
                              } to not give off any smell.`);
@@ -867,8 +862,6 @@ export async function wiz_smell() {
         }
     }
 }
-// C ref: polyself.c body_part(ARM); the unpolymorphed answer is "arm".
-function body_part_ARM() { return 'arm'; }
 
 /* ------------------------------------------------------------------ */
 /*  #wizrumorcheck                                                    */

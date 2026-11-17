@@ -2,9 +2,10 @@
 // C ref: src/role.c
 
 import { game } from './gstate.js';
-import { s_suffix } from './hacklib.js';
+import { s_suffix, highc, an } from './hacklib.js';
 import { rn2 } from './rng.js';
 import { rn2_on_display_rng } from './disprng.js';
+import { Hallucination_u } from './display.js';
 import { MFLAGS2, MFLAGS3, MSOUND, MS_LEADER, MS_NEMESIS,
          M2_PEACEFUL, M2_HOSTILE, M2_NASTY, M2_STALK,
          M3_CLOSE, M3_WANTSARTI, M3_WAITFORU } from './monflags_data.js';
@@ -813,9 +814,7 @@ const HALLU_GODS = [
 // pick off the DISPLAY rng.  The hero's own pantheon is addressed by the
 // roles[] ARRAY index (not the PM_ mnum, which differs for Rogue/Ranger).
 export function halu_gname(alignment, force_sane = false) {
-    const u = game.u;
-    const hallu = !force_sane && !!u && !((u.HHalluc_resistance || 0) > 0)
-        && !!(u.uhallu || u.HHallucination || u.uprops?.Hallucination);
+    const hallu = !force_sane && Hallucination_u();
     if (!hallu) {
         const mnum = game.urole?.mnum ?? 0;
         const i = roles.findIndex((r) => r.mnum === mnum);
@@ -1156,9 +1155,7 @@ export function rs_putstr(win, attr, str) { win.strs.push(str); void attr; }
 // C ref: hacklib.c lowc(c) / highc(c) — first character folded.  Six files in
 // js/ carry the same one-liners (js/objnam.js:60, js/topten.js:188, ...).
 function lowc(c) { return String(c ?? '').charAt(0).toLowerCase(); }
-function highc(c) { return String(c ?? '').charAt(0).toUpperCase(); }
 // C ref: objnam.c an(str).
-function rs_an(s) { return /^[aeiou]/i.test(String(s)) ? `an ${s}` : `a ${s}`; }
 
 // The four aspect tables' C sizes.  C's roles[] and races[] are NULL-terminated
 // so `SIZE(x) - 1` is the number of REAL rows; genders[] and aligns[] are not
@@ -2020,7 +2017,7 @@ export function setup_rolemenu(win, filtering, race, gend, algn) {
         }
         /* !filtering implies reset_role_filtering() where we want to mark this
            role as preselected if current filter excludes it */
-        rs_add_menu(win, any, thisch, 0, ATR_NONE, clr, rs_an(rolenamebuf),
+        rs_add_menu(win, any, thisch, 0, ATR_NONE, clr, an(rolenamebuf),
                     (!filtering && !role_ok)
                         ? MENU_ITEMFLAGS_SELECTED : MENU_ITEMFLAGS_NONE);
         lastch = thisch;
