@@ -386,16 +386,13 @@ export async function maybe_wail() {
         if (u.uhp === 1) {
             await pline(`${who} is about to die.`);
         } else {
-            // C ref: hack.c:4213-4236 — four or more intrinsic powers change
-            // the wording.  Counted as `u.uprops[p].intrinsic & INTRINSIC`;
-            // role/race grants are derived (exper.js has_innate), not stored.
-            const { has_innate } = await import('./exper.js');
+            // C ref: hack.c:4213-4236 counts uprops[p].intrinsic & INTRINSIC.
             let powercnt = 0;
             for (const key of ['HTeleportation', 'HSee_invisible', 'HPoison_resistance',
                                'HCold_resistance', 'HShock_resistance', 'HFire_resistance',
                                'HSleep_resistance', 'HDisint_resistance',
                                'HTeleport_control', 'HStealth', 'HFast', 'HInvis'])
-                if (((u.uprops?.[key] | 0) & INTRINSIC) || has_innate(key)) ++powercnt;
+                if ((u.uprops?.[key] | 0) & INTRINSIC) ++powercnt;
             await pline(powercnt >= 4 ? `${who}, all your powers will be lost...`
                                       : `${who}, your life force is running out.`);
         }

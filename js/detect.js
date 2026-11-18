@@ -611,6 +611,15 @@ export function glyph_at(x, y, remembered = false) {
     const sym = remembered ? (loc.remembered_glyph?.ch ?? ' ')
                            : ((loc.disp_ch != null) ? loc.disp_ch : ' ');
     if (loc.invisMon && sym === 'I') return { kind: 'invisible', x, y };
+    /* C ref: display.h statue_to_glyph(): a hallucinated statue is DISPLAYED as a
+       random monster glyph, so glyph_at() reports glyph_is_monster() although no
+       monster stands there (display.js show_bg_glyph records it in disp_hstatue). */
+    if (!remembered && loc.disp_hstatue && !m_at(x, y))
+        return { kind: 'monster', mon: null, x, y };
+    /* C ref: display.c glyph_at() is gbuf: a cell showing an object glyph is one
+       even when level.flags.hero_memory is off and nothing was remembered. */
+    if (!remembered && loc.disp_objotyp && sym !== ' ')
+        return { kind: 'object', obj: null, otyp: loc.disp_objotyp, x, y };
     if (!remembered && d_u_at(x, y)) {
         // The hero's square reads as the hero unless something else was drawn
         // over it (object_detect() maps a pile onto the hero's own spot and
@@ -629,15 +638,6 @@ export function glyph_at(x, y, remembered = false) {
         if (!(og && sym !== '@' && og.ch === sym) && !steed_obj_drawn)
             return { kind: 'monster', mon: null, isyou: true, x, y };
     }
-    /* C ref: display.h statue_to_glyph(): a hallucinated statue is DISPLAYED as a
-       random monster glyph, so glyph_at() reports glyph_is_monster() although no
-       monster stands there (display.js show_bg_glyph records it in disp_hstatue). */
-    if (!remembered && loc.disp_hstatue && !m_at(x, y))
-        return { kind: 'monster', mon: null, x, y };
-    /* C ref: display.c glyph_at() is gbuf: a cell showing an object glyph is one
-       even when level.flags.hero_memory is off and nothing was remembered. */
-    if (!remembered && loc.disp_objotyp && sym !== ' ')
-        return { kind: 'object', obj: null, otyp: loc.disp_objotyp, x, y };
     const mon = remembered ? null : m_at(x, y);
     // C ref: display.c glyph_at() just returns gbuf[y][x].glyphinfo.glyph —
     // whatever glyph was ACTUALLY last drawn there, by its numeric range.  A
@@ -848,7 +848,10 @@ function map_object(obj, show) {
                                  corpsenm: g.corpsenm };
         loc.mapped_trap_ttyp = 0;
     }
-    if (show) show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr({ pile }));
+    if (show) {
+        show_glyph_cell(x, y, g.ch, g.color, g.dec, bg_attr({ pile }));
+        loc.disp_objotyp = obj.otyp;
+    }
 }
 
 // ── detect.c ───────────────────────────────────────────────────────────────

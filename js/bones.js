@@ -262,6 +262,7 @@ export async function getbones() {
         game.lastseentyp = bundle.lastseentyp || [];
         game.billobjs = bundle.billobjs || [];
         game._bones_loaded = true;   // goto_level(): skip the fill/mineralize pass
+        (await import('./mkobj.js')).continue_fobj_stamps(game.level.objects);
 
         // C ref: restore.c:1195-1221 getlev() `for (mtmp = fmon; ...)` — with
         // ghostly set, each monster in chain order (restmon above): "reset

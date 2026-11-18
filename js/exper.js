@@ -12,7 +12,7 @@
 import { game } from './gstate.js';
 import { rn1, rn2, rnd } from './rng.js';
 import { A_WIS, A_CON } from './const.js';
-import { MAXULEV, LARGEST_INT, FROMOUTSIDE } from './const.js';
+import { MAXULEV, LARGEST_INT, FROMEXPER, FROMRACE, FROMOUTSIDE, INTRINSIC } from './const.js';
 import { races } from './roles.js';
 import { Goodbye, roles } from './role.js';
 import { acurr_eff } from './attrib.js';
@@ -397,8 +397,7 @@ export async function pluslvl(incr, emitMsg) {
         if (emitMsg)
             await emitMsg(`Welcome ${(u.ulevelmax || 0) < u.ulevel ? '' : 'back '}to experience level ${u.ulevel}.`);
         if ((u.ulevelmax || 0) < u.ulevel) u.ulevelmax = u.ulevel;
-        // adjabil(): give new intrinsics; only the (RNG-free) "You feel X!"
-        // messages matter for the recorded screens.
+        // C grants intrinsics only after the welcome message returns.
         await adjabil(oldlevel, u.ulevel, emitMsg);
         // C ref: exper.c:358 — crossing into a new rank is an achievement, and
         // it is the ORDER of u.uachieved that #conduct prints, so this has to
@@ -570,34 +569,21 @@ const RACE_ABIL_INNATE = new Map([
     [RC_GNOME, [[1, '', '', 'HInfravision']]],
 ]);
 
-// The innate intrinsics the hero holds right now.  C keeps these as
-// FROMEXPER/FROMRACE bits in u.uprops[]; here they are a pure function of
-// role/race/ulevel, minus anything explicitly stripped.  sit.c attrcurse()
-// (angry god, intrinsic-stealing attack) clears `HFoo &= ~INTRINSIC`, which
-// takes the role/race bits with it, so those names are remembered in
-// u.lost_innate and subtracted here.
-export function innate_intrinsics(ulevel = game.u?.ulevel || 0) {
+// Role and race grants are stored in the intrinsic word by adjabil(), not
+// inferred from ulevel: the level changes before the grant's message boundary.
+export function innate_intrinsics() {
     const s = new Set();
     for (const tbl of [ROLE_ABIL.get(game.urole?.mnum), RACE_ABIL.get(urace_mnum())])
-        for (const [ulvl, , , prop] of tbl || [])
-            if (ulevel >= ulvl) s.add(prop);
-    for (const prop of game.u?.lost_innate || []) s.delete(prop);
+        for (const [, , , prop] of tbl || [])
+            if (has_innate(prop)) s.add(prop);
     return s;
 }
-export function has_innate(prop, ulevel) { return innate_intrinsics(ulevel).has(prop); }
+export function has_innate(prop) {
+    return !!((game.u?.uprops?.[prop] | 0) & (FROMEXPER | FROMRACE));
+}
 
-// C ref: attrib.c:1046 adjabil() — an ability gained at level 1 is stored with
-// FROMOUTSIDE as well as FROMEXPER/FROMRACE ("a 'gain' of such an ability from
-// an outside source is devoid of meaning"), so e.g. a Healer's poison
-// resistance already has the FROMOUTSIDE bit and eating a shrieker corpse
-// prints no "You feel healthy.".  This port derives innates instead of storing
-// bits, so the level-1 rows answer the (HFoo & FROMOUTSIDE) test here.
 export function has_innate_fromoutside(prop) {
-    if (game.u?.lost_innate?.has(prop)) return false;  // attrcurse() cleared it
-    for (const tbl of [ROLE_ABIL.get(game.urole?.mnum), RACE_ABIL.get(urace_mnum())])
-        for (const [ulvl, , , p] of tbl || [])
-            if (ulvl === 1 && p === prop) return true;
-    return false;
+    return !!(((game.u?.uprops?.[prop] | 0) | (game.u?.[prop] | 0)) & FROMOUTSIDE);
 }
 
 // C ref: attrib.c:864 innately(ability) — WHICH table conferred an intrinsic,
@@ -605,7 +591,6 @@ export function has_innate_fromoutside(prop) {
 // FROM_ROLE when its ulevel is 1 and FROM_EXP otherwise; a FROMRACE row is
 // FROM_RACE whatever its level.  Returns null when neither table grants it.
 export function innate_source(prop, ulevel = game.u?.ulevel || 0) {
-    if (game.u?.lost_innate?.has(prop)) return null; // attrcurse() cleared it
     for (const [ulvl, , , p] of ROLE_ABIL.get(game.urole?.mnum) || [])
         if (p === prop && ulevel >= ulvl) return (ulvl === 1) ? 'role' : 'exp';
     for (const [ulvl, , , p] of RACE_ABIL_INNATE.get(urace_mnum()) || [])
@@ -614,36 +599,27 @@ export function innate_source(prop, ulevel = game.u?.ulevel || 0) {
 }
 
 export async function adjabil(oldlevel, newlevel, emitMsg) {
-    const role = ROLE_ABIL.get(game.urole?.mnum) || [];
+    const u = game.u;
+    const props = u.uprops ||= {};
+    const role = ROLE_ABIL.get(game.urole?.mnum ?? roles[game.initrole]?.mnum) || [];
     const race = RACE_ABIL.get(urace_mnum()) || [];
-    // C: `if (!(*ability & INTRINSIC & ~mask))` — a gain/loss message is
-    // suppressed when the OTHER table (role vs race) also confers the property.
-    // FROMOUTSIDE (eaten corpse, potion, or a level-1 gain, which C always
-    // stores with FROMOUTSIDE) also lives in INTRINSIC & ~mask.
-    const alsoFrom = (other, prop, lvl) =>
-        other.some(([ulvl, , , p]) => p === prop && lvl >= ulvl)
-        || (!game.u?.lost_innate?.has(prop)
-            && ((((game.u?.uprops?.[prop] | 0) | (game.u?.[prop] | 0)) & FROMOUTSIDE) !== 0
-                || has_innate_fromoutside(prop)));
-    for (const [tbl, other] of [[role, race], [race, role]]) {
+    for (const [tbl, mask] of [[role, FROMEXPER], [race, FROMRACE]]) {
         for (const [ulvl, gainstr, losestr, prop] of tbl) {
-            let changed = false;
+            const previous = props[prop] | 0;
             if (oldlevel < ulvl && newlevel >= ulvl) {
-                // C: `*ability |= mask` re-grants the bit attrcurse()/u_slow_down() cleared.
-                if (ulvl > 1) game.u?.lost_innate?.delete(prop);
-                changed = true;
-                if (!alsoFrom(other, prop, newlevel)
+                props[prop] = previous | mask | (ulvl === 1 ? FROMOUTSIDE : 0);
+                if (!(((props[prop] | 0) | (u[prop] | 0)) & INTRINSIC & ~mask)
                     && gainstr && emitMsg) await You_feel(`${gainstr}!`);
             } else if (oldlevel >= ulvl && newlevel < ulvl) {
-                changed = true;
-                if (!alsoFrom(other, prop, newlevel)) {
+                props[prop] = previous & ~mask;
+                if (!(((props[prop] | 0) | (u[prop] | 0)) & INTRINSIC)) {
                     if (losestr && emitMsg) await You_feel(`${losestr}!`);
                     else if (gainstr && emitMsg) await You_feel(`less ${gainstr}!`);
                 }
             }
             // C ref: attrib.c:1063 `if (prevabil != *ability) postadjabil()` —
             // a Warning / See_invisible change refreshes the map via see_monsters().
-            if (changed && (game.u?.ulevel | 0)
+            if (previous !== (props[prop] | 0) && (u.ulevel | 0)
                 && (prop === 'HWarning' || prop === 'HSee_invisible')) {
                 const { see_monsters } = await import('./display.js');
                 await see_monsters();

@@ -2298,14 +2298,17 @@ function remember_bg(loc, bg) {
 
 // Value identity of loc.remembered_glyph, standing in for C's `lev->glyph`
 // integer comparison (lock.c doopen/doclose/pick_lock: `door->glyph != oldglyph`).
-// Glyph records come from several constructors, with different defaults and
-// rendering colors. Color belongs to glyphinfo, not the glyph number: mapping
-// a dark room and then feeling it must not count as learning a new glyph.
+// Glyph records come from several constructors, with different defaults.
+// Color is identity where it is the only thing separating two cmap glyphs:
+// S_litcorr versus S_corr, which a felt corridor switches between.  A dark
+// room record already carries its S_darkroom identity in `darkroom`, and only
+// its rendering color changes when a mapped dark room is felt.
 export function remembered_glyph_sig(loc) {
     const r = loc?.remembered_glyph;
     if (!r) return null;
-    return JSON.stringify([r.ch, !!r.decgfx, !!r.pile, !!r.bwEngr, !!r.female,
-        !!r.darkroom, r.objotyp || 0, r.hallucotyp || 0, r.corpsenm ?? null]);
+    return JSON.stringify([r.ch, r.darkroom ? null : r.color, !!r.decgfx, !!r.pile,
+        !!r.bwEngr, !!r.female, !!r.darkroom, r.objotyp || 0, r.hallucotyp || 0,
+        r.corpsenm ?? null]);
 }
 
 // Value identity of what the cell currently DISPLAYS, standing in for C's
@@ -4673,14 +4676,10 @@ function _buildScreenOutput() {
         const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : topl_rows(msg);
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
-            for (let c = 0; c < Math.min(ln.length, display.cols); c++) {
-                // Plain strings use signed char, but putmixed emits its
-                // decoded leading glyph through the unsigned glyph path.
-                const code = ln.charCodeAt(c);
-                const mixedGlyph = li === 0 && c === 0 && is_dec_prefix_msg(msg);
-                if (mixedGlyph || code < 0x80 || code > 0xff)
-                    display.setCell(c, li, ln[c], NO_COLOR, 0);
-            }
+            display.putstr(0, li, ln, NO_COLOR, 0);
+            // putmixed emits its leading glyph through the unsigned path.
+            if (li === 0 && ln && is_dec_prefix_msg(msg))
+                display.setCell(0, li, ln[0], NO_COLOR, 0);
         }
         // C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` touches only
         // row 0, so while a wrapped yn prompt is being recalled with ^P the prompt's

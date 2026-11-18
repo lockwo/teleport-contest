@@ -36,6 +36,8 @@ import { nhgetch } from './input.js';
 export const SAVE_SKIP_KEYS = new Set([
     // runtime environment (kept fresh by the restoring segment)
     'nhDisplay', '_preNhgetchHook', '_pendingDisplay', 'storage', 'datetime',
+    // gc.cmd_bind points into the current process's command table.
+    'cmd_bind',
     // PRNG state — savegamestate() writes no RNG state at all, and the
     // restoring process re-seeds from its own NETHACK_SEED (both segments of a
     // save/restore session carry the same seed).  It also cannot survive JSON:

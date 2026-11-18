@@ -1101,6 +1101,8 @@ export async function jump(magic) {
     // C ref: apply.c jump() sets gj.jumping_is_magic BEFORE getpos_sethilite(), so
     // the valid-position set the opening flush redraws already reflects `magic`.
     set_jumping_is_magic(magic);
+    const { getpos_sethilite } = await import('./getpos.js');
+    getpos_sethilite(display_jump_positions, get_valid_jump_position);
     // C ref: getpos() -> handle_tip(TIP_GETPOS): the FIRST getpos() use shows a
     // tty NHW_TEXT tip window, which pages the pending message first (a trailing
     // --More--) then renders the tip text via getpos_tip(); every later use
@@ -1128,7 +1130,7 @@ export async function jump(magic) {
     // getpos with force=TRUE (jump/teleport targeting): unknown keys keep the
     // loop alive, the '(invalid target)' suffix uses get_valid_jump_position.
     const cc = await getpos('the desired position', u.ux, u.uy,
-                            (x, y) => get_valid_jump_position(x, y), /*force=*/true,
+                            get_valid_jump_position, /*force=*/true,
                             /*verbose=*/game.flags?.verbose !== false,
                             false, false, display_jump_positions);
     if (!cc) {

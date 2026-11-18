@@ -475,20 +475,13 @@ const ATTRCURSE_CHAIN = [
 export async function attrcurse() {
     const u = game.u;
     const start = rnd(11) - 1;
-    // C ref: sit.c attrcurse() tests `HFoo & INTRINSIC`, i.e. FROMEXPER |
-    // FROMRACE | FROMOUTSIDE.  In this port the role/race halves are derived
-    // from the ability tables (js/exper.js innate_intrinsics) and only
-    // FROMOUTSIDE lives in u.uprops, so both have to be consulted — reading
-    // u[field] alone never saw a Barbarian's innate speed and let the whole
-    // chain fall through.
-    const innate = innate_intrinsics();
+    // C ref: sit.c attrcurse() removes every INTRINSIC source, not timers.
     for (let i = start; i < ATTRCURSE_CHAIN.length; i++) {
         const [field, msg, prop] = ATTRCURSE_CHAIN[i];
-        const outside = ((u.uprops?.[field] | 0) | (u[field] | 0)) & INTRINSIC;
-        if (!innate.has(field) && !outside) continue;
+        const intrinsic = ((u.uprops?.[field] | 0) | (u[field] | 0)) & INTRINSIC;
+        if (!intrinsic) continue;
         u[field] = (u[field] | 0) & ~INTRINSIC;
         if (u.uprops) u.uprops[field] = (u.uprops[field] | 0) & ~INTRINSIC;
-        (u.lost_innate ||= new Set()).add(field);
         if (prop === TELEPAT) {
             if (Blind() && !Blind_telepat())
                 await see_monsters(); /* Can't sense mons anymore! */

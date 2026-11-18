@@ -1,11 +1,9 @@
 // youprop.js — hero property readers shared by modules that cannot import each
 // other without a cycle.  C ref: youprop.h.
 //
-// This port spreads one C property over several spellings (u.uprops.X, u.uprops.HX,
-// u.HX, u.uprops_extrinsic[X] for the worn half, the has_innate() derivation for
-// role/race grants, u.formprops for the polymorph form).  Every reader that
-// answers only some of them is a drift bug (attrib.js poisoned() ignored a worn
-// ring of poison resistance), so there is exactly one reader per property here.
+// Intrinsic words (including role/race grants) live in u.uprops.HX, with
+// some properties using u.uprops.X or u.HX. Worn sources use
+// u.uprops_extrinsic and polymorph sources use u.formprops.
 import { game } from './gstate.js';
 import { mflags1_of, M1_FLY, M1_SWIM } from './monflags_data.js';
 import { POISON_RES, TELEPAT, ACID_RES, SICK_RES, Is_waterlevel, I_SPECIAL, TIMEOUT, FROMFORM, FROMOUTSIDE, W_ARTI,
@@ -14,10 +12,7 @@ import { has_innate } from './exper.js';
 import { defended } from './artifact.js';
 import { AD_DISE } from './monattk_data.js';
 
-// C ref: youprop.h Poison_resistance == (HPoison_resistance || EPoison_resistance
-// || FROMFORM/FROMEXPER/FROMRACE): the worn half is the extrinsic word, role and
-// race grants (Healer, every orc) are never stored as flags so they come from
-// has_innate(), and the polymorph form is u.formprops (polyself.js set_uasmon()).
+// C ref: youprop.h Poison_resistance includes intrinsic, worn and form sources.
 export function Poison_resistance() {
     const u = game.u;
     if (u?.formprops?.Poison_resistance) return true;

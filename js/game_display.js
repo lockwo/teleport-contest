@@ -57,11 +57,11 @@ export class GameDisplay {
         return this.terminal.setCell(col, row, ch, color, attr);
     }
     putstr(col, row, str, color = CLR_GRAY, attr = 0) {
-        // C tty string walkers pass signed char to nomux_putch(), which
-        // skips negative bytes without collapsing their screen columns.
+        // nomux_putch skips control and signed high bytes without collapsing
+        // the columns advanced by the tty string walker.
         for (let i = 0; i < str.length && col + i < this.cols; i++) {
             const code = str.charCodeAt(i);
-            if (code < 0x80 || code > 0xff)
+            if (code >= 32 && (code < 0x80 || code > 0xff))
                 this.terminal.setCell(col + i, row, str[i], color, attr);
         }
     }

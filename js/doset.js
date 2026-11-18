@@ -255,6 +255,8 @@ function rawBoolValue(name) {
     switch (name) {
     case 'autopickup': return game.flags.pickup;
     case 'fixinv':     return game.flags.invlet_constant;
+    case 'ascii_map': return game.iflags?.wc_ascii_map ?? game.flags.ascii_map;
+    case 'tiled_map': return game.iflags?.wc_tiled_map ?? game.flags.tiled_map;
     case 'cmdassist':  return game.iflags?.cmdassist;
     case 'altmeta':    return game.iflags?.altmeta;
     case 'autodescribe': return game.iflags?.autodescribe;
@@ -268,6 +270,15 @@ function rawBoolValue(name) {
         }
         return game.flags[name];
     }
+}
+
+export function booleanOptionValue(name) {
+    const value = rawBoolValue(name);
+    if (value !== undefined) return !!value;
+    const entry = OPT_MENU_ENTRIES.find(e => e.name === name);
+    if (entry) return /\[(true|on)\]$/.test(entry.body || entry.text);
+    // optlist.h defaults for booleans absent from the tty options menu.
+    return name === 'ascii_map' || name === 'guicolor';
 }
 
 // Boolean display value: "X" when on, " " when off.  Tracks any toggles made
@@ -1315,6 +1326,7 @@ async function dosetSimpleLoop() {
         const items = buildSimpleFlat();
         const pages = paginateSimple(items);
         const npages = pages.length;
+        OPTS.clear_option_visual_flags(true);   // doset_simple_menu(): after end_menu()
         let page = 0;
         let pick = null;
         let cancelled = false;
@@ -1482,6 +1494,7 @@ export async function doset() {
 
 async function dosetPass(skiphelp) {
     const entries = buildFullEntries(skiphelp);
+    OPTS.clear_option_visual_flags(false);      // doset(): after end_menu()
     const npages = Math.ceil(entries.length / PER_PAGE);
     const selected = new Set(); // entry indices
     const counts_sel = new Map(); // entry index -> count it was selected with ('#' marker)
@@ -1717,7 +1730,7 @@ async function dosetPass(skiphelp) {
 // Mirror the gameplay-affecting side of the toggled booleans we model.  Most
 // boolean options are pure display/UI; the ones that change the recorded
 // screens are showexp/time (status line) and autopickup (auto-lift on move).
-function applyBooleanToggle(name, turnOn) {
+export function applyBooleanToggle(name, turnOn) {
     game.flags = game.flags || {};
     switch (name) {
     case 'autopickup': game.flags.pickup = turnOn; break;
@@ -1737,6 +1750,15 @@ function applyBooleanToggle(name, turnOn) {
         game.flags.color = turnOn;
         (game.iflags = game.iflags || {}).use_color = turnOn;
         break;
+    case 'ascii_map':
+    case 'tiled_map': {
+        const ascii = name === 'ascii_map' ? turnOn : !turnOn;
+        game.flags.ascii_map = ascii;
+        game.flags.tiled_map = !ascii;
+        (game.iflags ||= {}).wc_ascii_map = ascii;
+        game.iflags.wc_tiled_map = !ascii;
+        break;
+    }
     case 'showexp':
     case 'showvers':
     case 'time':

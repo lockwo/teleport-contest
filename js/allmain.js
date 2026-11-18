@@ -32,7 +32,7 @@ import { newuhs } from './eat.js';
 import { adj_erinys } from './makemon.js';
 import { find_ac, u_init_skills_discoveries, moveloop_preamble_startup,
          race_attrmin, race_attrmax, u_init_inventory_attrs } from './u_init.js';
-import { newhp, newpw } from './exper.js';
+import { newhp, newpw, adjabil } from './exper.js';
 import { com_pager_legacy } from './questpgr.js';
 import { roles, races, aligns, genders, Hello, rankName, ROLE_PRIEST, randrole, quest_monster_fixups_for_role, align_str, plname_is_generic, plnamesuffix } from './role.js';
 import { Unaware,
@@ -88,12 +88,14 @@ function role_init() {
 }
 
 // C ref: u_init.c u_init_misc() — level-0 HP and Pw, then the handedness roll.
-function u_init_misc() {
+async function u_init_misc() {
     const g = game;
     g.u = g.u || {};
     g.u.ulevel = 0;
     g.u.uhp = g.u.uhpmax = g.u.uhppeak = newhp();
     g.u.uen = g.u.uenmax = g.u.uenpeak = newpw();
+    await adjabil(0, 1);
+    g.u.ulevel = g.u.ulevelmax = 1;
     // u.uhandedness = rn2(10) ? RIGHT_HANDED : LEFT_HANDED.
     g.u.uleft_handed = (rn2(10) === 0);
     // C ref: u_init.c u_init_misc() `u.uhunger = 900; u.uhs = NOT_HUNGRY;`
@@ -162,7 +164,7 @@ export async function newgame() {
     // definition is read.
     rn2(3); rn2(2);
     init_dungeons();
-    u_init_misc();
+    await u_init_misc();
 
     // C ref: allmain.c l_nhcore_init() — shuffle align[] for Lua
     // Consumes rn2(3), rn2(2) matching session indices 309-310
@@ -857,36 +859,9 @@ async function do_tutorial_goto() {
     game._tutorial_pending_enter = true;
 }
 
-// C ref: attrib.c innate ability tables (sam_abil/mon_abil/kni_abil/...).
-// The dungeon level at which each role first gains intrinsic Fast (HFast).
-// Roles absent from this map never gain Fast intrinsically.  Used by
-// u_calc_moveamt() to decide whether the per-turn hero-speed rn2(3) fires.
-const FAST_AT_LEVEL = Object.freeze({
-    1: 7,   // Barbarian (bar_abil)
-    2: 7,   // Caveman   (cav_abil)
-    4: 7,   // Knight    (kni_abil)
-    5: 1,   // Monk      (mon_abil)
-    9: 1,   // Samurai   (sam_abil)
-    11: 7,  // Valkyrie  (val_abil)
-    0: 10,  // Archeologist (arc_abil)
-});
-
-// C ref: hack.h Fast / Very_fast — does the hero have intrinsic Fast?
-// We model only the role-granted intrinsic.  Extrinsic Fast (speed boots) is
-// handled separately by youHaveVeryFast(); since Very_fast takes priority in
-// u_calc_moveamt's else-if chain, the two never both fire on the same turn.
+// C ref: youprop.h HFast & INTRINSIC; adjabil() stores role grants here too.
 export function youHaveFast() {
-    // HFast & INTRINSIC from a non-role source (FROMOUTSIDE: potion of speed,
-    // quantum mechanic corpse, ...).  Timed-only speed is Very_fast, below.
-    if ((((game.u?.uprops?.HFast | 0) | (game.u?.HFast | 0)) & INTRINSIC) !== 0)
-        return true;
-    // sit.c attrcurse() can clear the role-granted FAST (angry god); js/pray.js
-    // records that in u.lost_innate.
-    if (game.u?.lost_innate?.has('HFast')) return false;
-    const mnum = gameRoleMnum();
-    const lvl = FAST_AT_LEVEL[mnum];
-    if (lvl == null) return false;
-    return (game.u?.ulevel ?? 1) >= lvl;
+    return ((((game.u?.uprops?.HFast | 0) | (game.u?.HFast | 0)) & INTRINSIC) !== 0);
 }
 
 // C ref: hack.h Very_fast == ((HFast & ~INTRINSIC) || EFast).  EFast is the
@@ -905,28 +880,11 @@ function youHaveVeryFast() {
 }
 export { youHaveVeryFast };
 
-// C ref: attrib.c innate ability tables (*_abil[] with &HSearching).  The
-// dungeon-XP level at which each role first gains intrinsic Searching.  Keys
-// are this codebase's roles[].mnum (Rogue=8, Ranger=7 here).  Roles absent
-// never gain Searching intrinsically.  Drives the per-turn dosearch0(1) call.
-const SEARCHING_AT_LEVEL = Object.freeze({
-    0: 1,    // Archeologist (arc_abil): { 1, &HSearching }
-    5: 9,    // Monk         (mon_abil): { 9, &HSearching }
-    7: 1,    // Ranger       (ran_abil): { 1, &HSearching }
-    8: 10,   // Rogue        (rog_abil): { 10, &HSearching }
-    10: 10,  // Tourist      (tou_abil): { 10, &HSearching }
-});
-
 // C ref: hack.h Searching — does the hero have intrinsic Searching (HSearching)?
 // Role-granted, timed/granted HSearching and worn/wielded ESearching.  When set, the moveloop runs dosearch0(1) each turn.
 function youHaveSearching() {
-    const p = game.u?.uprops;
-    // HSearching (granted/timed) and ESearching (ring, Excalibur) halves.
-    if (((p?.HSearching | 0) !== 0) || worn_extrinsic(34 /*SEARCHING*/) !== 0) return true;
-    const mnum = gameRoleMnum();
-    const lvl = SEARCHING_AT_LEVEL[mnum];
-    if (lvl == null) return false;
-    return (game.u?.ulevel ?? 1) >= lvl;
+    return !!(game.u?.uprops?.HSearching || game.u?.HSearching
+        || worn_extrinsic(34 /* SEARCHING */));
 }
 export { youHaveSearching };
 

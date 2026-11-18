@@ -282,14 +282,11 @@ function hides_under_pm(ptr) {
 const S_EEL_MCLS = 57;   // monsym.h S_EEL
 const S_MIMIC_MCLS = 13; // monsym.h S_MIMIC
 
-// C ref: rm.h glyph_is_invisible(glyph) — a square remembered as holding a
-// sensed-but-unseen monster.  display.js tracks this per-square as `invisMon`
-// (see game.js's rm-cell shape / map_invisible()).
+// C ref: glyph_is_invisible(glyph_at(x, y)): inspect the displayed glyph.
+// Underwater redraws can blank a remembered 'I' without changing map memory.
 export function glyph_is_invisible(x, y) {
     const loc = game.level?.at(x, y);
-    // Levels without hero_memory (Air/Water) draw the 'I' via show_glyph only,
-    // so invisMon is never set there; C's glyph_at() reads the displayed cell.
-    return !!loc && (!!loc.invisMon || (loc.disp_ch === 'I' && !loc.disp_monster));
+    return !!loc && loc.disp_ch === 'I' && !loc.disp_monster;
 }
 
 // C ref: uhitm.c attack_checks() reads the shown glyph, not current senses.
@@ -559,7 +556,7 @@ export async function stumble_onto_mimic(mtmp) {
     await wakeupAttack(mtmp, false);
     // wakeup() -> if hero is blind, the monster still won't display; keep the
     // invisible-monster marker up for a blind hero (uhitm.c:6294-6296).
-    if (!canspotmon(mtmp) && !glyph_is_invisible(mtmp.mx, mtmp.my))
+    if (!canspotmon(mtmp) && !game.level?.at(mtmp.mx, mtmp.my)?.invisMon)
         map_invisible(mtmp.mx, mtmp.my);
 }
 
@@ -790,7 +787,7 @@ async function atk_done(mtmp) {
     const u = game.u;
     const x = u.ux + u.dx, y = u.uy + u.dy;
     if (game.context?.forcefight && !DEADMONSTER(mtmp) && !canspotmon(mtmp)
-        && !glyph_is_invisible(x, y) && !engulfing_u(mtmp))
+        && !game.level?.at(x, y)?.invisMon && !engulfing_u(mtmp))
         map_invisible(x, y);
     return true;
 }
@@ -2956,7 +2953,7 @@ export async function hitum_cleave(target, uattk) {
         if (!mtmp) {
             /* display.c unmap_invisible(x, y): js/display.js spells it
                    unmap_object() */
-            if (glyph_is_invisible(tx, ty)) {
+            if (game.level?.at(tx, ty)?.invisMon) {
                 unmap_object(tx, ty);
                 newsym(tx, ty);
             }
@@ -4270,7 +4267,8 @@ export async function gulpum(mdef, mattk) {
      * regurgitate it after exactly one round of attack otherwise.  -KAA
      */
 
-    if (!engulf_target_uh(game.u, mdef)) return M_ATTK_MISS;
+    const { engulf_target } = await import('./mhitm.js');
+    if (!engulf_target(YOUMONST, mdef)) return M_ATTK_MISS;
 
     if (!(u_digest && (u.uhunger | 0) >= 1500) && !u.uswallow) {
         if (!flaming(ydata)) {
@@ -4719,31 +4717,6 @@ export async function mhitm_knockback(magr, mdef, mattk, hitflags, weapon_used) 
 async function plineU(text) {
     const { pline } = await import('./display.js');
     await pline(text);
-}
-
-// C ref: mhitm.c:807 engulf_target(magr, mdef) — can magr swallow mdef?  No
-// RNG.  js/mhitm.js references it only in a comment, so this is a local copy;
-// the hero-as-defender arms are dropped (the hero can't be gulpum()'s target).
-function engulf_target_uh(magr, mdef) {
-    const uatk = (magr === game.u);
-    const adata = uatk ? youmonst_data() : magr?.data;
-    /* can't swallow something that's too big */
-    if ((mdef.data?.msize ?? 2) >= 4 /*MZ_HUGE*/
-        || ((adata?.msize ?? 2) < (mdef.data?.msize ?? 2) && !is_whirly(adata)))
-        return false;
-    /* can't (move to) swallow if trapped */
-    if (mdef.mtrapped || magr?.mtrapped) return false;
-    /* both squares must be enterable by the other party, or expelling could
-       fail to place them back on the map */
-    const dx = mdef.mx, dy = mdef.my;
-    if (!passes_walls(mdef.data)
-        && IS_OBSTRUCTED(game.level?.at(dx, dy)?.typ ?? 0))
-        return false;
-    const ax = uatk ? game.u?.ux : magr.mx, ay = uatk ? game.u?.uy : magr.my;
-    if (!passes_walls(adata)
-        && IS_OBSTRUCTED(game.level?.at(ax, ay)?.typ ?? 0))
-        return false;
-    return true;
 }
 
 // C ref: uhitm.c:5424 hmonas(mon) — the poly'd hero's full attack sequence:

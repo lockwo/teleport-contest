@@ -122,8 +122,6 @@ export async function u_slow_down() {
     const u = game.u || {};
     if (u.uprops) u.uprops.HFast = 0;
     u.HFast = 0;
-    /* HFast = 0 also drops the role-granted intrinsic (see pray.js attrcurse) */
-    (u.lost_innate ||= new Set()).add('HFast');
     const speedBoots = !!(u.uprops?.EFast)
         || (await import('./allmain.js')).youHaveVeryFast();
     await emitU(!speedBoots ? 'You slow down.'

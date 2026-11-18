@@ -1,0 +1,79 @@
+{
+ "source": "Fresh C recordings, detect.c display_trap_map and getpos.c opening flush",
+ "cases": [
+  {
+   "name": "detected object under hero outranks hero occupancy",
+   "segments": [
+    {
+     "seed": 352761,
+     "datetime": "20000101000100",
+     "nethackrc": "OPTIONS=name:Hero,role:Archeologist,race:dwarf,gender:female,align:neutral\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\n",
+     "moves": "  #wizwish\nsqueaky board\n#wizwish\noil lamp\n#wizwish\nscroll of gold detection\n#wizwish\nboomerang\n#wizwish\nfigurine\n#wizwish\nfire trap\nTm\u001b;j.\u001b\u0014\u001b#monster\n\u001b#ride\nu\u001b\u0010\u001b#rub\nh\u001b#rub\nl\u001b\\\u001b#pray\ny\u001bFk\u001bEgyfoo\n\u001b\u0005\u001brj\u001bRb\u001btgj\u001b1",
+     "frames": {
+      "202": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n\u001b[10Cnot your character.  Game time does not advance.  This mode is used\n\u001b[10Cto look around the map, or to select a location on it.\n\n\u001b[10CWhen in this mode, you can press ESC to return to normal game mode,\n\u001b[10Cand pressing ? will show the key help.\n\u001b[5C\u001b[93m$\u001b[39m    (end)\n\n\n\n\n\n\n\n\u001b[12C\u001b[93m$\u001b[39m\n\u001b[10C\u001b[93m$\u001b[39m \u001b[93m$\u001b[39m\n\n\u001b[41C\u001b[93m$\u001b[39m\n\n\nWizard the Digger\u001b[14CSt:14 Dx:13 Co:10 In:15 Wi:14 Ch:9 Lawful\nDlvl:1 $:0 HP:15(15) Pw:1(1) AC:9 Xp:1",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "208": {
+       "screen": "Unknown direction: 't' (aborted).  Done.--More--\n\n\n\n\u001b[75C\u001b[93m$\u001b[39m\n\n\u001b[64C\u001b[93m$\u001b[39m\n\n\u001b[5C\u001b[93m$\u001b[39m\n\n\n\n\n\n\n\n\u001b[12C\u001b[93m$\u001b[39m\n\u001b[10C\u001b[93m$\u001b[39m \u001b[93m$\u001b[39m\n\n\u001b[41C\u001b[93m$\u001b[39m\n\n\nWizard the Digger\u001b[14CSt:14 Dx:13 Co:10 In:15 Wi:14 Ch:9 Lawful\nDlvl:1 $:0 HP:15(15) Pw:1(1) AC:9 Xp:1",
+       "cursor": [
+        48,
+        0,
+        1
+       ]
+      },
+      "210": {
+       "screen": "\n\n\n\n\u001b[75C\u001b[93m$\u001b[39m\n\n\u001b[64C\u001b[93m$\u001b[39m\n\n\u001b[5C\u001b[93m$\u001b[39m\n\n\n\n\n\n\n\n\u001b[12C\u001b[93m$\u001b[39m\n\u001b[10C\u001b[93m$\u001b[39m \u001b[93m$\u001b[39m\u001b[26C-------\u001b[33m+\u001b[39m--\n\u001b[39C|..\u001b[93m<\u001b[97mf\u001b[39m....|\n\u001b[39C|.\u001b[97m@\u001b[39m...o...\n\u001b[39C----------\n\nWizard the Digger\u001b[14CSt:14 Dx:13 Co:10 In:15 Wi:14 Ch:9 Lawful\nDlvl:1 $:0 HP:15(15) Pw:1(1) AC:9 Xp:1",
+       "cursor": [
+        41,
+        19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "non-verbose jump publishes target glyphs before input",
+   "segments": [
+    {
+     "seed": 439788,
+     "datetime": "20001013220000",
+     "nethackrc": "OPTIONS=name:Hero,role:Knight,race:human,gender:male,align:neutral\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=!verbose\n",
+     "moves": "  #wizwish\nwand of teleportation\n#wizwish\ndrum of earthquake\n#wizwish\nwater walking boots\n#wizwish\nlarge box\n#wizwish\ncrystal ball\n#wizwish\nholy water\n#wizwish\nring of free action\n#wizwish\nspellbook of force bolt\n#wizwish\napple\nCkRex\n\u001b#ride\nk\u001b#polyself\njackal\n\u001bi\u001b#ride\nb\u001b:\u001b#sit\n\u001b#name\nngbar\n\u001b\u0018\u001bn5s\u001b\\\u001b#wizwish\nloadstone\n\u001b<\u001bCkRex\n\u001b#wizwish\nfire trap\n\u001bzcj\u001bb\u001bX\u001b:\u001btnh\u001bank\u001bPj\u001bob\u001bGl\u001bi\u001b\u0004h\u001b#name\nnabar\n\u001b#enhance\n\u001b#polyself\nwerewolf\n\u001bwa\u001b#name\nnobar\n\u001b+\u001bcj\u001bza.\u001b\u0018\u001b>\u001b\\\u001b\u0007soldier ant\n\u001b\u0006\u001bzc.\u001b\u0005\u001bwj\u001bi\u001by\u001bi\u001b#jump\n\u001b#",
+     "frames": {
+      "492": {
+       "screen": "Where do you want to jump?\n\n\u001b[28C-------\u001b[21C------\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[21C|\u001b[90m....\u001b[39m.###\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[7C---------\u001b[5C|\u001b[90m....\u001b[39m|  ###\n\u001b[18C#\u001b[9C|\u001b[90m.....\u001b[39m|   ####\u001b[33m-\u001b[90m...\u001b[94m{\u001b[90m...\u001b[39m|\u001b[5C|\u001b[90m....\u001b[39m|    #\n\u001b[9C--------------  ###\u001b[33m+\u001b[90m.....\u001b[39m.####   |\u001b[90m.......\u001b[39m.#    |\u001b[90m....\u001b[39m|    #------\n\u001b[9C|\u001b[90m............\u001b[39m|  #  |\u001b[90m...\u001b[39m>\u001b[90m.\u001b[39m|\u001b[7C--.------#    |\u001b[90m....\u001b[39m|    #\u001b[33m+\u001b[39m....|\n\u001b[9C|\u001b[90m............\u001b[39m.#####----\u001b[33m+\u001b[39m--\u001b[9C# #    #    |\u001b[90m....\u001b[39m|\u001b[5C|....|\n\u001b[9C|\u001b[90m............\u001b[39m|  # ###########\u001b[6C#\u001b[6C#    -\u001b[33m+\u001b[39m----\u001b[5C|...\u001b[94m^\u001b[39m|\n\u001b[9C|\u001b[90m............\u001b[39m.###\u001b[7C#  #################    #\u001b[9C|.\u001b[93m<\u001b[97m@\u001b[39m.|\n\u001b[9C|\u001b[90m............\u001b[39m|\u001b[10C#\u001b[7C-\u001b[33m+\u001b[39m-.--   # ###############...\u001b[33m[\u001b[39m.|\n\u001b[9C--------------\u001b[6C----.---    |\u001b[90m....\u001b[39m|   #    #\u001b[11C|...\u001b[33m(\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|    |\u001b[90m....\u001b[39m|   #   ###\u001b[10C------\n\u001b[29C|\u001b[90m......\u001b[39m.#   |\u001b[90m....\u001b[39m|   #---.-.----\n\u001b[29C|\u001b[90m......\u001b[39m|#   |\u001b[90m....\u001b[39m|   #|\u001b[90m........\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|####\u001b[33m+\u001b[90m....\u001b[39m|   #\u001b[33m+\u001b[90m........\u001b[39m|\n\u001b[29C--------    |\u001b[90m....\u001b[39m|    |\u001b[90m........\u001b[39m|\n\u001b[41C------    ----------\n\u001b[44C#\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:9 Co:11 In:7 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:10 Xp:1",
+       "cursor": [
+        72,
+        12,
+        1
+       ]
+      },
+      "493": {
+       "screen": "\n\n\u001b[28C-------\u001b[21C------\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[21C|\u001b[90m....\u001b[39m.###\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[7C---------\u001b[5C|\u001b[90m....\u001b[39m|  ###\n\u001b[18C#\u001b[9C|\u001b[90m.....\u001b[39m|   ####\u001b[33m-\u001b[90m...\u001b[94m{\u001b[90m...\u001b[39m|\u001b[5C|\u001b[90m....\u001b[39m|    #\n\u001b[9C--------------  ###\u001b[33m+\u001b[90m.....\u001b[39m.####   |\u001b[90m.......\u001b[39m.#    |\u001b[90m....\u001b[39m|    #------\n\u001b[9C|\u001b[90m............\u001b[39m|  #  |\u001b[90m...\u001b[39m>\u001b[90m.\u001b[39m|\u001b[7C--.------#    |\u001b[90m....\u001b[39m|    #\u001b[33m+\u001b[39m....|\n\u001b[9C|\u001b[90m............\u001b[39m.#####----\u001b[33m+\u001b[39m--\u001b[9C# #    #    |\u001b[90m....\u001b[39m|\u001b[5C|....|\n\u001b[9C|\u001b[90m............\u001b[39m|  # ###########\u001b[6C#\u001b[6C#    -\u001b[33m+\u001b[39m----\u001b[5C|...\u001b[94m^\u001b[39m|\n\u001b[9C|\u001b[90m............\u001b[39m.###\u001b[7C#  #################    #\u001b[9C|.\u001b[93m<\u001b[97m@\u001b[39m.|\n\u001b[9C|\u001b[90m............\u001b[39m|\u001b[10C#\u001b[7C-\u001b[33m+\u001b[39m-.--   # ###############...\u001b[33m[\u001b[39m.|\n\u001b[9C--------------\u001b[6C----.---    |\u001b[90m....\u001b[39m|   #    #\u001b[11C|...\u001b[33m(\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|    |\u001b[90m....\u001b[39m|   #   ###\u001b[10C------\n\u001b[29C|\u001b[90m......\u001b[39m.#   |\u001b[90m....\u001b[39m|   #---.-.----\n\u001b[29C|\u001b[90m......\u001b[39m|#   |\u001b[90m....\u001b[39m|   #|\u001b[90m........\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|####\u001b[33m+\u001b[90m....\u001b[39m|   #\u001b[33m+\u001b[90m........\u001b[39m|\n\u001b[29C--------    |\u001b[90m....\u001b[39m|    |\u001b[90m........\u001b[39m|\n\u001b[41C------    ----------\n\u001b[44C#\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:9 Co:11 In:7 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:10 Xp:1",
+       "cursor": [
+        70,
+        10,
+        1
+       ]
+      },
+      "494": {
+       "screen": "#\n\n\u001b[28C-------\u001b[21C------\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[21C|\u001b[90m....\u001b[39m.###\n\u001b[28C|\u001b[90m.....\u001b[39m|\u001b[7C---------\u001b[5C|\u001b[90m....\u001b[39m|  ###\n\u001b[18C#\u001b[9C|\u001b[90m.....\u001b[39m|   ####\u001b[33m-\u001b[90m...\u001b[94m{\u001b[90m...\u001b[39m|\u001b[5C|\u001b[90m....\u001b[39m|    #\n\u001b[9C--------------  ###\u001b[33m+\u001b[90m.....\u001b[39m.####   |\u001b[90m.......\u001b[39m.#    |\u001b[90m....\u001b[39m|    #------\n\u001b[9C|\u001b[90m............\u001b[39m|  #  |\u001b[90m...\u001b[39m>\u001b[90m.\u001b[39m|\u001b[7C--.------#    |\u001b[90m....\u001b[39m|    #\u001b[33m+\u001b[39m....|\n\u001b[9C|\u001b[90m............\u001b[39m.#####----\u001b[33m+\u001b[39m--\u001b[9C# #    #    |\u001b[90m....\u001b[39m|\u001b[5C|....|\n\u001b[9C|\u001b[90m............\u001b[39m|  # ###########\u001b[6C#\u001b[6C#    -\u001b[33m+\u001b[39m----\u001b[5C|...\u001b[94m^\u001b[39m|\n\u001b[9C|\u001b[90m............\u001b[39m.###\u001b[7C#  #################    #\u001b[9C|.\u001b[93m<\u001b[97m@\u001b[39m.|\n\u001b[9C|\u001b[90m............\u001b[39m|\u001b[10C#\u001b[7C-\u001b[33m+\u001b[39m-.--   # ###############...\u001b[33m[\u001b[39m.|\n\u001b[9C--------------\u001b[6C----.---    |\u001b[90m....\u001b[39m|   #    #\u001b[11C|...\u001b[33m(\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|    |\u001b[90m....\u001b[39m|   #   ###\u001b[10C------\n\u001b[29C|\u001b[90m......\u001b[39m.#   |\u001b[90m....\u001b[39m|   #---.-.----\n\u001b[29C|\u001b[90m......\u001b[39m|#   |\u001b[90m....\u001b[39m|   #|\u001b[90m........\u001b[39m|\n\u001b[29C|\u001b[90m......\u001b[39m|####\u001b[33m+\u001b[90m....\u001b[39m|   #\u001b[33m+\u001b[90m........\u001b[39m|\n\u001b[29C--------    |\u001b[90m....\u001b[39m|    |\u001b[90m........\u001b[39m|\n\u001b[41C------    ----------\n\u001b[44C#\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:9 Co:11 In:7 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:10 Xp:1",
+       "cursor": [
+        2,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

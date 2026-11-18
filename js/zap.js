@@ -4792,11 +4792,6 @@ function Stunned()          { return Stunned_hero(); }
 function dist2(x0, y0, x1, y1) { return (x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0); }
 
 // C ref: youprop.h Sleep_resistance — intrinsic/extrinsic sleep immunity.
-// HSleep_resistance's innate source (elf from level 4, monk from level 1) is
-// never persisted as a stored uprops flag — adjabil() only prints the "You
-// feel drowsy/awake!" message — so OR in the pure has_innate() derivation,
-// the same pattern potion.js/artifact.js/fountain.js/explode.js already use
-// for their own H<Prop> reads.
 export function Sleep_resistance() {
     if (game.u?.formprops?.Sleep_resistance) return true; /* FROMFORM: polyself.js set_uasmon() */
     const p = game.u?.uprops;

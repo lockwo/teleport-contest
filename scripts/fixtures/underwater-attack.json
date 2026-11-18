@@ -1,0 +1,42 @@
+{
+ "source": "Fresh C recording, uhitm.c attack_checks reads glyph_at rather than levl.glyph",
+ "cases": [
+  {
+   "name": "submerged hero reveals an unseen monster before attacking despite a remembered marker",
+   "segments": [
+    {
+     "seed": 364518,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Caveman,race:human,gender:female,align:chaotic\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=color\nOPTIONS=showexp,time\n",
+     "moves": "  #wizwish\nring of free action\n#wizwish\nscroll of genocide\n#wizwish\npotion of levitation\n#wizwish\npool\n#wizwish\nlevitation boots\n#wizwish\nwand of digging\n#wizwish\nwand of sleep\ncl\u001b\u0007dust vortex\n\u001bi\u001b#monster\n\u001b<\u001b#polyself\nxorn\n\u001bEdyElbereth\n\u001b#sit\n\u001b#wizwish\nteleportation trap\n\u001b#pray\ny\u001bzdk\u001bwh\u001b#untrap\nh\u001b10s\u001boh\u001b#tip\nf\u001b\u0007Mordor orc\n\u001b#polyself\nxorn\n\u001b#turn\n\u001bWa\u001b#enhance\n\u001bi\u001b\u000f\u001b#chat\nk\u001b",
+     "frames": {
+      "370": {
+       "screen": "Your speech is unintelligible underwater.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[48C\u001b[33mX\u001b[39m\n\n\nWizard the Xorn\u001b[16CSt:18/** Dx:13 Co:17 In:11 Wi:10 Ch:8 Lawful\nDlvl:1 $:0 HP:35(35) Pw:2(2) AC:-2 HD:8 T:10",
+       "cursor": [
+        48,
+        19,
+        1
+       ]
+      },
+      "371": {
+       "screen": "Wait!  There's something there you can't see!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[48C\u001b[33mX\u001b[39m\n\n\nWizard the Xorn\u001b[16CSt:18/** Dx:13 Co:17 In:11 Wi:10 Ch:8 Lawful\nDlvl:1 $:0 HP:35(35) Pw:2(2) AC:-2 HD:8 T:11",
+       "cursor": [
+        48,
+        19,
+        1
+       ]
+      },
+      "372": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[48C\u001b[33mX\u001b[39m\n\n\nWizard the Xorn\u001b[16CSt:18/** Dx:13 Co:17 In:11 Wi:10 Ch:8 Lawful\nDlvl:1 $:0 HP:35(35) Pw:2(2) AC:-2 HD:8 T:11",
+       "cursor": [
+        48,
+        19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

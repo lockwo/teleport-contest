@@ -2036,7 +2036,8 @@ export async function hideunder(mtmp) {
     const { undetected, seenmon, seenobj, seenlocomo } = d;
     // C ref: mon.c:4785-4800. Store hidden state before You_see(), but leave
     // the cached glyph alone until its trailing newsym(), after any pager.
-    const oldUndetected = mtmp.mundetected;
+    // Normalize: an unset field must not reach hideunder_settle()'s default.
+    const oldUndetected = !!mtmp.mundetected;
     if (mtmp !== game.u) mtmp.mundetected = undetected ? 1 : 0;
     if (mtmp !== game.u
         && undetected && seenmon && seenobj) {

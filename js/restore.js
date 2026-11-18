@@ -293,7 +293,7 @@ const UNSAVED_GLOBALS = [
     'symoverride', 'apelist', 'preferred_pet', 'plnamelen', 'wsettings',
     '_winStop', '_winNoStop', '_yn_need_more', '_startup_selected_character',
     /* gc./gd./ge./gf. */
-    '_cmdq_repeat', '_cmdq_canned', 'last_command_count', 'domove_attempting',
+    'cmd_bind', '_cmdq_repeat', '_cmdq_canned', 'last_command_count', 'domove_attempting',
     'did_dig_msg', 'current_wand', 'clicklook_cc', 'item_action_in_progress',
     '_itemaction_repeat', 'corpsenm_digested', 'dfr_pre_msg', 'dfr_post_msg',
     'followmsg', 'far_noise', 'noisetime',

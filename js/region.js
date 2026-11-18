@@ -570,14 +570,6 @@ async function inside_gas_cloud(reg, mtmp) {
             const { make_blinded_hero } = await import('./potion.js');
             await make_blinded_hero(1, false);
         }
-        // C ref: region.c:1117 `if (!Poison_resistance)`.  The innate source
-        // (orc/healer/barbarian from level 1, monk from level 3, tourist
-        // from level 20) is never persisted as a stored uprops flag, so OR
-        // in has_innate()'s pure derivation — the same reader potion.js's
-        // Poison_resistance() and fountain.js's Poison_resistance() already
-        // use.  This branch used to always take the damaging arm, so a
-        // poison-resistant hero standing in a gas cloud drew rnd(dam) it
-        // should never have drawn.
         const { Half_gas_damage } = await import('./potion.js');
         const { Maybe_Half_Phys } = await import('./zap.js');
         const { losehp_do } = await import('./do.js');

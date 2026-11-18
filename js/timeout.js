@@ -324,7 +324,6 @@ async function vomiting_dialogue() {
             if ((u.uhs | 0) < C.FAINTING)
                 await update_topl(`You ${Hallucination() ? 'hurl chunks' : 'vomit'}!`);
         }
-        u.uprops.Vomiting = 0;
         await vomit();
         break;
     }
@@ -873,19 +872,14 @@ export async function nh_timeout() {
 // would shadow the real one the day it lands (the js/save.js:270 convention).
 
 
-// C ref: prop.h set_itimeout()/incr_itimeout().  This port stores each hero
-// timer as a bare integer in u.uprops[<key>] with no TIMEOUT/INTRINSIC bit
-// packing, so both macros reduce to arithmetic on that integer and `& TIMEOUT`
-// is the identity for every value the game can reach.
+// C ref: prop.h TIMEOUT excludes persistent intrinsic-source bits.
 function _prop(key) { return (game.u?.uprops?.[key] | 0) & TIMEOUT; }
-// C ref: `HFast = 0L` — drops every source bit, including the role-granted
-// intrinsic that allmain.js youHaveFast() reads through u.lost_innate.
+// C ref: HFast = 0L clears timed speed and every persistent source.
 function _clear_HFast() {
     if (game.u) (game.u.uprops = game.u.uprops || {}).HFast = 0;
     const u = game.u;
     if (!u) return;
     u.HFast = 0;
-    (u.lost_innate ||= new Set()).add('HFast');
 }
 
 // C ref: pline.c urgent_pline() + wintty.c tty_putstr(ATR_URGENT) — shown even

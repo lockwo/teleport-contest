@@ -1384,20 +1384,21 @@ function acurrstr() {
 // together with the float_vs_flight() calls that bracket the calculation.
 export function weight_cap() {
     const u = game.u;
+    const ptr = youmonst_data();
     let ewl = 0;
     let carrcap = WT_WEIGHTCAP_STRCON * (acurrstr() + acurr_eff(A_CON))
                   + WT_WEIGHTCAP_SPARE;
     // C ref: hack.c weight_cap() Upolyd branch (consistent with mon.c
     // can_carry()) — small/large forms scale capacity by body size (cwt) or,
     // for the cwt==0 case, by msize relative to human-sized (MZ_HUMAN=2).
-    if (u?.Upolyd && u.data) {
+    if (u?.Upolyd && ptr) {
         const MZ_HUMAN = 2, WT_HUMAN = 1450;
-        if (u.data.mlet === 'n') {
+        if (ptr.mlet === 'n') {
             carrcap = MAX_CARR_CAP;
-        } else if (!u.data.cwt) {
-            carrcap = Math.trunc((carrcap * (u.data.msize ?? MZ_HUMAN)) / MZ_HUMAN);
-        } else if (!strongmonst(u.data) || (strongmonst(u.data) && u.data.cwt > WT_HUMAN)) {
-            carrcap = Math.trunc((carrcap * u.data.cwt) / WT_HUMAN);
+        } else if (!ptr.cwt) {
+            carrcap = Math.trunc((carrcap * (ptr.msize ?? MZ_HUMAN)) / MZ_HUMAN);
+        } else if (!strongmonst(ptr) || (strongmonst(ptr) && ptr.cwt > WT_HUMAN)) {
+            carrcap = Math.trunc((carrcap * ptr.cwt) / WT_HUMAN);
         }
     }
     // C ref: hack.c:4324 — Levitation / Plane of Air / strong steed pin
@@ -2103,9 +2104,15 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
     // before drawing a corner menu. Preserve the physical map: its glyph buffer
     // can contain monster moves that no flush_screen() has published yet.
     const inheritedTrunc = game._menuTruncCarry;
+    // tty_clear_nhwindow(WIN_MESSAGE) is a no-op only when toplin is already
+    // EMPTY (the stale case).  Otherwise it erases the message, so the later
+    // docorner() teardown has nothing to the left of the menu to restore.
     if (!game._disclose_inventory_auto
-        && !(game._toplinStale && game._toplinStale === game._pending_message))
+        && !(game._toplinStale && game._toplinStale === game._pending_message)) {
         display.clearRow(0);
+        game._pending_message = '';
+        game._toplPromptMsg = null;
+    }
     const cols = display.cols ?? 80;
     const rows = display.rows ?? 24;
     // C ref: wintty.c:2729-2733 tty_end_menu() — "cut off any lines that are too
@@ -2276,6 +2283,10 @@ export async function menu_page_pending() {
 // automatic selectors and counted PICK_ANY selections.
 export async function select_command_menu(entries, { how = PICK_ANY, blankStatus = false } = {}) {
     await menu_page_pending();
+    // tty_display_nhwindow clears the message state before displaying a menu.
+    game._toplin = 0;
+    game._toplinSoft = null;
+    game._yn_need_more = false;
     const rows = game.nhDisplay?.rows ?? 24;
     const lmax = Math.min(52, rows - 1);
     const npages = Math.ceil(entries.length / lmax) || 1;
@@ -2843,6 +2854,11 @@ export async function dismiss_invent_screen(textWindow = false) {
         game.botlx = true;
         const disp = game.nhDisplay;
         if (disp?.setCell) blank_status_rows(disp);
+    } else if (textWindow && !(game._menuOffx > 0) && menu_ctx.active) {
+        // An NHW_TEXT window is dismissed outside select_menu(), so
+        // erase_menu_or_text()'s flush_screen(1) published the status rows.
+        // Option-handler menus are dismissed inside select_menu()'s bot gate.
+        menu_ctx.blankStatus = false;
     }
     if (carriedCuts) {
         // getlin redraws only the topline after ^P; keep docorner's cleared
@@ -10861,15 +10877,6 @@ export async function identify(otmp) {
 async function menu_identify(id_limit) {
     let first = true, tryct = 5;
     while (id_limit) {
-        // C's menu setup flushes the pending message window before it draws the
-        // inventory menu.  `update_topl()` tracks this as a soft pending line,
-        // so force the same --More-- boundary before each menu iteration.
-        if (game._pending_message) {
-            await topl_more();
-            game._pending_message = '';
-            game._toplin = 0;
-            game._toplinSoft = null;
-        }
         const picks = await query_objlist_menu(
             `What would you like to identify ${first ? 'first' : 'next'}?`,
             inventoryArray(),
@@ -13952,28 +13959,30 @@ export async function display_minventory(mon, dflags, title) {
             }
             if (group.length > 1) rows.push(group);
         }
+        if (incl_hero) {
+            const { dmgtype } = await import('./monattk_data.js');
+            const { self_lookat } = await import('./hack.js');
+            if (objs.length) rows.push([`${dmgtype(mon.data, AD_DGST) ? 'Swallowed' : 'Engulfed'} Creatures`]);
+            youmonst_menu_glyph();
+            const heroLine = `${CONTAINED_SYM} - ${an(self_lookat())}`;
+            if (objs.length) rows[rows.length - 1].push(heroLine); else rows.push([null, heroLine]);
+        }
+        /* tty_display_nhwindow pages the pending topline in the same data context. */
+        if (game._toplin === 1
+            || (game._pending_message && game._toplinSoft === game._pending_message)) {
+            await flush_screen(1);
+            if (!game._winStop) await topl_more();
+            game._pending_message = '';
+            game._toplin = 0;
+            game._toplinSoft = null;
+        }
+        await select_inventory_menu(rows, new Map(), (dflags & MINV_PICKMASK) === PICK_NONE);
+        return null;
     } finally {
         delete game._youmonst_data_override;
+        // C restores gy.youmonst.data directly, without set_uasmon side effects.
+        game.u.data = monster_by_pmidx(game.u.umonnum);
     }
-    if (incl_hero) {
-        const { dmgtype } = await import('./monattk_data.js');
-        const { self_lookat } = await import('./hack.js');
-        if (objs.length) rows.push([`${dmgtype(mon.data, AD_DGST) ? 'Swallowed' : 'Engulfed'} Creatures`]);
-        youmonst_menu_glyph();
-        const heroLine = `${CONTAINED_SYM} - ${an(self_lookat())}`;
-        if (objs.length) rows[rows.length - 1].push(heroLine); else rows.push([null, heroLine]);
-    }
-    /* tty_display_nhwindow(NHW_MENU) pages an unacknowledged topline first */
-    if (game._toplin === 1
-        || (game._pending_message && game._toplinSoft === game._pending_message)) {
-        await flush_screen(1);
-        if (!game._winStop) await topl_more();
-        game._pending_message = '';
-        game._toplin = 0;
-        game._toplinSoft = null;
-    }
-    await select_inventory_menu(rows, new Map(), (dflags & MINV_PICKMASK) === PICK_NONE);
-    return null;
 }
 /* C ref: hacklib.c strsubst() — replace the FIRST occurrence only. */
 function strsubst_first(bp, orig, repl) {

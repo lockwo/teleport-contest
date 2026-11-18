@@ -921,10 +921,7 @@ export function init_oclass_probs() {
 
 // C ref: o_init.c:352 objdescr_is(obj, descr) — does `descr` name this object's
 // CURRENT unidentified appearance?  The comparison must go through the shuffled
-// oc_descr_idx, which is what OBJ_DESCR() above does.  js/muse.js:599,
-// js/potion.js:372, js/spell.js:855 and js/eat.js:3210 each hold a private copy
-// of this; eat.js's indexes the description table by obj.otyp instead of by
-// oc_descr_idx, so it only agrees when the shuffle was the identity.
+// oc_descr_idx, which is what OBJ_DESCR() above does.
 export function objdescr_is(obj, descr) {
     if (!obj) {
         disco_impossible('objdescr_is: null obj');

@@ -74,6 +74,70 @@ and retain the pending gear recheck, even when a special level immediately
 equips replacement items. That recheck builds monster names for each armor
 slot and consumes display RNG while the hero is hallucinating.
 
+### Hero engulfing
+
+`gulpum` uses the shared `mhitm.engulf_target` predicate with `YOUMONST`.
+The initial damage roll occurs before eligibility checks, even on a miss.
+Size, trapping, wall-passing, closed doors, trees and iron bars all constrain
+engulfing. Keep these checks shared with monster attacks rather than maintaining
+a reduced hero-only copy.
+Run `node --test scripts/hero-engulf-target.test.mjs` for the C-recorded regression.
+
+### Invisible-target glyph checks
+
+`glyph_is_invisible(x, y)` tests the displayed marker, not remembered map
+contents. Submerging can blank a remembered `I`. An ordinary attack must then
+reveal the unseen monster before swinging, as C's `attack_checks` does.
+The post-attack force-fight marker, mimic wakeup and empty cleave square paths
+instead inspect `invisMon`, matching their explicit `levl[x][y].glyph` reads.
+Run `node --test scripts/underwater-attack.test.mjs` for the C-recorded regression.
+
+### Detection and message boundaries
+
+Detected object glyphs retain their object type even at the hero's location,
+including synthetic gold from cursed trap detection. Displayed glyph identity
+takes precedence over occupancy. The initial `getpos` flush also publishes
+highlight-triggered redraws when verbose prompts are disabled.
+Run `node --test scripts/detection-targeting.test.mjs` for both regressions.
+
+`find_trap` compares the remembered glyph with the discovered trap. A cloud
+covering an already remembered trap does not require clearing the map.
+Run `node --test scripts/trap-memory-discovery.test.mjs` for the sight-restoration
+and automatic-search boundary.
+
+Identification menus use the shared menu pager, including Escape suppression.
+They must not insert an unconditional extra `--More--` before selection.
+Eating a paper scroll compares its shuffled appearance through `objdescr_is`,
+not its unshuffled object index.
+Run `node --test scripts/scroll-message-parity.test.mjs` for these boundaries.
+
+### Hero intrinsic updates
+
+`adjabil` stores role and race grants as `FROMEXPER` and `FROMRACE` in the
+intrinsic words. Level-one grants also carry `FROMOUTSIDE`. Changing `ulevel`
+alone must not grant or remove an ability: level-up announcements occur before
+`adjabil`, and removing a source must preserve other sources and the timeout.
+The stored words travel with the hero through save/restore.
+
+The vomiting dialogue leaves its timer active through `vomit()`. The ordered
+timeout loop expires it afterward, including across intervening message pages.
+
+### Parameterized key bindings
+
+`BIND=key:toggle(option)` retains the parameter through command-table rebuilds.
+The bound command changes the live option and performs C's message and redraw
+steps. An option prefix toggles every matching in-game boolean.
+
+Interactive rebinding reads the parameter through the normal line editor.
+Empty parameters report a configuration error. Repeating a parameterized
+command queues its function, not the original binding's parameter.
+The active binding pointer is process-local and is not saved or restored.
+Input acknowledges the prior message before a subsequent message is printed.
+Control bytes in tty strings occupy columns but do not overwrite captured cells.
+
+Run `node --test scripts/parameterized-bindings.test.mjs` for the C-recorded
+binding, replay, error, and cross-segment regressions.
+
 ### Monster generation across segments
 
 `mkclass` lazily caches species order once per C process. Clear that cache
@@ -125,6 +189,12 @@ Corner restoration also moves the physical cursor: each row starts at the
 erase column, and redrawn glyphs advance it. Replayed object selection can
 read input without printing a prompt, exposing that cursor position.
 Run `node --test scripts/tty-menu-cursor.test.mjs` for the reduced regression.
+
+Opening a corner menu clears both the physical message row and its pending
+display text, unless the tty already considers that row empty. Dismissal must
+not restore an answered yes/no prompt that the menu erased. The message-history
+string remains separate. Run `node --test scripts/menu-message-clear.test.mjs`
+for the `#enhance` prompt/menu/dismissal regression.
 
 Command menus follow the recorder's signed 64-bit `long` range for count
 prefixes. An overflowing digit discards the pending count, so the next
@@ -268,6 +338,12 @@ Each call returns a self-contained game. `getScreens()`,
 should cover **only that segment** — the harness concatenates them
 itself. Persistent C-side state (save file, bones, record) lives in
 `storage`; nothing else needs to cross the segment boundary.
+
+Loading bones preserves the saved floor-object chain order. The receiving
+game's placement counter must advance past the loaded `fobj_seq` stamps so
+later drops and throws prepend to `fobj`, as in C. This order affects pet
+object selection and RNG. Run `node --test scripts/bones-fobj-order.test.mjs`
+for a death/new-game regression using shared storage.
 
 ## `game` — what you return
 

@@ -2054,6 +2054,14 @@ export function weight(otmp) {
 export function stamp_fobj(otmp) {
     otmp.fobj_seq = game._fobj_seq = (game._fobj_seq || 0) + 1;
 }
+// C ref: restore.c getlev() rebuilds fobj in its saved chain order, and every
+// later place_object() still prepends.  A level grafted from another game (a
+// bones file) carries that game's stamps, so this game's counter must continue
+// above them or its new placements would sort as older than the bones objects.
+export function continue_fobj_stamps(objs) {
+    for (const o of objs || [])
+        if (o.fobj_seq > (game._fobj_seq || 0)) game._fobj_seq = o.fobj_seq;
+}
 
 // All floor objects on the level (C's `fobj` chain, rm.h `fobj` == svl.level.objlist),
 // newest placement first: C inserts each newly placed object at the HEAD of fobj

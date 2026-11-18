@@ -1145,6 +1145,8 @@ export async function rhack(key) {
     // bookkeeping.
     const Cmd = numpad_cmd();
     let npExt = null, npBad = null, npBound = null;
+    if (!game._modal_screen && key !== 27)
+        game.cmd_bind = cmdbind_get(key & 0xff);
     const commandName = live_bind_name(key & 0xff);
 
     // C rhack() returns for !key / 0377 / ESC before it ever calls
@@ -2333,7 +2335,12 @@ export async function rhack(key) {
             cmdq_of(CQ_REPEAT).push(...midRepeat);
         } else if (repeatName !== 'do_repeat' && !isPrefixCmd) {
             if (!game.context._prefix_seen && !mPrefixSeen) cmdq_of(CQ_REPEAT).length = 0;
-            cmdq_add_key(CQ_REPEAT, origKey);
+            // C queues the function, not the bound parameter. Re-resolving a
+            // parameterized key here would incorrectly reuse its argument on ^A.
+            if (repeatBind?.flags & CMD_PARAM)
+                cmdq_add_ec(CQ_REPEAT, repeatBind.ef_funct);
+            else
+                cmdq_add_key(CQ_REPEAT, origKey);
             cmdq_of(CQ_REPEAT).push(...midRepeat);
         } else if (isPrefixCmd) {
             // C ref: cmd.c rhack():3733-3737 — a PREFIXCMD ('m') recorded itself on
@@ -2443,19 +2450,13 @@ export async function find_trap(trap) {
     if (Blind()) feel_location(trap.tx, trap.ty); // C: feel_newsym()
     else newsym(trap.tx, trap.ty);
     const loc = game.level?.at(trap.tx, trap.ty);
-    // C: `Hallucination || levl[x][y].glyph != trap_to_glyph(trap)`.  Without
-    // hero_memory (Planes of Water and Air, mkmaze.c fixup_special) map_trap()
-    // never stores into levl[][].glyph, so it still holds the level's base
-    // element and always differs from the trap's glyph.
-    // A visible region (gas cloud) on the square is drawn by newsym() through
-    // show_region() and returns BEFORE _map_location(), so levl[x][y].glyph
-    // keeps the old memory and differs from the trap's glyph (display.c newsym).
-    // A blind hero whose map memory of the square is an 'I' with a monster still
-    // there: feel_location() returns early (display.c:764) so levl[x][y].glyph is
-    // still the invisible-monster glyph, not the trap's.
-    const cleared = Hallucination() || !game.level?.flags?.hero_memory
-        || !!loc?.disp_region || !!loc?.invisMon
-        || (!!vobj_at(trap.tx, trap.ty) && !covers_objects(loc));
+    // C compares levl[x][y].glyph with trap_to_glyph(), not the displayed
+    // cloud or the objects currently on the square. A cloud can cover a trap
+    // whose remembered glyph already matches, without requiring cls().
+    const { glyph_at } = await import('./detect.js');
+    const remembered = glyph_at(trap.tx, trap.ty, true);
+    const cleared = Hallucination() || remembered.kind !== 'trap'
+        || remembered.ttyp !== trap.ttyp;
     if (cleared) {
         // C cls() opens with display_nhwindow(WIN_MESSAGE, FALSE): a pending
         // topline (e.g. a squeaky board's note) pages with --More-- first,
@@ -6437,7 +6438,6 @@ function cmd_destroy_nhwindow(_win) {}
 function cmd_display_nhwindow(_win, _blocking) {}
 function cmd_clear_nhwindow(_win) {}
 function cmd_putstr(_win, _attr, _str) {}
-function cmd_getlin(_query, out) { if (out) out.buf = '\x1b'; return; }
 function cmd_nhbell() {}
 function cmd_mark_synch() {}
 // C ref: cmd.c:3517 randomkey() — the debug fuzzer's random keystroke.
@@ -7949,14 +7949,13 @@ export async function dolookaround() {
 //   BIND=':toggle(price_quotes)      BIND=@:toggle(autopickup)
 export async function dotoggleoption() {
     if (game.cmd_bind && game.cmd_bind.param) {
-        return await cmd_toggle_bool_option(game.cmd_bind.param);
+        const { toggle_bool_option } = await import('./options.js');
+        return await toggle_bool_option(game.cmd_bind.param);
     } else {
         await pline('Use #optionsfull to set any option instead.');
         return ECMD_OK;
     }
 }
-// options.c toggle_bool_option(optname) is unported.
-async function cmd_toggle_bool_option(_name) { return ECMD_OK; }
 
 // C ref: cmd.c:1387 set_move_cmd(dir, run).
 export function set_move_cmd(dir, run) {
@@ -8121,16 +8120,13 @@ export function extcmds_getentry(i) {
 
 // C ref: cmd.c:2235 get_changed_key_binds(sbuf) — show changed key bindings as
 // text, or if sbuf is non-null append the config-file form to it.
-export function get_changed_key_binds(sbuf) {
+export async function get_changed_key_binds(sbuf) {
     cmd_binds_init_once();
-    let win = /*WIN_ERR*/ -1;
     let i;
     let buf;
     let bind = gc_Cmd.cmdbinds;
     const keys = new Array(256).fill(0);
-
-    if (!sbuf)
-        win = create_nhwindow(/*NHW_TEXT*/ 2);
+    const lines = []; /* create_nhwindow(NHW_TEXT) */
 
     /* commands bound to a different key */
     while (bind) {
@@ -8145,7 +8141,7 @@ export function get_changed_key_binds(sbuf) {
             if (sbuf)
                 sbuf.str = (sbuf.str || '') + buf;
             else
-                cmd_putstr(win, 0, buf);
+                lines.push(buf);
         }
         bind = bind.next;
     }
@@ -8159,12 +8155,12 @@ export function get_changed_key_binds(sbuf) {
             if (sbuf)
                 sbuf.str = (sbuf.str || '') + buf;
             else
-                cmd_putstr(win, 0, buf);
+                lines.push(buf);
         }
     }
     if (!sbuf) {
-        cmd_display_nhwindow(win, true);
-        cmd_destroy_nhwindow(win);
+        const { display_text_window } = await import('./pager.js');
+        await display_text_window(lines);
     }
 }
 
@@ -8176,10 +8172,7 @@ export async function handler_rebind_keys_add(keyfirst) {
     const picks = [];
     let buf;
     let key = 0;
-    // cmd.c handler_rebind_keys(): `char cmdstr[BUFSZ]` is never initialized before the Strcat()s, so in the
-    // recorded build it starts non-empty and bind_key() fails for every command without a parameter
-    // ("Key binding failed?!").  A parameter command assigns it with Snprintf() and binds fine.
-    let cmdstr = '\u0001';
+    let cmdstr = '';
 
     if (keyfirst) {
         await bind_key_prompt();
@@ -8238,10 +8231,9 @@ export async function handler_rebind_keys_add(keyfirst) {
             ec = extcmdlist[i - 1];
 
             if ((ec.flags & CMD_PARAM) !== 0) {
-                const out = { buf: '' };
-
-                cmd_getlin(`Command ${ec.ef_txt} requires a parameter:`, out);
-                cmdstr = `${ec.ef_txt}(${mungspaces(out.buf)})`;
+                const parameter = await hooked_tty_getlin(
+                    `Command ${ec.ef_txt} requires a parameter:`, null);
+                cmdstr = `${ec.ef_txt}(${mungspaces(parameter)})`;
             } else {
                 cmdstr += ec.ef_txt;
             }
@@ -8257,7 +8249,11 @@ export async function handler_rebind_keys_add(keyfirst) {
 
         prevcmd = cmdbind_get(key);
 
-        if (cmd_bind_key(key, cmdstr, true)) {
+        const errors = [];
+        const bound = cmd_bind_key(key, cmdstr, true, errors);
+        const { OPT_MENU_DRIVER } = await import('./options.js');
+        for (const message of errors) await OPT_MENU_DRIVER.error(message);
+        if (bound) {
             /* the rc-derived inputs the table is rebuilt from must keep it */
             (game.keybind ||= {})[String.fromCharCode(key)] = cmdstr;
             cmd_binds_sig = cmd_binds_signature();
@@ -8276,7 +8272,7 @@ export async function handler_rebind_keys_add(keyfirst) {
 // C ref: cmd.c:2662 bind_key(key, command, user).  js/options.js owns the
 // name `bind_key` (it is the rc BIND= parser's entry point and reports through
 // a result object); this is the C-shaped one that mutates the Cmd_bind list.
-function cmd_bind_key(key, command, user) {
+function cmd_bind_key(key, command, user, errors = null) {
     let extcmd;
     let buf, p = null, lastp = null;
 
@@ -8305,20 +8301,20 @@ function cmd_bind_key(key, command, user) {
         cmdbind_add_bind(key, extcmd, user);
 
         if ((extcmd.flags & CMD_PARAM) !== 0) {
-            if (!p) {
-                cmd_config_error_add(`'${buf}' requires a parameter`);
+            if (p === null) {
+                errors?.push(`'${buf}' requires a parameter`);
             } else {
                 const bind = cmdbind_get(key);
                 const maxlen = Math.min(30, p.length) + 1;
 
                 if (maxlen <= 1) {
-                    cmd_config_error_add('Required parameter cannot be empty');
+                    errors?.push('Required parameter cannot be empty');
                 } else {
                     bind.param = p.slice(0, maxlen - 1);
                 }
             }
         } else if (p && p.length > 0)
-            cmd_config_error_add(`'${buf}' does not take a parameter`);
+            errors?.push(`'${buf}' does not take a parameter`);
 
         void lastp;
         return true;
@@ -8356,7 +8352,7 @@ export async function handler_rebind_keys() {
             if (i === 1 || i === 2) {
                 await handler_rebind_keys_add(i === 1);
             } else if (i === 3) {
-                get_changed_key_binds(null);
+                await get_changed_key_binds(null);
             }
             continue;
         }

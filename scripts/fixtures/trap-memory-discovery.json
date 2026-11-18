@@ -1,0 +1,42 @@
+{
+ "source": "Fresh C recording, detect.c find_trap compares levl.glyph, not the displayed region",
+ "cases": [
+  {
+   "name": "cloud-covered remembered trap does not clear the map",
+   "segments": [
+    {
+     "seed": 448645,
+     "datetime": "20000301030000",
+     "nethackrc": "OPTIONS=name:Hero,role:Ranger,race:human,gender:male,align:neutral\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=color\nOPTIONS=lit_corridor\n",
+     "moves": "  #wizwish\nspellbook of force bolt\n#wizwish\nscroll of light\n#wizwish\nfire trap\n#wizwish\nluckstone\n#wizwish\nring of invisibility\n#wizwish\nboulder\n#wizwish\nwax candle\n#wizwish\nhorn of plenty\n#wizwish\nleash\nEnyElbereth\n\u001bei\u001b#kick\nb\u001bdo\u001b#rub\nj\u001bx\u001bTd\u001bGb\u001b#polyself\nfog cloud\n\u001bmn\u001b\u0010\u001b#chat\nk\u001bi\u001bEdyfoo\n\u001b>\u001b#untrap\nb\u001bX\u001b<\u001b\u0007snake\n\u001bWf\u001b@\u001bajn\u001b#wizwish\ndwarvish mattock\n\u001b#wizwish\nsleeping gas trap\n\u001bE-x\n\u001b#wizwish\ntree\n\u001b<\u001bFb\u001bi\u001bEcyElbereth\n\u001bi\u001b",
+     "frames": {
+      "418": {
+       "screen": "You return to human form!  You can see again.--More--\n\n\n   -----------\n   |.........|\u001b[10C--------\n   |\u001b[33m(\u001b[39m......\u001b[90m..\u001b[39m.\u001b[10C\u001b[90m.......\u001b[39m|\n   |....\u001b[93m$\u001b[39m`\u001b[90m...\u001b[39m|\u001b[7C.\u001b[90m.........\u001b[39m|\n   |\u001b[36m!\u001b[97m@\u001b[39m.\u001b[97md\u001b[39m......\n   |.\u001b[33mS\u001b[39m#\u001b[90m.\u001b[93m$\u001b[39m....|\n   -----------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Tenderfoot\u001b[10CSt:15 Dx:11 Co:14 In:18 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:10 Xp:1",
+       "cursor": [
+        53,
+        0,
+        1
+       ]
+      },
+      "419": {
+       "screen": "You return to human form!  You can see again.--More--\n\n\n   -----------\n   |.........|\u001b[10C--------\n   |\u001b[33m(\u001b[39m......\u001b[90m..\u001b[39m.\u001b[10C\u001b[90m.......\u001b[39m|\n   |....\u001b[93m$\u001b[39m`\u001b[90m...\u001b[39m|\u001b[7C.\u001b[90m.........\u001b[39m|\n   |\u001b[36m!\u001b[97m@\u001b[39m.\u001b[97md\u001b[39m......\n   |.\u001b[33mS\u001b[39m#\u001b[90m.\u001b[93m$\u001b[39m....|\n   -----------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Tenderfoot\u001b[10CSt:15 Dx:11 Co:14 In:18 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:10 Xp:1",
+       "cursor": [
+        53,
+        0,
+        1
+       ]
+      },
+      "420": {
+       "screen": "You find a sleeping gas trap.\n\n\n   -----------\n   |.........|\u001b[10C--------\n   |\u001b[33m(\u001b[39m......\u001b[90m..\u001b[39m.\u001b[10C\u001b[90m.......\u001b[39m|\n   |....\u001b[93m$\u001b[39m`\u001b[90m...\u001b[39m|\u001b[7C.\u001b[90m.........\u001b[39m|\n   |\u001b[36m!\u001b[97m@\u001b[39m.\u001b[97md\u001b[39m......\n   |.\u001b[33mS\u001b[39m#\u001b[90m.\u001b[93m$\u001b[39m....|\n   -----------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Tenderfoot\u001b[10CSt:15 Dx:11 Co:14 In:18 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:10 Xp:1",
+       "cursor": [
+        5,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

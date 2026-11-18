@@ -2107,7 +2107,6 @@ async function cpostfx(pm) {
             if (youHaveFast()) {
                 u.uprops.HFast = (u.uprops.HFast | 0) & P_TIMEOUT;
                 u.HFast = (u.HFast | 0) & P_TIMEOUT;
-                if (youHaveFast()) (u.lost_innate ||= new Set()).add('HFast');
                 await update_topl('You seem slower.');
             } else {
                 u.uprops.HFast = (u.uprops.HFast | 0) | P_FROMOUTSIDE;
@@ -2383,9 +2382,6 @@ async function eatcorpse(otmp) {
     } else if (sp && mon_poisonous(sp) && rn2(5)) {
         tp++;
         await update_topl('Ecch - that must have been poisonous!');
-        // C ref: youprop.h Poison_resistance.  Innate (orc/healer/barbarian
-        // from level 1, monk from level 3, tourist from level 20) is never
-        // persisted as a stored uprops flag, so OR in has_innate().
         if (!Poison_resistance())
             await poison_strdmg(rnd(4), rnd(15), !otmp.globby ? 'poisonous corpse' : 'poisonous glob',
                                 0 /* KILLED_BY_AN */);       // eat.c:1932 poison dmg
@@ -2769,11 +2765,8 @@ export function food_substitution(old_obj, new_obj) {
 // (dragon scales), not blocked.  Used by enlightenment and by
 // maybe_extend_timed_resist().
 //
-// C reads the u.uprops[prop] triple {intrinsic, extrinsic, blocked}.  This port
-// keeps one number per property and models innate intrinsics as a computed set
-// (js/exper.js innate_intrinsics()), so the "not also intrinsic" test goes
-// through the FROMOUTSIDE/FROMEXPER/FROM_RACE bits that number carries and
-// there is no `blocked` column at all.
+// Persistent intrinsic sources share the timeout word. Worn and form sources
+// are stored separately.
 export function temp_resist(prop) {
     const raw = uprop_get(prop);
     const timeout = raw & P_TIMEOUT;
@@ -3869,7 +3862,7 @@ export async function eatspecial() {
             await pline(`Yuck${otmp.blessed ? '!' : '.'}`);
         else if (otmp.oclass === SCROLL_CLASS
                  /* the description is checked after the specific scrolls */
-                 && objdescr_is_eat(otmp, 'YUM YUM'))
+                 && T.o_init.objdescr_is(otmp, 'YUM YUM'))
             await pline(`Yum${otmp.blessed ? '!' : '.'}`);
         else
             await pline('Needs salt...');
@@ -3908,16 +3901,6 @@ export async function eatspecial() {
     }
     if (carried(otmp)) _invent.useup(otmp);
     else await _invent.useupf(otmp, 1);
-}
-
-// C ref: objnam.c objdescr_is(obj, descr) — compares the SHUFFLED appearance.
-// js/o_descr_data.js DESCR_BY_OTYP is the UNSHUFFLED table and js/o_init.js
-// exports no shuffled accessor, so this only matches when the shuffle happened
-// to be the identity for that otyp.  (Only reachable while polymorphed.)
-function objdescr_is_eat(obj, descr) {
-    const T = _tail.o_descr;
-    if (!T) return false;
-    return T.DESCR_BY_OTYP[obj?.otyp] === descr;
 }
 
 // C ref: eat.c:2609 leather_cover(otmp) — inside `#if 0` upstream: it was meant

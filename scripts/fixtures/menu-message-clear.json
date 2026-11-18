@@ -1,0 +1,50 @@
+{
+ "source": "Fresh C recording, wintty.c tty_display_nhwindow(NHW_MENU) -> tty_clear_nhwindow(WIN_MESSAGE)",
+ "cases": [
+  {
+   "name": "answered y_n prompt is erased by the corner menu that follows",
+   "segments": [
+    {
+     "seed": 480811,
+     "datetime": "20000101000100",
+     "nethackrc": "OPTIONS=name:Hero,role:Healer,race:gnome,gender:male,align:neutral\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=color\nOPTIONS=!verbose\n",
+     "moves": "  #enhance\n\u001b\u001bi\u001b",
+     "frames": {
+      "12": {
+       "screen": "\u001b[34C\u001b[7mCurrent skills:  (0 slots available)\u001b[0m\n\n\u001b[34C\u001b[7mFighting Skills\u001b[0m\n\u001b[29C----  bare handed combat Unskilled\u001b[8C0(  20)\n\u001b[29C..\u001b[94m{\u001b[39m. \u001b[7mWeapon Skills\u001b[0m\n\u001b[29C|...  dagger\u001b[13CUnskilled\u001b[8C0(  20)\n\u001b[29C|.\u001b[97m@\u001b[39m.  knife\u001b[14CBasic\u001b[11C20(  80)\n\u001b[29C\u001b[33m+\u001b[39m.\u001b[97md\u001b[39m.  short sword\u001b[8CUnskilled\u001b[8C0(  20)\n\u001b[29C|...  saber\u001b[14CUnskilled\u001b[8C0(  20)\n\u001b[29C----  club\u001b[15CUnskilled\u001b[8C0(  20)\n\u001b[35Cmace\u001b[15CUnskilled\u001b[8C0(  20)\n\u001b[35Cquarterstaff\u001b[7CUnskilled\u001b[8C0(  20)\n\u001b[35Cpolearms\u001b[11CUnskilled\u001b[8C0(  20)\n\u001b[35Cspear\u001b[14CUnskilled\u001b[8C0(  20)\n\u001b[35Ctrident\u001b[12CUnskilled\u001b[8C0(  20)\n\u001b[35Csling\u001b[14CUnskilled\u001b[8C0(  20)\n\u001b[35Cdart\u001b[15CUnskilled\u001b[8C0(  20)\n\u001b[35Cshuriken\u001b[11CUnskilled\u001b[8C0(  20)\n\u001b[35Cunicorn horn\u001b[7CUnskilled\u001b[8C0(  20)\n\u001b[34C\u001b[7mSpellcasting Skills\u001b[0m\n\u001b[35Chealing spells\u001b[5CBasic\u001b[11C20(  80)\n\u001b[34C(end)\nWizard the Rhizotomist\u001b[9CSt:10 Dx:11 Co:13 In:9 Wi:15 Ch:17 Neutral\nDlvl:1 $:1737 HP:12(12) Pw:6(6) AC:8 Xp:1",
+       "cursor": [
+        40,
+        21,
+        1
+       ]
+      },
+      "13": {
+       "screen": "\n\n\n\u001b[29C------\n\u001b[29C..\u001b[94m{\u001b[39m.!\u001b[33m+\u001b[39m\n\u001b[29C|....|\n\u001b[29C|.\u001b[97m@\u001b[39m...\n\u001b[29C\u001b[33m+\u001b[39m.\u001b[97md\u001b[39m..|\n\u001b[29C|....|\n\u001b[29C------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Rhizotomist\u001b[9CSt:10 Dx:11 Co:13 In:9 Wi:15 Ch:17 Neutral\nDlvl:1 $:1737 HP:12(12) Pw:6(6) AC:8 Xp:1",
+       "cursor": [
+        31,
+        6,
+        1
+       ]
+      },
+      "14": {
+       "screen": "\u001b[24C\u001b[7mCoins\u001b[0m\n\u001b[24C$ - 1737 gold pieces\n\u001b[24C\u001b[7mWeapons\u001b[0m\n\u001b[24Ca - a blessed +0 scalpel (weapon in right hand)\n\u001b[24C\u001b[7mArmor\u001b[0m\n\u001b[24Cb - an uncursed +1 pair of leather gloves (being worn)\n\u001b[24C\u001b[7mComestibles\u001b[0m\n\u001b[24Cl - 7 uncursed apples\n\u001b[24C\u001b[7mSpellbooks\u001b[0m\n\u001b[24Ci - a blessed spellbook of healing\n\u001b[24Cj - a blessed spellbook of extra healing\n\u001b[24Ck - a blessed spellbook of stone to flesh\n\u001b[24C\u001b[7mPotions\u001b[0m\n\u001b[24Cd - 3 uncursed potions of healing\n\u001b[24Ce - a blessed potion of healing\n\u001b[24Cf - 3 uncursed potions of extra healing\n\u001b[24Cg - a blessed potion of extra healing\n\u001b[24C\u001b[7mWands\u001b[0m\n\u001b[24Ch - a wand of sleep (0:8)\n\u001b[24C\u001b[7mTools\u001b[0m\n\u001b[24Cc - an uncursed stethoscope\n\u001b[24C(end)\nWizard the Rhizotomist\u001b[9CSt:10 Dx:11 Co:13 In:9 Wi:15 Ch:17 Neutral\nDlvl:1 $:1737 HP:12(12) Pw:6(6) AC:8 Xp:1",
+       "cursor": [
+        30,
+        21,
+        1
+       ]
+      },
+      "15": {
+       "screen": "\n\n\n\u001b[29C------\n\u001b[29C..\u001b[94m{\u001b[39m.!\u001b[33m+\u001b[39m\n\u001b[29C|....|\n\u001b[29C|.\u001b[97m@\u001b[39m...\n\u001b[29C\u001b[33m+\u001b[39m.\u001b[97md\u001b[39m..|\n\u001b[29C|....|\n\u001b[29C------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Rhizotomist\u001b[9CSt:10 Dx:11 Co:13 In:9 Wi:15 Ch:17 Neutral\nDlvl:1 $:1737 HP:12(12) Pw:6(6) AC:8 Xp:1",
+       "cursor": [
+        31,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

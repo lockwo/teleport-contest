@@ -1,0 +1,41 @@
+{
+ "source": "Fresh C recording, bones.c getbones -> restore.c getlev keeps the saved fobj chain order",
+ "cases": [
+  {
+   "name": "objects placed after loading bones are newest on fobj",
+   "segments": [
+    {
+     "seed": 468922,
+     "datetime": "20000118120000",
+     "nethackrc": "OPTIONS=name:Hero,role:Wizard,race:human,gender:male,align:chaotic\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=color\nOPTIONS=autopickup,pickup_types:$\n",
+     "moves": "  >\u001bE-Elbereth\n\u001brc\u001b#loot\ny\u001bwc\u001bTi\u001bTh\u001b;b.\u001b#pray\ny\u001b\u0004h\u001brk\u001b\u0007priest\n\u001bn20s\u001bZah\u001b_>.\u001b#force\ny\u001bGh\u001b_>.\u001b#polyself\nnewt\n\u001bdgy",
+     "frames": {}
+    },
+    {
+     "seed": 468922,
+     "datetime": "20000118120000",
+     "nethackrc": "OPTIONS=name:Hero,role:Wizard,race:human,gender:male,align:chaotic\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=color\nOPTIONS=autopickup,pickup_types:$\n",
+     "moves": "  qb\u001b_>.\u001bdky\u001b#pray\ny\u001bn20s\u001bwe\u001b#wizwish\nscroll of teleportation\n\u001b#force\ny\u001bck\u001b#chat\nh\u001btan\u001b",
+     "frames": {
+      "86": {
+       "screen": "The kitten bites!  The kitten bites wizard.  Wizard hits the kitten.--More--\n\n\u001b[10C\u000elqqqqqqk\u000f\n\u001b[10C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~x\u000f\n\u001b[10C\u000ex~~~~~~x\u000f\n\u001b[10C\u000ex~\u001b[97m\u000f@f\u001b[39m\u000e~~~x\u000f\n\u001b[10C\u001b[33m+\u001b[97mZf\u001b[93m<\u001b[39m\u000e~~~\u001b[33m\u000f+\u001b[39m\n\u001b[10C\u000ex~\u001b[97m\u000f%\u001b[39m\u000e~\u001b[33m\u000f)\u001b[39m\u000e~~x\u000f\n\u001b[10C\u000emqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:15 Dx:11 Co:13 In:18 Wi:12 Ch:9 Chaotic\nDlvl:1 $:0 HP:9(12) Pw:7(7) AC:9 Xp:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "87": {
+       "screen": "The kitten is killed!\n\n\u001b[10C\u000elqqqqqqk\u000f\n\u001b[10C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~x\u000f\n\u001b[10C\u000ex~~~~~~x\u000f\n\u001b[10C\u000ex~\u001b[97m\u000f@f\u001b[39m\u000e~~~x\u000f\n\u001b[10C\u001b[33m+\u001b[97mZ%\u001b[93m<\u001b[39m\u000e~~~\u001b[33m\u000f+\u001b[39m\n\u001b[10C\u000ex~\u001b[97m\u000f%\u001b[39m\u000e~\u001b[33m\u000f)\u001b[39m\u000e~~x\u000f\n\u001b[10C\u000emqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:15 Dx:11 Co:13 In:18 Wi:12 Ch:9 Chaotic\nDlvl:1 $:0 HP:7(12) Pw:7(7) AC:9 Xp:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

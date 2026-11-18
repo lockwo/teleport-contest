@@ -1,0 +1,321 @@
+{
+  "source": "Fresh C recordings, cmd.c bind_key/rhack and options.c toggle_bool_option",
+  "cases": [
+    {
+      "name": "valid-repeat",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nBIND=~:toggle(autopickup)\n",
+          "moves": "  n~ \u0001 ",
+          "frames": {
+            "4": {
+              "screen": "'autopickup' option toggled on.--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                39,
+                0,
+                1
+              ]
+            },
+            "6": {
+              "screen": "Use #optionsfull to set any option instead.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": true
+    },
+    {
+      "name": "command-first",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "  n#optionsfull\r:bind keys\r\rb:toggle:\rautopickup\r~ \u001b~ \u001b",
+          "frames": {
+            "38": {
+              "screen": "Command toggle requires a parameter:\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f",
+              "cursor": [
+                37,
+                0,
+                1
+              ]
+            },
+            "50": {
+              "screen": "Bound key '~' to \"toggle(autopickup)\".--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                46,
+                0,
+                1
+              ]
+            },
+            "53": {
+              "screen": "'autopickup' option toggled on.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": true
+    },
+    {
+      "name": "empty-parameter",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "  n#optionsfull\r:bind keys\r\ra~>>>>l\r \u001b~ \u001b",
+          "frames": {
+            "35": {
+              "screen": "Command toggle requires a parameter:\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f",
+              "cursor": [
+                37,
+                0,
+                1
+              ]
+            },
+            "36": {
+              "screen": "Required parameter cannot be empty.  Bound key '~' to \"toggle()\".--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                73,
+                0,
+                1
+              ]
+            },
+            "39": {
+              "screen": "Use #optionsfull to set any option instead.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": false
+    },
+    {
+      "name": "escaped-parameter",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "  n#optionsfull\r:bind keys\r\ra~>>>>l\u001b \u001b~ \u001b",
+          "frames": {
+            "35": {
+              "screen": "Command toggle requires a parameter:\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f",
+              "cursor": [
+                37,
+                0,
+                1
+              ]
+            },
+            "36": {
+              "screen": "Bound key '~' to \"toggle( )\".--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                37,
+                0,
+                1
+              ]
+            },
+            "39": {
+              "screen": "\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": false
+    },
+    {
+      "name": "invalid-repeat",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nBIND=~:toggle(not_an_option)\n",
+          "moves": "  n~\u0001#toggle\r",
+          "frames": {
+            "4": {
+              "screen": "\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            },
+            "5": {
+              "screen": "There is no command available to repeat.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            },
+            "13": {
+              "screen": "Use #optionsfull to set any option instead.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": false
+    },
+    {
+      "name": "parameter-switch",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nBIND=~:toggle(autopickup)\n",
+          "moves": "  n~ \u001b",
+          "frames": {
+            "4": {
+              "screen": "'autopickup' option toggled on.--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                39,
+                0,
+                1
+              ]
+            }
+          }
+        },
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nBIND=~:toggle(time)\n",
+          "moves": "  n~ \u001b",
+          "frames": {
+            "4": {
+              "screen": "'time' option toggled on.--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1 T:1",
+              "cursor": [
+                33,
+                0,
+                1
+              ]
+            },
+            "5": {
+              "screen": "\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1 T:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "time": true
+    },
+    {
+      "name": "nonparameter-binding",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "  n#optionsfull\r:bind keys\r\ra~:toggle\r \u001b~",
+          "frames": {
+            "38": {
+              "screen": "Bound key '~' to \"autopickup\".--More--\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                0,
+                1
+              ]
+            },
+            "41": {
+              "screen": "Autopickup: ON, for all objects.\n\n\n\n\u001b[31C\u000elqqqqqqqqqk\u000f\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m\u000e~x\u000f\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            }
+          }
+        }
+      ],
+      "pickup": true
+    },
+    {
+      "name": "view-unbound",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nBIND=~:toggle(autopickup)\nBIND=s:nothing\nBIND=v:kick\n",
+          "moves": "  n#optionsfull\r:bind keys\r\rc \u001b\u001b",
+          "frames": {
+            "29": {
+              "screen": "BIND=~:toggle(autopickup)\nBIND=v:kick\nBIND=s:nothing\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+              "cursor": [
+                8,
+                23,
+                1
+              ]
+            },
+            "30": {
+              "screen": "\u001b[41C\u001b[7mDo what?\u001b[0m\n\n\u001b[41Ca - bind key to a command\n\u001b[41Cb - bind command to a key\n\u001b[31C\u000elqqqqqqqq\u000f c - view changed key binds\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m (end)\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                47,
+                5,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "view-after-interactive",
+      "segments": [
+        {
+          "seed": 2138309,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Quill,role:Rogue,race:human,gender:female,align:chaotic,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "  n#optionsfull\r:bind keys\r\rb:toggle:\rautopickup\r~ c \u001b\u001b",
+          "frames": {
+            "52": {
+              "screen": "BIND=~:toggle(autopickup)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+              "cursor": [
+                8,
+                23,
+                1
+              ]
+            },
+            "53": {
+              "screen": "\u001b[41C\u001b[7mDo what?\u001b[0m\n\n\u001b[41Ca - bind key to a command\n\u001b[41Cb - bind command to a key\n\u001b[31C\u000elqqqqqqqq\u000f c - view changed key binds\n\u001b[31C\u000ex~~~~~~~\u001b[97m\u000f{\u001b[39m (end)\n\u001b[31C\u000ex~~~~~~~~~x\u000f\n\u001b[31C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[31C\u000emqqqqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Footpad\u001b[13CSt:16 Dx:16 Co:10 In:11 Wi:11 Ch:9 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                47,
+                5,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

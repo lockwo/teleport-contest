@@ -969,7 +969,7 @@ function bind_key(key, command, result) {
         if (String(e.flags).includes('CMD_PARAM')) {
             if (param === null) config_error_add(`'${buf}' requires a parameter`);
             else if (!param.length) config_error_add('Required parameter cannot be empty');
-            else result.keybind_param[key] = param.slice(0, 30);
+            else result.keybind[key] = `${e.txt}(${param.slice(0, 30)})`;
         } else if (param !== null && param.length > 0) {
             config_error_add(`'${buf}' does not take a parameter`);
         }
@@ -1471,6 +1471,8 @@ function set_boolean(name, value, result) {
         result.flags.color = value;
         result.iflags.use_color = value;
         break;
+    case 'ascii_map': result.flags.ascii_map = result.iflags.wc_ascii_map = value; break;
+    case 'tiled_map': result.flags.tiled_map = result.iflags.wc_tiled_map = value; break;
     case 'splash_screen': result.iflags.wc_splash_screen = value; break;
     // C: &iflags.sanity_check (optlist.h) — the already-ported sanity-check
     // subsystem (mon.js/mklev.js/wizcmds.js/ball.js/engrave.js/timeout.js/
@@ -1780,6 +1782,8 @@ function optfn_symset(o, negated, opts, op, result) {
         return OPTN_ERR;
     }
     result[o.name] = /^(default|Default symbols)$/i.test(op) ? '' : op;
+    // C retains these flags even when the symbol set came from the rc.
+    opt_need_redraw = opt_need_glyph_reset = true;
     return OPTN_OK;
 }
 
@@ -2551,7 +2555,7 @@ export async function handler_compound_getlin(name) {
     if (abuf[0] === '\x1b') return null;
     const result = { flags: {}, iflags: {}, msgtypes: [], menucolors: [],
                      status_hilites: [], conds: {}, apelist: [], keybind: {}, symoverride: {},
-                     warnsyms: [], menu_cmd_alias: [], keybind_param: {}, keyunbind: [],
+                     warnsyms: [], menu_cmd_alias: [], keyunbind: [],
                      spkeys: {}, mousebtn: {}, autocomplete: {} };
     const errors = [];
     inGameErrors = errors;
@@ -4358,7 +4362,7 @@ export async function parseNethackrc(rc) {
         // gm.mapped_menu_op, gc.Cmd.spkeys, gc.Cmd.mousebtn, extcmdlist[].flags
         // AUTOCOMPLETE bit, gp.plinemsg_types, gm.menu_colorings, the
         // 'thresholds' lists and condtests[].enabled.
-        menu_cmd_alias: [], keybind_param: {}, keyunbind: [], spkeys: {},
+        menu_cmd_alias: [], keyunbind: [], spkeys: {},
         mousebtn: {}, autocomplete: {}, msgtypes: [], menucolors: [],
         status_hilites: [], conds: {},
     };
@@ -5843,6 +5847,20 @@ register_process_static(() => {
     opt_reset_customcolors = false; opt_reset_customsymbols = false;
     opt_update_basic_palette = false; opt_need_promptstyle = false;
 });
+// C ref: options.c doset():8904-8905 and doset_simple_menu():8644-8648 clear
+// these after end_menu(), so flags left by rc parsing (a symset) never force
+// the menu's closing reset_needed_visuals() into a docrt().  Only a bound
+// toggle_bool_option() sees them.
+export function clear_option_visual_flags(simple) {
+    opt_need_redraw = false;
+    opt_need_glyph_reset = false;
+    if (simple) {
+        opt_reset_customcolors = false;
+        opt_reset_customsymbols = false;
+        opt_update_basic_palette = false;
+    }
+    game._optNeedRedraw = false;
+}
 
 // C ref: parseoptions()'s third argument -- the accumulator parseNethackrc()
 // builds for a whole config file.  handler_pickup_types() reaches parseoptions()
@@ -5853,7 +5871,7 @@ function opt_result_shim() {
         name: '', role: -1, race: -1, gender: -1, align: -1,
         flags: {}, iflags: {}, keybind: {}, symoverride: {}, apelist: [],
         warnsyms: [],
-        menu_cmd_alias: [], keybind_param: {}, keyunbind: [], spkeys: {},
+        menu_cmd_alias: [], keyunbind: [], spkeys: {},
         mousebtn: {}, autocomplete: {}, msgtypes: [], menucolors: [],
         status_hilites: [], conds: {},
     };
@@ -6468,17 +6486,68 @@ export async function reset_needed_visuals() {
 export async function toggle_bool_option(p) {
     let i;
     let ret = ECMD_FAIL;
+    const { booleanOptionValue, applyBooleanToggle } = await import('./doset.js');
 
     for (i = 0; i < OPTCOUNT; i++)
         if (strncmpi_eq(ALLOPT[i].name, p, p.length)
             && ALLOPT[i].typ === 'B'
             && opt_setwhere(i) === SET_IN_GAME
             && !ALLOPT[i].noaddr) {
-            const cur = !!(game.flags && game.flags[ALLOPT[i].name]);
-            const buf = `${cur ? '!' : ''}${ALLOPT[i].name}`;
-
-            if (parseoptions(buf, false, opt_result_shim())) ret = ECMD_OK;
-
+            const name = ALLOPT[i].name;
+            const turnOn = !booleanOptionValue(name);
+            if (game.iflags?.debug_fuzzer && (name === 'silent' || name === 'perm_invent')) {
+                ret = ECMD_OK;
+                await reset_needed_visuals();
+                continue;
+            }
+            if (name === 'perm_invent' && turnOn && !can_set_perm_invent()) {
+                await reset_needed_visuals();
+                continue;
+            }
+            if (name === 'idlecheckpoint') {
+                applyBooleanToggle(name, false);
+                game.flags.give_opt_msg_off = true;
+                await pline("There is no underlying support for 'idlecheckpoint' compiled in.");
+                ret = ECMD_OK;
+                await reset_needed_visuals();
+                continue;
+            }
+            applyBooleanToggle(name, turnOn);
+            if (name === 'terrainstatus')
+                (await import('./botl.js')).classify_terrain();
+            if (['fixinv', 'price_quotes', 'sortpack', 'implicit_uncursed'].includes(name)
+                && game.flags.invlet_constant === false)
+                (await import('./invent.js')).reassign();
+            switch (name) {
+            case 'color': case 'showrace': case 'use_inverse': case 'hilite_pile':
+            case 'perm_invent': case 'ascii_map': case 'tiled_map':
+                opt_need_glyph_reset = opt_need_redraw = true;
+                break;
+            case 'hilite_pet':
+                opt_need_redraw = true;
+                break;
+            case 'hitpointbar':
+                opt_need_redraw = true;
+                game.botl = game.botlx = game._statusUpdateAll = true;
+                break;
+            case 'customcolors': opt_reset_customcolors = true; break;
+            case 'customsymbols': opt_reset_customsymbols = true; break;
+            case 'menucolors': case 'guicolor': opt_need_promptstyle = true; break;
+            case 'armorstatus': case 'weaponstatus': case 'terrainstatus':
+            case 'showscore': case 'showvers': case 'showexp': case 'time':
+                game.botl = game.botlx = game._statusUpdateAll = true;
+                game._ttyPolyFields = !!game.u?.Upolyd;
+                break;
+            case 'mention_decor': game.iflags.prev_decor = 0; break;
+            case 'accessiblemsg':
+                if (game.a11y) game.a11y.msg_loc = { x: 0, y: 0 };
+                break;
+            }
+            opt_need_redraw ||= !!game._optNeedRedraw;
+            game._optNeedRedraw = false;
+            if (!game.flags.give_opt_msg_off)
+                await pline(`'${name}' option toggled ${turnOn ? 'on' : 'off'}.`);
+            ret = ECMD_OK;
             await reset_needed_visuals();
         }
     return ret;

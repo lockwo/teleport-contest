@@ -919,8 +919,6 @@ async function confused_book(spellbook) {
 }
 
 // C ref: youprop.h Sleep_resistance (HSleep_resistance || ESleep_resistance).
-// The innate source (elf from level 4, monk from level 1) is never persisted
-// as a stored uprops flag, so OR in has_innate()'s pure derivation.
 async function Sleep_resistance_hero() { return (await import('./zap.js')).Sleep_resistance(); }
 // C ref: objnam.c objdescr_is(obj, descr) — compare the SHUFFLED appearance.
 function objdescr_is_spell(obj, descr) {
