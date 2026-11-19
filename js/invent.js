@@ -16,7 +16,7 @@ import { find_mac as worn_find_mac, clear_bypasses, bypass_obj } from './worn.js
 import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush, queue_impossible, flush_impossibles } from './display.js';
-import { render_map_row_to_grid } from './display.js';
+import { render_map_row_to_grid, nh_delay_output } from './display.js';
 import { Hallucination_u } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
@@ -7022,6 +7022,7 @@ async function bhit_thrown_landing(dx, dy, range, obj, tethered = false, returni
         // boomhit(), js/dokick.js's kicked-object walker and js/mthrowu.js's
         // monster-throw walker already do this; this hero-throw walker didn't.
         await flash.step(bx, by);
+        await nh_delay_output();
         if (IS_SINK(typ)) break;
         /* limit range of ball so hero won't make an invalid move */
         if (crange > 0 && obj?.otyp === HEAVY_IRON_BALL_OTYP) {
@@ -7761,7 +7762,10 @@ export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
         game.bhitpos = { x: em.mx, y: em.my };
         land = { x: em.mx, y: em.my, mon: em };
         /* C: if (tethered_weapon) tmp_at(DISP_TETHER, obj_to_glyph(obj)) */
-        if (tethered_weapon) land.flash = tmp_at_flash(otmp, true);
+        if (tethered_weapon) {
+            land.flash = tmp_at_flash(otmp, true);
+            await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
+        }
     } else if (otmp.otyp === BOOMERANG_OTYP && !Underwater) {
         if (recoil) await DT.hurtle(-u.dx, -u.dy, 1, true);
         // C ref: dothrow.c:1601 — a boomerang does NOT fly in a straight line,
@@ -7941,7 +7945,9 @@ export async function throwit(otmp, wep_mask, twoweap = false, oldslot = null) {
         // its landing square: tmp_at(DISP_FLASH, obj_to_glyph(obj,
         // rn2_on_display_rng)); tmp_at(bhitpos); nh_delay_output(); DISP_END.
         const bflash = tmp_at_flash(otmp);
+        await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
         await bflash.step(land.x, land.y);
+        await nh_delay_output();
         await bflash.end();
         await DT.breakmsg(otmp, cansee(land.x, land.y));
         otmp.owornmask = 0;

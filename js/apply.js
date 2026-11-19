@@ -2207,8 +2207,11 @@ async function ap_bhit_beam(dx, dy, range, obj, flashed) {
                 D.newsym(x, y);
             }
             await D.tmp_at(x, y);
-            if (A.vision.cansee(x, y))
+            if (A.vision.cansee(x, y)) {
                 D.show_glyph_cell(x, y, '!', 15 /* CLR_WHITE */, false);
+                await D.flush_screen(0); /* display.c tmp_at(): make sure it shows up */
+            }
+            await D.nh_delay_output();
         }
     }
     if (flashed)

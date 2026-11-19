@@ -28,14 +28,14 @@ import { nhgetch } from './input.js';
 
 // Keys on the game object that must NOT travel in the save file.  These are
 // either the runtime environment that the restoring segment sets up fresh (the
-// display handle, the input-capture hook, the wall-clock datetime that drives
-// the moon phase, the storage handle itself) or derived display/vision caches
-// that restore.c explicitly recomputes rather than saving (vision maps, the
-// status-line render cache, the serialized screen buffer, the top-line message
-// state).  docrt()/bot()/vision_recalc() rebuild all of these after restore.
+// display handle, the input-capture and animation-frame hooks, the wall-clock
+// datetime that drives the moon phase, the storage handle itself) or derived
+// display/vision caches that restore.c explicitly recomputes rather than saving
+// (vision maps, the status-line render cache, the top-line message state).
+// docrt()/bot()/vision_recalc() rebuild all of these after restore.
 export const SAVE_SKIP_KEYS = new Set([
     // runtime environment (kept fresh by the restoring segment)
-    'nhDisplay', '_preNhgetchHook', '_pendingDisplay', 'storage', 'datetime',
+    'nhDisplay', '_preNhgetchHook', '_animationFrameHook', '_pendingDisplay', 'storage', 'datetime',
     // gc.cmd_bind points into the current process's command table.
     'cmd_bind',
     // PRNG state — savegamestate() writes no RNG state at all, and the
@@ -52,7 +52,7 @@ export const SAVE_SKIP_KEYS = new Set([
     'viz_array', '_viz_rmin', '_viz_rmax',
     'vis_start_col', 'vis_start_row', 'vis_step',
     // display / status / top-line caches — rebuilt by docrt()/bot()
-    '_screen_output', '_toplines', '_toplin', '_pending_message', '_prevmsg',
+    '_toplines', '_toplin', '_pending_message', '_prevmsg',
     'active_buf', '_wc', 'cs_func', 'cs_arg', 'cs_left', 'cs_right', 'cs_rows',
     // the ^P ring: savegamestate() -> save_msghistory() writes its strings
     // (getmsghistory(), game.msghistory on the blob) and a restoring process

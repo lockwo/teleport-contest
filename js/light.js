@@ -30,7 +30,7 @@ import {
     FM_YOU, FM_FMON, FM_MIGRATE, FM_MYDOGS, FM_EVERYWHERE, BURN_OBJECT, W_ARM, OBJ_FREE, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED,
     is_pool } from './const.js';
 import { clear_path, vision_recalc, Blind } from './vision.js';
-import { flush_screen, map_invisible, canseemon_shared, match_warn_of_mon } from './display.js';
+import { flush_screen, map_invisible, canseemon_shared, match_warn_of_mon, nh_delay_output } from './display.js';
 import { objects, place_object, remove_object, start_object_timer, stop_object_timer } from './mkobj.js';
 import { DEADMONSTER, monsterList } from './mon.js';
 import { name_to_pmidx } from './makemon.js';
@@ -1033,11 +1033,6 @@ function sensemon(mon) {
     return Detect_monsters_hero()
         || tp_sensemon(mon) || match_warn_of_mon(mon);
 }
-
-// C ref: windows nh_delay_output() — the 50ms pause a transient light uses so
-// the player can see the flash.  The recorded corpora are screen-diffed, not
-// timed, so this is a yield rather than a sleep.
-async function nh_delay_output() {  await Promise.resolve(); }
 
 // C ref: vision.c:703 — vision_recalc() calls do_light_sources(next_array).
 // js/vision.js cannot import this file directly (doing so reorders ESM module

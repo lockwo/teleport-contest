@@ -12,7 +12,8 @@ import { game, register_process_static } from './gstate.js';
 
 import { rn2, rnd, rn1, rnl, d } from './rng.js';
 import { pline, update_topl, m_at, map_invisible, canseemon_shared,
-         tmp_at, zapdir_to_glyph, status_hold, You_hear, You_feel, stairway_at } from './display.js';
+         tmp_at, zapdir_to_glyph, status_hold, You_hear, You_feel, stairway_at,
+         flush_screen, nh_delay_output } from './display.js';
 import { exercise, acurr_eff } from './attrib.js';
 import { objects, mksobj, weight, set_bknown, SPE_BLANK_PAPER, SPE_NOVEL } from './mkobj.js';
 import { SPELL_META } from './u_init.js';
@@ -1702,6 +1703,7 @@ export async function propagate_chain_lightning(clq, zap_in) {
     if (cansee(zap.x, zap.y)) {
         const { show_beam_cell } = await import('./zap.js');
         show_beam_cell(zap.x, zap.y, xdir[zap.dir], ydir[zap.dir], clq.displayed_beam);
+        await flush_screen(0); /* display.c tmp_at(): make sure it shows up */
     }
 }
 
@@ -1731,6 +1733,7 @@ export async function cast_chain_lightning() {
     for (let dir = 0; dir < N_DIRS; dir++) {
         await propagate_chain_lightning(clq, { dir, x: u.ux, y: u.uy, strength: 2 });
     }
+    await nh_delay_output();
 
     while (clq.head < clq.tail) {
         const delay_tail = clq.tail;
@@ -1798,7 +1801,10 @@ export async function cast_chain_lightning() {
             zap.dir = DIR_RIGHT2(zap.dir);
             await propagate_chain_lightning(clq, zap);
         }
+        await nh_delay_output();
     }
+    await nh_delay_output();
+    await nh_delay_output();
 
     await tmp_at(DISP_END, 0);
 }

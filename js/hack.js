@@ -27,7 +27,7 @@ import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR, JUMPING, INTRINSIC } from './const.js';
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
-import { pending_glyph_cursor, cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, furniture_mimic_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg } from './display.js';
+import { pending_glyph_cursor, cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, furniture_mimic_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg, nh_delay_output } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta } from './pager.js';
 import { is_drawbridge_wall } from './dbridge.js';
 import { fruit_from_name, the, The } from './objnam.js';
@@ -5459,9 +5459,6 @@ function runmode_value() {
     return i < 0 ? RUN_LEAP : i;
 }
 
-// C ref: windows nh_delay_output() — a pure output pause.  js/light.js:1005 has
-// the identical no-op (private there).
-async function nh_delay_output() {  await Promise.resolve(); }
 // C ref: windows curs_on_u() — park the cursor on the hero.  The recorded cursor
 // is placed by js/display.js flush_screen() instead.
 function curs_on_u() { /* no-op */ }

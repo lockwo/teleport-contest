@@ -127,7 +127,7 @@ import { castmu, buzzmu } from './mcastu.js';
 import { dog_move, dogfood, m_cansee, could_reach_item, finish_meating, monnear, relobj } from './dogmove.js';
 import { mon_msize, mon_cwt, monster_by_pmidx, makemon, makemon_appears_msg } from './makemon.js';
 import { level_difficulty } from './dungeon.js';
-import { set_msg_mon, flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel, verbalize } from './display.js';
+import { set_msg_mon, flush_screen, newsym, map_invisible, unmap_object, show_glyph_cell, object_glyph, flash_obj_glyph, tmp_at_flash, tmp_at_flash_cell, pline, update_topl, see_with_infrared, bot, impossible, Hallucination_u, tp_sensemon, vobj_at, worm_seg_owner_at, You_hear, You_see, Deaf_hero, swallowed, m_at, You_feel, verbalize, nh_delay_output } from './display.js';
 import { worm_cross, wormhitu, worm_move, worm_nomove, count_wsegs, worm_known } from './worm.js';
 import { in_town } from './mkroom.js';
 import { mdig_tunnel, may_dig, holetime, is_digging, watch_dig } from './dig.js';
@@ -1955,7 +1955,7 @@ export function maybe_unhide_at(x, y) {
     if (undetected
         && ((hides_under_pm(ptr)
              && (!OBJ_AT(x, y) || trapped || !can_hide_under_obj_at(x, y)))
-            || (ptr?.mcls === S_EEL && !IS_POOL(terrainTyp(x, y)))))
+            || (ptr?.mcls === S_EEL && !is_pool_at(x, y))))
         hideunder_settle(mtmp, hideunder_decide(mtmp));
 }
 
@@ -1994,7 +1994,7 @@ function hideunder_decide(mtmp) {
                /* pets won't hide under a cursed item or an item of any BUC state
                   that shares a pile with one or more cursed items */
                && (!mtmp.mtame || !cursed_object_at(x, y))
-               && !(IS_POOL(terrainTyp(x, y)) || IS_LAVA(terrainTyp(x, y)))) {
+               && !(is_pool_at(x, y) || is_lava_at(x, y))) {
         if (seeit) seenobj = ansimpleoname_topobj(x, y);
         /* most monsters won't hide under a cockatrice corpse but they can hide
            under a pile containing more than just such corpses */
@@ -2044,6 +2044,7 @@ export async function hideunder(mtmp) {
         // C: `if (!locomo) locomo = locomotion(mtmp->data, "hide");` — the eel
         // arm has already set it to "dive".
         const locomo = seenlocomo || locomotion(mtmp.data, 'hide');
+        (await import('./hack.js')).set_msg_xy(mtmp.mx, mtmp.my);
         await You_see(`${seenmon} ${locomo} under ${seenobj}.`);
         game.last_msg = PLNMSG_HIDE_UNDER;
         game.last_hider = mtmp.m_id;
@@ -2064,7 +2065,7 @@ function hideunder_hero_decide() {
         undetected = is_pool_at(x, y) && !Is_waterlevel(u.uz)
                      && (!Underwater() || !couldsee(x, y));
     } else if (hides_under_pm(ptr) && OBJ_AT(x, y) && can_hide_under_obj_at(x, y)
-               && !(IS_POOL(terrainTyp(x, y)) || IS_LAVA(terrainTyp(x, y)))) {
+               && !(is_pool_at(x, y) || is_lava_at(x, y))) {
         /* skip a top of pile made only of cockatrice corpses unless Stone_resistance */
         const pile = objectsAt(x, y).reverse();    /* top of pile first */
         let i = 0;
@@ -4845,12 +4846,13 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
     // C ref: mthrowu.c:649 — tmp_at(DISP_FLASH, obj_to_glyph(singleobj)).  sym
     // (obj->oclass) is always truthy for a potion; potions are never tethered.
     const fglyph = (singleobj.oclass ? flash_obj_glyph(singleobj) : null);
+    if (fglyph) await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
     let fx = -1, fy = -1; // last flashed cell (-1 = none drawn yet)
     // C ref: display.c tmp_at(x, y) DISP_FLASH + mthrowu.c nh_delay_output():
     // newsym the previous flash square, draw the glyph on a cansee() square, then
     // flush_screen(0) -- which, with m_throw()'s "slips as ..." / "hurls ..." line
     // still unacknowledged, is what pages that --More-- over the drawn flash.
-    const flash_at = async (x, y) => {
+    const flash_draw = async (x, y) => {
         if (!fglyph) return;
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } // restore previous square
         if (!cansee(x, y)) return;                     // unseen: no flash drawn
@@ -4858,6 +4860,8 @@ async function m_throw_potion(mon, sx, sy, dx, dy, range, otmp) {
         fx = x; fy = y;
         await flush_screen(0);
     };
+    // C ref: mthrowu.c:824-828 — each tmp_at(bhitpos) is followed by nh_delay_output().
+    const flash_at = async (x, y) => { await flash_draw(x, y); await nh_delay_output(); };
     const flash_end = () => { if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
     let bx = sx, by = sy;
     game.bhitpos = { x: bx, y: by };   // C ref: mthrowu.c:589-590
@@ -7379,7 +7383,8 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
     // C ref: mthrowu.c:653 — a tethered weapon (aklys) uses DISP_TETHER: the
     // cells behind the missile show the tether line until DISP_END.
     const tf = (fglyph && tethered_weapon) ? tmp_at_flash_cell(fglyph, true) : null;
-    const flash_at = async (x, y) => {
+    if (fglyph) await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
+    const flash_draw = async (x, y) => {
         if (!fglyph) return;
         if (tf) return tf.step(x, y);
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } // restore previous square
@@ -7390,6 +7395,8 @@ async function m_throw_at_hero(mon, mdat, sx, sy, dx, dy, range, otmp) {
         // --More-- shows is this flush, not the restoring newsym() of DISP_END.
         await flush_screen(0);
     };
+    // C ref: mthrowu.c:824-828 — each tmp_at(bhitpos) is followed by nh_delay_output().
+    const flash_at = async (x, y) => { await flash_draw(x, y); await nh_delay_output(); };
     // C tmp_at(DISP_END, 0): restore the last flashed cell after the throw.
     const flash_end = () => { if (tf) return return_flightpath ? undefined : tf.end(false); if (fx >= 0) { newsym(fx, fy); fx = fy = -1; } };
     // C ref: mthrowu.c:833-838 — after the flight (and drop_throw/tmp_at(DISP_END)):
@@ -7620,8 +7627,10 @@ async function return_from_mtoss_mon(magr, otmp, tethered_weapon, bx, by, tf) {
                one tmp_at(x, y) per step back toward the thrower. */
             const dx = Math.sign(x - magr.mx), dy = Math.sign(y - magr.my);
             const fl = tmp_at_flash(otmp);
+            await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
             while (isok(x, y) && (x !== magr.mx || y !== magr.my)) {
-                fl.step(x, y);
+                await fl.step(x, y);
+                await nh_delay_output();
                 x -= dx; y -= dy;
             }
             fl.end();

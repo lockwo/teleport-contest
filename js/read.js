@@ -3597,7 +3597,7 @@ export async function create_particular_creation(d) {
             const { canspotmon } = await import('./uhitm.js');
             if (!canspotmon(mtmp)) {
                 const { flash_mon } = await import('./mon.js');
-                flash_mon(mtmp);
+                await flash_mon(mtmp);
             }
         }
 

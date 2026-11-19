@@ -15,7 +15,7 @@ import { has_mgivenname } from './const.js';
 import { has_oname } from './const.js';
 import { Fumbling_hero, Half_physical_damage_hero } from './youprop.js';
 import { game } from './gstate.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, nh_delay_output } from './display.js';
 
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
@@ -1154,6 +1154,7 @@ export async function boomhit(obj, dx, dy) {
     let boom = counterclockwise ? 80 /* S_boomleft */ : 81 /* S_boomright */;
     const boom_cell = (b) => ({ ch: b === 80 ? ')' : '(', color: 3 /* CLR_BROWN */, dec: false });
     const flash = tmp_at_flash_cell(boom_cell(boom));
+    await flush_screen_hurtle(0); /* C ref: display.c:1194 tmp_at() start flush */
 
     for (let ct = 0; ct < 10; ct++) {
         i = ((i % N_DIRS) + N_DIRS) % N_DIRS;
@@ -1191,7 +1192,7 @@ export async function boomhit(obj, dx, dy) {
             return { caught: true };
         }
         await flash.step(bx, by);
-        await nh_delay_output_hurtle();
+        await nh_delay_output();
         if (IS_SINK(typ_at(bx, by))) {
             if (!Deaf_hero()) await update_topl('Klonk!');
             const { wake_nearto_core } = await import('./mon.js');
@@ -1599,7 +1600,7 @@ export async function hurtle_step(arg, x, y) {
     if (--arg.range < 0) /* make sure our range never goes negative */
         arg.range = 0;
     if (arg.range !== 0)
-        await nh_delay_output_hurtle();
+        await nh_delay_output();
     return true;
 }
 
@@ -1648,7 +1649,7 @@ export async function mhurtle_step(arg, x, y) {
             vision_recalc(0); /* new location => different lines of sight */
         }
         await flush_screen_hurtle(1);
-        await nh_delay_output_hurtle();
+        await nh_delay_output();
         const { set_apparxy } = await import('./monmove.js');
         set_apparxy(mon);
         if (IS_WATERWALL(typ_at(x, y)))
@@ -1820,9 +1821,10 @@ export async function sho_obj_return_to_u(obj) {
         let x = bh.x - u.dx, y = bh.y - u.dy;
 
         const flash = tmp_at_flash(obj);
+        await flush_screen_hurtle(0); /* C ref: display.c:1194 tmp_at() start flush */
         while (isok(x, y) && (x !== u.ux || y !== u.uy)) {
             await flash.step(x, y);
-            await nh_delay_output_hurtle();
+            await nh_delay_output();
             x -= u.dx;
             y -= u.dy;
         }
@@ -1955,8 +1957,6 @@ async function nomul_hurtle(nval) {
     const { nomul } = await import('./hack.js');
     nomul(nval);
 }
-// C ref: tty nh_delay_output() — js/hack.js:3734 (unexported).
-async function nh_delay_output_hurtle() {  await Promise.resolve(); }
 // C ref: mon.c remove_monster(x, y) — js/worm.js:206 (unexported).
 function remove_monster_hurtle(x, y) {
     for (const m of game.level?.monsters || [])

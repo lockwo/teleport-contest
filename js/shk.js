@@ -30,7 +30,7 @@ import { acurr_eff, adjalign, exercise } from './attrib.js';
 import { monster_by_pmidx, mpickobj, add_to_minv, makemon, makemon_appears_msg } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { rn2, rnd } from './rng.js';
-import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize, Hallucination_u, queue_impossible } from './display.js';
+import { update_topl, Norep, newsym, m_at, map_invisible, You_hear, You_feel, verbalize, Hallucination_u, queue_impossible, nh_delay_output } from './display.js';
 import { MFLAGS1, MFLAGS2, M1_TPORT, M1_TPORT_CNTRL, M1_HUMANOID, M2_DEMON,
          M2_NEUTER, msound_of, passes_walls_flag, is_vampire, is_elf_flag, is_human_flag } from './monflags_data.js';
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
@@ -3082,6 +3082,7 @@ export async function shkcatch(obj, x, y) {
             } catches ${the(xname(obj))}.`);
             const { canspotmon } = await import('./uhitm.js');
             if (!canspotmon(shkp)) map_invisible(x, y);
+            await nh_delay_output();
         }
         subfrombill(obj, shkp);
         mpickobj(shkp, obj);

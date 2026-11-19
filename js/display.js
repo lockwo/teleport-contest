@@ -300,7 +300,7 @@ export function tmp_at_flash_cell(glyph, tethered = false, always = false) {
             if (!glyph || (!always && !cansee(x, y))) return;
             draw(x, y);
             fx = x; fy = y;
-            if (always) await flush_screen(0);
+            await flush_screen(0); /* C ref: display.c:1292 make sure it shows up */
         },
         async end(backtrack = false) {
             if (tethered) {
@@ -309,7 +309,7 @@ export function tmp_at_flash_cell(glyph, tethered = false, always = false) {
                         newsym(saved[i].x, saved[i].y);
                         draw(saved[i - 1].x, saved[i - 1].y);
                         await flush_screen(0);
-                        await nh_delay_output_d();
+                        await nh_delay_output();
                     }
                     saved.length = 1;
                 }
@@ -742,29 +742,6 @@ function mon_visible(mtmp) {
     if (mtmp.minvis && !See_invisible_hero()) return false;
     return !mtmp.mundetected;
 }
-
-// ── ANSI color codes ──
-// Maps CLR_* constants (0-15) to ANSI SGR color codes.
-// C ref: wintty.c term_start_color
-const ANSI_DEFAULT = 39;
-const ANSI_COLOR = [
-    30,  // CLR_BLACK     0
-    31,  // CLR_RED       1
-    32,  // CLR_GREEN     2
-    33,  // CLR_BROWN     3
-    34,  // CLR_BLUE      4
-    35,  // CLR_MAGENTA   5
-    36,  // CLR_CYAN      6
-    37,  // CLR_GRAY      7
-    39,  // NO_COLOR      8 → default
-    91,  // CLR_ORANGE    9
-    92,  // CLR_BRIGHT_GREEN  10
-    93,  // CLR_YELLOW    11
-    94,  // CLR_BRIGHT_BLUE   12
-    95,  // CLR_BRIGHT_MAGENTA 13
-    96,  // CLR_BRIGHT_CYAN   14
-    97,  // CLR_WHITE     15
-];
 
 // True when the active symset uses VT100 line-drawing (DECgraphics).  C ref:
 // drawing.c symset[] / dat/symbols — without it the default ASCII glyphs
@@ -3226,65 +3203,6 @@ export function show_monster_and_self(mon) {
     }
 }
 
-// ── Serialize a map row with DEC line-drawing and ANSI colors ──
-function render_map_row(y) {
-    if (!game.level) return '';
-    let firstCol = -1, lastCol = -1;
-    for (let x = 1; x < COLNO; x++) {
-        const loc = game.level.at(x, y);
-        if (loc?.disp_ch && loc.disp_ch !== ' ') {
-            if (firstCol < 0) firstCol = x;
-            lastCol = x;
-        }
-    }
-    if (firstCol < 0) return '';
-
-    let output = '';
-    let activeColor = ANSI_DEFAULT;  // default
-    let activeDec = false;
-
-    // Leading gap
-    const gap = firstCol - 1;
-    if (gap > 4) output += `\x1b[${gap}C`;
-    else if (gap > 0) output += ' '.repeat(gap);
-
-    for (let x = firstCol; x <= lastCol; x++) {
-        const loc = game.level.at(x, y);
-        const ch = loc?.disp_ch ?? ' ';
-        const color = loc?.disp_color ?? NO_COLOR;
-        const dec = !!loc?.disp_decgfx;
-
-        if (ch === ' ') {
-            // Space runs
-            let run = 1;
-            while (x + run <= lastCol && (game.level.at(x + run, y)?.disp_ch ?? ' ') === ' ') run++;
-            if (activeDec) { output += '\x0f'; activeDec = false; }
-            if (run > 4) output += `\x1b[${run}C`;
-            else output += ' '.repeat(run);
-            x += run - 1;
-            continue;
-        }
-
-        let wantAnsi = ANSI_COLOR[color] ?? ANSI_DEFAULT;
-        if (wantAnsi !== activeColor) {
-            output += `\x1b[${wantAnsi}m`;
-            activeColor = wantAnsi;
-        }
-
-        // DEC mode switching
-        if (dec && !activeDec) { output += '\x0e'; activeDec = true; }
-        else if (!dec && activeDec) { output += '\x0f'; activeDec = false; }
-
-        output += ch;
-    }
-
-    // Reset state at end of row (C does per-row SO/SI)
-    if (activeColor !== ANSI_DEFAULT) output += `\x1b[${ANSI_DEFAULT}m`;
-    if (activeDec) output += '\x0f';
-
-    return output;
-}
-
 // ── Status lines ──
 // C ref: botl.h enum statusfields — the field ids bot_via_windowport() fills
 // and wintty.c render_status() walks in fieldorder[] order.
@@ -4637,23 +4555,6 @@ function _buildScreenOutput() {
     game._menuTruncCarry = null;
 
     _syncClipping();
-    const nstat = StatusRows();
-    let output = '';
-    // Row 0: message
-    output += (game._pending_message || '') + '\n';
-
-    // Map rows: LI - 1 - statuslines of them, scrolled by clipy.
-    for (let i = 0; i < (display.rows ?? 24) - 1 - nstat; i++) {
-        output += render_map_row(clipy + i) + '\n';
-    }
-
-    // Status rows (the last `nstat` rows of the terminal)
-    const outRows = botl_lines();
-    for (let r = 0; r < nstat; r++)
-        output += _statusRowText(outRows[r] || []) + (r < nstat - 1 ? '\n' : '');
-
-    game._screen_output = output;
-
     // Also write to grid for serialize_terminal_grid
     if (display.grid) {
         display.clearScreen();
@@ -5507,6 +5408,26 @@ export function topl_rows(msg) {
         for (let i = 0; i < ln.length; i += CO - 1) rows.push(ln.slice(i, i + CO - 1));
     }
     return rows;
+}
+
+// C ref: win/tty/topl.c update_topl() -> redotoplin() write a message to the
+// physical top line at once, while this port paints it at the next screen
+// build.  An animation frame (tty_delay_output) is captured between the two,
+// so it shows the current topline over the terminal.  Returns the undo.
+export function overlay_topline(term) {
+    const rows = topl_rows(game._pending_message || '');
+    const n = Math.min(Math.max(rows.length, 1), term.rows);
+    const saved = [];
+    for (let r = 0; r < n; r++) {
+        saved.push(term.grid[r].map((c) => ({ ch: c.ch, color: c.color, attr: c.attr })));
+        term.clearRow(r);
+        if (rows[r]) term.putstr(0, r, rows[r], NO_COLOR, 0);
+    }
+    return () => {
+        for (let r = 0; r < n; r++)
+            for (let c = 0; c < saved[r].length; c++)
+                term.setCell(c, r, saved[r][c].ch, saved[r][c].color, saved[r][c].attr);
+    };
 }
 
 // Draw "--More--" for the current top-line message and block until the
@@ -6769,9 +6690,13 @@ export function update_lastseentyp(x, y) {
     if (!game.lastseentyp[x]) game.lastseentyp[x] = [];
     game.lastseentyp[x][y] = ltyp;
 }
-// C ref: windows nh_delay_output() — a pure output pause (js/hack.js:3734 has
-// the same private shim).
-async function nh_delay_output_d() {  await Promise.resolve(); }
+// C ref: windowprocs nh_delay_output() -> tty_delay_output(); the recorder
+// build captures an animation frame there (termcap.c NOMUX_CAPTURE).
+export async function nh_delay_output() {
+    const hook = game._animationFrameHook;
+    if (hook) await hook();
+    else await Promise.resolve();
+}
 // C ref: display.c:715 suppress_map_output() —
 // gi.in_mklev || program_state.saving || program_state.restoring.
 function _suppress_map_output() {
@@ -7035,6 +6960,17 @@ const shield_static = [
     S_ss1, S_ss2, S_ss3, S_ss2, S_ss1, S_ss2, S_ss4,
     S_ss1, S_ss2, S_ss3, S_ss2, S_ss1, S_ss2, S_ss4,
 ];
+// C ref: drawing.c defsyms[] S_ss1..S_ss4: '0', '#', '@', '*', all HI_ZAP.
+const SHIELD_SYMS = { [S_ss1]: ['S_ss1', '0'], [S_ss2]: ['S_ss2', '#'],
+                      [S_ss3]: ['S_ss3', '@'], [S_ss4]: ['S_ss4', '*'] };
+// C ref: show_glyph(x, y, cmap_to_glyph(shield_static[k])), painted into the
+// live cell buffer (shieldeff() and explode.c's shielded-cell sparkle).
+export function show_shield_cell(x, y, k) {
+    show_glyph(x, y, cmap_to_glyph(shield_static[k]));
+    const [name, dflt] = SHIELD_SYMS[shield_static[k]];
+    show_glyph_cell(x, y, symOverrideChar(name) || dflt, CLR_BRIGHT_BLUE, false);
+}
+export { SHIELD_COUNT };
 
 // C ref: display.c:1110 shieldeff(x, y) — magic-shield pyrotechnics.
 // async because this port's flush_screen() is (C's is void).
@@ -7045,9 +6981,9 @@ export async function shieldeff(x, y) {
         return;
     if (cansee(x, y)) { /* don't see anything if can't see the location */
         for (i = 0; i < SHIELD_COUNT; i++) {
-            show_glyph(x, y, cmap_to_glyph(shield_static[i]));
+            show_shield_cell(x, y, i);
             await flush_screen(1); /* make sure the glyph shows up */
-            await nh_delay_output_d();
+            await nh_delay_output();
         }
         newsym(x, y); /* restore the old information */
     }
@@ -7123,7 +7059,7 @@ export async function tmp_at(x, y) {
                         show_glyph(_tglyph.saved[i - 1].x,
                                    _tglyph.saved[i - 1].y, _tglyph.glyph);
                         await flush_screen(0); /* make sure it shows up */
-                        await nh_delay_output_d();
+                        await nh_delay_output();
                     }
                     _tglyph.sidx = 1;
                 }
@@ -7192,7 +7128,7 @@ export async function flash_glyph_at(x, y, tg, rpt) {
     for (let i = 0; i < rpt; i++) {
         show_glyph(x, y, glyph[i % 2]);
         await flush_screen(1);
-        await nh_delay_output_d();
+        await nh_delay_output();
     }
 }
 
@@ -7214,6 +7150,25 @@ export function show_remembered_glyph_at(x, y) {
         const bg = background_glyph(loc, x, y);
         show_bg_glyph(x, y, bg);
     }
+}
+
+// C ref: display.c:1305 flash_glyph_at(x, y, tg, rpt) with `tg` as a display
+// cell: alternate it with the remembered glyph, flushing and delaying after
+// each, ending on the remembered glyph with no newsym().
+export async function flash_cell_at(x, y, cell, rpt) {
+    for (let i = 0; i < rpt * 2; i++) {
+        if (i % 2 === 0) show_glyph_cell(x, y, cell.ch, cell.color, !!cell.dec, cell.attr | 0);
+        else show_remembered_glyph_at(x, y);
+        await flush_screen(1);
+        await nh_delay_output();
+    }
+}
+
+// C ref: display.h mon_to_glyph(mtmp, rng) as a display cell: the species
+// glyph, ignoring any disguise (one display rng draw while hallucinating).
+export function mon_to_glyph_cell(mtmp) {
+    const mg = monster_glyph(mtmp, true);
+    return { ch: mg.ch, color: mg.color, dec: mg.dec, attr: female_attr(mg.female) };
 }
 
 // C ref: display.c:1395 under_water(mode) — shows the hero while underwater,

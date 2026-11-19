@@ -2815,11 +2815,9 @@ export async function polymorph_sink() {
     if (loc?.typ !== SINK) return;
 
     const sinklooted = (loc.looted | 0) !== 0;
-    /* C: svl.level.flags.nsinks-- is commented out — set_levltyp() recounts.
-       NOTE: mkmaze.c set_levltyp()'s count_level_features() call is NOT ported
-       (js/mklev.js recount_level_features() is private and only mklev calls it),
-       so level.flags.nsinks/nfountains do not follow these edits. */
+    // C's flags field also stores looted bits, kept separately in JS.
     loc.flags = 0;
+    loc.looted = 0;
     switch (rn2(4)) {
     default:
     case 0:

@@ -7,7 +7,6 @@
 // generated naturally for any session whose level state is materialized.
 
 import { has_ceiling as has_ceiling_dg } from './dungeon.js';
-import { random_monster } from './disprng.js';
 import { game, hooks, register_process_static } from './gstate.js';
 import { s_suffix, an } from './hacklib.js';
 import { The } from './objnam.js';
@@ -39,7 +38,7 @@ import { monster_by_pmidx, newcham_wizard_aware,
     pickvampshape_pub, set_mimic_sym, makemon, makemon_appears_msg, can_saddle  } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { newsym, pline, update_topl, see_with_infrared, canseemon_shared,
-    tp_sensemon, match_warn_of_mon, Hallucination_u, Deaf_hero, You_feel, show_remembered_glyph_at } from './display.js';
+    tp_sensemon, match_warn_of_mon, Hallucination_u, Deaf_hero, You_feel } from './display.js';
 import { dist2 } from './hacklib.js';
 import { monnear } from './dogmove.js';
 import { Monnam, mon_nam } from './uhitm.js';
@@ -3959,7 +3958,7 @@ export async function shieldeff_mon(mtmp) {
 // Flash a monster's glyph in place.  The viz_array override is the same trick
 // hide_monst() above uses: it forces the square to count as seen for the
 // duration and restores the saved byte afterwards.
-export function flash_mon(mtmp) {
+export async function flash_mon(mtmp) {
     const mx = mtmp.mx, my = mtmp.my;
     let count = couldsee(mx, my) ? 8 : 4;
     const row = game.viz_array?.[my];
@@ -3968,13 +3967,8 @@ export function flash_mon(mtmp) {
     if (!game.flags?.sparkle)
         count = Math.trunc(count / 2);
     if (row) row[mx] |= (VIZ_IN_SIGHT | VIZ_COULD_SEE);
-    /* C ref: display.c flash_glyph_at(x, y, mon_to_glyph(mtmp, newsym_rn2),
-       count) — the flash frames are display-only and the glyph pick (what_mon())
-       DRAWS one display-rng value while hallucinating.  The loop ends with the
-       remembered glyph showing, drawn with no newsym() of its own. */
-    if (Hallucination_u()) random_monster();
-    show_remembered_glyph_at(mx, my);
-    void count;
+    const { flash_cell_at, mon_to_glyph_cell } = await import('./display.js');
+    await flash_cell_at(mx, my, mon_to_glyph_cell(mtmp), count);
     if (row) row[mx] = saveviz;
     newsym(mx, my);
 }

@@ -15,7 +15,7 @@ import { rnd, rn2, rn1 } from './rng.js';
 import { align_str } from './role.js';
 import { hard_helmet } from './do_wear.js';
 import { newsym, feel_location, feel_newsym, You_hear, You_feel, show_glyph_cell, flush_screen, verbalize, stairway_at, canseemon_shared } from './display.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, nh_delay_output } from './display.js';
 import { A_STR, A_INT, A_WIS, A_DEX, A_CON, A_CHA, HEAD, FOOT, STOMACH, Unaware, is_pool, is_lava, is_moat, is_pool_or_lava, is_ice } from './const.js';
 import { CLR_WHITE } from './terminal.js';
 import { unblock_point, recalc_block_point, cansee, couldsee, Blind } from './vision.js';
@@ -481,6 +481,7 @@ export async function zap_dig() {
     // the hero can see keeps the S_digbeam glyph ('*', white) until DISP_END, so
     // a --More-- raised inside the loop shows the beam so far.
     const beam = [];
+    await flush_screen(0); /* tmp_at(DISP_BEAM) start flush */
 
     while (--digdepth >= 0) {
         if (!isok(zx, zy)) break;
@@ -491,6 +492,7 @@ export async function zap_dig() {
             show_glyph_cell(zx, zy, '*', CLR_WHITE, false);
             await flush_screen(0);
         }
+        await nh_delay_output(); /* wait a little bit */
 
         if (pitdig) { /* we are already in a pit if this is true */
             let adjpit = t_at(zx, zy);
@@ -1166,6 +1168,7 @@ export async function mkcavearea(rockit) {
         }
 
         await flush_screen_(1);           /* make sure the new glyphs show up */
+        await nh_delay_output();
     }
 
     if (!rockit && lvl.at(u.ux, u.uy)?.typ === CORR) {

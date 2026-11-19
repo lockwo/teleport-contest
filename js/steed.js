@@ -28,6 +28,7 @@ import { pline, flush_screen, newsym, update_topl, urgent_topl, unmap_object,
          canseemon_shared, y_n, status_hold } from './display.js';
 import { m_at, Hallucination_u } from './display.js';
 import { DEADMONSTER } from './mon.js';
+import { finish_meating } from './dogmove.js';
 import { killed } from './uhitm.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
 import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
@@ -923,7 +924,7 @@ export async function maybewakesteed(steed) {
     if (wasimmobile && !helpless_std(steed))
         await pline(`${Monnam_uhitm(steed)} wakes up.`);
     /* regardless of waking, terminate any meal in progress */
-    finish_meating_std(steed);
+    finish_meating(steed);
 }
 
 // C ref: steed.c:852 poly_steed(steed, oldshape) — the steed changed form.
@@ -969,8 +970,6 @@ function objdescr_is_std(obj, descr) {
 function helpless_std(mon) {
     return !mon?.mcanmove || !!mon.msleeping || (mon.mfrozen | 0) > 0;
 }
-// C ref: eat.c finish_meating(mon) — js/dogmove.js:2300 holds the private port.
-function finish_meating_std(mon) { mon.meating = 0; }
 // (dismount_steed_std removed — kick_steed()/poly_steed() above now call the
 // real, exported dismount_steed(reason) directly.)
 // C ref: hacklib.c strsubst(bp, orig, replacement) — first occurrence only.

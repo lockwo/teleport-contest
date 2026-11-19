@@ -480,9 +480,10 @@ export async function thrwmmDeps() {
         // restores the last one.  So thitu()'s "You are hit by ..." --More--
         // shows the missile on the square just before the hero.  (A tethered
         // aklys uses DISP_TETHER's trail, not drawn here.)
-        tmp_at_flash: (obj, tethered) => {
+        tmp_at_flash: async (obj, tethered) => {
             flash.glyph = tethered ? null : flash_obj_glyph(obj);
             flash.x = flash.y = -1;
+            await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
         },
         tmp_at_step: async (x, y) => {
             if (!flash.glyph) return;

@@ -14,7 +14,8 @@ import { cant_squeeze_thru_hero } from './hack.js';
 import { s_suffix, upstart } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
-         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp, hold_botl_hp } from './display.js';
+         feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp, hold_botl_hp,
+         flush_screen, nh_delay_output } from './display.js';
 import { map_trap } from './detect.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
@@ -5465,13 +5466,6 @@ const RIN_LEVITATION_SF = 183;    // mkobj.js otyp (invent.js's own copy)
 // outside/form-granted or terrain-blocked source, or the hero is already
 // Flying) or it crashes the hero onto the sink (an ordinary timed potion/
 // spell/wand source).  Called from spoteffects() below.
-//
-// This port's Levitation is a single packed `u.uprops.Levitation` timeout
-// (js/timeout.js:357-361) with no worn-item extrinsic — js/do_wear.js:330
-// "the extrinsic itself rides on the worn mask (deferred: levitation)" — so
-// `lev_boots` and the Ring_off/Boots_off tail below can never actually fire
-// in current play; ported anyway, faithfully, in case worn-item levitation
-// is modelled later.
 async function dosinkfall() {
     const u = game.u;
     const fell_on_sink = 'fell onto a sink';
@@ -5525,6 +5519,8 @@ async function dosinkfall() {
     /* C: ELevitation &= ~W_ARTI; HLevitation &= ~(I_SPECIAL|TIMEOUT);
        end any timed/worn-artifact levitation source now, across every field
        name this port's Levitation() helpers read (see js/dbridge.js HProp). */
+    if (u.uprops_extrinsic)
+        u.uprops_extrinsic[LEVITATION] = worn_extrinsic(LEVITATION) & ~W_ARTI;
     if (u.uprops) {
         u.uprops.Levitation = (u.uprops.Levitation | 0) & ~(I_SPECIAL | TIMEOUT);
         if (u.uprops.HLevitation !== undefined)
@@ -5818,23 +5814,32 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
         singleobj.otrapped = 1;   /* a flag for ohitmon */
         style &= ~LAUNCH_KNOWN;
     }
+    // C ref: trap.c:3339-3351 — the roll arms reach `roll:` (delaycnt 2);
+    // anything else delays once per visible step.
+    const delaycnt = (style === ROLL) ? 2 : 1;
+    if (!cansee(x, y)) await flush_screen(1); /* curs_on_u() */
     // tmp_at(DISP_FLASH, obj_to_glyph(singleobj, rn2_on_display_rng)) and
     // tmp_at(x, y) at the TOP of each step (the PRE-move square), then
     // tmp_at(DISP_END).  The flash trails one square behind the boulder, so a
     // --More-- raised mid-roll shows the glyph on that trailing square.
     const fglyph = flash_obj_glyph(singleobj);
+    await flush_screen(0); /* tmp_at(DISP_FLASH) start flush */
     let fx = -1, fy = -1;
-    const flash_at = (ax, ay) => {
+    const flash_at = async (ax, ay) => {
         if (fx >= 0) { newsym(fx, fy); fx = fy = -1; }
         if (!cansee(ax, ay)) return;
         show_glyph_cell(ax, ay, fglyph.ch, fglyph.color, fglyph.dec);
         fx = ax; fy = ay;
+        await flush_screen(0);
     };
-    flash_at(x, y);
+    await flash_at(x, y);
     // C ref: trap.c:3361 launch_drop_spot(singleobj, x, y) — the flight's start.
     launch_drop_spot(singleobj, x, y);
     while (dist-- > 0 && !used_up) {
-        flash_at(x, y);
+        await flash_at(x, y);
+        /* Delay only if hero sees it */
+        if (cansee(x, y))
+            for (let t = delaycnt; t-- > 0; ) await nh_delay_output();
         if (!isok(x + dx, y + dy)) { x2 = x; y2 = y; break; }
         x += dx; y += dy;
         const mtmp = m_at(x, y);

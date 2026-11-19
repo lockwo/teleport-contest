@@ -4230,10 +4230,12 @@ export async function start_engulf(mdef) {
         await flush_screen(0);   /* tmp_at(DISP_ALWAYS, glyph) flushes */
         await engulf_flash.step(mdef.mx, mdef.my);
     }
-    const { update_topl } = await import('./display.js');
+    const { update_topl, nh_delay_output } = await import('./display.js');
     await update_topl(`You `
         + `${u_digest ? 'swallow' : u_enfold ? 'enclose' : 'engulf'} `
         + `${mon_nam(mdef)}${u_digest ? ' whole' : ''}!`);
+    await nh_delay_output();
+    await nh_delay_output();
 }
 
 // C ref: uhitm.c:4949 end_engulf() — tear down the swallow animation.  No RNG.

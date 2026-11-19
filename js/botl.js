@@ -265,15 +265,13 @@ export function status_version_str(indent) {
     return status_version('', 0, indent);
 }
 
-/* C ref: hack.c classify_terrain() — classifies the terrain under the hero
-   (the hero's square is always seen, so levl typ stands in for
-   svl.lastseentyp[u.ux][u.uy]) into iflags.terrain_typ, and requests a status
-   update when that changed unless the hero is running. */
+/* C ref: hack.c classify_terrain() reads lastseentyp, including the surface
+   beneath a raised drawbridge, rather than the current terrain type. */
 export function classify_terrain() {
     const u = game.u || {};
     const loc = game.level?.at(u.ux, u.uy);
-    let typ = loc?.typ;
-    if (typ == null) { game.iflags = game.iflags || {}; game.iflags.terrain_typ = MAX_TYPE; return; }
+    let typ = game.lastseentyp?.[u.ux]?.[u.uy] ?? STONE;
+    if (!loc) { game.iflags = game.iflags || {}; game.iflags.terrain_typ = MAX_TYPE; return; }
 
     if (Underwater()) {
         typ = xSUBMERGED;

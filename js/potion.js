@@ -1841,7 +1841,8 @@ async function dipsink(obj) {
         break;
     default:
         await update_topl('A wisp of vapor rises up...');
-        await potionbreathe_hero(obj);   // does its own trycall/makeknown
+        if (!p_breathless(youmonst_data()) || p_haseyes(youmonst_data()))
+            await potionbreathe_hero(obj);   // does its own trycall/makeknown
         break;
     }
     if (try_call && obj.dknown) await trycall(obj);

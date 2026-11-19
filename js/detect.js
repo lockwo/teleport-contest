@@ -25,7 +25,8 @@ import { rnd } from './rng.js';
 // Additional imports used only by the translated block at the end of this file.
 import { m_at, docrt, cls, covers_objects, map_invisible, unmap_object,
          terrain_glyph, see_monsters, update_topl, flush_screen,
-         Hallucination_u, impossible, warning_of, display_nhwindow_message, female_attr, show_remembered_glyph_at } from './display.js';
+         Hallucination_u, impossible, warning_of, display_nhwindow_message, female_attr,
+         flash_cell_at, mon_to_glyph_cell } from './display.js';
 import { Blind, cansee, unblock_point, recalc_block_point, do_clear_area_async } from './vision.js';
 import { TER_DETECT, TER_MAP, TER_TRP, TER_OBJ, TER_MON, TER_FULL, SVALL,
          COULD_SEE, IN_SIGHT, I_SPECIAL, isok, IS_DOOR, ROOM,
@@ -55,9 +56,13 @@ import { get_obj_location } from './light.js';
 // object" scan, o_material(obj, GOLD)).
 const GOLD_MATERIAL = 15;
 
+// C ref: detect.c:19 FOUND_FLASH_COUNT, and the GLYPH_INVISIBLE marker cell.
+const FOUND_FLASH_COUNT = 6;
+const INVISIBLE_CELL = { ch: 'I', color: NO_COLOR, dec: false };
+
 // C ref: detect.c findone(zx, zy, whatfound) — reveal a single hidden feature
 // at (zx,zy): secret door/corridor, trap, trapped door, trapped chest, hidden
-// or unseen monster.  FOUND_FLASH_COUNT's flash_glyph_at() is display-only.
+// or unseen monster, flashing each find with flash_glyph_at().
 async function findone(zx, zy, found) {
     const { canspotmon, seemimicLocal } = await import('./uhitm.js');
     const { is_hider_flag, hides_under_flag } = await import('./monflags_data.js');
@@ -70,12 +75,17 @@ async function findone(zx, zy, found) {
     found.ft_cc = { x: zx, y: zy }; /* needed by detect_obj_traps() */
 
     if (lev.typ === SDOOR) {
+        /* S_hcdoor / S_vcdoor */
+        await flash_cell_at(zx, zy, terrain_glyph({ typ: DOOR, doormask: D_CLOSED,
+                                                    horizontal: lev.horizontal }, zx, zy),
+                            FOUND_FLASH_COUNT);
         cvt_sdoor_to_door(lev); /* set lev->typ = DOOR */
         recalc_block_point(zx, zy);
         magic_map_background(zx, zy, 0);
         foundone(zx, zy, { kind: 'cmap' });
         found.num_sdoors++;
     } else if (lev.typ === SCORR) {
+        await flash_cell_at(zx, zy, corr_glyph_cell(false), FOUND_FLASH_COUNT);
         lev.typ = CORR;
         unblock_point(zx, zy);
         magic_map_background(zx, zy, 0);
@@ -86,6 +96,7 @@ async function findone(zx, zy, found) {
     if (ttmp && !ttmp.tseen
         /* [shouldn't successful 'find' reveal and activate statue traps?] */
         && ttmp.ttyp !== STATUE_TRAP) {
+        await flash_cell_at(zx, zy, trap_glyph(ttmp), FOUND_FLASH_COUNT);
         ttmp.tseen = 1;
         sense_trap(ttmp, zx, zy, 0); /* handles Hallucination */
         foundone(zx, zy, { kind: 'cmap' }); /* trap_to_glyph(): a cmap glyph */
@@ -95,42 +106,38 @@ async function findone(zx, zy, found) {
         && ((lev.doormask | 0) & D_TRAPPED) !== 0) { /* closed_door() */
         dummytrap.ttyp = TRAPPED_DOOR;
         dummytrap.tx = zx; dummytrap.ty = zy;
+        await flash_cell_at(zx, zy, trap_glyph(dummytrap), FOUND_FLASH_COUNT);
         dummytrap.tseen = 1;
         sense_trap(dummytrap, zx, zy, 0); /* handles Hallucination */
         foundone(zx, zy, { kind: 'cmap' }); /* trap_to_glyph(): a cmap glyph */
         found.num_traps++;
     }
     /* trapped chests */
-    detect_obj_traps(d_buriedobjs(), true, 0, found);
-    detect_obj_traps(d_fobj(), true, 0, found);
+    await detect_obj_traps(d_buriedobjs(), true, 0, found);
+    await detect_obj_traps(d_fobj(), true, 0, found);
     if (mtmp)
-        detect_obj_traps(mtmp.minvent || [], true, 0, found);
+        await detect_obj_traps(mtmp.minvent || [], true, 0, found);
     if (d_u_at(zx, zy))
-        detect_obj_traps(game.invent || [], true, 0, found);
+        await detect_obj_traps(game.invent || [], true, 0, found);
 
     if (mtmp && (!canspotmon(mtmp) || mtmp.mundetected || mtmp.m_ap_type)) {
         if (mtmp.m_ap_type) {
-            /* C: flash_glyph_at(zx, zy, mon_to_glyph(mtmp, rn2_on_display_rng), ...) */
-            if (Hallucination_u()) random_monster_disp();
-            show_remembered_glyph_at(zx, zy); /* flash_glyph_at() final frame */
+            await flash_cell_at(zx, zy, mon_to_glyph_cell(mtmp), FOUND_FLASH_COUNT);
             seemimicLocal(mtmp);
             found.num_mons++;
         } else if (mtmp.mundetected && (is_hider_flag(mtmp.data)
                                         || hides_under_flag(mtmp.data)
                                         || mtmp.data?.mcls === 57 /* S_EEL */)) {
-            /* C: flash_glyph_at(zx, zy, mon_to_glyph(mtmp, rn2_on_display_rng),
-               FOUND_FLASH_COUNT) — the glyph pick draws off the display rng
-               while hallucinating; the flash itself is display-only. */
-            if (Hallucination_u()) random_monster_disp();
-            /* the flash loop ends with the remembered glyph drawn, with no newsym() of
-               its own; the newsym() below is a no-op for a far square while submerged */
-            show_remembered_glyph_at(zx, zy);
+            /* the flash ends with the remembered glyph drawn; the newsym()
+               below is a no-op for a far square while submerged */
+            await flash_cell_at(zx, zy, mon_to_glyph_cell(mtmp), FOUND_FLASH_COUNT);
             mtmp.mundetected = 0;
             newsym(zx, zy);
             found.num_mons++;
         }
         if (!lev.invisMon) {
             if (!canspotmon(mtmp)) {
+                await flash_cell_at(zx, zy, INVISIBLE_CELL, FOUND_FLASH_COUNT);
                 map_invisible(zx, zy);
                 found.num_invis++;
             }
@@ -140,9 +147,10 @@ async function findone(zx, zy, found) {
     } else if (lev.invisMon) { /* unmap_invisible() */
         unmap_object(zx, zy);
         newsym(zx, zy);
-        /* flash_glyph_at(GLYPH_INVISIBLE): its even loop ends with levl[][].glyph
-           shown and no newsym(), so it overrides a gas-cloud glyph newsym() drew */
-        show_remembered_glyph_at(zx, zy);
+        /* flash the invisible monster glyph because it is already gone; the
+           flash ends on levl[][].glyph with no newsym(), so it overrides a
+           gas-cloud glyph newsym() drew */
+        await flash_cell_at(zx, zy, INVISIBLE_CELL, FOUND_FLASH_COUNT);
         found.num_cleared_invis++;
     }
 }
@@ -1380,7 +1388,7 @@ const OTRAP_NONE = 0, OTRAP_HERE = 1, OTRAP_THERE = 2;
 // list of objects for chest traps.  Returns OTRAP_HERE|OTRAP_THERE bits;
 // optionally updates the map and (when ft is non-null, i.e. called from
 // findone()) flashes and counts each one.
-export function detect_obj_traps(objlist, show_them, how, ft) {
+export async function detect_obj_traps(objlist, show_them, how, ft) {
     let result = OTRAP_NONE;
 
     dummytrap.ttyp = TRAPPED_CHEST;
@@ -1398,8 +1406,8 @@ export function detect_obj_traps(objlist, show_them, how, ft) {
             otmp.tknown = 1;
             observe_object(otmp);
             result |= d_u_at(x, y) ? OTRAP_HERE : OTRAP_THERE;
-            // flash_glyph_at(x, y, trapglyph, FOUND_FLASH_COUNT) — FOUND_FLASH_COUNT
-            // is 6 so C animates the find; js/display.js has no flash_glyph_at.
+            if (ft)
+                await flash_cell_at(x, y, trapglyph, FOUND_FLASH_COUNT);
             if (show_them) {
                 dummytrap.tx = x; dummytrap.ty = y;
                 sense_trap(dummytrap, x, y, how);
@@ -1410,7 +1418,7 @@ export function detect_obj_traps(objlist, show_them, how, ft) {
             }
         }
         if (d_Has_contents(otmp))
-            result |= detect_obj_traps(d_cobj(otmp), show_them, how, ft);
+            result |= await detect_obj_traps(d_cobj(otmp), show_them, how, ft);
     }
     return result;
 }
@@ -1426,13 +1434,13 @@ export async function display_trap_map(cursed_src) {
     blank_map_cells();
     unconstrain_map();
     /* chest traps first, buried before floor so floor traps override */
-    detect_obj_traps(d_buriedobjs(), true, cursed_src, null);
-    detect_obj_traps(d_fobj(), true, cursed_src, null);
+    await detect_obj_traps(d_buriedobjs(), true, cursed_src, null);
+    await detect_obj_traps(d_fobj(), true, cursed_src, null);
     for (const mon of d_fmon()) {
         if (d_DEADMONSTER(mon) || (mon.isgd && !mon.mx)) continue;
-        detect_obj_traps(mon.minvent, true, cursed_src, null);
+        await detect_obj_traps(mon.minvent, true, cursed_src, null);
     }
-    detect_obj_traps(game.invent, true, cursed_src, null);
+    await detect_obj_traps(game.invent, true, cursed_src, null);
 
     /* gf.ftrap is prepend-ordered (newest first) in C; level.traps is
        append-ordered, so walk it backwards to draw hallucinated glyphs in
@@ -1487,25 +1495,25 @@ export async function trap_detect(sobj) {
         found = true;
     }
     /* chest traps (might be buried or carried) */
-    tr = detect_obj_traps(d_fobj(), false, 0, null);
+    tr = await detect_obj_traps(d_fobj(), false, 0, null);
     if (tr !== OTRAP_NONE) {
         if (tr & OTRAP_THERE) { await display_trap_map(cursed_src); return 0; }
         found = true;
     }
-    tr = detect_obj_traps(d_buriedobjs(), false, 0, null);
+    tr = await detect_obj_traps(d_buriedobjs(), false, 0, null);
     if (tr !== OTRAP_NONE) {
         if (tr & OTRAP_THERE) { await display_trap_map(cursed_src); return 0; }
         found = true;
     }
     for (const mon of d_fmon()) {
         if (d_DEADMONSTER(mon) || (mon.isgd && !mon.mx)) continue;
-        tr = detect_obj_traps(mon.minvent, false, 0, null);
+        tr = await detect_obj_traps(mon.minvent, false, 0, null);
         if (tr !== OTRAP_NONE) {
             if (tr & OTRAP_THERE) { await display_trap_map(cursed_src); return 0; }
             found = true;
         }
     }
-    if (detect_obj_traps(game.invent, false, 0, null) !== OTRAP_NONE) found = true;
+    if (await detect_obj_traps(game.invent, false, 0, null) !== OTRAP_NONE) found = true;
     /* door traps: secret doors use wall_info so can't be marked as trapped */
     const doorindex = game.level?.doorindex | 0;
     for (let door = 0; door < doorindex; door++) {

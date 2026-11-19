@@ -408,6 +408,7 @@ export async function dorestore() {
     // compiled-in default (On) same as any other freshly-started segment.
     const keepDisplay = game.nhDisplay;
     const keepHook = game._preNhgetchHook;
+    const keepAnimHook = game._animationFrameHook;
     const keepDatetime = game.datetime;
     const keepStorage = game.storage;
     const keepMock = game.mockStorage;
@@ -424,6 +425,7 @@ export async function dorestore() {
     reset_iflags_type_options(fresh);
     game.nhDisplay = keepDisplay;
     game._preNhgetchHook = keepHook;
+    game._animationFrameHook = keepAnimHook;
     game.datetime = keepDatetime;
     game.storage = keepStorage;
     game.mockStorage = keepMock;

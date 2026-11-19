@@ -54,7 +54,7 @@ import { makemon, rndmonst, mkclass,
          newcham as newcham_mk, mongets_pub, set_malign  } from './makemon.js';
 import { enexto_gpflags } from './teleport.js';
 import { mk_mplayer } from './mplayer.js';
-import { m_at, newsym, impossible, map_location } from './display.js';
+import { m_at, newsym, impossible, map_location, nh_delay_output } from './display.js';
 import { wiz_flip_lregions } from './levels/wiz_common.js';
 import { getbones } from './bones.js';
 import { set_corpsenm, des_object_defaults, obj_ice_effects, dealloc_obj } from './mkobj.js';
@@ -7957,6 +7957,7 @@ export async function mkinvokearea() {
         }
 
         await flush_screen(1); /* make sure the new glyphs show up */
+        await nh_delay_output();
     }
 
     await pline('You are standing at the top of a stairwell leading down!');

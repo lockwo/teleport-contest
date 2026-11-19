@@ -227,10 +227,8 @@ function hallucinated_explosion(limit = Infinity) {
 
 // C ref: explode.c:199 explode(x, y, type, dam, olet, expltype).
 //
-// `expltype` is a glyph-colour selector; the blast animation (tmp_at DISP_BEAM
-// ... DISP_END) is fully undone before the first pline, so it never reaches a
-// captured frame and only the message/RNG side is modelled.  A NEGATIVE
-// expltype still matters: it names the monster the hero gets kill credit for
+// `expltype` is a glyph-colour selector for the blast animation.  A NEGATIVE
+// expltype also names the monster the hero gets kill credit for
 // (muse_unslime).
 export async function explode(x, y, type, dam, olet, expltype) {
     const u = game.u;
@@ -336,27 +334,48 @@ export async function explode(x, y, type, dam, olet, expltype) {
             didmsg = true;
         }
     } else {
-        // C: the blast animation's tmp_at(DISP_END) newsym()s every cell of the
-        // 3x3 the hero could see, wiping whatever was drawn there meanwhile
-        // (e.g. chain lightning beams).  The animation itself is not drawn.
+        // C ref: explode.c:388-435 — the blast animation.  tmp_at(DISP_BEAM)
+        // draws (and DISP_END later restores) only cells the hero can see.
+        const { show_expl_leftover, show_shield_cell, flush_screen, nh_delay_output,
+                SHIELD_COUNT } = await import('./display.js');
+        const shielded = (i, j) => explmask[i][j] !== EXPL_SKIP
+            && (explmask[i][j] & (EXPL_MON | EXPL_HERO)) !== 0;
+        let any_shield = false;
+        await flush_screen(0); /* tmp_at(DISP_BEAM, ...) flushes buffered glyphs */
+        for (let i = 0; i < 3; i++)
+            for (let j = 0; j < 3; j++) {
+                if (explmask[i][j] === EXPL_SKIP) continue;
+                if (shielded(i, j)) any_shield = true;
+                const xx = x + i - 1, yy = y + j - 1;
+                if (!cansee(xx, yy)) continue;
+                show_expl_leftover(xx, yy, expltype, i + 3 * j);
+                await flush_screen(0);
+            }
+        await flush_screen(1); /* curs_on_u() */
+        if (any_shield && game.flags?.sparkle !== false) {
+            /* simulate shield effect, bypassing tmp_at() */
+            for (let k = 0; k < SHIELD_COUNT; k++) {
+                for (let i = 0; i < 3; i++)
+                    for (let j = 0; j < 3; j++)
+                        if (shielded(i, j)) show_shield_cell(x + i - 1, y + j - 1, k);
+                await flush_screen(1);
+                await nh_delay_output();
+            }
+            /* Cover last shield glyph with blast symbol; tmp_at(DISP_END)
+               only restores the seen cells, so an unseen one keeps it. */
+            for (let i = 0; i < 3; i++)
+                for (let j = 0; j < 3; j++)
+                    if (shielded(i, j))
+                        show_expl_leftover(x + i - 1, y + j - 1, expltype, i + 3 * j);
+        } else { /* delay a little bit. */
+            await nh_delay_output();
+            await nh_delay_output();
+        }
+        /* tmp_at(DISP_END, 0): newsym() every cell the beam saved */
         for (let i = 0; i < 3; i++)
             for (let j = 0; j < 3; j++) {
                 const xx = x + i - 1, yy = y + j - 1;
                 if (explmask[i][j] !== EXPL_SKIP && cansee(xx, yy)) newsym(xx, yy);
-            }
-        // C: with sparkle on, a cell holding a shielded monster/hero gets the
-        // blast glyph shown directly (explode.c:422-431, bypassing tmp_at).
-        // tmp_at only saves (and DISP_END only erases) cells the hero can see,
-        // so an unseen shielded cell keeps the blast symbol until redrawn.
-        if (game.flags?.sparkle !== false) {
-            const { show_expl_leftover } = await import('./display.js');
-            for (let i = 0; i < 3; i++)
-                for (let j = 0; j < 3; j++) {
-                    const xx = x + i - 1, yy = y + j - 1;
-                    if (explmask[i][j] !== EXPL_SKIP && (explmask[i][j] & (EXPL_MON | EXPL_HERO))
-                        && isok(xx, yy) && !cansee(xx, yy))
-                        show_expl_leftover(xx, yy, expltype, i + 3 * j);
-                }
             }
     }
     if (!Deaf() && !didmsg) await update_topl('Boom!');

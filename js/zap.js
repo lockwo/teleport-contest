@@ -13,7 +13,7 @@ import { rn2, rn1, rnd, rnl, d } from './rng.js';
 import { pline, newsym, m_at, show_glyph_cell, update_topl, urgent_topl, topl_more, y_n,
          bot, flush_screen, canseemon_shared, map_invisible, unmap_object, shieldeff,
          impossible, display_nhwindow_message, useDECgraphics, You_hear, You_feel, Deaf_hero,
-         Hallucination_u as Hallucination } from './display.js';
+         Hallucination_u as Hallucination, nh_delay_output } from './display.js';
 import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCLUDE,
          GETOBJ_NOFLAGS, xname, near_capacity, check_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
@@ -2682,6 +2682,7 @@ export async function dobuzz(type, nd, sx, sy, dx, dy,
                 else if (!mon) unmap_invisible_zap(sx, sy);
                 if (ZAP_POS(typ) || (isok(lsx, lsy) && cansee(lsx, lsy)))
                     await drawBeam(sx, sy);
+                await nh_delay_output(); /* wait a little */
             }
 
             /* hit() and miss() need bhitpos to match the target */

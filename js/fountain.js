@@ -770,12 +770,10 @@ function OBJ_DESCR(obj) {
 // C ref: do_name.c hcolor(colorpref) — js/do_name.js (a random nonsense word off
 // the DISPLAY rng while hallucinating).
 
-// C ref: fountain.c breaksink(x, y) — converts a sink into a fountain (used
-// by both drinksink's "pipes break" case and dipsink).  Both call sites have
-// the hero standing on the square, so the cansee(x,y)||u_at(x,y) message
-// guard always holds.
+// C ref: fountain.c:581, also reached off the hero's square by digging.
 export async function breaksink(x, y) {
-    await update_topl('The pipes break!  Water spurts out!');
+    if (cansee(x, y) || (game.u.ux === x && game.u.uy === y))
+        await update_topl('The pipes break!  Water spurts out!');
     const loc = game.level?.at(x, y);
     if (loc) {
         loc.typ = FOUNTAIN;

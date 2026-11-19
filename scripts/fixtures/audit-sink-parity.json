@@ -1,0 +1,189 @@
+{
+  "cases": [
+    {
+      "name": "blind-pipes",
+      "segments": [
+        {
+          "seed": 232104,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3,playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=color\nOPTIONS=pettype:none\n",
+          "moves": " l#wizwish\nsink\n#wizwish\nblindfold\nPe #wizwish\nwand of digging (0:1)\nlafy    \n    ...",
+          "frames": {
+            "74": {
+              "screen": "You hear a blast.  You are caught in the magical blast!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u001b[93m\u000f<\u001b[97m{@\u001b[39m\u000ex\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:18/04 Dx:11 Co:18 In:7 Wi:8 Ch:9 Lawful\nDlvl:1 $:0 HP:15(16) Pw:2(2) AC:6 Xp:1 Blind",
+              "cursor": [
+                44,
+                19,
+                1
+              ]
+            },
+            "75": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u001b[93m\u000f<\u001b[97m{@\u001b[39m\u000ex\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:18/04 Dx:11 Co:18 In:7 Wi:8 Ch:9 Lawful\nDlvl:1 $:0 HP:15(16) Pw:2(2) AC:6 Xp:1 Blind",
+              "cursor": [
+                44,
+                19,
+                1
+              ]
+            },
+            "76": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u001b[93m\u000f<\u001b[97m{@\u001b[39m\u000ex\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:18/04 Dx:11 Co:18 In:7 Wi:8 Ch:9 Lawful\nDlvl:1 $:0 HP:15(16) Pw:2(2) AC:6 Xp:1 Blind",
+              "cursor": [
+                44,
+                19,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "hallucinated-ooze",
+      "segments": [
+        {
+          "seed": 232275,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3,playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=color\nOPTIONS=pettype:none\n",
+          "moves": " #wizwish\ncursed potion of hallucination\nqe    \u001b#wizwish\nsink\nl\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h     \u001b..............................     \u001b\u0004h  ",
+          "frames": {
+            "725": {
+              "screen": "A neon ooze gushes up from the drain!\n\n\n\n\n\n\n\n\n\u001b[49C\u000elqqqqk\u000f\n\u001b[49C\u000ex~~~~~\u000f\n\u001b[49C\u000ex~~~\u001b[97m\u000f%\u001b[39m\u000ex\u000f\n\u001b[49C\u000e~\u001b[94m\u000f`\u001b[90mf\u001b[97m@\u001b[39m\u000e~\u001b[33m\u000f+\u001b[39m\n\u001b[49C\u000emqqqqj\u000f\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:14 Co:17 In:9 Wi:7 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Hallu",
+              "cursor": [
+                52,
+                12,
+                1
+              ]
+            },
+            "726": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\u001b[49C\u000elqqqqk\u000f\n\u001b[49C\u000ex~~~~~\u000f\n\u001b[49C\u000ex~~~\u001b[97m\u000f=\u001b[39m\u000ex\u000f\n\u001b[49C\u000e~\u001b[94m\u000f`\u001b[36mK\u001b[97m@\u001b[39m\u000e~\u001b[33m\u000f+\u001b[39m\n\u001b[49C\u000emqqqqj\u000f\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:14 Co:17 In:9 Wi:7 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Hallu",
+              "cursor": [
+                52,
+                12,
+                1
+              ]
+            },
+            "727": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\u001b[49C\u000elqqqqk\u000f\n\u001b[49C\u000ex~~~~~\u000f\n\u001b[49C\u000ex~~~\u001b[96m\u000f/\u001b[39m\u000ex\u000f\n\u001b[49C\u000e~\u001b[94m\u000f`\u001b[92m@\u001b[97m@\u001b[39m\u000e~\u001b[33m\u000f+\u001b[39m\n\u001b[49C\u000emqqqqj\u000f\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:14 Co:17 In:9 Wi:7 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Hallu",
+              "cursor": [
+                52,
+                12,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "artifact-levitation",
+      "segments": [
+        {
+          "seed": 232104,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Barbarian,race:human,gender:female,align:neutral\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3,playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=color\n",
+          "moves": " #wizwish\nThe Heart of Ahriman\n    \u001b#wizwish\nsink\n#invoke\ne    \u001bqy    \u001b#sit\n   \u001b...",
+          "frames": {
+            "59": {
+              "screen": "You start to float in the air!  You crash to the floor!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[38C\u000e~~\u001b[93m\u000f:\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Plunderess\u001b[10CSt:18 Dx:18 Co:17 In:7 Wi:7 Ch:8 Neutral\nDlvl:1 $:0 HP:9(16) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "60": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[38C\u000e~~\u001b[93m\u000f:\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Plunderess\u001b[10CSt:18 Dx:18 Co:17 In:7 Wi:7 Ch:8 Neutral\nDlvl:1 $:0 HP:9(16) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "61": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~~\u000f\n\u001b[38C\u000e~~\u001b[93m\u000f:\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Plunderess\u001b[10CSt:18 Dx:18 Co:17 In:7 Wi:7 Ch:8 Neutral\nDlvl:1 $:0 HP:9(16) Pw:2(2) AC:7 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "breathless-vapor",
+      "segments": [
+        {
+          "seed": 232104,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3,playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=color\n",
+          "moves": " #wizwish\nsink\n#wizwish\npotion of speed\n#polyself\nblack pudding\n    \u001b#dip\ney    \u001b...",
+          "frames": {
+            "77": {
+              "screen": "A wisp of vapor rises up...\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u000fP\u000e~~\u001b[39mx\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Black Pudding\u001b[7CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:46(46) Pw:2(2) AC:6 HD:10 Blind",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "78": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u000fP\u000e~~\u001b[39mx\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Black Pudding\u001b[7CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:46(46) Pw:2(2) AC:6 HD:10 Blind",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "79": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[39m~\u000f\n\u001b[38C\u000e~\u001b[90m~~~\u000fP\u000e~~\u001b[39mx\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Black Pudding\u001b[7CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:46(46) Pw:2(2) AC:6 HD:10 Blind",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "polymorph-flags",
+      "segments": [
+        {
+          "seed": 232104,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3,playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=color\n",
+          "moves": " #wizwish\nlooted sink\n#wizwish\npotion of polymorph\n..    \u001b#dip\ney    \n    \u001bqy    \u001bny    \u001b...",
+          "frames": {
+            "77": {
+              "screen": "The cool draught refreshes you.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~~~~~~\u000f\n\u001b[38C\u000e~~~~\u001b[97m\u000f@f\u001b[39m\u000e~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "78": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~~~~~~\u000f\n\u001b[38C\u000e~~~~\u001b[97m\u000f@f\u001b[39m\u000e~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            },
+            "79": {
+              "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[38C\u000elqqqqq~k\u000f\n\u001b[38C\u000ex~~~~~~x\u000f\n\u001b[38C\u000ex\u001b[94m\u000f{\u001b[39m\u000e~~~~~~\u000f\n\u001b[38C\u000e~~~~\u001b[97m\u000f@f\u001b[39m\u000e~x\u000f\n\u001b[38C\u000emqqqqqqj\u000f\n\nWizard the Stripling\u001b[11CSt:15 Dx:15 Co:15 In:8 Wi:11 Ch:14 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+              "cursor": [
+                42,
+                19,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

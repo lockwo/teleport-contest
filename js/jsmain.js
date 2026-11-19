@@ -17,7 +17,7 @@ import { pushKey, nhgetch } from './input.js';
 import { NetHackPanic, NetHackGameOver } from './panic.js';
 import { newgame, moveloop_core, early_init } from './allmain.js';
 import { parseNethackrc, config_error_report, fruitadd } from './options.js';
-import { flush_screen, warmupBotlStatusFns, remember_topl, yn_prompt_history, key2txt } from './display.js';
+import { flush_screen, warmupBotlStatusFns, remember_topl, yn_prompt_history, key2txt, overlay_topline } from './display.js';
 import { See_invisible_hero } from './youprop.js';
 import { GameDisplay } from './game_display.js';
 import {
@@ -275,10 +275,12 @@ export class NethackGame {
     async animationFrame() {
         const disp = game?.nhDisplay;
         const term = disp?.terminal || disp;
+        const undo = term?.grid ? overlay_topline(term) : null;
         this._pendingAnimFrames.push({
             screen: term ? serializeGrid(term) : '',
             cursor: disp ? [disp.cursorCol ?? 0, disp.cursorRow ?? 0, 1] : null,
         });
+        undo?.();
         if (typeof requestAnimationFrame === 'function') {
             await new Promise((resolve) => requestAnimationFrame(resolve));
         } else {
@@ -1696,6 +1698,7 @@ export class NethackGame {
             // already shifted the step<->rng mapping.
             if (nhGame._nhjsdump) nhGame._captureStateDump(fullLog.length);
         };
+        game._animationFrameHook = () => nhGame.animationFrame();
     }
 
     getScreens() { return this._screens; }

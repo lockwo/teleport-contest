@@ -16,7 +16,7 @@ import { P_NONE, P_MARTIAL_ARTS, is_pool, is_lava, is_pool_or_lava, is_ice } fro
 import { ok_to_quest } from './questok.js';
 import { rn2, rnd, rnl, rn1 } from './rng.js';
 import { pline, newsym, feel_location, feel_newsym, m_at, topl_more, unmap_object, y_n, update_topl, urgent_topl, tmp_at_flash, You_hear, You_see, stairway_at } from './display.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, nh_delay_output, flush_screen } from './display.js';
 import { Blind, couldsee, cansee, recalc_block_point, unblock_point } from './vision.js';
 import { exercise, acurr_eff, adjalign, change_luck } from './attrib.js';
 import {
@@ -46,7 +46,7 @@ import { makemon, makemon_appears_msg, monster_by_pmidx, name_to_pmidx, mpickobj
 import { in_rooms, shop_keeper, shkname } from './shkroom.js';
 import { water_damage, set_wounded_legs, t_at, chest_trap, Levitation_fu, fall_through } from './trap.js';
 import { near_capacity, sobj_at, useup, body_part, inv_weight, objects_at, obj_extract_self, stackobj, splitobj, xname, otense,
-         obfree, remove_worn_item,
+         obfree, remove_worn_item, Yname2,
          obj_doname, thitmonst } from './invent.js';
 import { makeplural } from './plural.js';
 import { obj_resists, Maybe_Half_Phys } from './zap.js';
@@ -63,12 +63,12 @@ import { canspotmon, Monnam, mon_nam, setmangry, killed,
          seemimicLocal as seemimic, glyph_is_invisible, shade_miss } from './uhitm.js';
 import { DEADMONSTER, fmonOrder, wake_nearto } from './mon.js';
 import { map_invisible } from './display.js';
-import { special_dmgval } from './weapon.js';
+import { special_dmgval, is_pick } from './weapon.js';
 import { goodpos, rloc_to, enexto_gpflags } from './teleport.js';
 import { m_in_out_region } from './region.js';
 import { set_apparxy, noteleport_level, impact_disturbs_zombies } from './monmove.js';
 import { AT_KICK, attacktype_fordmg, AD_DGST } from './monattk_data.js';
-import { a_monnam, free_oname, christen_orc, mhis } from './do_name.js';
+import { a_monnam, free_oname, christen_orc, mhis, hcolor } from './do_name.js';
 import { wipe_engr_at, u_wipe_engr, del_engr_at } from './engrave.js';
 import { getdir, wake_nearby, b_trapped } from './cmd.js';
 import { is_drawbridge_wall, find_drawbridge } from './dbridge.js';
@@ -116,19 +116,13 @@ function Wounded_legs() {
 // C ref: youprop.h Passes_walls.
 function Passes_walls() { return Passes_walls_hero(); }
 
-// C ref: dokick.c martial() == (martial_bonus() || is_bigfoot(youmonst)
-//   || (uarmf && uarmf->otyp == KICKING_BOOTS)), where
-//   martial_bonus() == (Role_if(PM_SAMURAI) || Role_if(PM_MONK)).
-// A martial hero kicks "expertly" — the kick_dumb / kick_door martial checks
-// short-circuit before rolling, so the RNG stream must reflect this for the
-// monk and samurai sessions (the seed0200-monk step-27 divergence: kick_dumb's
-// rn2(3) fired in JS but C skipped it via martial()).  We never poly into a
-// sasquatch, so is_bigfoot() stays false (no RNG either way).
-// mnum is roles[].mnum, the PM_ number Role_if() compares against (role.js).
+// C ref: dokick.c:8 martial(): role bonus, sasquatch form, or kicking boots.
+// mnum is roles[].mnum, the PM_ number Role_if() compares against.
 const PM_ARCHEOLOGIST = 0, PM_MONK = 5, PM_SAMURAI = 9;
 export function martial() {
     const mnum = game.urole?.mnum;
     if (mnum === PM_MONK || mnum === PM_SAMURAI) return true;
+    if (youmonst_data()?.name === 'sasquatch') return true;
     const uarmf = game.uarmf;
     if (uarmf && uarmf.otyp === KICKING_BOOTS) return true;
     return false;
@@ -657,7 +651,7 @@ export async function kick_nondoor(x, y, avrg_attrib) {
             if (Blind()) {
                 if (!Deaf()) await You_hear('a gushing sound.');
             } else {
-                await pline('A black ooze gushes up from the drain!');
+                await pline(`A ${hcolor('black')} ooze gushes up from the drain!`);
             }
             makemon(monster_by_pmidx(name_to_pmidx('black pudding')), x, y, MM_NOMSG);
             exercise(A_DEX, true);
@@ -1009,15 +1003,29 @@ async function kick_flooreffects(obj, x, y) {
 async function bhit_kicked(ddx, ddy, range, obj) {
     const u = game.u;
     let bx = u.ux + ddx, by = u.uy + ddy;
+    const bhitpos = game.bhitpos = { x: bx, y: by };
+    const { show_transient_light, transient_light_cleanup } = await import('./light.js');
     range--;
     let result = null;
     let point_blank = true;
     // C ref: zap.c:3868 — tmp_at(DISP_FLASH, obj_to_glyph(obj, rn2_on_display_rng))
     // before the loop; DISP_END (flash.end) runs on every way out below.
     const flash = tmp_at_flash(obj);
+    await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
     while (range-- > 0) {
         bx += ddx; by += ddy;
         if (!isok(bx, by)) { bx -= ddx; by -= ddy; break; }
+        bhitpos.x = bx;
+        bhitpos.y = by;
+        // C ref: zap.c:3885, reached by dokick.c:736 for kicked picks too.
+        if (is_pick(obj) && inside_shop(bx, by)) {
+            const { shkcatch } = await import('./shk.js');
+            const shkp = await shkcatch(obj, bx, by);
+            if (shkp) {
+                result = shkp;
+                break;
+            }
+        }
         const loc = game.level?.at(bx, by);
         const typ = loc ? loc.typ : 0 /* STONE */;
         /* "wall of water" and lava wall stop items */
@@ -1025,6 +1033,8 @@ async function bhit_kicked(ddx, ddy, range, obj) {
 
         /* C ref: zap.c:3905 — iron bars block anything big enough and break
            some things; the !rn2(5) always_hit roll is skipped at point blank. */
+        if (obj.lamplit && !Blind())
+            await show_transient_light(obj, bx, by);
         if (typ === IRONBARS) {
             const { hits_bars } = await import('./mthrowu.js');
             const objp = { obj };
@@ -1038,10 +1048,7 @@ async function bhit_kicked(ddx, ddy, range, obj) {
         const ttmp = t_at(bx, by);
         if (!mtmp && ttmp && ttmp.ttyp === WEB && !rn2(3)) {
             if (cansee(bx, by)) {
-                // C: Yname2(obj) — yname() capitalized; shk_your() resolves to
-                // "the " for a floor object outside a shop, which is every kick
-                // that can reach a web square here.
-                await update_topl(`${The(xname(obj))} gets stuck in a web!`);
+                await update_topl(`${Yname2(obj)} gets stuck in a web!`);
                 ttmp.tseen = 1;
                 newsym(bx, by);
             }
@@ -1073,13 +1080,17 @@ async function bhit_kicked(ddx, ddy, range, obj) {
             newsym(bx, by);
         }
         await flash.step(bx, by);
+        await nh_delay_output();
         /* kicked objects fall in pools; physical objects fall onto sinks */
         if (is_pool_or_lava(bx, by)) break;
         if (IS_SINK(typ)) break;
         /* thrown/kicked missile has moved away from its starting spot */
         point_blank = false;        /* affects passing through iron bars */
     }
+    bhitpos.x = bx;
+    bhitpos.y = by;
     await flash.end();
+    await transient_light_cleanup();
     return { x: bx, y: by, mon: result };
 }
 
@@ -1407,10 +1418,15 @@ export async function ghitm(mtmp, gold) {
     return false;
 }
 
-// C ref: lock.c breakchestlock(box, destroyit) — the !destroyit half: the box
-// is forced open and its lock destroyed.  js/extcmd-handlers.js keeps the same
-// function module-private for #force.  No RNG in this half.
+// C ref: lock.c:162 breakchestlock(box, FALSE), called by dokick.c:659.
+// Bill for the box with its contents hidden, then mark the lock broken.
 async function breakchestlock_k(box) {
+    const contents = box.cobj;
+    box.cobj = [];
+    const { costly_alteration } = await import('./shk.js');
+    const { COST_BRKLCK } = await import('./const.js');
+    await costly_alteration(box, COST_BRKLCK);
+    box.cobj = contents;
     box.olocked = 0;
     box.obroken = 1;
     box.lknown = 1;
@@ -1583,6 +1599,7 @@ export async function dokick() {
 
     // C ref: dokick.c:1406-1441 — monsters come first of the five square tests.
     if (mtmp) {
+        const mdat = mtmp.data; /* recoil uses the form before knockback traps */
         await kick_monster(mtmp, x, y);
         /* C: see comment in attack_checks() — if we mapped an invisible
            monster and immediately killed it, we don't want to forget what we
@@ -1609,7 +1626,7 @@ export async function dokick() {
             const iw = inv_weight();
             let range = (youmonst_data()?.cwt ?? WT_HUMAN) + ((game._wc | 0) + iw);
             if (range < 1) range = 1; /* divide by zero avoidance */
-            range = Math.trunc((3 * (mon_cwt(mtmp.data?.pmidx) ?? 0)) / range);
+            range = Math.trunc((3 * (mon_cwt(mdat?.pmidx) ?? 0)) / range);
             if (range < 1) range = 1;
             await hurtle(-u.dx, -u.dy, range, true);
         }
@@ -1625,8 +1642,8 @@ export async function dokick() {
     unmap_invisible(x, y);
     // C ref: dokick.c:1441 — `(is_pool(x,y) || typ == LAVAWALL) ^ !!u.uinwater`:
     // objects normally can't be removed from water by kicking.
-    if ((IS_POOL(maploc.typ) || maploc.typ === LAVAWALL) !== !!u.uinwater) {
-        await pline(`You splash some ${hliquid(IS_POOL(maploc.typ) ? 'water' : 'lava')} around.`);
+    if ((is_pool(x, y) || maploc.typ === LAVAWALL) !== !!u.uinwater) {
+        await pline(`You splash some ${hliquid(is_pool(x, y) ? 'water' : 'lava')} around.`);
         /* pretend the kick is fast enough for lava not to burn */
         return ECMD_TIME;
     }
@@ -1828,7 +1845,7 @@ export async function impact_drop(missile, x, y, dlev) {
                 else
                     await pline(`"${game.plname}, you are a thief!"`);
             } else
-                await pline('You hear a scream, "Thief!"');
+                await You_hear('a scream, "Thief!"');
             hot_pursuit(shkp);
             await angry_guards(false);
             return;
@@ -2024,7 +2041,8 @@ hooks.deliver_obj_to_mon = deliver_obj_to_mon;
 // order, which is why this must not be reordered.
 export async function container_impact_dmg(obj, x, y) {
     /* only consider normal containers */
-    if (!obj || !Array.isArray(obj.cobj) || !obj.cobj.length) return;
+    if (!obj || obj.otyp < LARGE_BOX || obj.otyp > BAG_OF_TRICKS
+        || !Has_contents(obj)) return;
     if (obj.otyp === BAG_OF_HOLDING || obj.otyp === BAG_OF_TRICKS) return;
 
     const shkp = shop_keeper(in_rooms(x, y, SHOPBASE)[0]);
