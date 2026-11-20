@@ -31,7 +31,7 @@ import { DEADMONSTER } from './mon.js';
 import { finish_meating } from './dogmove.js';
 import { killed } from './uhitm.js';
 import { enexto_gpflags, rloc_to, rloc, teleds } from './teleport.js';
-import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down } from './trap.js';
+import { sokoban_guilt, set_wounded_legs, heal_legs, trapname, Flying_fu, Levitation_fu, float_down, u_locomotion } from './trap.js';
 import { monster_by_pmidx, name_to_pmidx, can_saddle, put_saddle_on_mon } from './makemon.js';
 import { surface } from './dungeon.js';
 import { hliquid, mhe, mon_nam, mon_pmname } from './do_name.js';
@@ -409,7 +409,7 @@ export async function dismount_steed(reason) {
     // youprop.h Flying/Levitation: intrinsic | extrinsic (worn boots/ring) && !blocked, not just the intrinsic word.
     const ufly = Flying_fu();
     const ulev = Levitation_fu();
-    let verb = u_locomotion_std('fall');
+    let verb = u_locomotion('fall');
     u.usteed = mtmp;
 
     /* Check the reason for dismounting */
@@ -541,13 +541,6 @@ export async function dismount_steed(reason) {
 }
 
 // ── dismount_steed() helper adapters ─────────────────────────────────────
-// C ref: hack.c u_locomotion(def) — the current hero's own way of moving.
-function u_locomotion_std(def) {
-    const u = game.u;
-    if (Levitation_fu()) return 'float';
-    if (Flying_fu()) return 'fly';
-    return def;
-}
 // C ref: youprop.h Stunned.
 function Stunned_std() { return Stunned_hero(); }
 // C ref: mondata.h grounded(ptr) — none of the steeds() classes (quadruped/

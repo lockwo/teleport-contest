@@ -1,0 +1,247 @@
+{
+ "cases": [
+  {
+   "name": "bearing in the monster bear trap notice",
+   "segments": [
+    {
+     "seed": 4,
+     "datetime": "20260414173108",
+     "nethackrc": "OPTIONS=symset:DECgraphics\n\nOPTIONS=accessiblemsg,mention_walls,terrainstatus,weaponstatus\n",
+     "moves": "Tetra\ryy  nkkklLuujjllnnJj  bbbbbbbbbbbbbbbb kk",
+     "frames": {
+      "44": {
+       "screen": "(west): Your saddled pony steps reluctantly onto an orc corpse.--More--\n\n\n\n\u001b[65C\u000elqqqk\u000f  \u000elqqqqk\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39mx\u000f##\u001b[33m+\u001b[90m\u000e~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39m~\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000elqqj\u001b[90m~~~\u001b[39mx\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f##\u001b[33m\u000ea\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f# \u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f  \u000emqq~qj\u000f\n\u001b[62C\u000emqq~qqqj\u000f\u001b[5C#\n\u001b[75C#\n\u001b[75C#\n\u001b[75C##\n\u001b[76C#\n\u001b[76C#\n\u001b[74C\u000elq~k\u000f\n\u001b[74C\u000ex\u001b[31m\u000f%\u001b[97m@\u001b[39m\u000ex\u000f\n\u001b[74C\u000ex~~x\u000f\n\u001b[74C\u000emqqj\u000f\n\nTetra the Gallant\u001b[14CSt:14 Dx:8 Co:11 In:10 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:11(16) Pw:4(4) AC:3 Xp:1 Burdened Sword Floor",
+       "cursor": [
+        71,
+        0,
+        1
+       ]
+      },
+      "45": {
+       "screen": "(west): The saddled pony is caught in a bear trap!\n\n\n\n\u001b[65C\u000elqqqk\u000f  \u000elqqqqk\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39mx\u000f##\u001b[33m+\u001b[90m\u000e~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39m~\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000elqqj\u001b[90m~~~\u001b[39mx\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f##\u001b[33m\u000ea\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f# \u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f  \u000emqq~qj\u000f\n\u001b[62C\u000emqq~qqqj\u000f\u001b[5C#\n\u001b[75C#\n\u001b[75C#\n\u001b[75C##\n\u001b[76C#\n\u001b[76C#\n\u001b[74C\u000elq~k\u000f\n\u001b[74C\u000ex\u001b[33m\u000fu\u001b[97m@\u001b[39m\u000ex\u000f\n\u001b[74C\u000ex~~x\u000f\n\u001b[74C\u000emqqj\u000f\n\nTetra the Gallant\u001b[14CSt:14 Dx:8 Co:11 In:10 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:11(16) Pw:4(4) AC:3 Xp:1 Burdened Sword Floor",
+       "cursor": [
+        76,
+        18,
+        1
+       ]
+      },
+      "46": {
+       "screen": "You are caught in a bear trap.  You finally wriggle free.\n\n\n\n\u001b[65C\u000elqqqk\u000f  \u000elqqqqk\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39mx\u000f##\u001b[33m+\u001b[90m\u000e~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[65C\u000ex\u001b[90m~~~\u001b[39m~\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000elqqj\u001b[90m~~~\u001b[39mx\u000f##\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f##\u001b[33m\u000ea\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f# \u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[62C\u000ex\u001b[90m~~~~~~\u001b[39mx\u000f  \u000emqq~qj\u000f\n\u001b[62C\u000emqq~qqqj\u000f\u001b[5C#\n\u001b[75C#\n\u001b[75C#\n\u001b[75C##\n\u001b[76C#\n\u001b[76C#\n\u001b[74C\u000elq~k\u000f\n\u001b[74C\u000ex\u001b[33m\u000fu\u001b[97m@\u001b[39m\u000ex\u000f\n\u001b[74C\u000ex~~x\u000f\n\u001b[74C\u000emqqj\u000f\n\nTetra the Gallant\u001b[14CSt:14 Dx:8 Co:11 In:10 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:11(16) Pw:4(4) AC:3 Xp:1 Burdened Sword Floor",
+       "cursor": [
+        76,
+        18,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "option reassessment removes the time field before the next chooser",
+   "segments": [
+    {
+     "seed": 7,
+     "datetime": "20260503025436",
+     "nethackrc": "OPTIONS=symset:DECgraphics\n\nOPTIONS=statuslines:3,weaponstatus,armorstatus,terrainstatus,time,showexp,hitpointbar\nOPTIONS=hilite_status:armor-class/up/magenta/down/green\nOPTIONS=hilite_status:condition/hallu/cyan&inverse\nOPTIONS=hilite_status:title/changed/red\nOPTIONS=hilite_status:time/changed/blue\n",
+     "moves": "Septor\rynr\"moy   nmO g ijpu afp  n      $",
+     "frames": {
+      "38": {
+       "screen": "'price_quotes' option toggled on.  'quick_farsight' option toggled on.--More--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[30C\u000elqqqqqqqq~k\u000f\n\u001b[30C\u000ex~~~~~~~~~x\u000f\n\u001b[30C\u000ex~~~~~~~~~x\u000f\n\u001b[30C\u000ex~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[30C\u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~x\u000f\n\u001b[30C\u000e~~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[30C\u000emqqqqqqqqqj\u000f\n[\u001b[7mSeptor the Footpad\u001b[12C\u001b[27m] St:13 Dx:17 Co:14 In:10 Wi:10 Ch:11\nChaotic $:0 HP:11(11) Pw:2(2) AC:7 Xp:1\nDlvl:1 T:1 Sword Suit Stairs",
+       "cursor": [
+        78,
+        0,
+        1
+       ]
+      },
+      "39": {
+       "screen": "'showexp' option toggled off.  'time' option toggled off.--More--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[30C\u000elqqqqqqqq~k\u000f\n\u001b[30C\u000ex~~~~~~~~~x\u000f\n\u001b[30C\u000ex~~~~~~~~~x\u000f\n\u001b[30C\u000ex~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[30C\u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~x\u000f\n\u001b[30C\u000e~~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[30C\u000emqqqqqqqqqj\u000f\n[\u001b[7mSeptor the Footpad\u001b[12C\u001b[27m] St:13 Dx:17 Co:14 In:10 Wi:10 Ch:11\nChaotic $:0 HP:11(11) Pw:2(2) AC:7 Xp:1\nDlvl:1 Sword Suit Stairs",
+       "cursor": [
+        65,
+        0,
+        1
+       ]
+      },
+      "40": {
+       "screen": "\u001b[25C\u001b[7mAutopickup what?\u001b[0m\n\n\u001b[25Ca - $  pile of coins\n\u001b[25Cb - \"  amulet\n\u001b[25Cc - )  weapon\n\u001b[25Cd - [  suit or piece of armor\n\u001b[25Ce - %  piece of food\n\u001b[25Cf - ?  scroll\n\u001b[25Cg - +  spellbook\n\u001b[25Ch - !  potion\n\u001b[25Ci - =  ring\n\u001b[25Cj - /  wand\n\u001b[25Ck - (  useful item (pick-axe, key, lamp...)\n\u001b[25Cl - *  gem or rock\n\u001b[25Cm - `  boulder or statue\n\u001b[25Cn - 0  iron ball\n\u001b[25Co - _  iron chain\n\n\u001b[25CA -    All classes of objects\n\u001b[25CNote: when no choices are selected, \"all\" is implied.\n\u001b[25CToggle off 'autopickup' to not pick up anything.\n[\u001b[7mSeptor the Footpad\u001b[5C\u001b[27m (end)\nChaotic $:0 HP:11(11) Pw:2(2) AC:7 Xp:1\nDlvl:1 Sword Suit Stairs",
+       "cursor": [
+        31,
+        21,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "end of run publishes the highlight with the time field",
+   "segments": [
+    {
+     "seed": 104,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Knight,race:human,gender:male,align:lawful\n\nOPTIONS=runmode:teleport,travel,!safe_wait,time\nOPTIONS=hilite_status:time/changed/blue\n",
+     "moves": "  ns#ride\nlLLnn",
+     "frames": {
+      "12": {
+       "screen": "\n\n\n\n\n\n\u001b[17C---------\n\u001b[17C|.......|\n\u001b[17C|\u001b[93m<\u001b[39m......\u001b[33mu\u001b[39m#\n\u001b[17C|...\u001b[31m%\u001b[39m...|\n\u001b[17C|.....\u001b[92mF\u001b[39m.|\n\u001b[17C.....\u001b[97m:\u001b[39m.\u001b[90m.\u001b[39m|\n\u001b[17C---------\n\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 \u001b[34mT:8\u001b[39m Ride",
+       "cursor": [
+        25,
+        8,
+        1
+       ]
+      },
+      "13": {
+       "screen": "\n\n\n\n\n\n\u001b[17C---------\n\u001b[17C|.\u001b[90m......\u001b[39m|\n\u001b[17C|\u001b[93m<\u001b[39m.......#####\u001b[33mu\u001b[39m\n\u001b[17C|.\u001b[90m..\u001b[31m%\u001b[90m...\u001b[39m|\u001b[5C#\u001b[33m-\u001b[39mo\u001b[90m.\u001b[93m$\u001b[39m\n\u001b[17C|\u001b[90m.......\u001b[39m|\u001b[7C...\u001b[90m..\u001b[39m|\n\u001b[17C.\u001b[90m....\u001b[97m:\u001b[90m..\u001b[39m|\u001b[8C..\u001b[97m|\u001b[39m..\n\u001b[17C---------\u001b[8C-----\n\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 \u001b[34mT:13\u001b[39m Ride",
+       "cursor": [
+        31,
+        8,
+        1
+       ]
+      },
+      "14": {
+       "screen": "\n\n\n\n\n\n\u001b[17C---------\n\u001b[17C|.\u001b[90m......\u001b[39m|\n\u001b[17C|\u001b[93m<\u001b[39m.......#####\u001b[33mu\u001b[39m\n\u001b[17C|.\u001b[90m..\u001b[31m%\u001b[90m...\u001b[39m|\u001b[5C#\u001b[33m-\u001b[39mo\u001b[90m.\u001b[93m$\u001b[39m\n\u001b[17C|\u001b[90m.......\u001b[39m|\u001b[7C...\u001b[90m..\u001b[39m|\n\u001b[17C.\u001b[90m....\u001b[97m:\u001b[90m..\u001b[39m|\u001b[8C..\u001b[97m|\u001b[39m..\n\u001b[17C---------\u001b[8C-----\n\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 T:13 Ride",
+       "cursor": [
+        31,
+        8,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "pickup classes wait for redraw notice",
+   "segments": [
+    {
+     "seed": 12,
+     "datetime": "20260503045501",
+     "nethackrc": "OPTIONS=symset:DECgraphics\n\nOPTIONS=accessiblemsg,spot_monsters,mon_movement,mention_decor,mention_walls,getpos_coords:compass\n",
+     "moves": "Dodeco\rn[l\"m/hmy   nH#l\rK  #l\r:\u001b\u001bnknlnLll ,b\rnNuuLLi ln,@Oo$\"",
+     "frames": {
+      "58": {
+       "screen": " \u001b[7mOptions\u001b[0m\n\n ? - show help\n\n \u001b[7m General\u001b[24C\u001b[0m\n a - fruit\u001b[19C[slime mold]\n b - number_pad\u001b[14C[0=off]\n c - price_quotes\u001b[12C[ ]\n\n \u001b[7m Behavior\u001b[23C\u001b[0m\n d - autodig\u001b[17C[ ]\n e - autoopen\u001b[16C[X]\n f - autopickup\u001b[14C[X]\n g - autopickup exceptions   [(0 currently set)]\n h - autoquiver\u001b[14C[ ]\n i - autounlock\u001b[14C[apply-key]\n j - cmdassist\u001b[15C[X]\n k - dropped_nopick\u001b[10C[X]  (for autopickup)\n l - fireassist\u001b[14C[X]\n m - pickup_stolen\u001b[11C[X]  (for autopickup)\n n - pickup_thrown\u001b[11C[X]  (for autopickup)\n o - pickup_types\u001b[12C[all]  (for autopickup)\n p - pushweapon\u001b[14C[ ]\n (1 of 2)",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "59": {
+       "screen": "(southwest): You see your kitten.--More--\n\n\u001b[70C\u000elqqqqk\u000f\n\u001b[70C\u000ex~~~~x\u000f\n\u001b[70C\u000ex~~~~x\u000f\n\u001b[70C\u001b[33m+\u001b[39m\u000e~~~~x\u000f\n\u001b[70C\u000ex~~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[70C\u000ex~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[70C\u000emqq\u001b[33m\u000f+\u001b[39m\u000eqj\u000f",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "60": {
+       "screen": "(southwest): You see your kitten.--More--\n\n\u001b[70C\u000elqqqqk\u000f\n\u001b[70C\u000ex~~~~x\u000f\n\u001b[70C\u000ex~~~~x\u000f\n\u001b[70C\u001b[33m+\u001b[39m\u000e~~~~x\u000f\n\u001b[70C\u000ex~~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[70C\u000ex~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[70C\u000emqq\u001b[33m\u000f+\u001b[39m\u000eqj\u000f",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "departure notice is displayed over the old map",
+   "segments": [
+    {
+     "seed": 383,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Dazz,role:Wizard,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n\nOPTIONS=accessiblemsg,spot_monsters,mon_movement,mention_decor,mention_walls,getpos_coords:compass\n",
+     "moves": "  n#levelchange\n20\n                   \u0016?\ne\u0017blessed amulet of life saving\n\u0017blessed +3 gray dragon scale mail\n\u0017blessed +3 wand of fire\nT  Po      Wn  #wizintrinsic\nh\n    hjk l y  u    b   n    \u0016?\nchj",
+     "frames": {
+      "194": {
+       "screen": " \u001b[7mLevel teleport to where:\u001b[0m\n\n \u001b[7mThe Dungeons of Doom: levels 1 to 27\u001b[0m\n a - * One way stair to The Elemental Planes: 1\n b -   Stair to The Gnomish Mines: 3\n c -   oracle: 8\n d -   Stair to Sokoban: 9\n e -   bigrm: 12\n f -   Portal to The Quest: 14\n g -   rogue: 17\n h -   medusa: 24\n i -   Connection to Gehennom: 27\n j -   castle: 27 (tune EACEB)\n \u001b[7mGehennom: levels 28 to 49\u001b[0m\n k -   valley: 28\n l -   juiblex: 31\n m -   asmodeus: 33\n n -   baalz: 34\n o -   Stair to Vlad's Tower: 37\n p -   orcus: 37\n q -   wizard1: 42\n r -   wizard2: 43\n s -   wizard3: 44\n (1 of 3)",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "195": {
+       "screen": "(2north): You see your fire giant.--More--\n\n\n\u001b[61C\u000elqqqqqqqqqqqqk\u000f\n\u001b[61C\u000ex~~~~~~\u000fq\u000e~~~~~x\u000f\n\u001b[61C\u001b[33m+\u001b[39m\u000e~~~~~~~\u001b[93m\u000f<\u001b[39m\u000e~~~~x\u000f\n\u001b[61C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~x\u000f\n\u001b[61C\u001b[33m+\u001b[39m\u000e~~~~~~~~~~~~x\u000f\n\u001b[61C\u000emqqqq~qqqqqqqj\u000f",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "196": {
+       "screen": "(2north): You see your fire giant.--More--\n\n\n\u001b[61C\u000elqqqqqqqqqqqqk\u000f\n\u001b[61C\u000ex~~~~~~\u000fq\u000e~~~~~x\u000f\n\u001b[61C\u001b[33m+\u001b[39m\u000e~~~~~~~\u001b[93m\u000f<\u001b[39m\u000e~~~~x\u000f\n\u001b[61C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~x\u000f\n\u001b[61C\u001b[33m+\u001b[39m\u000e~~~~~~~~~~~~x\u000f\n\u001b[61C\u000emqqqq~qqqqqqqj\u000f",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Escape at a redraw notice reveals the options menu",
+   "segments": [
+    {
+     "seed": 4500,
+     "datetime": "20000601120000",
+     "nethackrc": "OPTIONS=name:Coverage,role:Knight,race:human,gender:male,align:lawful\nOPTIONS=!autopickup,!verbose,!legacy,!tutorial,!splash_screen\nOPTIONS=pettype:none,mention_walls\nOPTIONS=horsename:Shadowfax\nOPTIONS=pushweapon,showexp,time,color\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n\nOPTIONS=accessiblemsg,spot_monsters,mon_movement,mention_decor,mention_walls,getpos_coords:compass\n",
+     "moves": "j #jump\n j.jjl. jjh.hhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjhhhhhhhhyyyyyykkkkhhhhkh\u0004kkkkkkhhhhhhhhhhhhllllllllllllllllllllkkkkkkkkkkhhhhhhhjh\u001440 10\n\u001b#levelchange\n10\n         #levelchange\n15\n    \u00165\n#jump\n llj.#jump\n hkk.#jump\n kkl.#jump\n jjh.Odfamango\n>efjq\u001bll",
+     "frames": {
+      "248": {
+       "screen": "(5south): You see a leprechaun.--More--\n\n\n\n\n\n\n\u001b[33C\u000el~qqqqqqqqqqk\u000f\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~~~\u001b[90m~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~~~\u001b[90m~\u001b[97m\u000fC\u001b[90m\u000e~~~~~\u001b[39mx\u000f\n\u001b[33C\u000ex~~~lqq\u000f \u000ek\u000f   \u000ex\u000f\n\u001b[33C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~~x\u000f\n\u001b[33C\u000ex~~~m\u000f\n\u001b[33C\u000ex~~~\u001b[90m~\u000f\u001b[39m\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[32ml\u001b[39m\u000e~~\u001b[90m~\u000f\u001b[39m\n\u001b[33C\u000emqqqqqq\u000f",
+       "cursor": [
+        0,
+        7,
+        1
+       ]
+      },
+      "249": {
+       "screen": " \u001b[7mOptions\u001b[0m\n\n ? - show help\n\n \u001b[7m General\u001b[24C\u001b[0m\n a - fruit\u001b[19C[slime mold]\n b - number_pad\u001b[14C[0=off]\n c - price_quotes\u001b[12C[ ]\n\n \u001b[7m Behavior\u001b[23C\u001b[0m\n d - autodig\u001b[17C[X]\n e - autoopen\u001b[16C[X]\n f - autopickup\u001b[14C[ ]\n g - autopickup exceptions   [(0 currently set)]\n h - autoquiver\u001b[14C[ ]\n i - autounlock\u001b[14C[apply-key]\n j - cmdassist\u001b[15C[X]\n k - dropped_nopick\u001b[10C[X]  (for autopickup)\n l - fireassist\u001b[14C[X]\n m - pickup_stolen\u001b[11C[X]  (for autopickup)\n n - pickup_thrown\u001b[11C[X]  (for autopickup)\n o - pickup_types\u001b[12C[all]  (for autopickup)\n p - pushweapon\u001b[14C[X]\n (1 of 2)",
+       "cursor": [
+        0,
+        7,
+        1
+       ]
+      },
+      "250": {
+       "screen": "(5south): You see a leprechaun.--More--\n\n\n\n\n\n\n\u001b[33C\u000el~qqqqqqqqqqk\u000f\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~~~\u001b[90m~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~~~\u001b[90m~\u001b[97m\u000fC\u001b[90m\u000e~~~~~\u001b[39mx\u000f\n\u001b[33C\u000ex~~~lqq\u000f \u000ek\u000f   \u000ex\u000f\n\u001b[33C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~~x\u000f\n\u001b[33C\u000ex~~~m\u000f\n\u001b[33C\u000ex~~~\u001b[90m~\u000f\u001b[39m\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[32ml\u001b[39m\u000e~~\u001b[90m~\u000f\u001b[39m\n\u001b[33C\u000emqqqqqq\u000f\n\n\n\n\nWizard the Knight\u001b[14CSt:18/01 Dx:9 Co:12 In:7 Wi:14 Ch:17 Lawful\nDlvl:5 $:0 HP:71(71) Pw:109(109) AC:3 Xp:15/160000 T:42",
+       "cursor": [
+        0,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "level arrival map is written over its shared status row",
+   "segments": [
+    {
+     "seed": 373,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Conan,role:Barbarian,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n\nOPTIONS=statuslines:3,weaponstatus,armorstatus,terrainstatus,time,showexp,hitpointbar\nOPTIONS=hilite_status:armor-class/up/magenta/down/green\nOPTIONS=hilite_status:condition/hallu/cyan&inverse\nOPTIONS=hilite_status:title/changed/red\nOPTIONS=hilite_status:time/changed/blue\n",
+     "moves": "  n#levelchange\n20\n                   \u0016?\n y  ",
+     "frames": {
+      "43": {
+       "screen": "You materialize on a different level!--More--\n\u001b[62C\u000e~~~\u000f\u001b[10C\u000e~~~\u000f\n\u001b[63C\u000e~~~\u000f\u001b[9C\u000e~~~\u000f\n\u001b[64C\u000e~~~\u000f\u001b[8C\u000e~~~\u000f\n\u001b[65C\u000e~~\u000f\u001b[8C\u000e~~~\u000f\n\u001b[65C\u000e~~~\u000f\u001b[6C\u000ek~~~\u000f\n\u001b[66C\u000e~~~\u000f\u001b[5C\u000ex~~~\u000f\n\u001b[67C\u000e~~\u000f\u001b[5C\u000ex~~~\u000f\n\u001b[68C\u000e~~mqqqj~~~\u000f\n\u001b[69C\u000e~~~~~~~~~\u000f\n\u001b[69C\u000ek~~~~~~~~\u000f\n\u001b[69C\u000ex~~~~~~~~\u000f\n\u001b[69C\u000ex~~~~~~~~\u000f\n\u001b[69C\u000ex~~~~~~~~\u000f\n\u001b[69C\u000ex~~~~~~~~\u000f\n\u001b[69C\u000ex~~~~~~~~\u000f\n\u001b[69C\u000ej~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~\u000f\n\u001b[63C\u000e~~~~~~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~\u000f\n\u001b[51C\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~\u000f\n\u001b[39C\u000e~~\u001b[34m``\u001b[39m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u000f\n\u001b[36C\u001b[32m\u000eg\u001b[39m~~~~~\u001b[34m``\u001b[39m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u000f\n[\u001b[7mWizard the Reaver\u001b[13C\u001b[27m] St:\nNeutral $:0 HP:135(135) Pw:42(42) AC:7 Xp:20/5120000\nHome 1 T:1 2H-Axe Suit Floor",
+       "cursor": [
+        45,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

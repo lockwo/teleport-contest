@@ -1,0 +1,78 @@
+{
+  "cases": [
+    {
+      "name": "hallucinated glyphs during menu-dismissal monster notices, seed 484",
+      "segments": [
+        {
+          "seed": 484,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Dazz,role:Wizard,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n\nOPTIONS=spot_monsters,accessiblemsg,mention_walls\n",
+          "moves": "  n#levelchange\n20\n                   \u0016?\ne\u0017blessed amulet of life saving\n\u0017blessed +3 gray dragon scale mail\n\u0017blessed +3 wand of fire\nT  Po      Wn  #wizintrinsic\nh\n    hjk l y  u    b   n    \u0016?\nchjklyubn   i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+          "frames": {
+            "212": {
+              "screen": "(4west): You see a killer bee.--More--\n\n\n\n\n\n\n\u001b[33C\u000elqqqqqqqqqqqk\u000f\n\u001b[33C\u000e~\u001b[35m\u000fw\u001b[34mG\u001b[39m\u000e~~~~~~~~\u000fu\u000ex\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000f@\u001b[39m\u000e~~\u001b[36m\u000fq\u001b[97m@\u001b[39m\u000e~~~~x\u000f\n\u001b[33C\u000ex\u000f   \u000elqqqk\u000f \u000e~~x\u000f\n\u001b[45C\u000e~\u000f\n\u001b[45C\u000ex\u000f\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:10 Dx:11 Co:11 In:18 Wi:10 Ch:18 Neutral\nDlvl:7 $:0 HP:12(12) Pw:7(7) AC:-2 Xp:1 Hallu",
+              "cursor": [
+                38,
+                0,
+                1
+              ]
+            },
+            "213": {
+              "screen": "(4west): You see a killer bee.--More--\n\n\n\n\n\n\n\u001b[33C\u000elqqqqqqqqqqqk\u000f\n\u001b[33C\u000e~\u001b[35m\u000fw\u001b[34mG\u001b[39m\u000e~~~~~~~~\u000fu\u000ex\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000f@\u001b[39m\u000e~~\u001b[36m\u000fq\u001b[97m@\u001b[39m\u000e~~~~x\u000f\n\u001b[33C\u000ex\u000f   \u000elqqqk\u000f \u000e~~x\u000f\n\u001b[45C\u000e~\u000f\n\u001b[45C\u000ex\u000f\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:10 Dx:11 Co:11 In:18 Wi:10 Ch:18 Neutral\nDlvl:7 $:0 HP:12(12) Pw:7(7) AC:-2 Xp:1 Hallu",
+              "cursor": [
+                38,
+                0,
+                1
+              ]
+            },
+            "214": {
+              "screen": "(1north,5west): You see a lurker above.\n\n\n\n\n\n\n\u001b[33C\u000elqqqqqqqqqqqk\u000f\n\u001b[33C\u000e~\u001b[31m\u000f&\u001b[94me\u001b[39m\u000e~~~~~~~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~\u001b[34m\u000fM\u001b[39m\u000e~~\u001b[35m\u000f@\u001b[97m@\u001b[39m\u000e~~~~x\u000f\n\u001b[33C\u000ex\u000f   \u000elqqqk\u000f \u000e~~x\u000f\n\u001b[45C\u000e~\u000f\n\u001b[45C\u000ex\u000f\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:10 Dx:11 Co:11 In:18 Wi:10 Ch:18 Neutral\nDlvl:7 $:0 HP:12(12) Pw:7(7) AC:-2 Xp:1 Hallu",
+              "cursor": [
+                40,
+                9,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "hallucinated glyphs during menu-dismissal monster notices, seed 1192",
+      "segments": [
+        {
+          "seed": 1192,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Dazz,role:Wizard,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n\nOPTIONS=spot_monsters,accessiblemsg,mention_walls\n",
+          "moves": "  n#levelchange\n20\n                   \u0016?\ne\u0017blessed amulet of life saving\n\u0017blessed +3 gray dragon scale mail\n\u0017blessed +3 wand of fire\nT  Po      Wn  #wizintrinsic\nh\n    hjk l y  u    b   n    \u0016?\nchjklyubn   i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+          "frames": {
+            "212": {
+              "screen": "(south): You see your rock mole.  (2north,1east): You see a gecko.--More--\n\n\n\n\u001b[55C\u000elqqqk\u000f\n\u001b[55C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[55C\u000ex~~\u001b[33m\u000fr\u001b[39m\u000ex\u000f\n\u001b[55C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[55C\u000e~\u001b[90m\u000fZ\u001b[39m+\u000e~x\u000f\n\u001b[55C\u000emqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:7 Dx:14 Co:16 In:18 Wi:12 Ch:8 Neutral\nDlvl:5 $:0 HP:12(12) Pw:7(7) AC:10 Xp:1 Hallu",
+              "cursor": [
+                74,
+                0,
+                1
+              ]
+            },
+            "213": {
+              "screen": "(south): You see your rock mole.  (2north,1east): You see a gecko.--More--\n\n\n\n\u001b[55C\u000elqqqk\u000f\n\u001b[55C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[55C\u000ex~~\u001b[33m\u000fr\u001b[39m\u000ex\u000f\n\u001b[55C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[55C\u000e~\u001b[90m\u000fZ\u001b[39m+\u000e~x\u000f\n\u001b[55C\u000emqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:7 Dx:14 Co:16 In:18 Wi:12 Ch:8 Neutral\nDlvl:5 $:0 HP:12(12) Pw:7(7) AC:10 Xp:1 Hallu",
+              "cursor": [
+                74,
+                0,
+                1
+              ]
+            },
+            "214": {
+              "screen": "(1north,2east): You see a rothe.\n\n\n\n\u001b[55C\u000elqqqk\u000f\n\u001b[55C\u000ex~\u001b[31m\u000fd\u001b[39m\u000e~x\u000f\n\u001b[55C\u000ex~~\u001b[36m\u000fT\u001b[39m\u000ex\u000f\n\u001b[55C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[55C\u000e~\u001b[90m\u000fD\u001b[97m?\u001b[39m\u000e~x\u000f\n\u001b[55C\u000emqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Evoker\u001b[14CSt:7 Dx:14 Co:16 In:18 Wi:12 Ch:8 Neutral\nDlvl:5 $:0 HP:12(12) Pw:7(7) AC:10 Xp:1 Hallu",
+              "cursor": [
+                56,
+                7,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

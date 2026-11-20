@@ -2709,6 +2709,19 @@ export async function attributes_menu_lines(lines) {
 }
 
 async function attributes_menu(pages) {
+    // C ref: windows.c:1859-1863 select_menu() keeps bot() disabled through
+    // tty_select_menu()'s dismissal.  Flush the map first, then let the next
+    // bot() repaint status fields over any map row they share.
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
+    try {
+        return await attributes_menu_inner(pages);
+    } finally {
+        game.bot_disabled = old_bot_disabled;
+    }
+}
+
+async function attributes_menu_inner(pages) {
     game._attr_pages = pages;
     game._attr_page = 0;
     renderAttributesPage();

@@ -6533,11 +6533,6 @@ export async function toggle_bool_option(p) {
             case 'customcolors': opt_reset_customcolors = true; break;
             case 'customsymbols': opt_reset_customsymbols = true; break;
             case 'menucolors': case 'guicolor': opt_need_promptstyle = true; break;
-            case 'armorstatus': case 'weaponstatus': case 'terrainstatus':
-            case 'showscore': case 'showvers': case 'showexp': case 'time':
-                game.botl = game.botlx = game._statusUpdateAll = true;
-                game._ttyPolyFields = !!game.u?.Upolyd;
-                break;
             case 'mention_decor': game.iflags.prev_decor = 0; break;
             case 'accessiblemsg':
                 if (game.a11y) game.a11y.msg_loc = { x: 0, y: 0 };

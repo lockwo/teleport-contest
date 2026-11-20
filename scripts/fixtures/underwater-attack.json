@@ -1,5 +1,5 @@
 {
- "source": "Fresh C recording, uhitm.c attack_checks reads glyph_at rather than levl.glyph",
+ "source": "Fresh C recordings of submerged monster targeting, empty swings, and water turbulence",
  "cases": [
   {
    "name": "submerged hero reveals an unseen monster before attacking despite a remembered marker",
@@ -31,6 +31,114 @@
        "cursor": [
         48,
         19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "submerged swing toward a dry wall",
+   "segments": [
+    {
+     "seed": 230097,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,!safe_wait,!confirm,pettype:none,suppress_alert:3.4.3\nOPTIONS=playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=!tips\n",
+     "moves": "  #wizwish\nblessed amulet of magical breathing\nPe\u001b\u001b#wizwish\npool\n\u001b\u001bFh\u001b\u001b\u0012Fl\u001b\u001b;h.\u001b",
+     "frames": {
+      "74": {
+       "screen": "You harmlessly attack nothing.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[71C\u001b[97m@\u001b[39m\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/03 Dx:10 Co:18 In:8 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        71,
+        15,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "turbulence cancels a swing before a later swing toward a boulder",
+   "segments": [
+    {
+     "seed": 230097,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,!safe_wait,!confirm,pettype:none,suppress_alert:3.4.3\nOPTIONS=playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=!tips\n",
+     "moves": "  #wizwish\nblessed amulet of magical breathing\nPe\u001b\u001b#wizwish\nboulder\n\u001b\u001bh\u001b\u001b#wizwish\npool\n\u001b\u001b.\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001bFl\u001b\u001b",
+     "frames": {
+      "98": {
+       "screen": "Water turbulence affects your movements.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[70C\u001b[97m@\u001b[39m\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/03 Dx:10 Co:18 In:8 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        70,
+        15,
+        1
+       ]
+      },
+      "102": {
+       "screen": "You harmlessly attack nothing.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[70C\u001b[97m@\u001b[39m\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/03 Dx:10 Co:18 In:8 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        70,
+        15,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a blocked climb during force-fight costs time",
+   "segments": [
+    {
+     "seed": 230097,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,!safe_wait,!confirm,pettype:none,suppress_alert:3.4.3\nOPTIONS=playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=!tips,time\n",
+     "moves": "  #wizwish\nblessed amulet of magical breathing\nPe\u001b\u001b#wizwish\nheavy iron ball\n\u001b\u001b#wizwish\nheavy iron ball\n\u001b\u001b#wizwish\nheavy iron ball\n\u001b\u001b#wizwish\npool\n\u001b\u001b.\u001b\u001bFh\u001b\u001bFh\u001b\u001bFh\u001b\u001bFh\u001b\u001bFh\u001b\u001b",
+     "frames": {
+      "153": {
+       "screen": "You are carrying too much to climb out of the water.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[71C\u001b[97m@\u001b[39m\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/03 Dx:10 Co:18 In:8 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 T:6 Stressed",
+       "cursor": [
+        71,
+        15,
+        1
+       ]
+      },
+      "154": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[71C\u001b[97m@\u001b[39m\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/03 Dx:10 Co:18 In:8 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 T:6 Stressed",
+       "cursor": [
+        71,
+        15,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "current redirects a force-fight toward an eel under a raised drawbridge",
+   "segments": [
+    {
+     "seed": 236547,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=!tips\nOPTIONS=playmode:debug\nOPTIONS=symset:DECgraphics\nOPTIONS=mention_walls\nOPTIONS=!verbose\n",
+     "moves": " #wizwish\rblessed +3 white dragon scale mail\rWe#wizwish\rblessed amulet of life saving\rPf#wizwish\rblessed +2 speed boots\rWg\u0016castle\r\u0006_dll.\u001b_.\u001b_.\u001b_.\u001b_.\u001b_.\u001b_.\u001b#wizwish\rblessed amulet of magical breathing\rRf\u001b\u001bPh\u001b\u001b#wizwish\rpool\r\u001b\u001b.\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001bFj\u001b\u001bFk\u001b\u001b",
+     "frames": {
+      "229": {
+       "screen": "Water turbulence affects your movements.  You miss it.--More--\n\n\n\n\n\n\n\n\n\n\n\u001b[65C\u001b[34m\u000e`\u000f\u001b[39m\n\u001b[65C\u001b[36m;\u001b[97m@\u001b[39m\n\u001b[65C\u001b[32m%\u001b[39m\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:10 Wi:9 Ch:10 Lawful\nDlvl:25 $:0 HP:6(16) Pw:2(2) AC:-9 Xp:1",
+       "cursor": [
+        62,
+        0,
+        1
+       ]
+      },
+      "230": {
+       "screen": "The giant eel misses!\n\n\n\n\n\n\n\n\n\n\n\u001b[65C\u001b[34m\u000e`\u000f\u001b[39m\n\u001b[65C\u001b[36m;\u001b[97m@\u001b[39m\n\u001b[65C\u001b[32m%\u001b[39m\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:10 Wi:9 Ch:10 Lawful\nDlvl:25 $:0 HP:6(16) Pw:2(2) AC:-9 Xp:1",
+       "cursor": [
+        66,
+        12,
         1
        ]
       }

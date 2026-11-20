@@ -55,7 +55,7 @@ import { menuHeadStyle } from './menuattr.js';
 import { COLNO, ROWNO, STONE, DOOR, D_CLOSED, D_LOCKED,
          D_ISOPEN, D_BROKEN, D_NODOOR, D_TRAPPED,
          SDOOR, SCORR, CORR, IS_WALL, IS_OBSTRUCTED, IS_ROCK, isok, IS_DOOR,
-         IS_STWALL, IS_FURNITURE, ACCESSIBLE,
+         IS_STWALL, IS_FURNITURE,
          TREE, IRONBARS, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL, ROOM, IS_POOL, IS_LAVA,
          DRAWBRIDGE_UP, DB_UNDER, DB_MOAT, DB_LAVA, DB_ICE, DB_FLOOR,
          DBWALL, DRAWBRIDGE_DOWN, STAIRS, LADDER, LA_DOWN,
@@ -77,7 +77,7 @@ import { noattacks, attacktype, dmgtype, AT_ENGL, AD_FIRE, AD_RUST, AD_CORR, AT_
 // onscary() is an `export function` declaration in monmove.js, so this cycle
 // (cmd -> monmove -> uhitm -> allmain -> cmd) resolves through hoisting the
 // same way muse.js's import of it does.
-import { linedup, onscary, dissolve_bars, passes_bars, can_ooze_hero, bad_rock as bad_rock_mon } from './monmove.js';
+import { accessible, linedup, onscary, dissolve_bars, passes_bars, can_ooze_hero, bad_rock as bad_rock_mon } from './monmove.js';
 import { curr_mon_load, wake_nearto } from './mon.js';
 import { engr_at, wipe_engr_at, doengrave, can_reach_floor,
          read_engr_at } from './engrave.js';
@@ -3924,16 +3924,21 @@ async function domove_core(dx, dy, attemptTracked) {
     if (u.uinwater) {
         const wtmod = Swimming_hero() ? MOD_ENCUMBER : SLT_ENCUMBER;
         await water_friction();
-        if (!u.dx && !u.dy) { nomul(0); return; }
+        if (!u.dx && !u.dy) {
+            nomul(0);
+            game.context.move = 1;
+            return;
+        }
         newx = u.ux + u.dx;
         newy = u.uy + u.dy;
         /* are we trying to move out of water while carrying too much? */
-        if (isok(newx, newy) && !IS_POOL(game.level?.at(newx, newy)?.typ)
+        if (isok(newx, newy) && !is_pool(newx, newy)
             && !Is_waterlevel(u.uz)) {
             const { near_capacity } = await import('./invent.js');
             if (near_capacity() > wtmod) {
                 await update_topl('You are carrying too much to climb out of the water.');
                 nomul(0);
+                game.context.move = 1;
                 return;
             }
         }
@@ -4252,25 +4257,20 @@ async function domove_core(dx, dy, attemptTracked) {
         const off_edge = !isok(newx, newy);
         const loc = off_edge ? null : game.level?.at(newx, newy);
         const typ = loc ? loc.typ : STONE;
-        // C: solid = off_edge || !accessible(x,y) || IS_FURNITURE(typ), where
-        // accessible(x,y) = ACCESSIBLE(typ) && !closed_door(x,y) (monmove.c).
-        // A closed door's typ (DOOR) passes the bare ACCESSIBLE() macro, so
-        // without the closed_door check a force-fight at a shut door fell
-        // through to the "thin air" arm instead of naming the door.
-        const doorClosed = !off_edge && IS_DOOR(typ)
-            && ((loc.doormask | 0) & (D_CLOSED | D_LOCKED)) !== 0;
-        const solid = off_edge || !ACCESSIBLE(typ) || doorClosed || IS_FURNITURE(typ);
+        // hack.c:2248 uses the surface underneath a raised drawbridge.
+        const solid = off_edge || !accessible(newx, newy) || IS_FURNITURE(typ);
         // C ref: hack.c:2260 — `boulder = sobj_at(BOULDER, x, y)`; a boulder on
         // ACCESSIBLE floor is not `solid`, but it still names the object and
         // still takes the "harmlessly " prefix (the prefix test is
         // `!(boulder || solid)`), so without this a force-fight at a boulder
         // read "You attack thin air."
-        let boulder = off_edge ? null : boulder_at(newx, newy);
+        let boulder = null;
         // C ref: hack.c:2263 — a statue is a force-fight target only if the
         // DISPLAYED glyph is a statue (a remembered one counts even when the
         // hero is blind), or while hallucinating, if it shows any monster.
         let statueTarget = false;
         if (!off_edge && !game.u?.uinwater) {
+            boulder = boulder_at(newx, newy);
             const g = pg_glyph_at(newx, newy);
             if ((g.kind === 'object' && g.otyp === STATUE)
                 || (Hallucination() && g.kind === 'monster')) {
@@ -4314,6 +4314,8 @@ async function domove_core(dx, dy, attemptTracked) {
             buf = 'a statue';                      /* ansimpleoname(statue) */
         } else if (boulder) {
             buf = 'a boulder';                     /* ansimpleoname(boulder) */
+        } else if (u.uinwater && !is_pool(newx, newy)) {
+            buf = Is_waterlevel(u.uz) && typ === AIR ? 'an air bubble' : 'nothing';
         } else if (solid) {
             // C: a seen square (or any stone-wall / secret door/corridor) is
             // named via the cmap explanation ("the wall"); otherwise it reads

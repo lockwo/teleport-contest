@@ -3106,6 +3106,10 @@ async function docrt_live() {
         }
     }
     vision_recalc(0);
+    // C ref: vision.c:856 notice_all_mons() prints before docrt_flags()
+    // overlays monsters.  A paged notice must show the vision-pass glyphs,
+    // not see_monsters()'s next hallucinated glyphs.
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     // C ref: display.c docrt -> see_monsters(), whose tail newsym()s the hero's
     // own square (which honours canspotself()).
     await see_monsters();
@@ -7362,6 +7366,8 @@ export async function docrt_flags(refresh_flags) {
 
         /* see what is to be seen */
         vision_recalc(0);
+        // vision_recalc()'s notice_all_mons() runs before the overlay in C.
+        if (game._noticeQueue?.length) await hooks.flushNotices();
 
         /* overlay with monsters */
         await see_monsters();

@@ -11,7 +11,7 @@ import { dist2 } from './hacklib.js';
 import { rn2, rn1, rnd } from './rng.js';
 import {
     COLNO, ROWNO, STONE, ROOM, CORR, HWALL, isok, IS_DOOR, ACCESSIBLE,
-    MAGIC_PORTAL, LAVAPOOL, POOL, MOAT, WATER, AIR, CLOUD,
+    MAGIC_PORTAL, LAVAPOOL, is_pool, WATER, AIR, CLOUD,
     Is_firelevel, Is_waterlevel, Is_airlevel,
 } from './const.js';
 import { maketrap, t_at, Invocation_lev } from './trap.js';
@@ -730,7 +730,7 @@ export async function water_friction() {
         do {
             dy = rn2(3) - 1; /* -1, 0, 1 */
             y = u.uy + dy;
-        } while (dy && (!isok(x, y) || !is_pool_bubble(x, y)));
+        } while (dy && (!isok(x, y) || !is_pool(x, y)));
         u.dx = 0;
         u.dy = dy;
         eff = true;
@@ -740,19 +740,12 @@ export async function water_friction() {
         do {
             dx = rn2(3) - 1; /* -1 .. 1 */
             x = u.ux + dx;
-        } while (dx && (!isok(x, y) || !is_pool_bubble(x, y)));
+        } while (dx && (!isok(x, y) || !is_pool(x, y)));
         u.dy = 0;
         u.dx = dx;
         eff = true;
     }
     if (eff) await pline('Water turbulence affects your movements.');
-}
-
-// C ref: rm.h is_pool(x,y) — POOL/MOAT/WATER (the drawbridge arm cannot occur
-// on the Plane of Water).
-function is_pool_bubble(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    return t === POOL || t === MOAT || t === WATER;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

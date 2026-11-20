@@ -4,13 +4,10 @@ import test from 'node:test';
 import { runSegment } from '../js/jsmain.js';
 import { decodeScreen, diffCell } from '../frozen/screen-decode.mjs';
 
-// C recordings of the options menu with a symset rc (no forced --More-- on a
-// toggle), an option handler's menu closing inside the options menu (status
-// rows stay blank), pick_lock feeling a lit corridor (a turn is charged), and
-// a monster hiding under water on its first postmov (its trailing newsym).
-const fixture = JSON.parse(readFileSync(new URL('./fixtures/full-run-regressions.json', import.meta.url), 'utf8'));
+const cases = ['full-run-regressions', 'tty-publication', 'notice-glyph', 'air-status-row'].flatMap(name =>
+    JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')).cases);
 
-for (const c of fixture.cases) {
+for (const c of cases) {
     test(`matches C: ${c.name}`, async () => {
         for (const segment of c.segments) {
             const replay = await runSegment(segment);

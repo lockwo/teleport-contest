@@ -4,7 +4,7 @@
 import { panic } from './panic.js';
 import { makeplural } from './plural.js';
 import { within_bounded_area } from './rect.js';
-import { game } from './gstate.js';
+import { game, hooks } from './gstate.js';
 import { roles, align_gname } from './role.js';
 import { rn2, rn1, rnd } from './rng.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
@@ -1309,24 +1309,13 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
         // Any other key: ignore and redraw.
     }
 
-    // C ref: wintty.c tty_dismiss_nhwindow()'s NHW_MENU arm.  Its
-    // `iflags.window_inited` guard is TRUE for the whole game in C (set during
-    // tty_init_nhwindows), but this port drives the terminal directly and never
-    // runs that init, so go straight to the erase instead of through a flag
-    // that is permanently unset here.
-    if (wt.wins[win].offx === 0) {
-        await wt.erase_menu_or_text(win, wt.wins[win], false);
-    } else {
-        // A corner menu (the short endgame list): erase_menu_or_text() is
-        // docorner(), which row_refresh()es the glyph buffer back over the
-        // vacated columns -- no docrt(), so no cell is marked gnew and the
-        // status text on the map's shared row 21 is not repainted over.  The
-        // port's dismissal of a corner window lives in invent.js.
-        const { dismiss_invent_screen } = await import('./invent.js');
-        game._modal_screen = 'menu';
-        game._menuOffx = wt.wins[win].offx;
-        await dismiss_invent_screen();
-    }
+    // Dismiss while bot is disabled. A full-width menu redraws the map but
+    // leaves status blank. Deliver notices while still on the old level.
+    const { dismiss_invent_screen } = await import('./invent.js');
+    game._modal_screen = 'menu';
+    game._menuOffx = wt.wins[win].offx;
+    await dismiss_invent_screen();
+    if (game._noticeQueue?.length) await hooks.flushNotices();
     game.bot_disabled = old_bot_disabled;
     wt.wins[win].active = false;
     wt.tty_destroy_nhwindow(win);

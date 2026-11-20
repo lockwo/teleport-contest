@@ -1010,8 +1010,16 @@ async function pickupTypesMenu(blankStatus) {
 // Run the "Autopickup what?" menu and commit the result into
 // game.flags.pickup_types as the canonical class-symbol string ('' = all).
 // C ref: optfn_pickup_types() do_handler path.
-async function runPickupTypesHandler(blankStatus = true) {
+async function runPickupTypesHandler() {
     game.flags = game.flags || {};
+    // tty_display_nhwindow pages the previous message before the class menu.
+    // It may be a toggle confirmation or a monster noticed on menu dismissal.
+    const blankStatus = !game._toplin;
+    if (game._toplin && !game._winStop) {
+        await topl_more();
+        game._toplin = 0;
+        game._pending_message = '';
+    }
     // C ref: options.c optfn_pickup_types() do_set via handler_pickup_types():
     // menustyle Traditional/Combination prompt with getlin() first; only 'm' (or
     // any other menustyle) goes on to choose_classes_menu().
@@ -1446,6 +1454,7 @@ async function dosetSimpleLoop() {
         // C ref: options.c doset_simple(): reset_needed_visuals() after every pick,
         // for the redraw flags the handlers in options.js set (opt_need_redraw).
         await OPTS.reset_needed_visuals();
+        if (game._noticeQueue?.length) await hooks.flushNotices();
         // Rebuild the parent menu with the updated option values.
     }
 }
@@ -1654,16 +1663,7 @@ async function dosetPass(skiphelp) {
             if (!game.flags.give_opt_msg_off)
                 await update_topl(`'${e.name}' option toggled ${wasOff ? 'on' : 'off'}.`);
         } else if (e.name === 'pickup_types') {
-            // The pickup_types handler pops the "Autopickup what?" menu.  C ref:
-            // any pending top-line message ("'time' option toggled on.") is
-            // acknowledged with --More-- before the new menu replaces it.
-            const blankStatus = !game._toplin;
-            if (game._toplin) {
-                await topl_more();
-                game._toplin = 0;
-                game._pending_message = '';
-            }
-            await runPickupTypesHandler(blankStatus);
+            await runPickupTypesHandler();
         } else if (e.name === 'number_pad') {
             await runOptionsHandler(handler_number_pad);
         } else if (e.name === 'autounlock') {
@@ -1759,11 +1759,17 @@ export function applyBooleanToggle(name, turnOn) {
         game.iflags.wc_tiled_map = !ascii;
         break;
     }
+    case 'armorstatus':
+    case 'terrainstatus':
+    case 'weaponstatus':
+    case 'showscore':
     case 'showexp':
     case 'showvers':
     case 'time':
         game.flags[name] = turnOn;
-        game.botl = true;
+        // options.c optfn_boolean: status_initialize(REASSESS_ONLY), then botl.
+        game.botl = game.botlx = game._statusUpdateAll = true;
+        game._ttyPolyFields = !!game.u?.Upolyd;
         break;
     case 'verbose':    game.flags.verbose = turnOn; break;
     case 'hilite_pet':

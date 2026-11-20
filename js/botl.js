@@ -1149,7 +1149,13 @@ export function status_hilite_poll(transient) {
            the next full bot() */
         if (game._ttyCommit?.timeOnly) stat_update_time();
         else bot_via_windowport();
-        if (saved) out = tty_hl_copy();
+        if (saved) {
+            out = tty_hl_copy();
+            // BL_TIME displays the last bot()/timebot() publication, including
+            // its highlight. A screen preview is not another elapsed turn.
+            out.color[BL_TIME] = saved.hl.color[BL_TIME];
+            out.attr[BL_TIME] = saved.hl.attr[BL_TIME];
+        }
     } finally {
         _transient = null;
         [game.botl, game.botlx, game.time_botl] = flags;

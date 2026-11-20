@@ -1619,7 +1619,6 @@ function mm_aggression(magr, mdef) {
 // C ref: monmove.c:2188 accessible(x, y) = ACCESSIBLE(SURFACE_AT(x,y)) &&
 // !closed_door(x, y).  Distinct from this file's looser mon_accessible()
 // (corpse placement), which deliberately omits the closed-door exclusion.
-// SURFACE_AT's closed-drawbridge case is not modeled.
 export function accessible(x, y) {
     let typ = terrainTyp(x, y);
     if (typ == null) return false;
@@ -2650,9 +2649,8 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
             && !mon_check_in_air(mtmp) && !is_whirly(mptr) && !unsolid(mptr)) {
             mtmp.mtrapped = 1;
             if (in_sight) {
-                const { update_topl } = await import('./display.js');
                 const a_your = trap.madeby_u ? 'your' : 'a';
-                await update_topl(`${Monnam(mtmp)} is caught in ${a_your} bear trap!`);
+                await pline_mon(mtmp, `${Monnam(mtmp)} is caught in ${a_your} bear trap!`);
                 const { seetrap } = await import('./trap.js');
                 seetrap(trap);
             } else if (mptr.name === 'owlbear' || mptr.name === 'bugbear') {

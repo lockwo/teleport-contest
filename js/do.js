@@ -1091,6 +1091,9 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     }
     delete game._screenBlank;
     delete game._screenBlankCorner;
+    // A menu blanked status on the departing level. The arrival docrt()
+    // owns the next paint order, including the map row shared with status.
+    delete game._statusClsBlank;
     thaw_screen_for_level_change();
     // C ref: do.c goto_level():1839,1971-1972.  Arrival vision is drawn
     // before its messages, but monster announcements wait until after them.

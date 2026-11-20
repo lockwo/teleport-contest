@@ -36,6 +36,27 @@
           }
         }
       ]
+    },
+    {
+      "name": "salamander rider slithers off when the steed loses its saddle",
+      "segments": [
+        {
+          "seed": 231910,
+          "datetime": "20000110090000",
+          "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=playmode:debug,!autopickup,!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\n",
+          "moves": " ;  \u001b#levelchange\n20\n\r\r\r\r\r\r\r\r\r\r\r\r\r\r\r\r\r\r\r#wizwish\nsaddle\n\u0007tame baby red dragon\naeu#ride\nuy \u001b\u001b#polyself\nsalamander\n\u001b\u001b\u001b\u001b\u001b\u001b\u001b#wizwish\nwand of polymorph\n\u001b\u001bzf>\u001b\u001b\u001b\u001b;.\u001b\u0012h\u001b\u001bl\u001b\u001b.\u001b\u001b",
+          "frames": {
+            "153": {
+              "screen": "You slither off of the saddled lemure!\n\n\n\n\u001b[28C\u000elqqqqqqqqqqqqqk\u000f\n\u001b[28C\u000ex~~~~~\u001b[97m\u000fd\u001b[91m:\u001b[39m\u000e~~~~~~~\u000f\n\u001b[28C\u000ex~~~~~~\u001b[33m\u000fi\u001b[39m\u000e~~~~~\u001b[33m\u000f(\u001b[39m\u000ex\u000f\n\u001b[28C\u000e~~~~~~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[28C\u000emqqqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Salamander\u001b[10CSt:17 Dx:11 Co:18 In:11 Wi:9 Ch:8 Lawful\nDlvl:1 $:0 HP:29(46) Pw:53(53) AC:-5 HD:8",
+              "cursor": [
+                35,
+                5,
+                1
+              ]
+            }
+          }
+        }
+      ]
     }
   ]
 }
