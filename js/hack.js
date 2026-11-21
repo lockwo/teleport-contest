@@ -545,6 +545,12 @@ async function takeTurn() {
         const { deferred_goto } = await import('./do.js');
         await deferred_goto();
     }
+    // C ref: allmain.c:200 — the next moveloop_core() iteration re-enters a
+    // wish deferred by term_gone before its context.move block.
+    if (game.context?.resume_wish) {
+        const { makewish } = await import('./extcmd-handlers.js');
+        await makewish();
+    }
     await moveloop_turn();
     // C ref: allmain.c moveloop_core():513 — `u.umoved = FALSE;` follows every
     // iteration's turn processing.  moveloop_core()'s own reset (allmain.js)
@@ -1853,10 +1859,17 @@ function terrain_description(x, y, full = false) {
     if (typ === STONE) return game.level?.flags?.arboreal ? 'tree' : loc.seenv ? 'stone' : 'unexplored';
     // C ref: detect.c reveal_terrain_getglyph() keeps a seen trap only when
     // `which_subset & TER_TRP`; otherwise the browsed glyph is the background.
+    // But pager.c do_screen_description() reads glyph_at(), the DISPLAYED
+    // glyph: once something during the browse (the first-use tip window's
+    // docrt()) has redrawn the remembered map, the trap glyph is back on screen
+    // and is what gets described.
     // C ref: pager.c lookat() glyph_is_trap -> trap_description(), whose
     // trapname(tnum, FALSE) draws the hallucinated name from the display RNG.
     { const _tm = game.iflags?.terrainmode | 0;
-      const _t = (!_tm || (_tm & TER_TRP)) ? t_at_hk(x, y) : null;
+      const _tt = t_at_hk(x, y);
+      const _shown = !!_tt?.tseen && loc.disp_ch === trap_glyph(_tt).ch
+          && loc.disp_color === trap_glyph(_tt).color;
+      const _t = (!_tm || (_tm & TER_TRP) || _shown) ? _tt : null;
       if (_t && _t.tseen) return trap_description(_t.ttyp, x, y);
       /* C: glyph_at() is the REMEMBERED trap glyph even after the trap is gone
          (a boulder filled the pit while the hero was blind); map_trap() stamps
@@ -2765,6 +2778,16 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
         if (u0) { u0.dx = udx; u0.dy = udy; u0.dz = udz; }
     }
 }
+// A #terrain browse cell that shows a monster or a remembered object the
+// subset strips (only a docrt() during the browse puts them back on screen).
+function terrain_browse_redrawn(x, y, tm) {
+    const loc = game.level?.at(x, y);
+    if (!loc) return false;
+    if (loc.disp_monster && !(tm & 0x08 /* TER_MON */)) return true;
+    const rg = loc.remembered_glyph;
+    return !(tm & 0x04 /* TER_OBJ */) && !!rg && (rg.objotyp != null || rg.hallucotyp != null)
+        && loc.disp_ch === rg.ch && loc.disp_ch !== terrain_background_glyph(loc, x, y).ch;
+}
 // C ref: getpos.c auto_describe() text builder: message for one cell (self or terrain),
 // with the optional "(invalid target)" suffix from getpos_getvalid.
 function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
@@ -2800,6 +2823,16 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         // where the hero square is drawn as terrain; after a getpos_menu()
         // docrt() the live '@' is back while terrainmode is still set.
         return null;
+    } else if (terrainMode && tm0 && terrain_browse_redrawn(x, y, tm0)) {
+        // C ref: pager.c do_screen_description() reads glyph_at(), the DISPLAYED
+        // glyph.  A docrt() during the browse (dismissing a first-use tip with
+        // menu_overlay off) puts the remembered map, objects and monsters back
+        // while terrainmode still lacks TER_MON/TER_OBJ.  Their symbols then
+        // match no monster or object entry, only a cmap one with the same
+        // character ('$' is also S_goodpos), else auto_describe() is silent.
+        const fm = { s: '' };
+        if (!do_screen_description({ x, y }, true, '', { s: '' }, fm, {}) || !fm.s) return null;
+        desc = fm.s;
     } else if ((u?.uswallow || (u?.uinwater && !Is_waterlevel(u.uz))) && !terrainMode && !detectMode) {
         // C ref: pager.c do_screen_description() -- while engulfed every
         // non-adjacent spot reads "unreconnoitered" and the adjacent ones
@@ -3531,8 +3564,10 @@ export async function reveal_terrain(which_subset) {
             // C ref: detect.c reveal_terrain_getglyph() -- a visible region (gas
             // cloud) either survives with the traps (the displayed cloud glyph),
             // or replaces a stripped monster/cloud glyph with the region's glyph
-            // (traps kept) or the terrain beneath it.
-            if (visible_region_at(x, y)) {
+            // (traps kept) or the terrain beneath it.  An engulfed hero's base is
+            // levl[][].glyph instead of glyph_at(), and show_region() never
+            // writes that, so a region changes nothing there.
+            if (!swallowed && visible_region_at(x, y)) {
                 const ga = glyph_at(x, y);
                 const gas = ga.kind === 'cmap' && !!ga.gascloud;
                 if (gas && keep_traps) {
@@ -3867,6 +3902,9 @@ function render_whatis_menu(items) {
 
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcols - 1);
     if (offx < 0) offx = 0;
+    // C ref: tty_display_nhwindow(): `|| !iflags.menu_overlay` forces offx 0
+    // and term_clear_screen() wipes everything first.
+    if (!whatis_menu_overlay()) { offx = 0; if (disp.clearScreen) disp.clearScreen(); }
     const textCol = offx + 1;
 
     const blankCols = (row) => {
@@ -3882,6 +3920,9 @@ function render_whatis_menu(items) {
     blankCols(moreRow);
     disp.putstr(textCol, moreRow, '(end)', NO_COLOR, 0);
     disp.setCursor(textCol + 6, moreRow);
+}
+function whatis_menu_overlay() {
+    return (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) !== false;
 }
 
 // C ref: pager.c do_screen_description() (the looked==TRUE path).  Build the
@@ -4468,7 +4509,8 @@ async function display_dbase_window(lines, forceFull = false) {
     let maxcol = 0;
     for (const l of lines) maxcol = Math.max(maxcol, l.length + 1);
 
-    const fullscreen = forceFull || lines.length >= rows;
+    // tty_display_nhwindow(): `|| !iflags.menu_overlay` also forces offx 0.
+    const fullscreen = forceFull || lines.length >= rows || !whatis_menu_overlay();
     let offx = fullscreen ? 0
         : Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
@@ -4571,19 +4613,20 @@ function db_lookup_keys(inp) {
     // offset of dbase_str inside C's newstr[] (only front prefixes stripped)
     const dbase_off = String(inp).length - dbase_str.length;
     // "named"/"called"/", " -> truncate to base name; the tail becomes 'alt'.
+    // C ref: pager.c:961 `if (ep && ep > dbase_str) *ep = '\0'` — a separator
+    // at the very start (a typed ", foo") leaves the name whole.
     let alt = null;
     let ep = dbase_str.indexOf(' named ');
     if (ep >= 0) {
         alt = dbase_str.slice(ep + 7);
         const ap = dbase_str.indexOf(' called ');
         if (ap >= 0 && ap < ep) ep = ap;
-        dbase_str = dbase_str.slice(0, ep);
     } else if ((ep = dbase_str.indexOf(' called ')) >= 0) {
         alt = dbase_str.slice(ep + 8);
-        dbase_str = dbase_str.slice(0, ep);
-    } else if ((ep = dbase_str.indexOf(', ')) >= 0) {
-        dbase_str = dbase_str.slice(0, ep);
+    } else {
+        ep = dbase_str.indexOf(', ');
     }
+    if (ep > 0) dbase_str = dbase_str.slice(0, ep);
     // strip article from alt
     if (alt) {
         if (alt.startsWith('a ')) alt = alt.slice(2);
@@ -4916,11 +4959,29 @@ export async function do_look_full() {
         else cmdq_clear(CQ_CANNED);
     } else {
         const { whatis_menu_pick } = await import('./pager.js');
-        i = await whatis_menu_pick(render_whatis_menu);
-        // Redraw the map under the dismissed menu before any prompt is shown.
-        game._pending_message = '';
-        game._toplin = 0;
-        await flush_screen(1);
+        const D = await import('./display.js');
+        await D.page_topline_before_window();
+        // C ref: windows.c select_menu() holds gb.bot_disabled through
+        // tty_select_menu(), whose erase_menu_or_text() tears a full-screen
+        // (offx == 0, !menu_overlay) menu down with docrt(): cls() blanks the
+        // status window and its flush_screen(1) cannot repaint it.
+        const old_bot_disabled = game.bot_disabled;
+        game.bot_disabled = true;
+        try {
+            i = await whatis_menu_pick(render_whatis_menu);
+            // Redraw the map under the dismissed menu before any prompt is shown.
+            game._pending_message = '';
+            game._toplin = 0;
+            if (!whatis_menu_overlay()) await docrt();
+            await flush_screen(1);
+        } finally {
+            game.bot_disabled = old_bot_disabled;
+        }
+        if (!whatis_menu_overlay() && !old_bot_disabled) {
+            game._statusClsBlank = true;
+            game.botlx = true;
+            if (game.nhDisplay?.setCell) D.blank_status_rows(game.nhDisplay);
+        }
     }
 
     if (i === 'y') i = '/';   // C: case 'y' falls through to case '/'

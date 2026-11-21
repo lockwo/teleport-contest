@@ -17,7 +17,7 @@ import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush, queue_impossible, flush_impossibles } from './display.js';
 import { render_map_row_to_grid, nh_delay_output } from './display.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, page_topline_before_window } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -2217,8 +2217,10 @@ export async function tty_text_window(lines, maxcol = null) {
             /* xwaitforspace(): anything else rings the bell and waits on */
         }
     };
-    // C ref: wintty.c:1924 — a short menu overlays even when its offx is zero.
-    if (lines.length < rows && game.iflags?.menu_overlay !== false) {
+    // C ref: wintty.c:1924 — a short menu overlays even when its offx is zero,
+    // unless !menu_overlay forces the full-screen path.
+    if (lines.length < rows
+        && (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) !== false) {
         const carriedCuts = status_cuts_snapshot();
         display.clearScreen();
         render_map_to_grid();
@@ -2699,6 +2701,7 @@ export async function doattributes() {
         game._pending_message = note_topl('You feel very knowledgeable.');
         return ECMD_OK;
     }
+    await page_topline_before_window();
     return attributes_menu(pages);
 }
 
@@ -11921,7 +11924,19 @@ async function inventory_menu_dismissed() {
 
 // C ref: invent.c display_pickinv() -> select_menu(PICK_ONE).  The three
 // inventory callers differ after a pick, but share paging and menu commands.
+// C ref: windows.c select_menu() holds gb.bot_disabled for the whole
+// win_select_menu(), dismissal included: a full-width menu's docrt() leaves
+// the status rows blank (disp.botlx pending) until the next bot().
 async function select_inventory_menu(rows, byLet, pickNone = false) {
+    const old_bot_disabled = game.bot_disabled;
+    game.bot_disabled = true;
+    try {
+        return await select_inventory_menu_inner(rows, byLet, pickNone);
+    } finally {
+        game.bot_disabled = old_bot_disabled;
+    }
+}
+async function select_inventory_menu_inner(rows, byLet, pickNone) {
     let page = 0;
     let repaint = true;
     let info = null;
@@ -13210,11 +13225,13 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
     const MENU_OFFX = cwOffx + 1;                    /* --More-- column (offx + 1) */
     const TEXT_COL = cwOffx ? cwOffx + 1 : 0;        /* no leading blank when offx == 0 */
     // C ref: wintty.c tty_display_nhwindow(): `cw->maxrow >= ttyDisplay->rows`
-    // forces offx 0 and term_clear_screen(); process_text_window() then pages
-    // rows-1 lines at a time from column 0, each page ended by dmore()'s
-    // "--More--" at column 1 on the next row.  Dismissal is docrt().
+    // or `!iflags.menu_overlay` forces offx 0 and term_clear_screen();
+    // process_text_window() then pages rows-1 lines at a time from column 0,
+    // each page ended by dmore()'s "--More--" at column 1 on the next row.
+    // Dismissal is docrt().
     const rows = display?.rows ?? 24;
-    if (display?.setCell && lines.length >= rows) {
+    const overlay = (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) !== false;
+    if (display?.setCell && (lines.length >= rows || !overlay)) {
         const cols = display.cols ?? 80;
         const clearRow = (r) => { for (let c = 0; c < cols; c++) display.setCell(c, r, ' ', NO_COLOR, 0); };
         const clearAll = () => { for (let r = 0; r < rows; r++) clearRow(r); };

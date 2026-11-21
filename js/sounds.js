@@ -8,6 +8,7 @@ import { Invis_hero as Invis_hero_yp } from './youprop.js';
 
 import { letter } from './hacklib.js';
 import { game } from './gstate.js';
+import { ere_compile } from './pickup.js';
 import { p_coaligned, inhistemple } from './priest.js';
 import { roomAt } from './roomat.js';
 import { rn2 } from './rng.js';
@@ -1590,11 +1591,10 @@ export function release_sound_mappings() {
     if (sounddir) sounddir = null;
 }
 
-// C ref: sys/share/nhregex.c regex_compile() — the config-file SOUND patterns
-// are POSIX basic REs; JS RegExp is close enough for the accept/reject decision
-// and returns null (a compile failure) on a malformed pattern the same way.
+// C ref: sys/share/posixregex.c regex_compile(), shared by all config patterns.
 function compile_nhregex(text) {
-    try { return new RegExp(text); } catch (e) { return null; }
+    const ere = ere_compile(text);
+    return ere.error ? null : new RegExp(ere.jsSource);
 }
 // C ref: options.c msgtype_parse_add(str) — the MESG form's optional message
 // type prefix is registered as a msgtype rule.  Not ported (msgtype has no

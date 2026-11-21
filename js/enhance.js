@@ -18,7 +18,7 @@ import { nhgetch } from './input.js';
 import { menuHeadStyle } from './menuattr.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
 import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
-import { y_n, update_topl, topl_more, docrt, You_feel } from './display.js';
+import { y_n, update_topl, topl_more, docrt, You_feel, page_topline_before_window } from './display.js';
 import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
     P_MASTER, P_GRAND_MASTER, P_NUM_SKILLS,
@@ -609,6 +609,7 @@ export async function doenhance() {
     // svc.context.tips |= (1 << TIP_ENHANCE) — player now knows about #enhance.
     game.context = game.context || {};
     game.context.tips = (game.context.tips || 0) | (1 << TIP_ENHANCE);
+    await page_topline_before_window();
     // Any annotated or advanceable skill makes the menu selectable, which
     // needs the inline select_menu() loop below; the all-quiet PICK_NONE
     // listing keeps the paged skill_window_advance() form.

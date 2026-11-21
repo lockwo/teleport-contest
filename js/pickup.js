@@ -2165,19 +2165,14 @@ export async function tipcontainer(box, targetbox = null) {
    tipcontainer_gettarget() are the #tip command's menu halves; they are
    rendered by js/extcmd-handlers.js and drive tipcontainer() above. */
 
-/* ── sys/share/posixregex.c regex_compile() / regerror(3) ─────────────────
-   AUTOPICKUP_EXCEPTION patterns are compiled by regcomp(REG_EXTENDED), and a
-   failure is reported to the player as "regex error in AUTOPICKUP_EXCEPTION:
-   <regerror text>" — a config-error line that then sits on screen for every
-   step up to the first Return, so its exact wording is worth as many screens
-   as the rest of the session.  JS RegExp neither accepts the same language nor
-   produces the same message, so classify the pattern the way Spencer's ERE
-   parser (Darwin libc) does and emit its regerror() string.
+/* sys/share/posixregex.c: regex_compile(REG_EXTENDED | REG_NOSUB).
+   Darwin's C-locale ERE grammar differs from ECMAScript's, including its
+   diagnostics. Compile it explicitly rather than passing ERE syntax to V8.
 
-   Returns { error, jsSource }: `error` is the regerror text (null when regcomp
-   would have succeeded) and `jsSource` is the pattern with any construct that
-   is literal in ERE but special in JS made literal, so `new RegExp` accepts
-   what regcomp accepted. */
+   Both patterns and subjects are C byte strings: one JS code unit per byte
+   (0x00..0xff), terminated by NUL. UTF-8 text must be encoded once at its input
+   boundary, not here: in-game keyboard input can also contain raw high bytes.
+   The returned source is used with new RegExp(jsSource), without flags. */
 const REG_BADRPT_MSG = 'repetition-operator operand invalid';
 const REG_EBRACK_MSG = 'brackets ([ ]) not balanced';
 const REG_EPAREN_MSG = 'parentheses not balanced';
@@ -2187,122 +2182,257 @@ const REG_BADBR_MSG = 'invalid repetition count(s)';
 const REG_ERANGE_MSG = 'invalid character range';
 const REG_ECTYPE_MSG = 'invalid character class';
 const REG_EMPTY_MSG = 'empty (sub)expression';
-/* regex(3) POSIX character class names */
+const REG_ECOLLATE_MSG = 'invalid collating element';
+const REG_REPTOOBIG_MSG = 'maximum repetition exceeds 255';
+/* Darwin wctype(3), in the C locale. The BSD extensions are valid names even
+   when their classes contain no bytes in this locale. NUL is never consumed. */
 const CCLASS_JS = {
-    alnum: 'A-Za-z0-9', alpha: 'A-Za-z', blank: ' \\t', cntrl: '\\x00-\\x1f\\x7f',
-    digit: '0-9', graph: '\\x21-\\x7e', lower: 'a-z', print: '\\x20-\\x7e',
-    punct: '!-\\/:-@\\[-`{-~', space: ' \\t\\n\\v\\f\\r', upper: 'A-Z',
-    xdigit: '0-9A-Fa-f',
+    alnum: 'A-Za-z0-9', alpha: 'A-Za-z', blank: '\\x09\\x20',
+    cntrl: '\\x01-\\x1f\\x7f', digit: '0-9', graph: '\\x21-\\x7e',
+    ideogram: '', lower: 'a-z', phonogram: '', print: '\\x20-\\x7e',
+    punct: '\\x21-\\x2f\\x3a-\\x40\\x5b-\\x60\\x7b-\\x7e',
+    rune: '\\x01-\\x7f', space: '\\x09-\\x0d\\x20', special: '',
+    upper: 'A-Z', xdigit: '0-9A-Fa-f',
 };
-const CCLASS_NAMES = new Set(Object.keys(CCLASS_JS));
 
-/* one bracket expression, starting at the '['; returns the index just past the
-   closing ']' or an error */
+/* re_format(7)'s named collating elements, also accepted in [=name=]. */
+const COLLATING_NAMES = {
+    NUL: 0, SOH: 1, STX: 2, ETX: 3, EOT: 4, ENQ: 5, ACK: 6, BEL: 7,
+    BS: 8, HT: 9, LF: 10, VT: 11, FF: 12, CR: 13, SO: 14, SI: 15,
+    DLE: 16, DC1: 17, DC2: 18, DC3: 19, DC4: 20, NAK: 21, SYN: 22,
+    ETB: 23, CAN: 24, EM: 25, SUB: 26, ESC: 27, FS: 28, GS: 29,
+    RS: 30, US: 31, DEL: 127, IS1: 31, IS2: 30, IS3: 29, IS4: 28,
+    alert: 7, backspace: 8, tab: 9, newline: 10, 'vertical-tab': 11,
+    'form-feed': 12, 'carriage-return': 13, space: 32,
+    'exclamation-mark': 33, 'quotation-mark': 34, 'number-sign': 35,
+    'dollar-sign': 36, 'percent-sign': 37, ampersand: 38, apostrophe: 39,
+    'left-parenthesis': 40, 'right-parenthesis': 41, asterisk: 42,
+    'plus-sign': 43, comma: 44, hyphen: 45, 'hyphen-minus': 45,
+    period: 46, 'full-stop': 46, slash: 47, solidus: 47,
+    zero: 48, one: 49, two: 50, three: 51, four: 52, five: 53,
+    six: 54, seven: 55, eight: 56, nine: 57, colon: 58, semicolon: 59,
+    'less-than-sign': 60, 'equals-sign': 61, 'greater-than-sign': 62,
+    'question-mark': 63, 'commercial-at': 64, 'left-square-bracket': 91,
+    backslash: 92, 'reverse-solidus': 92, 'right-square-bracket': 93,
+    circumflex: 94, 'circumflex-accent': 94, 'low-line': 95, underscore: 95,
+    'grave-accent': 96, 'left-brace': 123, 'left-curly-bracket': 123,
+    'vertical-line': 124, 'right-brace': 125, 'right-curly-bracket': 125,
+    tilde: 126,
+};
+
+function ere_byte(code) {
+    return '\\x' + code.toString(16).padStart(2, '0');
+}
+
 function ere_bracket(pat, start) {
     let i = start + 1;
-    if (pat[i] === '^') i++;
-    if (pat[i] === ']') i++;               /* a leading ']' is a literal */
-    let prevWasRange = false, prevChar = null;
+    const inverted = pat[i] === '^';
+    if (inverted) i++;
+    const first = i;
+    let body = '', pending = -1, range = false;
+    const addByte = (c) => { if (c > 0) body += ere_byte(c); };
     for (; i < pat.length; i++) {
-        const c = pat[i];
-        if (c === ']') return { end: i + 1 };
-        if (c === '[' && (pat[i + 1] === ':')) {
-            const close = pat.indexOf(':]', i + 2);
-            if (close < 0) return { error: REG_ECTYPE_MSG };
-            if (!CCLASS_NAMES.has(pat.slice(i + 2, close)))
-                return { error: REG_ECTYPE_MSG };
-            i = close + 1; prevChar = null; prevWasRange = false;
-            continue;
+        const ch = pat[i];
+        if (ch === ']' && i !== first) {
+            addByte(pending);
+            return { end: i + 1, source: '[' + (inverted ? '^\\x00' : '') + body + ']' };
         }
-        if (c === '-' && prevChar !== null && pat[i + 1] !== ']'
-            && i + 1 < pat.length) {
-            if (prevWasRange) return { error: REG_ERANGE_MSG };
-            const hi = pat[i + 1];
-            if (hi < prevChar) return { error: REG_ERANGE_MSG };
-            i++; prevWasRange = true; prevChar = hi;
-            continue;
+        if (ch === '-' && i !== first && !range) {
+            if (i + 1 === pat.length) return { error: REG_EBRACK_MSG };
+            if (pat[i + 1] !== ']') {
+                if (pending < 0) return { error: REG_ERANGE_MSG };
+                range = true;
+                continue;
+            }
         }
-        prevChar = c; prevWasRange = false;
+        let c = ch.charCodeAt(0);
+        if (ch === '[') {
+            if (i + 1 === pat.length) return { error: REG_EBRACK_MSG };
+            const kind = pat[i + 1];
+            if (kind === ':' || kind === '=' || kind === '.') {
+                const isClass = kind === ':';
+                /* A class or equivalence class cannot end a range, even if
+                   its name is malformed. Collating symbols can. */
+                if (range && kind !== '.') return { error: REG_ERANGE_MSG };
+                const close = pat.indexOf(kind + ']', i + 2);
+                const error = isClass ? REG_ECTYPE_MSG : REG_ECOLLATE_MSG;
+                if (close < 0) return { error };
+                const name = pat.slice(i + 2, close);
+                i = close + 1;
+                if (isClass) {
+                    if (!Object.hasOwn(CCLASS_JS, name)) return { error };
+                    addByte(pending);
+                    pending = -1;
+                    body += CCLASS_JS[name];
+                    continue;
+                }
+                if (Object.hasOwn(COLLATING_NAMES, name)) {
+                    c = COLLATING_NAMES[name];
+                } else {
+                    if (name.length !== 1) return { error };
+                    c = name.charCodeAt(0);
+                    if (kind === '=') {
+                        addByte(pending);
+                        addByte(c);
+                        pending = -1;
+                        continue;
+                    }
+                }
+            }
+        }
+        if (range) {
+            if (c < pending) return { error: REG_ERANGE_MSG };
+            if (c > 0) body += ere_byte(Math.max(1, pending)) + '-' + ere_byte(c);
+            pending = -1;
+            range = false;
+        } else {
+            addByte(pending);
+            pending = c;
+        }
     }
     return { error: REG_EBRACK_MSG };
 }
 
+/* A nonnumeric '{' is literal. Otherwise parse counts before checking the
+   operand or closing brace, preserving Darwin's first-error precedence. */
+function ere_bound(src, start) {
+    let i = start + 1;
+    if (!(src[i] >= '0' && src[i] <= '9')) return null;
+    const number = () => {
+        let n = 0;
+        while (src[i] >= '0' && src[i] <= '9') n = Math.min(0x7fffffff, n * 10 + Number(src[i++]));
+        return n;
+    };
+    const min = number();
+    let max = min;
+    if (src[i] === ',') {
+        i++;
+        max = src[i] >= '0' && src[i] <= '9' ? number() : -1;
+    }
+    if (max >= 0 && min > max) return { error: REG_BADBR_MSG };
+    if (min > 255 || max > 255) return { error: REG_REPTOOBIG_MSG };
+    if (i === src.length) return { error: REG_EBRACE_MSG };
+    if (src[i] !== '}') return { error: REG_BADBR_MSG };
+    if ('*+?'.includes(src[i + 1]) && i + 1 < src.length) return { error: REG_BADRPT_MSG };
+    return { end: i + 1, min, max };
+}
+
 export function ere_compile(pat) {
-    const src = String(pat);
-    if (!src) return { error: REG_EMPTY_MSG, jsSource: src };
-    let out = '', prevAtom = false, branchContent = false;
-    /* one entry per open group; sawAlt says whether this group has a '|', which
-       is what makes an empty branch an error ("()" compiles, "(a|)" does not) */
-    const groups = [{ sawAlt: false }];
-    const bad = (error) => ({ error, jsSource: src });
-    for (let i = 0; i < src.length; i++) {
-        const c = src[i];
-        if (c === '\\') {
-            if (i + 1 >= src.length) return bad(REG_EESCAPE_MSG);
-            out += src[i] + src[i + 1]; i++;
-            prevAtom = true; branchContent = true;
-            continue;
-        }
-        if (c === '[') {
-            const r = ere_bracket(src, i);
-            if (r.error) return bad(r.error);
-            out += src.slice(i, r.end); i = r.end - 1;
-            prevAtom = true; branchContent = true;
-            continue;
-        }
-        if (c === '(') {
-            out += c; groups.push({ sawAlt: false });
-            prevAtom = false; branchContent = false;
-            continue;
-        }
-        if (c === ')') {
-            if (groups.length > 1) {
-                const g = groups.pop();
-                if (g.sawAlt && !branchContent) return bad(REG_EMPTY_MSG);
-                out += c; prevAtom = true; branchContent = true;
-            } else {
-                out += '\\)';        /* literal in ERE, special in JS */
-                prevAtom = true; branchContent = true;
+    const src = String(pat).split('\x00', 1)[0];
+    let i = 0, error = null, capture = 0;
+    const empty = () => ({ source: '', nullable: true, assertions: 0 });
+    const fail = (message) => { error = message; return empty(); };
+    const repeat = (atom, min, max) => {
+        if (max === 0) return empty();
+        /* Darwin's nullable-NFA path visits an empty operand even when an
+           iteration is optional. Expanded {0,n} bounds (n > 1) instead have
+           an explicit empty alternative. See tre_match_empty/tre_expand_ast. */
+        if (min === 0 && atom.nullable && max <= 1) min = 1;
+        else if (min > 1 && max === -1 && atom.nullable) min++;
+        const quantifier = min === 1 && max === 1 ? ''
+            : min === 0 && max === -1 ? '*'
+            : min === 1 && max === -1 ? '+'
+            : min === 0 && max === 1 ? '?'
+            : `{${min}${max === min ? '' : ',' + (max < 0 ? '' : max)}}`;
+        return {
+            source: atom.source + quantifier,
+            nullable: min === 0 || atom.nullable,
+            assertions: min === 0 ? 0 : atom.assertions,
+        };
+    };
+    const expression = (inGroup) => {
+        let branch = empty(), union = null, content = false;
+        const addBranch = () => {
+            if (!union) {
+                union = branch;
+                return;
             }
-            continue;
-        }
-        if (c === '|') {
-            if (!branchContent) return bad(REG_EMPTY_MSG);
-            groups[groups.length - 1].sawAlt = true;
-            out += c; prevAtom = false; branchContent = false;
-            continue;
-        }
-        if (c === '*' || c === '+' || c === '?') {
-            if (!prevAtom) return bad(REG_BADRPT_MSG);
-            out += c; prevAtom = false;
-            continue;
-        }
-        if (c === '{') {
-            if (!(src[i + 1] >= '0' && src[i + 1] <= '9')) {
-                out += '\\{';        /* not a bound: literal brace */
-                prevAtom = true; branchContent = true;
+            let right = branch.source;
+            if (union.nullable && branch.nullable && union.assertions !== branch.assertions) {
+                /* A nullable union uses its first nullable branch's assertions,
+                   rather than trying other empty branches after an assertion
+                   fails. Retain the later branch only when it consumes bytes.
+                   Capturing the remaining suffix makes that test independent
+                   of the subject's length, NULs, and the surrounding regex. */
+                const name = `ere${++capture}`;
+                right = `(?=(?<${name}>[\\s\\S]*))(?:${right})(?!\\k<${name}>(?![\\s\\S]))`;
+            }
+            union = {
+                source: union.source + '|' + right,
+                nullable: union.nullable || branch.nullable,
+                assertions: union.nullable ? union.assertions : branch.assertions,
+            };
+        };
+        while (i < src.length) {
+            const ch = src[i];
+            if (ch === ')' && inGroup) {
+                if (union && !content) return fail(REG_EMPTY_MSG);
+                i++;
+                addBranch();
+                return { ...union, source: '(?:' + union.source + ')' };
+            }
+            if (ch === '|') {
+                if (!content) return fail(REG_EMPTY_MSG);
+                addBranch();
+                branch = empty();
+                content = false;
+                i++;
                 continue;
             }
-            if (!prevAtom) return bad(REG_BADRPT_MSG);
-            const close = src.indexOf('}', i + 1);
-            if (close < 0) return bad(REG_EBRACE_MSG);
-            const body = src.slice(i + 1, close);
-            const m = /^(\d+)(,(\d*)?)?$/.exec(body);
-            if (!m) return bad(REG_BADBR_MSG);
-            if (m[3] && Number(m[3]) < Number(m[1])) return bad(REG_BADBR_MSG);
-            out += src.slice(i, close + 1); i = close;
-            prevAtom = false;
-            continue;
+            let atom = { source: '', nullable: false, assertions: 0 }, assertion = false;
+            if (ch === '*' || ch === '+' || ch === '?') return fail(REG_BADRPT_MSG);
+            if (ch === '{') {
+                const bound = ere_bound(src, i);
+                if (bound) return fail(bound.error || REG_BADRPT_MSG);
+            }
+            i++;
+            if (ch === '(') {
+                atom = expression(true);
+                if (error) return empty();
+            } else if (ch === '[') {
+                const bracket = ere_bracket(src, i - 1);
+                if (bracket.error) return fail(bracket.error);
+                atom.source = bracket.source;
+                i = bracket.end;
+            } else if (ch === '\\') {
+                if (i === src.length) return fail(REG_EESCAPE_MSG);
+                atom.source = ere_byte(src.charCodeAt(i++));
+            } else if (ch === '^' || ch === '$') {
+                assertion = true;
+                atom.nullable = true;
+                atom.assertions = ch === '^' ? 1 : 2;
+                /* ECMAScript '$' also matches before a final newline. C's
+                   REG_NEWLINE is off, so only the C-string end qualifies. */
+                atom.source = ch === '^' ? '^' : '(?=\\x00|(?![\\s\\S]))';
+            } else {
+                atom.source = ch === '.' ? '[^\\x00]' : ere_byte(ch.charCodeAt(0));
+            }
+            if (i < src.length && '*+?'.includes(src[i])) {
+                if (assertion) return fail(REG_BADRPT_MSG);
+                const op = src[i++];
+                if (i < src.length && '*+?'.includes(src[i])) return fail(REG_BADRPT_MSG);
+                atom = repeat(atom, op === '+' ? 1 : 0, op === '?' ? 1 : -1);
+            } else if (src[i] === '{') {
+                const bound = ere_bound(src, i);
+                if (bound) {
+                    if (bound.error) return fail(bound.error);
+                    if (assertion) return fail(REG_BADRPT_MSG);
+                    atom = repeat(atom, bound.min, bound.max);
+                    i = bound.end;
+                }
+            }
+            branch.source += atom.source;
+            branch.nullable = branch.nullable && atom.nullable;
+            branch.assertions |= atom.assertions;
+            content = true;
         }
-        if (c === '^' || c === '$') {
-            out += c; prevAtom = false; branchContent = true;
-            continue;
-        }
-        out += c; prevAtom = true; branchContent = true;
-    }
-    if (groups.length > 1) return bad(REG_EPAREN_MSG);
-    if (groups[0].sawAlt && !branchContent) return bad(REG_EMPTY_MSG);
-    /* JS has no POSIX classes; ere_bracket() has already validated the names */
-    out = out.replace(/\[:([a-z]+):\]/g, (_m, nm) => CCLASS_JS[nm] ?? '');
-    return { error: null, jsSource: out };
+        if (inGroup) return fail(REG_EPAREN_MSG);
+        if (!content) return fail(REG_EMPTY_MSG);
+        addBranch();
+        return union;
+    };
+    const out = expression(false);
+    /* Anchor the search prefix so no match can start beyond the first NUL.
+       All consuming atoms exclude NUL, just as regexec's C-string input does. */
+    return { error, jsSource: error ? src : '^[^\\x00]*?(?:' + out.source + ')' };
 }

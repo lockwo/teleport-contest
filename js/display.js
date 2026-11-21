@@ -3818,7 +3818,11 @@ function _ttyPutStatusField(w, text, x, y, attr = 0, color = NO_COLOR) {
         const n = i + x;
         if (n < STATUS_COLS) {
             w.dat[y][n - 1] = text[i];
-            w.phys[y][n - 1] = { ch: text[i], attr: attr | 0, color };
+            // nomux_putch() drops control bytes and signed high bytes: the
+            // cell keeps its old contents while the cursor moves on.
+            const code = text.charCodeAt(i);
+            if (code >= 32 && (code < 0x80 || code > 0xff))
+                w.phys[y][n - 1] = { ch: text[i], attr: attr | 0, color };
         }
     }
 }
@@ -5471,6 +5475,16 @@ export async function display_nhwindow_message() {
     game._toplin = 0;
     game._toplinSoft = null;
     game._pending_message = '';
+}
+
+// C ref: wintty.c:1921 tty_display_nhwindow() NHW_MENU/NHW_TEXT —
+// `if (ttyDisplay->toplin == TOPLINE_NEED_MORE) tty_display_nhwindow(WIN_MESSAGE,
+// TRUE)`: a message still pending when a menu or text window opens (e.g.
+// doextcmd()'s "'m' prefix has no effect ...") is paged with --More-- first.
+export async function page_topline_before_window() {
+    const cur = game._pending_message || '';
+    if (!game._winStop && (game._toplin === TOPLIN_NEED_MORE || (cur && game._toplinSoft === cur)))
+        await display_nhwindow_message();
 }
 
 // C ref: win/tty/getline.c xwaitforspace(s) — like topl_more(), but also

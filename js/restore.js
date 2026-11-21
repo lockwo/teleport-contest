@@ -322,6 +322,10 @@ const UNSAVED_GLOBALS = [
     '_pickup_encumbrance', '_helpless_at_timeout', '_end_turn_cb_ran',
     '_parse_cleared_topl', '_picklock_box', '_travel_unsure', '_travel_leftover',
     '_touch_blasted', '_ext_tlist', '_goto_familiar', '_dowhatdoes_once',
+    /* decl.c gs.simple_options_help: process global, starts FALSE.
+       gl.lua_ver (nhlua.c get_lua_version()): empty in a fresh process, so
+       the next #version reloads nhlib.lua and redraws its shuffle(align) */
+    '_simple_options_help', 'luaVersionCached',
     '_search_occupation', '_engrave_occupation', '_wait_occupation',
     '_takeoff_occupation', '_eat_occupation', '_study_occupation',
     '_dig_occupation', 'occupation', 'occupation_txt', '_prayer', '_already_found_flag',

@@ -6,7 +6,7 @@
 
 import { NetHackGameOver } from './panic.js';
 import { the } from './objnam.js';
-import { rawPrintBias, resetRawPrint, setFinalCursor } from './rawprint.js';
+import { rawPrintBias, resetRawPrint, setFinalCursor, raw_putstr } from './rawprint.js';
 import { MGIVENNAME, OBJ_FREE } from './const.js';
 import { setONAME } from './const.js';
 import { game } from './gstate.js';
@@ -583,6 +583,9 @@ async function done(how) {
         game._botlxKeepScreen = true; // no window covered the status rows
         d.freeze_botl();
         try { await d.bot(); } finally { delete game._botlxKeepScreen; }
+        // end.c:1071 then zeroes u.uhp with disp.botl set but no bot(): the
+        // status rows keep what this bot() drew until the next real bot().
+        if (!game._botlFrozen && game._botlLast) game._botlFrozen = game._botlLast;
     }
     if (how < PANICKED
         && (u.uhp !== 0 || (u.Upolyd && u.mh !== 0))) {
@@ -795,12 +798,19 @@ async function done(how) {
                 game._toplin = 0;
                 game._toplinSoft = null;
                 game._pending_message = '';
+                // wintty.c:1876-1877: after more(), tty_clear_nhwindow(WIN_MESSAGE)
+                // erases the paged line, so an automatic disclosure menu that
+                // follows overlays a blank top row.
+                game.nhDisplay?.clearRow?.(0);
             }
             // Acking that --More-- is where the deferred status redraw lands:
             // every frame from the first disclosure prompt on shows the zeroed
             // HP, while the "You die..." --More-- frames still show the value
             // done()'s own bot() left (nothing, when uhp was exactly -1).
-            delete game._botlFrozen;
+            // An automatic ('+i') inventory listing asks nothing: select_menu()
+            // holds bot_disabled, so the death-time status stays up until the
+            // listing is gone (disclose() thaws it there).
+            if (!auto_inventory_disclosure()) delete game._botlFrozen;
             // C ref: end.c really_done():1252-1262 — "needed for both
             // inventory disclosure and dumplog": for how != PANICKED, run
             // `discover_object(obj->otyp, TRUE, TRUE, FALSE)` over the pack
@@ -1077,6 +1087,15 @@ function parse_end_disclose() {
 // 'q' answer sets — so 'q' suppresses the remaining queries AND (back in
 // really_done) the tombstone window and the score list; returning `false` is how
 // that reaches the caller.
+// disclose()'s inventory step runs without a y/n query (end_disclose '+i').
+function auto_inventory_disclosure() {
+    const inv = Array.isArray(game.invent) ? game.invent
+        : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
+    if (!inv.length) return false;
+    const { ask, defquery } = should_query_disclose_option(parse_end_disclose(), 'i');
+    return !ask && defquery === 'y';
+}
+
 async function disclose(how, taken = false) {
     const d = await deps();
     const end_disclose = parse_end_disclose();
@@ -1110,6 +1129,7 @@ async function disclose(how, taken = false) {
                 await invmod.display_inventory_interactive(null, false);
             } finally {
                 delete game._disclose_inventory_auto;
+                delete game._botlFrozen;
             }
             // C ref: wintty.c erase_menu_or_text(): a full-screen (offx == 0)
             // inventory menu is torn down by docrt(), whose cls() blanks the
@@ -1493,7 +1513,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         if (tt.notbeaten) {
             disp.clearScreen();
             const row = rawPrintBias();
-            disp.putstr(0, row + 1, tt.notbeaten, NO_COLOR, 0);
+            raw_putstr(disp, row + 1, tt.notbeaten, NO_COLOR, 0);
             // topten_print("") x2 around the message, then really_done()'s two
             // raw_print("")s for done_stopprint.
             setFinalCursor(disp, row + 5);
@@ -1512,7 +1532,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     // A new raw-output stream starts after tty_exit_nhwindows().
     let row = rawPrintBias();
     const printLine = (text, so) => {
-        disp.putstr(0, row++, text, NO_COLOR, so ? ATR_BOLD : 0);
+        raw_putstr(disp, row++, text, NO_COLOR, so ? ATR_BOLD : 0);
     };
     printLine('', false);              // C: HUP topten_print("") before the list
     if (tt.notbeaten) { printLine(tt.notbeaten, false); printLine('', false); }

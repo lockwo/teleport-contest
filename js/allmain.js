@@ -2005,6 +2005,12 @@ async function moveloop_core_body() {
     // only; verified clean across the whole public corpus with the option
     // forced on).
 
+    // C ref: allmain.c:200 — `if (svc.context.resume_wish) makewish();`
+    if (g.context?.resume_wish) {
+        const { makewish } = await import('./extcmd-handlers.js');
+        await makewish();
+    }
+
     // Per-turn work runs at the TOP of the turn that follows a hero move,
     // mirroring the C moveloop (monsters move based on the previous command's
     // svc.context.move).

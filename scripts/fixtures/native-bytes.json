@@ -1,0 +1,766 @@
+{
+ "cases": [
+  {
+   "name": "extended command prompt keeps the completion cell under a high-bit key",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:kitten,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  #é\n\u001b\u001b#eén\n\u001b\u001b\u001b#é\u001b\u001b\u001b",
+     "frames": {
+      "10": {
+       "screen": "# en\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "11": {
+       "screen": "# enn\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "12": {
+       "screen": "#e n: unknown extended command.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "UTF-8 player name bytes are skipped by the capture on the status line",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:kitten,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  sss:\u001bi\u001b\u0018    \u001bClKit\u001b#overview\n\u001b;.\u001bSy",
+     "frames": {
+      "31": {
+       "screen": "\u001b[23CIt is written in the Book of Tyr:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[21C\u000el\u000f\u001b[5Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[21C\u000ex\u000f\u001b[5Cand he hid it in the dark cavities of Gehennom, the\n\u001b[21C\u000ex\u000f\u001b[5CUnder World, where he now lurks, and bides his time.\n\u001b[21C\u000ex\u000f\n\u001b[21C\u000ex\u000f Your god Tyr seeks to possess the Amulet, and with it\n\u001b[21C\u000em\u000f to gain deserved ascendance over the other gods.\n\n\u001b[23CYou, a newly trained Stripling, have been heralded\n\u001b[23Cfrom birth as the instrument of Tyr.  You are destined\n\u001b[23Cto recover the Amulet for your deity, or die in the\n\u001b[23Cattempt.  Your hour of destiny has come.  For the sake\n\u001b[23Cof us all:  Go bravely with Tyr!\n\u001b[23C--More--\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "32": {
+       "screen": "Velkommen Zo  , welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "33": {
+       "screen": "Pick a monster, object or location.--More--\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "UTF-8 name bytes split by the 31-byte name limit",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Abcdefghijklmnopqrstuvwxyza🙂,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:kitten,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  #quit\nyyyyyyyyy                    ",
+     "frames": {
+      "18": {
+       "screen": "Velkommen Abcdefghijklmnopqrstuvwxyza    , welcome to NetHack!  You are a\nlawful human Valkyrie.--More--\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nAbcdefghijklmnop the Stripling St:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "19": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nAbcdefghijklmnop the Stripling St:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "partial UTF-8 player name cannot be saved on macOS",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Abcdefghijklmnopqrstuvwxyzabcdé,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:kitten,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  sss:\u001bi\u001b\u0018    \u001bClKit\u001b#overview\n\u001b;.\u001bSy",
+     "frames": {
+      "37": {
+       "screen": "Saving...  Cannot open save file.--More--\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nAbcdefghijklmnop the Stripling St:14 Dx:15 Co:16 In:9 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "save file is found under a differently cased name",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "\u001b ssSy   \u001b",
+     "frames": {}
+    },
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  :\u001bi\u001bSy",
+     "frames": {
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "3": {
+       "screen": "There is a staircase up out of the dungeon here.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "save file is found under a canonically equivalent name",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "\u001b ssSy   \u001b",
+     "frames": {}
+    },
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  :\u001bi\u001bSy",
+     "frames": {
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "3": {
+       "screen": "There is a staircase up out of the dungeon here.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "keys above 0xff reach the terminal as their low byte",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  s🙂s\u001b\u001b:\u001bi\u001b",
+     "frames": {
+      "3": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "4": {
+       "screen": "You are not wearing any rings.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "5": {
+       "screen": "You swap places with your kitten.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        22,
+        7,
+        1
+       ]
+      },
+      "6": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000f@f\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:4",
+       "cursor": [
+        22,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a name ending in a UTF-8 0xA0 byte keeps it (the harness trims UTF-16 text)",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Voilà,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  ss:\u001b\u0018     \u001bSy",
+     "frames": {
+      "1": {
+       "screen": "Velkommen Voil  , welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nVoil   the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nVoil   the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "3": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nVoil   the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "topten raw output shows the UTF-8 name decoded, one cell per character",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:éééééééééééééééé,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  ss:\u001b\u0018     \u001b#quit\nyyyyyyy          ",
+     "frames": {
+      "31": {
+       "screen": "\n No  Points\u001b[5CName\u001b[51CHp [max]\n\u001b[1m\u001b[13C0  ééééé-Val-Hum-Fem-Law quit in The Dungeons of\u001b[13C\u001b[0m\n\u001b[1m\u001b[16CDoom on level 1.\u001b[39C16  [16]\u001b[0m",
+       "cursor": [
+        0,
+        4,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "topten raw output decodes a multibyte CJK name",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:ヒーローヒーローヒーローヒーロー,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  ss:\u001b\u0018     \u001b#quit\nyyyyyyy          ",
+     "frames": {
+      "31": {
+       "screen": "\n No  Points\u001b[5CName\u001b[51CHp [max]\n\u001b[1m\u001b[13C0  ヒーロ�-Val-Hum-Fem-Law quit in The Dungeons of\u001b[13C\u001b[0m\n\u001b[1m\u001b[16CDoom on level 1.\u001b[39C16  [16]\u001b[0m",
+       "cursor": [
+        0,
+        4,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "startup config errors show UTF-8 rc text decoded, one cell per character",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nBIND=M-e:pray\nBIND=M-s:search\nBIND=é:inventory\n",
+     "moves": "  å\u001b\u001b\u001bó\u001b\u001b\u001bé\u001b\u001b\u001b:\u001b",
+     "frames": {
+      "0": {
+       "screen": "\nBIND=é:inventory\n * Line 6: Unknown key binding key 'é'.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\nBIND=é:inventory\n * Line 6: Unknown key binding key 'é'.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a long UTF-8 option name wraps by bytes in the startup error screen",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nOPTIONS=ééééééééééééééééééééééééééééééééééééééééééééé,x\n",
+     "moves": "  \n\n\n\u001b\u001b\u001b:\u001b",
+     "frames": {
+      "0": {
+       "screen": "\nOPTIONS=éééééééééééééééééééééééééééééééééééé\n * Line 4: Unknown option 'x'.\n * Line 4: Unknown option 'éééééééééééééééééééééééééé�\n\n2 errors in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-ha",
+       "cursor": [
+        0,
+        7,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\nOPTIONS=éééééééééééééééééééééééééééééééééééé\n * Line 4: Unknown option 'x'.\n * Line 4: Unknown option 'éééééééééééééééééééééééééé�\n\n2 errors in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-ha",
+       "cursor": [
+        0,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "BIND=\\xe9 binds byte 0xe9 (hexdd digit pairs)",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nBIND=\\xe9:inventory\n",
+     "moves": "  é\u001b\u001b\u001b",
+     "frames": {
+      "3": {
+       "screen": "\u001b[31C\u001b[7mWeapons\u001b[0m\n\u001b[31Ca - a +1 spear (weapon in right hand)\n\u001b[31Cb - a +0 dagger (alternate weapon; not wielded)\n\u001b[31C\u001b[7mArmor\u001b[0m\n\u001b[31Cc - an uncursed +3 small shield (being worn)\n\u001b[21C\u000elqqqqqqqq\u000f \u001b[7mComestibles\u001b[0m\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~\u000f d - an uncursed food ration\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~\u000f (end)\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        37,
+        7,
+        1
+       ]
+      },
+      "4": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "BIND=\\x41 binds A",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nBIND=\\x41:inventory\n",
+     "moves": "  A\u001b\u001b\u001b:\u001b",
+     "frames": {
+      "0": {
+       "screen": "\u001b[23CIt is written in the Book of Tyr:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[21C\u000el\u000f\u001b[5Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[21C\u000ex\u000f\u001b[5Cand he hid it in the dark cavities of Gehennom, the\n\u001b[21C\u000ex\u000f\u001b[5CUnder World, where he now lurks, and bides his time.\n\u001b[21C\u000ex\u000f\n\u001b[21C\u000ex\u000f Your god Tyr seeks to possess the Amulet, and with it\n\u001b[21C\u000em\u000f to gain deserved ascendance over the other gods.\n\n\u001b[23CYou, a newly trained Stripling, have been heralded\n\u001b[23Cfrom birth as the instrument of Tyr.  You are destined\n\u001b[23Cto recover the Amulet for your deity, or die in the\n\u001b[23Cattempt.  Your hour of destiny has come.  For the sake\n\u001b[23Cof us all:  Go bravely with Tyr!\n\u001b[23C--More--\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1/0 T:1",
+       "cursor": [
+        31,
+        17,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Velkommen Hero, welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "3": {
+       "screen": "\u001b[31C\u001b[7mWeapons\u001b[0m\n\u001b[31Ca - a +1 spear (weapon in right hand)\n\u001b[31Cb - a +0 dagger (alternate weapon; not wielded)\n\u001b[31C\u001b[7mArmor\u001b[0m\n\u001b[31Cc - an uncursed +3 small shield (being worn)\n\u001b[21C\u000elqqqqqqqq\u000f \u001b[7mComestibles\u001b[0m\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~\u000f d - an uncursed food ration\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~\u000f (end)\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        37,
+        7,
+        1
+       ]
+      },
+      "4": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "5": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "6": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "7": {
+       "screen": "There is a staircase up out of the dungeon here.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "8": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "altmeta does not combine ESC with the next key inside the #enhance window",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nOPTIONS=altmeta\n",
+     "moves": "  \u001be\u001b\u001b\u001b\u001b:\u001b",
+     "frames": {
+      "5": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "6": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "7": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "byte 0xff ends a wish getlin as EOF and makewish resumes every turn (term_gone)",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nOPTIONS=playmode:debug\n",
+     "moves": "  #wizwish\nÿ\n\n\n\n\n\u001bSy",
+     "frames": {
+      "11": {
+       "screen": "For what do you wish?\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff@\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{\u001b[39m\u000e~~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        22,
+        0,
+        1
+       ]
+      },
+      "12": {
+       "screen": "You may wish for an object.--More--\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff@\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{\u001b[39m\u000e~~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        35,
+        0,
+        1
+       ]
+      },
+      "13": {
+       "screen": "For what do you wish?\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff@\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{\u001b[39m\u000e~~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        22,
+        0,
+        1
+       ]
+      },
+      "14": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff@\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{\u001b[39m\u000e~~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        54,
+        12,
+        1
+       ]
+      },
+      "15": {
+       "screen": "You may wish for an object.--More--\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        35,
+        0,
+        1
+       ]
+      },
+      "16": {
+       "screen": "For what do you wish?\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        22,
+        0,
+        1
+       ]
+      },
+      "17": {
+       "screen": "You may wish for an object.--More--\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        35,
+        0,
+        1
+       ]
+      },
+      "18": {
+       "screen": "For what do you wish?\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        22,
+        0,
+        1
+       ]
+      },
+      "19": {
+       "screen": "For what do you wish? S\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        23,
+        0,
+        1
+       ]
+      },
+      "20": {
+       "screen": "For what do you wish? Sy\n\n\n\n\n\n\n\n\n\n\u001b[44C\u000elqqqqqq~qqqk\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~\u001b[97m\u000ff\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000fo\u000e~\u001b[97m\u000f{@\u001b[39m\u000e~\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~x\u000f\n\u001b[44C\u000ex~~~~~~~~~~\u000f\n\u001b[44C\u000emqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:16 In:13 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        24,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "control bytes in the player name leave status cells untouched (nomux_putch)",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bo\u0001bz,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  ss\u0018     \u001bSy",
+     "frames": {
+      "0": {
+       "screen": "\u001b[23CIt is written in the Book of Tyr:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[21C\u000el\u000f\u001b[5Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[21C\u000ex\u000f\u001b[5Cand he hid it in the dark cavities of Gehennom, the\n\u001b[21C\u000ex\u000f\u001b[5CUnder World, where he now lurks, and bides his time.\n\u001b[21C\u000ex\u000f\n\u001b[21C\u000ex\u000f Your god Tyr seeks to possess the Amulet, and with it\n\u001b[21C\u000em\u000f to gain deserved ascendance over the other gods.\n\n\u001b[23CYou, a newly trained Stripling, have been heralded\n\u001b[23Cfrom birth as the instrument of Tyr.  You are destined\n\u001b[23Cto recover the Amulet for your deity, or die in the\n\u001b[23Cattempt.  Your hour of destiny has come.  For the sake\n\u001b[23Cof us all:  Go bravely with Tyr!\n\u001b[23C--More--\n\n\n\n\nBo bz the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1/0 T:1",
+       "cursor": [
+        31,
+        17,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Velkommen Bo bz, welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nBo bz the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nBo bz the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      },
+      "3": {
+       "screen": "\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nBo bz the Stripling\u001b[11CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:2",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a tab in the player name leaves its status cell blank",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob\tX,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  \n\n\nss:\u001b\u0018     \u001b#quit\nyyyyyyy          ",
+     "frames": {
+      "0": {
+       "screen": "\u001b[23CIt is written in the Book of Tyr:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[21C\u000el\u000f\u001b[5Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[21C\u000ex\u000f\u001b[5Cand he hid it in the dark cavities of Gehennom, the\n\u001b[21C\u000ex\u000f\u001b[5CUnder World, where he now lurks, and bides his time.\n\u001b[21C\u000ex\u000f\n\u001b[21C\u000ex\u000f Your god Tyr seeks to possess the Amulet, and with it\n\u001b[21C\u000em\u000f to gain deserved ascendance over the other gods.\n\n\u001b[23CYou, a newly trained Stripling, have been heralded\n\u001b[23Cfrom birth as the instrument of Tyr.  You are destined\n\u001b[23Cto recover the Amulet for your deity, or die in the\n\u001b[23Cattempt.  Your hour of destiny has come.  For the sake\n\u001b[23Cof us all:  Go bravely with Tyr!\n\u001b[23C--More--\n\n\n\n\nBob X the Stripling\u001b[12CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1/0 T:1",
+       "cursor": [
+        31,
+        17,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Velkommen Bob X, welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nBob X the Stripling\u001b[12CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "option pet names are sanitized like bones.c sanitize_name (high bytes to _ and .)",
+   "segments": [
+    {
+     "seed": 381,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nOPTIONS=catname:Zoë,dogname:Ëmil,horsename:Ågé\n",
+     "moves": "  Tm  j  #jump\n\u001b#offer\njn;u.\u001b#loot\ng   #jump\n  dbn\u001b#overview\n\u001b mk Tbn\u001bZcy\u001bO\u001bWen\u001b^l#annotate\n\u001b\u001b#untrap\nh\u001b\u0018    \u001b #terrain\n\u001b\u001b#apply\ngn\u001b#dip\nfy ;j. #jump\nWdy  #chat\nn  #annotate\n\u001b  s Rbk\u001bO\u001b>\u001b#turn\n Tgu  #loot\nmb\\\u001b  #loot\nfy;b.  i\u001b ahn\u001b#apply\npn\u001bCy #name\njy\u001ben\u001bdfn Agy_<. #sit\n  #chronicle\n\u001b\u001bzby> da.Afy H  We \u001b#untrap\nh#overview\n\u001b ea.\u001b\u0004b\u001b\u0004u#kick\nk  \u0018    \u001b\u001brdy #jump\n D  ^l  ,\u001b#apply\ngy\u001b#apply\nmy\u001bWbb /y. ^h _>.\u001b#turn\n  #turn\n  #terrain\n\u001b#force\nO\u001b  Rcn Rql  #pickup\n#turn\n  Ch#jump\n#chat\nh Gl  L  Rb > E-x\nml #apply\ndn\u001b\u0004h #chat\nu x  #loot\njy #name\nan\u001beg \u001b#sit\n\u001b#sit\n#annotate\n\u001b  #loot\nnn #dip\nqn #dip\nqy kkk#force\n _>. mn\u001b#kick\nb  Gn  Fb s  ai_<.#overview\n\u001bxfj  Fn\u001bml\u001bu #force\n\u001bGj",
+     "frames": {
+      "7": {
+       "screen": "Zo__ misses the goblin.\n\n \u000elqqqqqqk\u000f\n \u000ex\u001b[31m\u000f%\u001b[39m\u000e~~~\u000fo\u000e~x\u000f\n \u000ex~\u001b[93m\u000f<\u001b[39m\u000e~\u001b[97m\u000ff\u001b[33m(\u001b[39m\u000e~~\u000f\n \u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n \u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:18/04 Dx:13 Co:15 In:10 Wi:7 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1/0 T:3",
+       "cursor": [
+        3,
+        5,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a dog name with a control-low byte reads _. on the top line",
+   "segments": [
+    {
+     "seed": 1039,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:dog,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\nOPTIONS=catname:Zoë,dogname:Ëmil,horsename:Ågé\n",
+     "moves": "  #conduct\n\u001bdl \u001bO\u001b\u001b#annotate\n\u001b Gj\u001bzcn\u001bPon\u001b;j.Fy fb\u001bfy\u001bs\u001b;k.#apply\niy\\\u001b,zpn #offer\nen  :\u001b\u0018    \u001b\u001bu #pickup\n #enhance\n\u001b #pickup\nzl<  Cu  Wk   O\u001b  #pray\ny  \u001b/b. _<.Rky  Ten  _<.\u001bZiy aen  ;j.  > #offer\nhn  k  /k.\u001b<  E-x\n\u001b\\\u001b  Zfy _>.\u001b#loot\ng zn  20s\u001brkl\u001bAay y5s5s  #kick\nh >\u001b^y  _<. fn#force\n\u001b#pickup\n\u001b>#untrap\nb #name\nhy\u001b_>.  fk 5s^j Thb  #overview\n\u001b\u001b#sit\n#annotate\n\u001b  #annotate\n\u001b#chronicle\n\u001b\u001b:\u001bdpy  : _<.20s  #offer\nmn\u001b\u000f\u001b\u001bbbb\u001b#name\ngn\u001b#kick\nhfy  #chat\ny\u001b#dip\nh\u001baa #kick\nn  Cl #jump\n  ^k #turn\n tby  Pqh KFby  Aln  #conduct\n\u001b Fn  Fl zjy 5s  _<.\u001badn  ^k#loot\nhn  rdh\u001b#force\n eay  u\u001b\u0018    \u001b\u001bu k  #untrap\nb #apply\npH  #name\ni.\u001b",
+     "frames": {
+      "33": {
+       "screen": "You swap places with _.mil.  You see here a chest.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[63C\u000elqqqqqk\u000f\n\u001b[63C\u000e~\u001b[93m\u000f<\u001b[97md\u001b[39m\u000e~~~x\u000f\n\u001b[63C\u000ex~~~~~x\u000f\n\u001b[63C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n\u001b[63C\u000emqqqqqj\u000f\n\nHero the Stripling\u001b[13CSt:18 Dx:12 Co:18 In:7 Wi:10 Ch:10 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:3",
+       "cursor": [
+        64,
+        19,
+        1
+       ]
+      },
+      "58": {
+       "screen": "tame little dog called _.mil\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[63C\u000elqqqqqk\u000f\n\u001b[63C\u000e~\u001b[93m\u000f<\u001b[39m\u000e~~~~x\u000f\n\u001b[63C\u000ex\u001b[97m\u000fd\u001b[39m\u000e~~~~x\u000f\n\u001b[63C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n\u001b[63C\u000emqqqqqj\u000f\n\nHero the Stripling\u001b[13CSt:18 Dx:12 Co:18 In:7 Wi:10 Ch:10 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:4",
+       "cursor": [
+        64,
+        18,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

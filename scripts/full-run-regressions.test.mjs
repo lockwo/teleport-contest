@@ -9,8 +9,20 @@ const cases = ['full-run-regressions', 'tty-publication', 'notice-glyph', 'air-s
 
 for (const c of cases) {
     test(`matches C: ${c.name}`, async () => {
+        // One Web-Storage-shaped store per session, as the judge shares it
+        // across segments (save files, bones, the record file).
+        const data = new Map();
+        const storage = {
+            getItem: (k) => data.get(k) ?? null, setItem: (k, v) => data.set(k, String(v)),
+            removeItem: (k) => data.delete(k), get length() { return data.size; },
+            key: (i) => [...data.keys()][i] ?? null,
+        };
         for (const segment of c.segments) {
-            const replay = await runSegment(segment);
+            const replay = await runSegment({ ...segment, storage });
+            // The judge drops empty C screens (a process that exited leaves a
+            // blank final capture), so a segment's screen count must match.
+            if (segment.screens != null)
+                assert.equal(replay.getScreens().length, segment.screens, 'screen count');
             for (const [index, want] of Object.entries(segment.frames)) {
                 const got = decodeScreen(replay.getScreens()[Number(index)]);
                 const expected = decodeScreen(want.screen);

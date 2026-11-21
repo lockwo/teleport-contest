@@ -1655,17 +1655,15 @@ export async function feel_engraving(ep) {
 
 // C ref: bones.c:198 sanitize_name(namebuf) — "while loading bones, strip out
 // text possibly supplied by old player that might accidentally or maliciously
-// disrupt new player's display".  js/options.js:1619 has a same-named private
-// copy, but it is a DIFFERENT reduction (it deletes offending characters rather
-// than substituting '.'/'_', so it shortens the string); reusing it here would
-// silently change engraving lengths, which wipeout_text() counts.  Kept private
-// under a distinct name so it cannot shadow the real bones.c port.
+// disrupt new player's display".  Also applied to option-supplied pet and
+// fruit names (options.c).  A byte whose low 7 bits are a control character
+// becomes '.', any other high-bit byte '_', so the length never changes.
 // strip_8th_bit = (WINDOWPORT(tty) && !iflags.wc_eight_bit_input): this build is
 // tty, and the 'eight_bit_tty' option (default off) lives in this port's wincap
 // BITMASK rather than in an iflags field (js/options.js:4210), so the C field
 // name reads undefined here and the flag is TRUE — which is the default-off
 // answer either way.
-export function sanitize_engr_text(s) {
+export function sanitize_name(s) {
     const strip_8th_bit = !(game.iflags?.wc_eight_bit_input);
     let out = '';
     for (let i = 0; i < s.length; i++) {
@@ -1691,7 +1689,7 @@ export function sanitize_engr_text(s) {
 // bytes).
 export function sanitize_engravings() {
     for (const ep of head_engr()) {
-        ep.actualText = sanitize_engr_text(ep.actualText || '');
+        ep.actualText = sanitize_name(ep.actualText || '');
     }
 }
 

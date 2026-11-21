@@ -27,6 +27,7 @@ import { pline, impossible } from './display.js';
 import { makeplural } from './plural.js';
 // fruitadd()'s 127-fruit overflow fallback is `return rnd(127)`.
 import { rnd } from './rng.js';
+import { sanitize_name } from './engrave.js';
 // condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
 // modules that import this one, so parseNethackrc() loads them dynamically.
 let conditions = [], condition_aliases = [];
@@ -334,7 +335,7 @@ function fuzzymatch(s1, s2, ignore_chars, caseblind) {
 // C ref: options.c escapes() — expand `\M`/meta, `^X`, decimal, `\o` octal,
 // `\x` hex and the C-style `\n`/`\t`/`\b`/`\r`/`\\` forms in place.  Load
 // bearing for txt2key(), sym_val() and warning_opts().
-const HEXDD = '0123456789aAbBcCdDeEfF';
+const HEXDD = '00112233445566778899aAbBcCdDeEfF'; /* decl.c hexdd: offset / 2 */
 function escapes(cp) {
     let out = '';
     let i = 0;
@@ -830,17 +831,33 @@ export async function config_error_report(result) {
        which is why a later wait_synch() finds the earlier text still there. */
     if (disp?.clearScreen) disp.clearScreen();
     let row = 0, col = 0;
+    /* nomux_raw_putch() stores every byte >= 32 in the shadow buffer; the
+       harness decodes each captured row as UTF-8, so multibyte text takes one
+       cell per decoded character while the raw cursor counts bytes. */
+    const rowBytes = new Map();
     const putch = (ch) => {
         if (ch === '\n') { row++; col = 0; return; }
-        if (ch.charCodeAt(0) < 32) return;
-        if (row >= 0 && row < rows && col >= 0 && col < cols)
-            disp?.putstr?.(col, row, ch, NO_COLOR, 0);
+        const code = ch.charCodeAt(0);
+        if (code < 32) return;
+        if (row >= 0 && row < rows && col >= 0 && col < cols) {
+            if (!rowBytes.has(row)) rowBytes.set(row, []);
+            rowBytes.get(row)[col] = code & 0xff;
+        }
         col++;
+    };
+    const paint = () => {
+        for (const [r, bytes] of rowBytes) {
+            const filled = Array.from(bytes, (b) => b ?? 32);
+            let c = 0;
+            for (const dch of new TextDecoder('utf-8').decode(Uint8Array.from(filled)))
+                if (c < cols) disp?.setCell?.(c++, r, dch, NO_COLOR, 0);
+        }
     };
     for (const item of raw) {
         if (typeof item === 'string') {
-            for (const ch of item) putch(ch);
+            for (let i = 0; i < item.length; i++) putch(item[i]);
             putch('\n'); /* puts() / tty_raw_print_bold both append one */
+            paint();
             game._nomux_raw = { row, col };
             if (disp?.setCursor) disp.setCursor(col, row);
             continue;
@@ -1726,17 +1743,6 @@ function petname_optfn(o, negated, opts, op, result) {
     if (negated || op === 'none' || op === 'None') op = '';
     result.flags[o.name] = sanitize_name(nmcpy(op, PL_PSIZ));
     return OPTN_OK;
-}
-
-// C ref: files.c sanitize_name() — a name that reaches a file or the topline
-// keeps only printable characters.
-function sanitize_name(s) {
-    let out = '';
-    for (const c of s) {
-        const k = c.charCodeAt(0);
-        if (k >= 32 && k < 127) out += c;
-    }
-    return out;
 }
 
 // C ref: options.c optfn_crash_urlmax() (CRASHREPORT is on for this build).
@@ -4346,10 +4352,20 @@ function recorder_u_name(rc) {
         for (const opt of line.slice(line.indexOf('=') + 1).split(',')) {
             const t = opt.trim();
             if (t.toLowerCase().startsWith('name:'))
-                return t.slice('name:'.length).trim().slice(0, PL_NSIZ - 1);
+                return t.slice('name:'.length).trim();
         }
     }
     return '';
+}
+
+// UTF-8 encode a JS string and return one code unit (0..255) per byte, the
+// way C sees text it read from a file or argv.
+export function utf8_byte_string(s) {
+    const str = String(s);
+    if (!/[^\x00-\x7f]/.test(str)) return str;
+    let out = '';
+    for (const b of new TextEncoder().encode(str)) out += String.fromCharCode(b);
+    return out;
 }
 
 export async function parseNethackrc(rc) {
@@ -4367,6 +4383,11 @@ export async function parseNethackrc(rc) {
         status_hilites: [], conds: {},
     };
     if (!rc) return result;
+    // The harness finds the name in the UTF-16 text (String.prototype.trim()
+    // and all) and passes it as a UTF-8 argv string; it writes the rc file as
+    // UTF-8.  C holds both as bytes, so one code unit per byte from here on.
+    const u_name = utf8_byte_string(recorder_u_name(rc)).slice(0, PL_NSIZ - 1);
+    rc = utf8_byte_string(rc);
 
     raw_stream = [];
     reset_duplicate_opt_detection();
@@ -4428,7 +4449,7 @@ export async function parseNethackrc(rc) {
     // recording harness derives it from the rc's OPTIONS=name: value and
     // passes an empty string when there is none, so plname ends up being
     // exactly that value and a NAME= statement never reaches the game.
-    result.name = recorder_u_name(rc);
+    result.name = u_name;
     if (raw_stream.length) result.config_error_raw = raw_stream;
     raw_stream = null;
     // C ref: options.c gp.plinemsg_types / gm.menu_colorings / gr.rfilter are

@@ -1007,8 +1007,10 @@ export async function rhack(key) {
         // #jump) rather than dispatching as its own no-op. getdir()/getpos()
         // get the same merge at their call sites. This file's own parse()/
         // readchar_core() port it faithfully but have no live caller, so this
-        // replicates just the top-level-read case.
-        if (!replay && key === 27 && game.iflags?.altmeta) {
+        // replicates just the top-level-read case.  A key read while a modal
+        // window is up belongs to process_menu_window()/xwaitforspace(), which
+        // read with tty_nhgetch() directly: no ESC combining there.
+        if (!replay && key === 27 && game.iflags?.altmeta && !game._modal_screen) {
             const next = await nhgetch();
             key = (next === 0 || next === 27) ? 27 : (next | 0x80);
         }
@@ -8832,11 +8834,15 @@ export function reset_cmd_vars(reset_cmdq) {
     const svc = game.context || (game.context = {});
     const iflags = game.iflags || (game.iflags = {});
 
+    /* C has one svc.context.run; zero every piece this port splits it into
+       (see gstate.js svc_context_run()), and gd.domove_attempting's rush bit */
     svc.run = 0;
     svc.run_leftover8 = 0;
+    svc.stale_run = svc.cmd_stale_run = 0;
     svc.nopick = svc.forcefight = false;
     svc.move = svc.mv = false;
     game.domove_attempting = 0;
+    svc.stale_rush = false;
     game.multi = 0;
     iflags.menu_requested = false;
     svc.travel = svc.travel1 = 0;

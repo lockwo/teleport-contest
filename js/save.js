@@ -110,13 +110,24 @@ export function serializeGameState(root) {
     return JSON.stringify({ root: r, nodes });
 }
 
-// The storage key under which this character's save lives.  C keys the save
-// file on the player name (SAVEF); we do the same so restore in a later segment
-// finds it.
+// The storage key under which this character's save lives: files.c
+// set_savefile_name() "save/<uid><plname>" after unixunix.c regularize()
+// ('.', '/' and ' ' become '_').  The recordings were made on macOS APFS,
+// which refuses a name that is not valid UTF-8 and looks names up without
+// regard to case or Unicode normalization.  null: no such file can exist.
 export const SAVE_KEY_PREFIX = 'nethack.save.';
 export function saveFileKey() {
     const nm = game.plname || '';
-    return nm ? `${SAVE_KEY_PREFIX}${nm}` : '';
+    if (!nm) return '';
+    const reg = nm.replace(/[./ ]/g, '_');
+    let txt;
+    try {
+        txt = new TextDecoder('utf-8', { fatal: true })
+            .decode(Uint8Array.from(reg, (c) => c.charCodeAt(0) & 0xff));
+    } catch {
+        return null;
+    }
+    return `${SAVE_KEY_PREFIX}${txt.normalize('NFD').toLowerCase()}`;
 }
 
 // C ref: save.c:174-214 dosave0() — "While copying level files around, zero out
@@ -202,6 +213,10 @@ function forget_saved_priests() {
 export async function dosave0() {
     const key = saveFileKey();
     const storage = game.storage;
+    if (key === null) {
+        await pline('Cannot open save file.');
+        return 0;
+    }
     if (!key || !storage || typeof storage.setItem !== 'function') return 0;
     if (typeof storage.getItem === 'function' && storage.getItem(key) != null) {
         game._pending_message = ''; // clear_nhwindow(WIN_MESSAGE)

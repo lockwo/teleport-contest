@@ -35,7 +35,7 @@ import {
 } from './const.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
-import { update_topl, pline, Hallucination_u } from './display.js';
+import { update_topl, pline, Hallucination_u, page_topline_before_window } from './display.js';
 import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON, getnow } from './calendar.js';
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
@@ -724,6 +724,7 @@ export async function show_conduct_disclosure(final) {
 
 // C ref: insight.c doconduct() — the #conduct command.
 export async function doconduct() {
+    await page_topline_before_window();
     await show_conduct_disclosure(0);
     return 0; // ECMD_OK
 }

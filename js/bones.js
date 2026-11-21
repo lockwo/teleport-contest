@@ -482,7 +482,7 @@ async function bones_getlev(blob) {
     // creation-ordered level.monsters array (fmonOrder()).
     const chain_order = [...(level.monsters || [])].reverse();
     const { propagate, monster_by_pmidx: monster_by_pmidx_b } = await import('./makemon.js');
-    const { sanitize_engr_text: sanitize_engr_text_b } = await import('./engrave.js');
+    const { sanitize_name: sanitize_name_b } = await import('./engrave.js');
     for (const m of chain_order) {
         m.m_id = next_ident();
         // C ref: restore.c getlev(): `if (propagate(mndx, TRUE, ghostly) == 0)
@@ -492,7 +492,7 @@ async function bones_getlev(blob) {
         if (mndx != null && propagate(mndx, true, true) === 0)
             m.mhpmax = DEFUNCT_MONSTER;
         /* C ref: bones.c getbones(): if (has_mgivenname(mtmp)) sanitize_name(MGIVENNAME(mtmp)) */
-        if (has_mgivenname(m)) setMGIVENNAME(m, sanitize_engr_text_b(MGIVENNAME(m)));
+        if (has_mgivenname(m)) setMGIVENNAME(m, sanitize_name_b(MGIVENNAME(m)));
         if (Array.isArray(m.minvent)) for (const o of m.minvent) stamp_obj(o);
     }
     // C ref: restore.c getlev() -> restore_buried_uchain()/buriedobjlist chain.
@@ -509,7 +509,7 @@ async function bones_getlev(blob) {
         const { exist_artifact, artifact_exists } = await import('./artifact.js');
         const { cant_revive } = await import('./read.js');
         const { is_quest_artifact } = await import('./questpgr.js');
-        const { sanitize_engr_text } = await import('./engrave.js');
+        const { sanitize_name } = await import('./engrave.js');
         const { setONAME, ONAME, ONAME_BONES } = await import('./const.js');
         const { inside_shop: shk_inside_shop, tended_shop } = await import('./shk.js');
         const { in_rooms } = await import('./shkroom.js');
@@ -518,7 +518,7 @@ async function bones_getlev(blob) {
             obj_extract_self, dealloc_obj, free_oname, free_omonst, set_corpsenm,
             exist_artifact, artifact_exists, cant_revive, is_quest_artifact, ONAME_BONES,
             /* bones.c sanitize_name(ONAME(otmp)): in place */
-            sanitize_name: (o) => setONAME(o, sanitize_engr_text(ONAME(o))),
+            sanitize_name: (o) => setONAME(o, sanitize_name(ONAME(o))),
             get_obj_location: (obj, loc) => {
                 loc.x = obj.ox;
                 loc.y = obj.oy;

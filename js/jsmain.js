@@ -480,8 +480,17 @@ export class NethackGame {
         if (!game.plname) {
             const saved = (opts.flags?.selectsaved !== false) ? get_saved_games() : null;
             if (saved && !(await this._restoreMenu(saved, optsel))) {
-                bail('Until next time then...');
-                return;
+                const mesg = 'Until next time then...';
+                bail(mesg);
+                // tty_exit_nhwindows(mesg) clears the screen and raw_print()s the
+                // farewell; nh_terminate()'s final capture records that screen,
+                // homed, and nothing after it (the process is gone).
+                const disp = game.nhDisplay;
+                disp?.clearScreen?.();
+                disp?.putstr?.(0, 0, mesg, NO_COLOR, 0);
+                disp?.setCursor?.(0, 0);
+                await game._preNhgetchHook?.();
+                throw new NetHackGameOver();
             }
             /* plnamesuffix()'s do/while: askname() again while the typed name was
                nothing but "-role-race" suffix tokens (e.g. "-" or "-wiz").  Each
@@ -524,7 +533,10 @@ export class NethackGame {
         // must not fall through into a randomly rolled game.
         if (!game._startup_selected_character) {
             bail(null);
-            return;
+            // The process is gone: tty_exit_nhwindows() left a blank screen,
+            // which the recorder's final capture stores as an empty frame and
+            // the judge drops, so no further input boundary is taken here.
+            throw new NetHackGameOver();
         }
 
         // role_init() runs plnamesuffix() again, which asks for a name again
@@ -1758,7 +1770,9 @@ export async function runSegment(input) {
     display.onEmptyQueue = () => { throw new Error('Input queue empty - test may be missing keystrokes'); };
     nhGame._pendingDisplay = display;
 
-    for (const ch of moves) display.pushKey(ch.charCodeAt(0));
+    // scripts/record-session.mjs sends moves[i] (one UTF-16 code unit) as
+    // Buffer.from(k, 'latin1'): the terminal reads its low byte.
+    for (let i = 0; i < moves.length; i++) display.pushKey(moves.charCodeAt(i) & 0xff);
 
     // Startup/chargen can run out of recorded keystrokes when the C session
     // used a tty selection feature the port doesn't model (e.g. the '~'

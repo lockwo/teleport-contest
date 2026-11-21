@@ -22,7 +22,7 @@ import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { worm_known } from './worm.js';
-import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle } from './display.js';
+import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle, page_topline_before_window } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -103,6 +103,7 @@ export function tty_putstr_text(out, ln) {
 
 // `lines` may be plain strings (ATR_NONE) or {text, attr} objects.
 export async function display_text_window(lines) {
+    await page_topline_before_window();
     // C ref: win/tty/wintty.c tty_putstr() — every string reaching a text
     // window is compress_str()'d and line-broken before it is ever paged.
     const wrapped = [];
@@ -140,6 +141,15 @@ export async function display_text_window(lines) {
 // stripped, tabs expanded) into a full-screen NHW_TEXT window and page it with
 // "--More--".  The file contents are build-constant, embedded in pager_data.js.
 export async function display_file(lines) {
+    // wintty.c:2467 tty_display_file() opens with tty_clear_nhwindow(WIN_MESSAGE):
+    // a pending message is erased unpaged (no --More--), unlike a text window
+    // built with create_nhwindow() and shown through tty_display_nhwindow().
+    if (game._pending_message || game._toplin) {
+        game._pending_message = '';
+        game._toplin = 0;
+        game._toplinSoft = null;
+        game.nhDisplay?.clearRow?.(0);
+    }
     await display_text_window(lines);
 }
 
@@ -593,6 +603,7 @@ function buildHelpItems() {
 // cursor parked strlen("(end) ") past its start.  Columns left of offx and rows
 // below the footer keep the underlying map.
 export async function dohelp() {
+    await page_topline_before_window();
     const items = buildHelpItems();
 
     // Menu line list, in display order: title, blank, then one line per item.

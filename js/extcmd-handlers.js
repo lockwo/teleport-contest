@@ -380,6 +380,15 @@ function draw_getlin(query, shown, cursorCol, cursorAt = null) {
     // char) is only putsyms(): it blanks the erased characters and never
     // touches the map, so `cursorAt` (set only for those echoes) skips it.
     const clearRows = Math.max(rows, game._getlin_rows || 1);
+    // nomux_putch() skips a signed high byte, so the terminal keeps the cell
+    // the previous echo left there (an autocompletion tail, say).
+    const grid = disp.terminal?.grid;
+    const kept = new Map();
+    for (let i = 0; i < line.length; i++) {
+        const code = line.charCodeAt(i);
+        const cell = grid?.[Math.floor(i / TOPL_WRAP)]?.[i % TOPL_WRAP];
+        if (code >= 0x80 && code <= 0xff && cell) kept.set(i, { ...cell });
+    }
     for (let r = 0; r < clearRows && r < disp.rows; r++)
         for (let c = 0; c < disp.cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     if (!cursorAt) {
@@ -392,7 +401,9 @@ function draw_getlin(query, shown, cursorCol, cursorAt = null) {
         // topl_putsym(char) advances for signed high bytes, but nomux_putch
         // ignores their negative values. Keep their buffer/cursor positions.
         const code = line.charCodeAt(i);
-        if (code < 0x80 || code > 0xff)
+        const old = kept.get(i);
+        if (old) disp.setCell(i % TOPL_WRAP, r, old.ch, old.color, old.attr);
+        else if (code < 0x80 || code > 0xff)
             disp.setCell(i % TOPL_WRAP, r, line[i], NO_COLOR, 0);
     }
     game._getlin_rows = rows;
@@ -570,6 +581,13 @@ export async function hooked_tty_getlin(query, hook) {
             // ttyDisplay->inread is temporarily 0 in C here, but redotoplin() must know it is
             // answering a getlin (it only rewrites the top row, see doprev_message()).
             game._getlin_inread = true;
+            // windows.c getlin() holds gb.bot_disabled around win_getlin (the
+            // ext-command hook prompt is called directly and does not), so a
+            // full-width history window's erase_menu_or_text() docrt() blanks
+            // the status window and its flush_screen(1) cannot repaint it.
+            const old_bot_disabled = game.bot_disabled;
+            if (!hook) game.bot_disabled = true;
+            game._menuOffx = undefined;
             try {
                 if (mode === 's' || (mode === 'c' && !doprev)) {
                     if (!doprev) await doprev_message(); /* need two initially */
@@ -582,6 +600,12 @@ export async function hooked_tty_getlin(query, hook) {
                 }
             } finally {
                 game._getlin_inread = false;
+                game.bot_disabled = old_bot_disabled;
+            }
+            if (!hook && !old_bot_disabled && game._menuOffx === 0 && game.nhDisplay?.setCell) {
+                game._statusClsBlank = true;
+                game.botlx = true;
+                blank_status_rows(game.nhDisplay);
             }
             continue;
         }
@@ -1497,6 +1521,7 @@ export async function makewish() {
     let tries = 0;
     let r = null, bufcpy = '';
 
+    (game.context ||= {}).resume_wish = 0;
     if (game.flags?.verbose !== false)
         await pline('You may wish for an object.');
     for (;;) {
@@ -1511,6 +1536,13 @@ export async function makewish() {
             buf = mungspaces(picked.value);
         } else {
             buf = mungspaces(await getlin_top(prompt));
+        }
+        /* zap.c:6339 — a getlin ended by EOF (byte 0xff from pgetchar(), see
+           hooked_tty_getlin) leaves iflags.term_gone set for good: the wish is
+           deferred to moveloop_core(), which re-enters makewish() every turn. */
+        if (game.iflags?.term_gone) {
+            if (!game.iflags.debug_fuzzer) game.context.resume_wish = 1;
+            return;
         }
         if (buf.length && buf[0] === '\x1b') {
             buf = '';
@@ -1904,13 +1936,13 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     // H2344_BROKEN: offx = min(min(82, cols/2), cols - maxcol - 1); text at offx+1.
     let offx = Math.min(Math.min(82, Math.floor(cols / 2)), cols - maxcol - 1);
     if (offx < 0) offx = 0;
-    const textCol = offx + 1;
     const moreRow = lines.length;
     // C ref: wintty.c tty_display_nhwindow(): maxrow >= rows forces offx = 0, and
     // process_menu_window() `if (!cw->offx) term_clear_screen()` -- a full-width
     // menu wipes the whole screen (map and status window included).
     if (isMenu && (moreRow + 1 >= rows
                    || (game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false)) offx = 0;
+    const textCol = offx + 1;
     const fullScreen = isMenu && offx === 0;
     // C ref: wintty.c erase_menu_or_text(): dismissal is docorner() (no docrt,
     // no vision_recalc) unless offx == 0; invent.js dismiss_invent_screen() reads this.
@@ -3748,8 +3780,16 @@ const HANDLERS = {
     knownclass: doclassdisco,
     lookatmap: lookatmap_herecmd,
     look: itemaction_time(dolook), // blind #look spends a move (invent ECMD_TIME 3)
-    options: dosetSimple,
-    optionsfull: doset,
+    // C ref: options.c doset_simple()/doset() — an 'm' prefix makes each run
+    // the other menu (clearing menu_requested first).
+    options: async () => {
+        if (game.iflags?.menu_requested) { game.iflags.menu_requested = false; return doset(); }
+        return dosetSimple();
+    },
+    optionsfull: async () => {
+        if (game.iflags?.menu_requested) { game.iflags.menu_requested = false; return dosetSimple(); }
+        return doset();
+    },
     perminv: doperminv,
     pickup: dopickup,
     quaff: dodrink,
