@@ -13,7 +13,7 @@ import { NO_COLOR } from './terminal.js';
 import { roles, rank_of, align_gname, align_gtitle, align_str } from './role.js';
 import { A_LAWFUL, A_NEUTRAL, A_CHAOTIC, In_quest } from './const.js';
 import { rn2 } from './rng.js';
-import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear, yn_cmdq_answer, yn_cmdq_save } from './display.js';
+import { docrt, flush_screen, topl_more, update_topl, impossible, display_nhwindow_message, putmsghistory, Deaf_hero, You_hear, yn_cmdq_answer, yn_cmdq_save, textwin_line } from './display.js';
 import { QUEST_SYNOPSIS } from './quest_synopsis_data.js';
 import { renderWindowScreen } from './invent.js';
 import { Blind } from './vision.js';
@@ -139,7 +139,7 @@ export async function com_pager_legacy() {
     const moreRow = lines.length; // row immediately after the last line
     for (let i = 0; i < lines.length; i++) {
         blankCols(i);
-        if (lines[i]) disp.putstr(textCol, i, lines[i], NO_COLOR, 0);
+        if (lines[i]) disp.putstr(textCol, i, textwin_line(lines[i]), NO_COLOR, 0);
     }
     blankCols(moreRow);
     const moreCol = offx + 1;

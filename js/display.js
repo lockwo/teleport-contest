@@ -6,7 +6,7 @@ import { mimic_obj_corpsenm } from './const.js';
 import { Blind_telepat, Detect_monsters_hero, Deaf_hero, Invis_hero, See_invisible_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 
-import { SYMBOL_BYTES } from './symset-data.js';
+import { SYMBOL_BYTES, UTF8_SYMBOLS, SYMSET_META } from './symset-data.js';
 import { cansee, couldsee, Blind, Infravision, vision_recalc,
          block_point, unblock_point } from './vision.js';
 import { nhgetch } from './input.js';
@@ -1121,13 +1121,22 @@ export function symOverrideChar(name, keepCtl = false) {
     if (ov && ov[name]) return ov[name];
     const set = String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase();
     if (set === 'blank') return ' ';
+    // C ref: wintty.c tty_print_glyph() — a UTF8-handling set's U+ symbols go
+    // out through g_pututf8(), which writes no capture cell (see utf8_marker).
+    if (UTF8_SYMBOLS[set]?.[name] != null) return utf8_marker(name);
     const byte = SYMBOL_BYTES[set]?.[name];
     // C ref: wintty.c g_putch(), NOMUX_CAPTURE: the recorder strips the
     // meta bit and ignores control bytes, just like the existing DEC path.
     if (byte == null) return null;
     const ch = byte & 0x7f;
     /* keepCtl: the caller models C's untouched cell (see NUL_CELL) */
-    return ch < 32 ? (keepCtl ? NUL_CELL : ' ') : String.fromCharCode(ch);
+    if (ch < 32) return keepCtl ? NUL_CELL : ' ';
+    // MAC handling is neither H_IBM nor H_UTF8, so g_putch() switches the
+    // terminal to DEC graphics (graph_on()) before the stripped char: the
+    // capture shows its line-drawing rendition.
+    if (byte >= 0x80 && SYMSET_META[set]?.handling === 4)
+        return decgfxMapChar(String.fromCharCode(ch), true);
+    return String.fromCharCode(ch);
 }
 // C ref: symbols.c gs.showsyms[] under a meta-bit symset (IBMGraphics): the
 // real symbol byte (>= 0x80) that pager.c do_screen_description() compares
@@ -1144,6 +1153,63 @@ export function symsetHighByte(name) {
 // A control-byte symbol (e.g. \x01 S_human, \x0f S_coin) writes nothing on the
 // recorder's terminal: the cell keeps whatever it showed before.
 const NUL_CELL = '\x00';
+
+// SYMHANDLING(H_UTF8) for the symset currently in effect (the Rogue level
+// uses its own).
+function utf8_symset() {
+    const set = String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase();
+    return UTF8_SYMBOLS[set] || null;
+}
+export function utf8_symhandling() {
+    return !!utf8_symset();
+}
+// Inside the port a UTF8 set's U+ symbol is a private-use code point, one per
+// symbol name: glyph comparisons stay exact, and the renderers know the cell
+// holds a symbol the recorder's capture never sees (show_glyph_cell keeps the
+// cell's previous captured content in disp_utf8term).
+const UTF8_MARK_BASE = 0xE000;
+const UTF8_MARK_NAMES = [...new Set(Object.values(UTF8_SYMBOLS).flatMap(Object.keys))];
+function utf8_marker(name) {
+    return String.fromCharCode(UTF8_MARK_BASE + UTF8_MARK_NAMES.indexOf(name));
+}
+export function is_utf8_marker(ch) {
+    if (typeof ch !== 'string' || ch.length !== 1) return false;
+    const c = ch.charCodeAt(0) - UTF8_MARK_BASE;
+    return c >= 0 && c < UTF8_MARK_NAMES.length;
+}
+// Byte count of the UTF-8 sequence tty sends for a marker.  topl_putsym() and
+// process_text_window() advance the cursor per byte, and the capture drops
+// every byte (nomux_putch() rejects a negative char).
+function utf8_marker_len(ch) {
+    const cp = utf8_symset()?.[UTF8_MARK_NAMES[ch.charCodeAt(0) - UTF8_MARK_BASE]] ?? 0;
+    return cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+}
+// Text as the capture shows it: each marker becomes one blank per byte.
+export function expand_utf8_markers(text) {
+    if (typeof text !== 'string' || !utf8_symhandling()) return text;
+    let out = '';
+    for (const c of text) out += is_utf8_marker(c) ? ' '.repeat(utf8_marker_len(c)) : c;
+    return out;
+}
+// C ref: wintty.c process_text_window() — under H_UTF8 the first byte of each
+// line goes out through g_putch(), whose capture lands one column right (curx
+// was already advanced) with its meta bit stripped; the next byte's capture
+// then overwrites it unless it is a UTF-8 continuation byte, which the capture
+// drops.  So the line's first cell stays blank.
+export function textwin_line(text) {
+    if (!text || !utf8_symhandling()) return text;
+    const first = text[0];
+    if (is_utf8_marker(first)) {
+        const cp = utf8_symset()[UTF8_MARK_NAMES[first.charCodeAt(0) - UTF8_MARK_BASE]];
+        const n = utf8_marker_len(first);
+        const lead = n === 1 ? cp : n === 2 ? 0xC0 | (cp >> 6)
+            : n === 3 ? 0xE0 | (cp >> 12) : 0xF0 | (cp >> 18);
+        const shown = n === 1 ? ' ' : String.fromCharCode(lead ^ 0x80) + ' '.repeat(n - 2);
+        return ' ' + shown + expand_utf8_markers(text.slice(1));
+    }
+    text = expand_utf8_markers(text);
+    return ' ' + (text.length > 1 ? text.slice(1) : text);
+}
 
 // C ref: symbols.c update_ov_primary_symset() — SYMBOLS=S_<CLASS>:c replaces the
 // showsyms[] character of a whole monster class (def_monsyms), and a symset may
@@ -1485,10 +1551,11 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     }
     /* The recorder's terminal only sees the glyph buffer at flush time: keep
        what the cell showed at the last build (blank if never drawn) so a
-       control-byte symbol, which writes nothing, can fall back to it. */
+       symbol that writes nothing can fall back to it. */
     if (!loc._termDirty) {
         loc._termDirty = true;
         loc._term = loc.disp_ch === undefined ? null
+            : loc.disp_utf8 ? (loc.disp_utf8term ?? null)
             : { ch: loc.disp_ch, color: loc.disp_color, decgfx: loc.disp_decgfx,
                 attr: loc.disp_attr, dark: loc.disp_dark, monster: loc.disp_monster, warning: loc.disp_warning };
     }
@@ -1501,9 +1568,14 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
         loc.disp_dark = t ? !!t.dark : false;
         loc.disp_monster = t ? !!t.monster : false;
         loc.disp_warning = t ? !!t.warning : false;
+        loc.disp_utf8 = false;
         loc.gnew = 1;
         return;
     }
+    // A UTF8 set's U+ symbol: the glyph buffer holds it (disp_ch is its marker),
+    // while the captured cell keeps what it showed at the last build.
+    loc.disp_utf8 = is_utf8_marker(ch);
+    loc.disp_utf8term = loc.disp_utf8 ? loc._term : null;
     if (String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase() === 'blank') {
         ch = ' ';
         decgfx = false;
@@ -3627,6 +3699,14 @@ function _ttyStatusState() {
         levVal: '', prevLev: null, dlvl_shrinklvl: 0,
     });
 }
+// C ref: restore.c dorecover() — a restored process never ran newgame()'s
+// pre-u_init_inventory() bot(), so _renderStatus() must not replay it: the
+// first status pass is the restored hero's, under status_initialize()'s
+// update_all.
+export function status_restored_init() {
+    _ttyStatusState().init = true;
+    game._engineUpdateAll = true;
+}
 
 // C ref: wintty.c set_condition_length()/render_status(): the words for the
 // condition bits, in cond_idx[] order, at one shrink level.
@@ -4110,6 +4190,9 @@ export function putStatusRow(display, which, row, cut = null) {
 // (the loop is y < ymax): game._statusSweepBotlx records that for the dismissal.
 export function status_sweep(xcut, lastRow) {
     game._sweepLastRow = lastRow;
+    // The same docorner() blanks the map under the window: a symbol the
+    // capture never sees is gone once the window is torn down.
+    note_corner_window(xcut, lastRow + 1);
     const rows = game.nhDisplay?.rows ?? 24;
     const cuts = (game._statusCuts ??= {});
     for (let r = rows - StatusRows(); r < rows && r <= lastRow + 1; r++)
@@ -4469,6 +4552,14 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
             if (x - 1 - clipx < minCol || (free && !free(x - 1 - clipx))) continue;
             const loc = _displayed_loc(x, y);
+            // A symbol the capture never sees: the cl_end() before this
+            // row_refresh() blanked the cell and the reprint writes nothing,
+            // though the tty cursor still advances past it.
+            if (loc?.disp_utf8) {
+                loc.disp_utf8term = null;
+                cursorCol = x - clipx;
+                continue;
+            }
             if (_mapCellIsBlank(loc)) continue;
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
@@ -4480,6 +4571,46 @@ export function render_map_row_to_grid(sy, minCol = 0, free = null) {
         }
     }
     return cursorCol;
+}
+
+// A UTF8 marker cell puts on the grid only what the capture kept there.
+function put_utf8term(display, col, row, loc) {
+    const t = loc.disp_utf8term;
+    if (t) display.setCell(col, row, decgfxMapChar(t.ch, t.decgfx), t.color ?? NO_COLOR, t.attr ?? 0);
+}
+
+// C ref: wintty.c docorner(xmin, ymax) — a corner window torn down without
+// row_refresh() through render_map_row_to_grid(): its cl_end() blanked screen
+// columns >= minCol on rows 0..lastRow, and a symbol the capture never sees
+// leaves them blank when the map is reprinted.
+export function forget_nul_cells(minCol, lastRow) {
+    if (!utf8_symhandling()) return;
+    _syncClipping();
+    for (let y = 0; y < ROWNO; y++) {
+        const sy = _mapRowOnScreen(y);
+        if (sy < 0 || sy > lastRow) continue;
+        for (let x = 1; x < COLNO; x++) {
+            if (x - 1 - clipx < minCol) continue;
+            const loc = game.level?.at(x, y);
+            if (loc?.disp_utf8) loc.disp_utf8term = null;
+        }
+    }
+}
+
+// A corner window's docorner() region (columns >= minCol, rows 0..lastRow),
+// forgotten once the window is gone: at the next plain-gameplay build, an
+// explicit teardown, or when a different window records its own region (the
+// earlier one was torn down by then).
+export function note_corner_window(minCol, lastRow) {
+    const p = game._utf8Forget;
+    if (p && (p.minCol !== minCol || p.lastRow !== lastRow)) forget_nul_cells(p.minCol, p.lastRow);
+    game._utf8Forget = { minCol, lastRow };
+}
+export function apply_utf8_forget() {
+    const p = game._utf8Forget;
+    if (!p) return;
+    game._utf8Forget = null;
+    forget_nul_cells(p.minCol, p.lastRow);
 }
 
 // Draw the map and the status rows onto the grid without touching row 0 (the
@@ -4526,6 +4657,11 @@ export function render_map_to_grid(changedOnly = false) {
             if (clipping && (x <= clipx || x >= clipxmax)) continue;
             const loc = _displayed_loc(x, y);
             if (changedOnly ? !loc?._gchg : _mapCellIsBlank(loc)) continue;
+            if (loc.disp_utf8) {
+                if (!changedOnly) put_utf8term(display, x - 1 - clipx, sy, loc);
+                else { loc._gchg = false; loc._termDirty = false; }
+                continue;
+            }
             const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
             if (ch === NUL_CELL) continue;
             display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0));
@@ -4559,6 +4695,7 @@ function _buildScreenOutput() {
     // truncation a prior chained corner window (draw_corner_window) needs to
     // carry forward no longer applies once we're back to plain gameplay.
     game._statusCuts = null;
+    apply_utf8_forget();
     game._statusSweepBotlx = false;
     game._menuTruncCarry = null;
 
@@ -4623,6 +4760,7 @@ function _buildScreenOutput() {
                 // new level, so the replay reads the live level, not the held frame.
                 const loc = blankCorner ? game.level?.at(x, y) : _displayed_loc(x, y);
                 if (_mapCellIsBlank(loc)) continue;
+                if (loc.disp_utf8) { put_utf8term(display, x - 1 - clipx, sy, loc); continue; }
                 const ch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (ch === NUL_CELL) continue;
                 display.setCell(x - 1 - clipx, sy, ch, loc.disp_color ?? NO_COLOR, framed_attr(x, y, loc.disp_attr ?? 0));
@@ -5543,6 +5681,7 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
             for (let x = 1; x < COLNO; x++) {
                 const loc = game.level?.at(x, my);
                 if (_mapCellIsBlank(loc)) continue;
+                if (loc.disp_utf8) { loc.disp_utf8term = null; continue; }
                 const mch = decgfxMapChar(loc.disp_ch, loc.disp_decgfx);
                 if (mch === NUL_CELL) continue;
                 disp.setCell(x - 1, r, mch, loc.disp_color ?? NO_COLOR, loc.disp_attr ?? 0);

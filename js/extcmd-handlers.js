@@ -78,7 +78,7 @@ import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
 import { do_mgivenname, bogusmon, roguename, rndmonnam } from './do_name.js';
 import { rn2_on_display_rng } from './disprng.js';
-import { glyph_at, Hallucination_u, canspotself, obj_to_glyph } from './display.js';
+import { glyph_at, Hallucination_u, canspotself, obj_to_glyph, textwin_line, utf8_symhandling } from './display.js';
 import { lock_action } from './lock.js';
 import { object_from_map, pg_glyph_at } from './pager.js';
 import { dodip, dodrink } from './potion.js';
@@ -1962,7 +1962,9 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     }
     for (let r = 0; r < lines.length; r++) {
         const ln = lines[r];
-        if (ln && ln.text) disp.putstr(textCol, r, ln.text, ln.color ?? NO_COLOR, ln.attr || 0);
+        if (!ln || !ln.text) continue;
+        disp.putstr(textCol, r, isMenu ? ln.text : textwin_line(ln.text), ln.color ?? NO_COLOR, ln.attr || 0);
+        if (!isMenu && utf8_symhandling()) disp.setCell(textCol, r, ' ', NO_COLOR, 0);
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
     if (!fullScreen) {

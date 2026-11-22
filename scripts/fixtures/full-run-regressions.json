@@ -897,6 +897,410 @@
      "frames": {}
     }
    ]
+  },
+  {
+   "name": "Enhanced1: text window lines lose their first cell, Unicode map symbols are never captured",
+   "segments": [
+    {
+     "seed": 2164,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Ranger\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced1\n",
+     "moves": "  kljn>h#chat\nnnn-nnnbbb#terrain\nyUjjkkkznnbb-yyy#apply\ns*llnwijuuui^jd.ytn\\bbhhhxuuhhkkkkbbhb;u?Qn&duuujjjmhh\u001b#history\nDnGw#wipe\n_lj\nbuihhhyyycquu#offer\nlyyBrq#overview\ne.uuuDmhhhhjjj#dip\n;uuujjjjnmf.uujOnhybb#turn\nbbobuuhhhu\u001b\u001b\u001b#terrain\na\u001b\u001b\u000f\u001b",
+     "frames": {
+      "2": {
+       "screen": "\u001b[24Ct is written in the Book of Mars:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[27Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[27Cand he hid it in the dark cavities of Gehennom, the\n\u001b[27CUnder World, where he now lurks, and bides his time.\n\n\u001b[24Cour god Mars seeks to possess the Amulet, and with it\n\u001b[24Co gain deserved ascendance over the other gods.\n\n\u001b[24Cou, a newly trained Tenderfoot, have been heralded\n\u001b[24Crom birth as the instrument of Mars.  You are destined\n\u001b[24Co recover the Amulet for your deity, or die in the\n\u001b[24Cttempt.  Your hour of destiny has come.  For the sake\n\u001b[24Cf us all:  Go bravely with Mars!\n\u001b[23C--More--\n\n\n\n\nHero the Tenderfoot\u001b[12CSt:15 Dx:11 Co:14 In:13 Wi:14 Ch:8 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:0 Xp:1",
+       "cursor": [
+        31,
+        17,
+        1
+       ]
+      },
+      "40": {
+       "screen": "\n\n\n\n\n\n\n\n\u001b[62C\u001b[97md@\u001b[39m\n\u001b[60C\u001b[93m<\u001b[39m \u001b[97m@@\u001b[39m\n\u001b[61C\u001b[97m@dd%\u001b[39m\n\u001b[62C\u001b[97mdd\u001b[39m \u001b[33m%\u001b[39m\n\u001b[62C\u001b[97m?\u001b[36m[\u001b[97md\u001b[39m\n\n\n\n\n\n\n\n\n\nHero the Tenderfoot\u001b[12CSt:15 Dx:11 Co:14 In:13 Wi:14 Ch:8 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        63,
+        8,
+        1
+       ]
+      },
+      "82": {
+       "screen": "b - a +1 elven bow (weapon in right hand).--More--\n\n\n\n\n\n\n\n\n\u001b[60C\u001b[93m<\u001b[39m\n\u001b[61C\u001b[97m@\u001b[39m  \u001b[97m%\u001b[39m\n\u001b[64C\u001b[97md\u001b[33m%\u001b[39m\n\u001b[62C\u001b[97m?\u001b[36m[\u001b[39m\n\n\n\n\n\n\n\n\n\nHero the Tenderfoot\u001b[12CSt:15 Dx:11 Co:14 In:13 Wi:14 Ch:8 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        50,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Enhanced2: getpos object list and #terrain after the tip window",
+   "segments": [
+    {
+     "seed": 2434,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Wizard\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced2\n",
+     "moves": "  uhNLpur< jbblkkubbjgz\n<uuun\u0014jh#chat\nhhNtjqmn#apply\nFieyylun\u0010#offer\nubbx.lynnjjkkk#kick\n#enhance\n:^ublllnfFPkd?J#adjust\nllll#annotate\njyy#enhance\ny#chat\nr;hfouuulcZ#wipe\nyi#history\np#apply\nnnk#whatis\njjjjjuuuobbbkbbjj#attributes\n.#force\nnnnhhikhh\u001bkkkkkyyytO \u001b\u001b\u001b#terrain\na\u001b\u001b\u000f\u001b",
+     "frames": {
+      "210": {
+       "screen": " bjects currently shown near <13,7>:\n\n <10,3>   $  a gold piece\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+       "cursor": [
+        8,
+        23,
+        1
+       ]
+      },
+      "274": {
+       "screen": "(For instructions type a '?')  Move cursor to anything of interest:\n\n\n\u001b[11C\u001b[33m+\u001b[39m\n\n\u001b[5C\u001b[93m<\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nHero the Evoker\u001b[16CSt:10 Dx:11 Co:16 In:18 Wi:10 Ch:10 Chaotic\nDlvl:1 $:0 HP:11(11) Pw:9(9) AC:9 Xp:1",
+       "cursor": [
+        10,
+        3,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Enhanced1 !menu_overlay: help menu teardown is a docrt that drops stale cells",
+   "segments": [
+    {
+     "seed": 16075,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Barbarian\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced1\nOPTIONS=!menu_overlay\nOPTIONS=!legacy\n",
+     "moves": "  ll\u001bjbbbb?uufWkyjjjuu#terrain\n#annotate\nnPfkuuu#optionsfull\n\u001b\u000fkkk:nnlllyy\nkkbnn#suspend\nfykyyyq\u0018#perminv\n\u001b?nullluu#chat\nbOyyyylllbuunOjjjuuuujkhu\nbbb\u0018\u001b\u001b\u001b\u001bSy",
+     "frames": {
+      "14": {
+       "screen": "Ask about '&' or '?' to get more info.--More--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[26C\u001b[93m<\u001b[39m\n\n\u001b[21C\u001b[33m(\u001b[39m \u001b[97m?\u001b[39m \u001b[97md@\u001b[39m\n\n\nBob the Plunderer\u001b[14CSt:18 Dx:16 Co:18 In:8 Wi:8 Ch:7 Chaotic\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:8 Xp:1",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      }
+     }
+    },
+    {
+     "seed": 16076,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Barbarian\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced1\nOPTIONS=!menu_overlay\nOPTIONS=!legacy\n",
+     "moves": " \\n\u0010jnnoybymmnRdlllnjj\u0012nnv#optionsfull\n\u001bn\nsuuuuuuyyznnn#chronicle\nkuuubbb\u0014cQnhqny#name\nan;Jkkk#chronicle\nFksfhhhw#untrap\nbQqnnnnjjjbjyhyyy#conduct\nsq#whatis\nxkn",
+     "frames": {}
+    }
+   ]
+  },
+  {
+   "name": "Enhanced2: conduct window teardown drops stale cells under it",
+   "segments": [
+    {
+     "seed": 56046,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Ranger\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced2\n",
+     "moves": "  wl?axhhhbhhuuuhyW#history\n#therecmdmenu\nl\u001byylll#ride\nkFrWnllunlllYyyyy#conduct\nunhlr_/bbOpijnnnp@ybbbyyu#annotate\naJheuuuhu^hhkkkyyynnn#optionsfull\n\u001b\u001b\u001b\u001b\u001bSy",
+     "frames": {
+      "81": {
+       "screen": "\u001b[38Coluntary challenges:\n\u001b[38CCharacter rerolling was not enabled.\n\u001b[38CYou have gone without food.\n\u001b[38CYou have been an atheist.\n\u001b[38CYou have never hit with a wielded weapon.\n\u001b[38CYou have been a pacifist.\n\u001b[38CYou have been illiterate.\n\u001b[38CYou have never genocided any monsters.\n\u001b[38CYou have never polymorphed an object.\n\u001b[38CYou have never changed form.\n\u001b[38CYou have used no wishes.\n\u001b[37C--More--\n\n\n\n\n\n\n\n\n\n\nZo   the Tenderfoot\u001b[12CSt:13 Dx:11 Co:16 In:11 Wi:13 Ch:9 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        45,
+        11,
+        1
+       ]
+      },
+      "116": {
+       "screen": "\n\n\n\n\u001b[72C\u001b[97md\u001b[93m<\u001b[39m  \u001b[97m@\u001b[39m\n\u001b[72C\u001b[33md\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nZo   the Tenderfoot\u001b[12CSt:13 Dx:11 Co:16 In:11 Wi:13 Ch:9 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        76,
+        4,
+        1
+       ]
+      }
+     }
+    },
+    {
+     "seed": 56047,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Ranger\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced2\n",
+     "moves": " #tip\n\u001b#history\n^kk<nnnhlkt#kick\nrnnnknw\ni#sit\nRjjjvu#enhance\nghhh#annotate\nuyyyce-lklllynnl_uunnblbbb#chronicle\n #loot\ndjo\\nluunq*lll#therecmdmenu\nl\u001b",
+     "frames": {}
+    }
+   ]
+  },
+  {
+   "name": "Enhanced1: farlook describes the Unicode-symbol terrain",
+   "segments": [
+    {
+     "seed": 24441,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Archeologist\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced1\nOPTIONS=statuslines:3\n",
+     "moves": "  @bnkkkk#glance\n.chhoyhhhkkn#glance\n.bbnllljn;\nqzjjGlbbubhu-mallnhyu&>b:#turn\ng#dip\nnh#suspend\n",
+     "frames": {
+      "94": {
+       "screen": "floor of a room\n\n\n\n   \u001b[97m@d\u001b[39m\n   \u001b[97m%@d\u001b[93m<\u001b[39m\n   \u001b[97md\u001b[39m   \u001b[97md\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nZo   the Digger\u001b[16CSt:13 Dx:9 Co:13 In:14 Wi:16 Ch:10\nLawful $:0 HP:15(15) Pw:1(1) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        6,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "an ESC at the m-prefix --More-- suppresses dowhatdoes \"Ask about\" (tty_yn_function WIN_STOP)",
+   "segments": [
+    {
+     "seed": 4242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!autopickup,!tutorial,pettype:cat,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics,time,showexp\n",
+     "moves": "  m#whatdoes\n\u001b\u001b\u001b\u001b:\u001b",
+     "frames": {
+      "14": {
+       "screen": "What command?\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        14,
+        0,
+        1
+       ]
+      },
+      "15": {
+       "screen": "<esc>   cancel current prompt or pending prefix.\n\n\n\n\n\u001b[21C\u000elqqqqqqqqqqqk\u000f\n\u001b[21C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[21C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~~~~~~~~~x\u000f\n\u001b[21C\u000ex~~~\u001b[97m\u000f?\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[21C\u000emqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqq\u001b[33m\u000f+\u001b[39m\u000ej\u000f\n\n\n\n\n\n\n\n\n\n\n\nHero the Stripling\u001b[13CSt:14 Dx:16 Co:16 In:8 Wi:10 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:1",
+       "cursor": [
+        23,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Enhanced1: whatis menu teardown drops stale cells one row below (end)",
+   "segments": [
+    {
+     "seed": 87432,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Archeologist\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:Enhanced1\nOPTIONS=showscore\n",
+     "moves": "   luu@#untrap\nlju\u001bshnk>jjub#attributes\njjjmO\u001bcbbb/hhhbbyN,tjj#turn\nEyyy#annotate\nuuuun#version\nbbbq\u0010q ym#version\nnnnihy#shell\ntejjjlWjy#jump\nm$-bj;PqnBj\nb?TyyyIx\u001bylwj#offer\nD#turn\nYunn,bkkkkkukkkeakkka",
+     "frames": {
+      "57": {
+       "screen": "Please move the cursor to a monster, object or location.--More--\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[50C\u001b[33m+\u001b[39m\n\u001b[46C\u001b[93m<\u001b[39m\n\u001b[43C\u001b[33m+\u001b[39m\n\u001b[47C\u001b[97m@\u001b[39m\n\u001b[46C\u001b[97m@\u001b[39m \u001b[97mdd\u001b[33m+\u001b[39m\n\u001b[46C=\n\n\n\nBob the Digger\u001b[17CSt:12 Dx:11 Co:14 In:15 Wi:14 Ch:9 Lawful\nDlvl:1 $:0 HP:15(15) Pw:1(1) AC:9 Xp:1",
+       "cursor": [
+        64,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "MACgraphics: meta symbol bytes are captured stripped, in DEC graphics",
+   "segments": [
+    {
+     "seed": 8235,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Tourist\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:MACgraphics\n",
+     "moves": "  l#sit\nyOkkb#force\n/yyuuuuyyyglllkkkybbmpkkjnnniu?#offer\n,jpob&;xh#turn\nnnuuuibb,yluialllfnnn.kkkjj#turn\nbsignnny.lllrhhh?jyybbbswu#adjust\nuuuyplllubkky@yykknjlluuuKyyylllhhHyw#chat\nmqk#conduct\npkhauuuwlo#offer\njjjnlpat\u001b\u001b\u001b#terrain\na\u001b\u001b\u000f\u001b",
+     "frames": {
+      "8": {
+       "screen": "Aloha Hero, welcome to NetHack!  You are a neutral male human Tourist.\n\n\u001b[29C\u000eIMMMMMMMMMM;\u000f\n\u001b[29C\u000e:\u000f..........\u000e:\u000f\n\u001b[29C\u000e0\u000f...\u001b[35mx\u001b[97mf\u001b[39m.....\u000e:\u000f\n\u001b[29C\u000e:\u000f...\u001b[97m@\u001b[39m......\u000e:\u000f\n\u001b[29C\u000eHMMMMM\u000f \u000eMMM\u000f \u000e<\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nHero the Rambler\u001b[15CSt:11 Dx:12 Co:13 In:15 Wi:9 Ch:15 Neutral\nDlvl:1 $:268 HP:10(10) Pw:2(2) AC:10 Xp:1",
+       "cursor": [
+        33,
+        5,
+        1
+       ]
+      },
+      "9": {
+       "screen": "\n\n\u001b[29C\u000eIMMMMMMMMMM;\u000f\n\u001b[29C\u000e:\u000f..........\u000e:\u000f\n\u001b[29C\u000e0\u000f..\u001b[97m@\u001b[35mx\u001b[97mf\u001b[39m.....\u000e:\u000f\n\u001b[29C\u000e:\u000f...\u001b[93m<\u001b[39m......\u000e:\u000f\n\u001b[29C\u000eHMMMMM0MMM\u000f \u000e<\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nHero the Rambler\u001b[15CSt:11 Dx:12 Co:13 In:15 Wi:9 Ch:15 Neutral\nDlvl:1 $:268 HP:10(10) Pw:2(2) AC:10 Xp:1",
+       "cursor": [
+        32,
+        4,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "terrainstatus stays blank after a restore until the terrain is reclassified",
+   "segments": [
+    {
+     "seed": 78637,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Caveman\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=terrainstatus\nOPTIONS=lit_corridor\nOPTIONS=menustyle:full\nOPTIONS=pickup_burden:s\nOPTIONS=number_pad:2\nOPTIONS=hilite_status:hitpoints/always/green\n",
+     "moves": "  Ujnkkklghhh#suspend\nuudnj&#whatdoes\n?#tip\n\u001bvFn#loot\n.jjjjl*f#attributes\nnny#turn\nYnuuu*#dip\nyuxK*yR Oa\n\u001buohhhyyjkhh\u001b\u001b\u001b\u001bSy",
+     "frames": {}
+    },
+    {
+     "seed": 78638,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zoë,role:Caveman\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=terrainstatus\nOPTIONS=lit_corridor\nOPTIONS=menustyle:full\nOPTIONS=pickup_burden:s\nOPTIONS=number_pad:2\nOPTIONS=hilite_status:hitpoints/always/green\n",
+     "moves": " #perminv\n\u001bmO\u001b#jump\nkbkktuuuezck;?`R#kick\n/yy#force\nby#turn\nFsq?GhhhnnnjjjyllkjjjG#glance\n.Ounprqhhhv#force\nlluuufbbbn#apply\n$j^ln#whatdoes\n?;jj#adjust\nuHm#terrain\n?Zxrju\u0018pyyO?>\u001bO?>\u001b",
+     "frames": {
+      "0": {
+       "screen": "Hello Zo  , the dwarven Cavewoman, welcome back to NetHack!\n\n\n\n\n\n\n\n\n\n   ---------------\n   |............\u001b[97m@\u001b[39m|\n   |............\u001b[97md\u001b[39m.\n   |.............|\n   |.............\n   |.............|\n   ---------------\n\n\n\n\n\nZo   the Troglodyte\u001b[12CSt:18/01 Dx:13 Co:16 In:10 Wi:7 Ch:10 Lawful\nDlvl:1 $:0 \u001b[32mHP:18\u001b[39m(18) Pw:1(1) AC:8 Xp:1",
+       "cursor": [
+        16,
+        11,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n   ---------------\n   |............\u001b[97m@\u001b[39m|\n   |............\u001b[97md\u001b[39m.\n   |.............|\n   |.............\n   |.............|\n   ---------------\n\n\n\n\n\nZo   the Troglodyte\u001b[12CSt:18/01 Dx:13 Co:16 In:10 Wi:7 Ch:10 Lawful\nDlvl:1 $:0 \u001b[32mHP:18\u001b[39m(18) Pw:1(1) AC:8 Xp:1",
+       "cursor": [
+        16,
+        11,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a monster notice printed by the restore docrt is erased without --More--",
+   "segments": [
+    {
+     "seed": 1,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=spot_monsters\n",
+     "moves": "  llll\u001bSy",
+     "frames": {}
+    },
+    {
+     "seed": 2,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=spot_monsters,msg_window:f\n",
+     "moves": "  \u0010\u001bhhs",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Hero, the human Valkyrie, welcome back to NetHack!\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~\u000fo\u000e~~~\u001b[93m\u000f<\u001b[39m\u000e~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[35C\u000ex~~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        45,
+        16,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~\u000fo\u000e~~~\u001b[93m\u000f<\u001b[39m\u000e~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[35C\u000ex~~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        45,
+        16,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~\u000fo\u000e~~~\u001b[93m\u000f<\u001b[39m\u000e~~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[35C\u000ex~~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        45,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "!help: whatis does not offer data.base more info",
+   "segments": [
+    {
+     "seed": 1,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=!help\n",
+     "moves": "  /..\u001b\u001b/.l.n\u001b/?d\n\u001b",
+     "frames": {
+      "17": {
+       "screen": "d\u001b[8Ca dog or other canine\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000f@f\u001b[39m\u000e~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex\u000fo\u000e~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        16,
+        1
+       ]
+      },
+      "18": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000f@f\u001b[39m\u000e~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex\u000fo\u000e~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "#optionsfull shows voices as [included] when set (term_for_boolean Term_Build)",
+   "segments": [
+    {
+     "seed": 1,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=voices\n",
+     "moves": "  #optionsfull\n>>>\u001b",
+     "frames": {
+      "15": {
+       "screen": " \u001b[7mSet what options?\u001b[0m\n\n\u001b[5CFor a brief explanation of how this works, type '?' to select\n\u001b[5Cthe next menu choice, then press <enter> or <return>.\n ? - view help for options menu\n\u001b[5C[To suppress this menu help, toggle off the 'cmdassist' option.]\n\n \u001b[7mBooleans (selecting will toggle value):\u001b[0m\n\u001b[5Cblind\u001b[19C[false]\n\u001b[5Cbones\u001b[19C[true]\n\u001b[5Cdeaf\u001b[20C[false]\n\u001b[5Clegacy\u001b[18C[true]\n\u001b[5Cnews\u001b[20C[false]\n\u001b[5Cnudist\u001b[18C[false]\n\u001b[5Cpauper\u001b[18C[false]\n\u001b[5Creroll\u001b[18C[false]\n\u001b[5Cselectsaved\u001b[13C[true]\n\u001b[5Cstatus_updates\u001b[10C[true]\n\u001b[5Ctutorial\u001b[16C[false]\n\u001b[5Cuse_darkgray\u001b[12C[true]\n\u001b[5Cuse_truecolor\u001b[11C[false]\n\u001b[5Cvoices\u001b[18C[included]\n a - accessiblemsg\u001b[11C[false]\n (1 of 7)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "status highlights after a restore start from update_all, not the new-game pre-inventory pass",
+   "segments": [
+    {
+     "seed": 1,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=hilite_status:armor-class/down/green/up/red,hilite_status:hitpoints/changed/yellow,statushilites:5\n",
+     "moves": "  ss\u001bSy",
+     "frames": {}
+    },
+    {
+     "seed": 2,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful,pettype:cat\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=hilite_status:armor-class/down/green/up/red,hilite_status:hitpoints/changed/yellow,statushilites:5\n",
+     "moves": "  sssssss",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Hero, the human Valkyrie, welcome back to NetHack!\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex\u000fo\u000e~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        16,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex\u000fo\u000e~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        16,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[35C\u000ex\u000fo\u000e~~~~~~~~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqj\u000f\n\n\nHero the Stripling\u001b[13CSt:18/01 Dx:13 Co:15 In:10 Wi:9 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
   }
  ]
 }

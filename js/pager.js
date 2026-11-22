@@ -22,7 +22,7 @@ import { game, hooks } from './gstate.js';
 import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { worm_known } from './worm.js';
-import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle, page_topline_before_window } from './display.js';
+import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle, page_topline_before_window, docrt, note_corner_window, apply_utf8_forget } from './display.js';
 import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
@@ -318,7 +318,12 @@ export async function dowhatdoes() {
         if (queued !== null) return queued.charCodeAt(0);
         const cur = game._pending_message || '';
         const softPending = !!cur && game._toplinSoft === cur;
-        if (game._toplin === 1 || softPending) await topl_more();
+        // C ref: topl.c tty_yn_function() — a pending line is paged only when
+        // no ESC'd --More-- left WIN_STOP set; both stop flags are then cleared.
+        if ((game._toplin === 1 || softPending) && (!game._winStop || game._winNoStop))
+            await topl_more();
+        game._winStop = false;
+        game._winNoStop = false;
         remember_topl();
         game._pending_message = full;
         game._toplines = full;
@@ -638,8 +643,14 @@ export async function dohelp() {
         // area the menu covered.  Without it the next handler's own overlay
         // (e.g. hmenu_dowhatis()'s "What do you want to look at:") was drawn on
         // top of a help menu C had already taken down.
-        {
+        // erase_menu_or_text(): a full-screen menu (offx == 0) goes with
+        // docrt(); flush_screen(1), a corner one with docorner(offx, maxrow + 1).
+        if (offx === 0) {
+            await docrt();
+            await flush_screen(1);
+        } else {
             const d0 = disp();
+            apply_utf8_forget();
             if (d0?.clearScreen) { d0.clearScreen(); render_map_to_grid(); }
         }
         await items[picked].fn();
@@ -660,6 +671,7 @@ function renderHelpMenu(offx, lines) {
     if (!d?.setCell) return;
     d.clearScreen();          // blanks the grid incl. the message line (row 0)
     if (offx > 0) render_map_to_grid();   // map rows 1-21 + status rows 22-23 underneath
+    if (offx > 0) note_corner_window(offx - 1, lines.length + 1);
 
     for (let r = 0; r < lines.length; r++) {
         for (let c = offx; c < COLS; c++) d.setCell(c, r, ' ', NO_COLOR, 0);

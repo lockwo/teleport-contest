@@ -35,7 +35,7 @@ import {
 } from './const.js';
 import { weapon_type } from './weapon.js';
 import { p_skill_of } from './enhance.js';
-import { update_topl, pline, Hallucination_u, page_topline_before_window } from './display.js';
+import { update_topl, pline, Hallucination_u, page_topline_before_window, textwin_line, utf8_symhandling, note_corner_window } from './display.js';
 import { phase_of_the_moon, friday_13th, night, midnight as midnight_cal, NEW_MOON, FULL_MOON, getnow } from './calendar.js';
 import { race_attrmax } from './u_init.js';
 import { acurr_eff, stone_luck } from './attrib.js';
@@ -648,13 +648,17 @@ async function render_conduct_menu(lines, footer = '--More--') {
     const textCol = offx + 1;
     for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
     const moreRow = lines.length;
+    if (offx > 0) note_corner_window(offx - 1, moreRow);
     for (let r = 0; r <= moreRow; r++) {
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
     for (let r = 0; r < lines.length; r++) {
         const ln = lines[r];
-        if (typeof ln === 'string') disp.putstr(textCol, r, ln, NO_COLOR, 0);
-        else disp.putstr(textCol, r, ln.text, NO_COLOR, ln.attr || 0);
+        if (typeof ln === 'string') disp.putstr(textCol, r, textwin_line(ln), NO_COLOR, 0);
+        else {
+            disp.putstr(textCol, r, textwin_line(ln.text), NO_COLOR, ln.attr || 0);
+            if (ln.text && utf8_symhandling()) disp.setCell(textCol, r, ' ', NO_COLOR, 0);
+        }
     }
     disp.putstr(textCol, moreRow, footer, NO_COLOR, 0);
     disp.setCursor(textCol + footer.length, moreRow);

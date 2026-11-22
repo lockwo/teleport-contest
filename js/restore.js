@@ -26,7 +26,8 @@ import { monster_by_pmidx, name_to_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
          impossible, stairway_at, display_nhwindow_message, Hallucination_u,
-         note_topl, putmsghistory, reglyph_remembered_darkroom, reglyph_remembered_terrain } from './display.js';
+         note_topl, putmsghistory, reglyph_remembered_darkroom, reglyph_remembered_terrain,
+         status_restored_init } from './display.js';
 import { init_vision_globals, vision_reset, vision_recalc } from './vision.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON, NEW_MOON } from './calendar.js';
 import { Hello, quest_monster_fixups_for_role } from './role.js';
@@ -342,7 +343,9 @@ const UNSAVED_GLOBALS = [
     '_statusFinalx', '_statusPrevArr', '_statusCuts', '_statusSweepBotlx',
     '_menuTruncCarry', '_menuOffx', '_ttyClipping', '_botl_blanked',
     '_sweepLastRow', '_getlin_rows', '_pubSig', '_decPrefixMsgs', '_ttyPolyFields',
-    '_pendingGrpNewsym', '_dismissMore',
+    '_pendingGrpNewsym', '_dismissMore', '_utf8Forget',
+    /* botl.c gb.blstats[][BL_TERRAIN]: process state, zeroed at startup */
+    '_terrainShown',
 ];
 
 /* `fresh` is a shallow copy of `game` taken before the blob was spliced in. */
@@ -644,8 +647,17 @@ export async function dorestore() {
     game._toplin = 0;
     /* clear_nhwindow(WIN_MESSAGE) leaves gt.toplines alone (only
        remember_topl() blanks it), so nothing is dropped here. */
+    /* The restored hero's first bot() is the process's first: no newgame()
+       pre-inventory pass, and status_initialize()'s update_all still holds. */
+    status_restored_init();
     await cls();
     await docrt();
+    /* C ref: dorecover() `docrt(); clear_nhwindow(WIN_MESSAGE);` — a monster
+       notice docrt()'s vision_recalc() just printed is erased without a
+       --More-- (it stays in gt.toplines for ^P). */
+    game._pending_message = '';
+    game._toplin = 0;
+    game._toplinSoft = null;
     await flush_screen(1);
     await bot();
 

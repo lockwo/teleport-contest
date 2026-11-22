@@ -77,7 +77,7 @@ import { makeplural } from './plural.js';
 import { body_part } from './polyself.js';
 import { y_monnam, ARTICLE_A, ARTICLE_YOUR, SUPPRESS_SADDLE, hliquid } from './do_name.js';
 import { x_monnam } from './uhitm.js';
-import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, hero_drawn_char, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts, wall_angle } from './display.js';
+import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_down, hero_glyph, hero_drawn_char, decgfxMapChar, status_cuts_snapshot, applyDisp, apply_status_cuts, wall_angle, textwin_line, forget_nul_cells, note_corner_window } from './display.js';
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
@@ -1343,6 +1343,7 @@ function render_getpos_tip() {
     blankCols(endRow);
     disp.putstr(textCol, endRow, '(end)', NO_COLOR, 0);
     disp.setCursor(textCol + '(end)'.length + 1, endRow);
+    return { offx, endRow };
 }
 
 // C ref: hack.c handle_tip(TIP_GETPOS): show the farlook tip the first time
@@ -1366,13 +1367,13 @@ async function getpos_tip() {
 
 // nhcore.lua show_getpos_tip(): the tip window itself (handle_tip() gates it).
 async function show_getpos_tip_window() {
-
     let counting = false, count = 0, reset_count = true, finished = false;
+    let shown = null;
     while (!finished) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
         let k;
         for (;;) { // xwaitforspace(resp)
-            render_getpos_tip();
+            shown = render_getpos_tip();
             k = xwaitforspace_note(await nhgetch());
             if (k === 32 || k === 13 || k === 10 || k === 27
                 || (k >= 48 && k <= 57)
@@ -1392,8 +1393,9 @@ async function show_getpos_tip_window() {
         // every other resp[] member is a menu command that PICK_NONE ignores
     }
     // C ref: wintty.c erase_menu_or_text(): offx == 0 (no menu_overlay) tears
-    // the window down with docrt().
+    // the window down with docrt(), a corner one with docorner(offx, maxrow + 1).
     if ((game.flags?.menu_overlay ?? game.iflags?.menu_overlay) === false) await docrt();
+    else if (shown) forget_nul_cells(Math.max(0, shown.offx - 1), shown.endRow + 1);
     return true;
 }
 
@@ -1503,7 +1505,7 @@ function getpos_help_lines(force, goal, doingWhatIs, hasValid, hasHilite) {
     }
     if (doingWhatIs) {
         lines.push(`  ':' describe current spot, show 'more info', move to another spot.`);
-        lines.push(`  '.' describe current spot,${!force ? " prompt if 'more info'," : ''} move to another spot;`);
+        lines.push(`  '.' describe current spot,${game.flags?.help !== false && !force ? " prompt if 'more info'," : ''} move to another spot;`);
         lines.push(`  ',' describe current spot, move to another spot;`);
         lines.push(`  ';' describe current spot, stop looking at things;`);
     }
@@ -1563,9 +1565,10 @@ function render_text_window(srcLines) {
 
     for (let i = 0; i < lines.length; i++) {
         blankCols(i);
-        if (lines[i]) disp.putstr(textCol, i, lines[i], NO_COLOR, 0);
+        if (lines[i]) disp.putstr(textCol, i, textwin_line(lines[i]), NO_COLOR, 0);
     }
     const endRow = lines.length;
+    if (offx > 0) note_corner_window(offx - 1, endRow);
     blankCols(endRow);
     const moreCol = offx + 1;
     disp.putstr(moreCol, endRow, GETPOS_MORESTR, NO_COLOR, 0);
@@ -3906,6 +3909,7 @@ function render_whatis_menu(items) {
     // and term_clear_screen() wipes everything first.
     if (!whatis_menu_overlay()) { offx = 0; if (disp.clearScreen) disp.clearScreen(); }
     const textCol = offx + 1;
+    if (offx > 0) note_corner_window(offx - 1, lines.length + 1);
 
     const blankCols = (row) => {
         for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
@@ -4534,7 +4538,7 @@ async function display_dbase_window(lines, forceFull = false) {
         }
         for (let r = 0; r < page.length; r++) {
             if (offx !== 0) for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
-            if (page[r]) disp.putstr(textCol, r, page[r], NO_COLOR, 0);
+            if (page[r]) disp.putstr(textCol, r, textwin_line(page[r]), NO_COLOR, 0);
         }
         // C ref: process_text_window() ends with tty_curs(BASE_WINDOW, offx+1, NHW_TEXT ? rows-1 : n): an NHW_MENU
         // data window (checkfile) puts its last --More-- on the row after the page content, not on row 23.
@@ -5004,14 +5008,14 @@ export async function do_look_full() {
         }
         // C ref: pager.c do_look() — a single character is looked up by symbol
         // (do_screen_description with looked=FALSE), then checkfile() offers
-        // the data.base entry since flags.help is on.
+        // the data.base entry when flags.help is on (pager.c:1942).
         const text = { s: '' }, firstmatch = { s: '' };
         const found = do_screen_description({ x: 0, y: 0 }, false, out_str, text, firstmatch, {});
         if (found) {
             game._pending_message = text.s;
             game._toplin = 1;        // NEED_MORE
             game._yn_need_more = true;
-            if (found === 1) await checkfile(firstmatch.s, 0);
+            if (found === 1 && game.flags?.help !== false) await checkfile(firstmatch.s, 0);
             game._yn_need_more = false;
         } else {
             await update_topl("I've never heard of such things.");
@@ -5132,9 +5136,10 @@ export async function do_look_full() {
             game._yn_need_more = true;
         }
         // C ref: pager.c:1941 — LOOK_QUICK (',') and LOOK_ONCE (';') skip the
-        // data.base query; LOOK_VERBOSE (':') shows it without asking.
+        // data.base query; LOOK_VERBOSE (':') shows it without asking, and the
+        // others ask only when flags.help is on.
         const ans = cc.pick | 0;
-        const prompted = (ans === 1 || ans === 2) ? false
+        const prompted = (ans === 1 || ans === 2 || (ans !== 3 && game.flags?.help === false)) ? false
             : await checkfile(firstmatch, ans === 3 ? 2 : 0);
         // C ref: pager.c do_look() `if (supplemental_pm) do_supplemental_info(
         // supplemental_name, supplemental_pm, ans == LOOK_VERBOSE)` -- the orctown

@@ -361,7 +361,7 @@ const OPT_MENU_ENTRIES = [
     {"t":"x","text":"     tutorial                [true]","name":"tutorial"},
     {"t":"x","text":"     use_darkgray            [true]","name":"use_darkgray"},
     {"t":"x","text":"     use_truecolor           [false]","name":"use_truecolor"},
-    {"t":"x","text":"     voices                  [excluded from build]"},
+    {"t":"x","text":"     voices                  [excluded from build]","name":"voices"},
     {"t":"a","a":"a","body":"accessiblemsg           [false]","name":"accessiblemsg","kind":"bool"},
     {"t":"a","a":"a","body":"acoustics               [true]","name":"acoustics","kind":"bool"},
     {"t":"a","a":"b","body":"altmeta                 [false]","name":"altmeta","kind":"bool"},
@@ -755,14 +755,15 @@ function pickupClasses() {
 // Recompute the bracket from this run's actual game.flags/iflags (falling
 // back to the baked word when this run never touched the option), reusing
 // rawBoolValue so both this and doset_simple's boolStr read the identical
-// storage location per name.  Only rewrites a trailing "[true]"/"[false]"/
-// "[on]"/"[off]" — anything else (e.g. voices' "[excluded from build]") is
-// left verbatim.
+// storage location per name.  Rewrites a trailing "[true]"/"[false]",
+// "[on]"/"[off]" or the Term_Build pair "[included]"/"[excluded from build]"
+// (options.c term_for_boolean()).
 function liveOptValue(name, bakedText) {
-    const m = bakedText.match(/\[(true|false|on|off)\]\s*$/);
+    const m = bakedText.match(/\[(true|false|on|off|included|excluded from build)\]\s*$/);
     if (!m) return { text: bakedText, on: null };
-    const onWord = (m[1] === 'true' || m[1] === 'false') ? 'true' : 'on';
-    const offWord = (m[1] === 'true' || m[1] === 'false') ? 'false' : 'off';
+    const [onWord, offWord] = (m[1] === 'true' || m[1] === 'false') ? ['true', 'false']
+        : (m[1] === 'on' || m[1] === 'off') ? ['on', 'off']
+        : ['included', 'excluded from build'];
     const bakedOn = (m[1] === onWord);
     let v = name ? rawBoolValue(name) : undefined;
     if (v === undefined) v = bakedOn;

@@ -283,6 +283,13 @@ export const SYMBOL_BYTES = {
         S_explode8: 235,
         S_explode9: 233,
     },
+    "macgraphics": {
+        S_vwall: 0xba, S_hwall: 0xcd, S_tlcorn: 0xc9, S_trcorn: 0xbb, S_blcorn: 0xc8,
+        S_brcorn: 0xbc, S_crwall: 0xce, S_tuwall: 0xca, S_tdwall: 0xcb, S_tlwall: 0xb9,
+        S_trwall: 0xcc, S_ndoor: 0xb0, S_vodoor: 0xee, S_hodoor: 0xee, S_vcdoor: 0xef,
+        S_hcdoor: 0xef, S_bars: 0xf0, S_tree: 0xf1, S_corr: 0xb0, S_engrcorr: 0xb0,
+        S_grave: 0xef, S_pool: 0xe0,
+    },
 };
 
 // symbols.c read_sym_file() view of each symset block in upstream dat/symbols:
@@ -312,3 +319,35 @@ export const SYMSET_META = {
 };
 // The `/<color>` of each G_ wall customization, by level suffix (CLR_* values).
 export const GLYPH_WALL_COLORS = { sokoban: 4, gehennom: 1, knox: 11, mines: 3 };
+// Symbols a `Handling: UTF8` set gives a U+ value, with that code point
+// (dat/symbols; G_fountain is the fountain glyph, the G_<wall>_<branch> lines
+// repeat the S_ walls).  tty prints those with g_pututf8(), which the
+// recorder's capture never sees.
+export const UTF8_SYMBOLS = {
+    enhanced1: {
+        S_corr: 0x2591, S_engrcorr: 0x2591, S_litcorr: 0x2592, S_vwall: 0x2502, S_hwall: 0x2500,
+        S_tlcorn: 0x250c, S_trcorn: 0x2510, S_blcorn: 0x2514, S_brcorn: 0x2518,
+        S_crwall: 0x253c, S_tuwall: 0x2534, S_tdwall: 0x252c, S_tlwall: 0x2524,
+        S_trwall: 0x251c, S_ndoor: 0x00b7, S_vodoor: 0x2592, S_hodoor: 0x2592, S_bars: 0x2261,
+        S_tree: 0x03a8, S_room: 0x00b7, S_engroom: 0x03be, S_darkroom: 0x00b7,
+        S_upladder: 0x2264, S_dnladder: 0x2265, S_altar: 0x03a9, S_grave: 0x2020,
+        S_fountain: 0x2320, S_pool: 0x224b, S_ice: 0x00b7, S_lava: 0x224b, S_lavawall: 0x2248,
+        S_vodbridge: 0x00b7, S_hodbridge: 0x00b7, S_water: 0x2248, S_web: 0x00a4,
+        S_vbeam: 0x2502, S_hbeam: 0x2500, S_sw_tc: 0x2594, S_sw_ml: 0x258f, S_sw_mr: 0x2595,
+        S_sw_bc: 0x2581, S_expl_tc: 0x2594, S_expl_ml: 0x258f, S_expl_mr: 0x2595,
+        S_expl_bc: 0x2581,
+    },
+    enhanced2: {
+        S_corr: 0x2591, S_litcorr: 0x2592, S_engrcorr: 0x2591, S_amulet: 0x2299,
+        S_cloud: 0x2601, S_vwall: 0x2551, S_hwall: 0x2550, S_tlcorn: 0x2554, S_trcorn: 0x2557,
+        S_blcorn: 0x255a, S_brcorn: 0x255d, S_crwall: 0x256c, S_tuwall: 0x2569,
+        S_tdwall: 0x2566, S_tlwall: 0x2563, S_trwall: 0x2560, S_ndoor: 0x00b7, S_vodoor: 0x2592,
+        S_hodoor: 0x2592, S_bars: 0x2980, S_tree: 0x2660, S_room: 0x00b7, S_engroom: 0x03be,
+        S_darkroom: 0x00b7, S_upladder: 0x2264, S_dnladder: 0x2265, S_altar: 0x03a9,
+        S_grave: 0x2020, S_fountain: 0x2320, S_pool: 0x224b, S_ice: 0x00b7, S_lava: 0x224b,
+        S_lavawall: 0x2248, S_vodbridge: 0x00b7, S_hodbridge: 0x00b7, S_water: 0x2248,
+        S_web: 0x00a4, S_vbeam: 0x2502, S_hbeam: 0x2500, S_sw_tc: 0x2594, S_sw_ml: 0x258f,
+        S_sw_mr: 0x2595, S_sw_bc: 0x2581, S_expl_tc: 0x2594, S_expl_ml: 0x258f,
+        S_expl_mr: 0x2595, S_expl_bc: 0x2581,
+    },
+};

@@ -322,9 +322,12 @@ export function classify_terrain() {
 
 hooks.classify_terrain = classify_terrain;
 
+// iflags is zero-initialised and never saved: a restored process keeps
+// terrain_typ 0 (stone) until u_on_newpos()/switch_terrain() reclassify it,
+// which matches the zeroed blstats entry, so the field stays blank.
 function classify_terrain_typ() {
     const t = game.iflags?.terrain_typ;
-    return (t === undefined || t === null) ? MAX_TYPE : t;
+    return (t === undefined || t === null) ? 0 : t;
 }
 
 /* C ref: botl.c bot_via_windowport() — `if (iflags.terrain_typ == MAX_TYPE)
@@ -337,9 +340,15 @@ export function terrain_status() {
     if (classify_terrain_typ() === MAX_TYPE)
         classify_terrain();
     const i = classify_terrain_typ();
-    const live = i === MAX_TYPE ? '' : (terrain_descr[i] || '');
+    // blstats[][BL_TERRAIN] starts zeroed (a_int 0, val ""), and its text is
+    // recomputed only when terrain_typ differs from the cached index.
+    const st = (game._terrainShown ??= { i: 0, val: '' });
+    if (st.i !== i) {
+        st.i = i;
+        st.val = i === MAX_TYPE ? '' : (terrain_descr[i] || '');
+    }
     const held = game._statusHold;
-    return held && 'terrain' in held ? held.terrain : live;
+    return held && 'terrain' in held ? held.terrain : st.val;
 }
 
 /* C ref: pray.c critically_low_hp(only_if_injured) — private copy (pray.js has

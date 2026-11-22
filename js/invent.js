@@ -17,7 +17,7 @@ import { rn1, rn2, rnd, rnl, d } from './rng.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { docrt, flush_screen, newsym, see_monsters, set_mimic_blocking, map_object, pline, putStatusRow, StatusRows, status_sweep, status_cuts_snapshot, status_sweep_reached, status_cuts_restore, status_sweep_botlx, apply_status_cuts, blank_status_rows, render_map_to_grid, commit_stale_glyph_buffer, y_n, topl_more, topl_more_ext, update_topl, bot, bot_snapshot, status_hold, m_at, display_nhwindow_message, obj_to_glyph, youmonst_menu_glyph, object_glyph, flash_obj_glyph, menu_glyph_sym, remember_topl, yn_prompt_history, key2txt, note_topl, putmsghistory, wrap_topl, show_glyph_cell, tmp_at_flash, map_invisible, verbalize, pline_vision_flush, queue_impossible, flush_impossibles } from './display.js';
 import { render_map_row_to_grid, nh_delay_output } from './display.js';
-import { Hallucination_u, page_topline_before_window } from './display.js';
+import { Hallucination_u, page_topline_before_window, textwin_line, utf8_symhandling, apply_utf8_forget, note_corner_window } from './display.js';
 import { hooks } from './gstate.js';
 import { livelog_printf, LL_CONDUCT, LL_ARTIFACT } from './livelog.js';
 import { cansee, Blind as Blind_for_wear } from './vision.js';
@@ -1818,6 +1818,7 @@ function compareInvlet(a, b) {
 // and docorner()'s `disp.botlx = TRUE; bot();` is pending (gb.bot_disabled).
 export function corner_menu_destroyed() {
     delete game._modal_screen;
+    apply_utf8_forget();
     const display = game.nhDisplay;
     if (game._menuOffx > 0 && display?.setCell) {
         const cut = game._menuOffx - 1;
@@ -2232,7 +2233,7 @@ export async function tty_text_window(lines, maxcol = null) {
         let row = 0;
         for (const t of lines)
             display.putstr(offx ? offx + 1 : 0, row++,
-                t.slice(0, cols - 1 - (offx ? offx + 1 : 0)), NO_COLOR, 0);
+                textwin_line(t.slice(0, cols - 1 - (offx ? offx + 1 : 0))), NO_COLOR, 0);
         // C ref: erase_menu_or_text() docorner(offx, maxrow + 1): a text window's
         // maxrow is its line count, which is the --More-- row, so the dismissal
         // sweep reaches rows 0..lines.length, one row less than a menu's
@@ -2549,8 +2550,13 @@ export function renderWindowScreen(lines, opts = {}) {
     for (const ln of lines) {
         let text = typeof ln === 'string' ? ln : (ln.text || '');
         if (maxLen >= 0 && text.length > maxLen) text = text.slice(0, maxLen);
+        const dropFirst = !menu && !!text && utf8_symhandling();
+        if (!menu) text = textwin_line(text);
         const attr = typeof ln === 'string' ? ATR_NONE : (ln.attr || ATR_NONE);
-        paintMenuLine(display, textCol, row++, { ...ln, text, attr }, menu);
+        paintMenuLine(display, textCol, row, { ...ln, text, attr }, menu);
+        /* textwin_line(): the capture never wrote that cell, cl_end() left it bare */
+        if (dropFirst) display.setCell(textCol, row, ' ', NO_COLOR, ATR_NONE);
+        row++;
     }
     const footer = opts.footer || '--More--';
     const footerRow = opts.footerRow != null ? opts.footerRow
@@ -13254,7 +13260,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
                 clearAll();
                 n = 0;
             }
-            display.putstr(0, n++, lines[i], NO_COLOR, ATR_NONE);
+            display.putstr(0, n++, textwin_line(lines[i]), NO_COLOR, ATR_NONE);
         }
         if (!cancelled) await dmore(n);
         const { docrt } = await import('./display.js');
@@ -13267,6 +13273,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
         if (!display?.clearScreen) return;
         display.clearScreen();
         render_map_to_grid();
+        if (cwOffx > 0) note_corner_window(cwOffx - 1, moreRow);
         // C: the tty message window is NOT cleared by the menu overlay, so a
         // surviving topline (getpos()'s last autodescribe) shows through.
         {
@@ -13284,7 +13291,7 @@ async function renderThingsHereMenu(header, itemLines, pre = []) {
                 if (c >= 0) display.setCell(c, r, ' ', NO_COLOR, 0);
         let row = 0;
         for (const ln of lines)
-            display.putstr(TEXT_COL, row++, ln, NO_COLOR, ATR_NONE);
+            display.putstr(TEXT_COL, row++, textwin_line(ln), NO_COLOR, ATR_NONE);
         display.putstr(MENU_OFFX, moreRow, '--More--', NO_COLOR, ATR_NONE);
         putStatusLines(display);
         display.setCursor(MENU_OFFX + '--More--'.length, moreRow);
