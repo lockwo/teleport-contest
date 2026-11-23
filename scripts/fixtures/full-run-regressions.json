@@ -1337,6 +1337,201 @@
      "frames": {}
     }
    ]
+  },
+  {
+   "name": "getpos 'a' treats a furniture-mimic's cmap (a grave) as interesting",
+   "segments": [
+    {
+     "seed": 7926,
+     "datetime": "20001013090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Knight\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=showscore\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017tin\ndi#wizwish\npool\rj\u0007giant eel\n\u0007python\nsjjukkgjsK#force\nyahy #wizwish\rchest\ndh\u00172 daggers\rdi#wizwish\r5 arrows\rdikkyyy#wizwish\npool\nk#wizgenesis\rgiant eel\n\u0007giant mimic\nlnsyyyhu,a\n<_nnn. sssec  \u0014yyy.#wizwish\nboulder\ndfjjj#wizwish\rgold piece\rnn#wizwish\rscroll of identify\ndgb#wizgenesis\riron piercer\nyyyyyuuuhb#sit\nss< \u0017scroll of identify\ndhFu\u0017large box\rdiFj\u001710 rocks\ndgu#wizgenesis\riron piercer\nBKyyyHy#chat\rhRi#untrap\nk ",
+     "frames": {
+      "408": {
+       "screen": "grave\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[61C\u000el\u001b[33m\u000f+\u001b[39m\u000eqqqqqqk\u000f\n\u001b[61C\u000e~~~~\u001b[93m\u000f<\u001b[97m@\u001b[39m\u000e~\u001b[33m\u000fu\u001b[39m\u000ex\u000f\n\u001b[61C\u000ex~\u000f%\u000e~\u001b[97m\u000f|\u001b[35mS\u001b[39m\u000e~~x\u000f\n\u001b[61C\u000emqqqqqqqj\u000f\n\nWizard the Gallant\u001b[13CSt:16 Dx:9 Co:8 In:9 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        65,
+        19,
+        1
+       ]
+      },
+      "409": {
+       "screen": "Unknown direction: 't' (use 'h', 'j', 'k', 'l' or '.').\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[61C\u000el\u001b[33m\u000f+\u001b[39m\u000eqqqqqqk\u000f\n\u001b[61C\u000e~~~~\u001b[93m\u000f<\u001b[97m@\u001b[39m\u000e~\u001b[33m\u000fu\u001b[39m\u000ex\u000f\n\u001b[61C\u000ex~\u000f%\u000e~\u001b[97m\u000f|\u001b[35mS\u001b[39m\u000e~~x\u000f\n\u001b[61C\u000emqqqqqqqj\u000f\n\nWizard the Gallant\u001b[13CSt:16 Dx:9 Co:8 In:9 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        65,
+        19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos 'a' finds a mapped engraving with the color option off",
+   "segments": [
+    {
+     "seed": 87583,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Sir,role:Archeologist\nOPTIONS=race:orc,gender:male,align:lawful\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=!color\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017blessed amulet of life saving\nWg\u0016castle\r\u0006#wizwish\nwooden flute\nagnGABCD\rssuuunnkhhBnnybkZaj  #chat\njoh#chat\nysuuHU\u0017blessed amulet of life saving\rWf\u0016castle\r\u0006#wizwish\rwand of locking\rzjhhhhjjjysnn4s #sit\r tfh #wizwish\rblessed amulet of life saving\rWf\u0016castle\r\u0006nnyyFlkkkklN\u0007giant eel\r_lllll.jjkhhhhuh7s\u0004kcbZa.  we\u0017blessed amulet of life saving\nWg\u0016castle\n#wizwish\rwand of striking\rzhn\u0007giant eel\r\u0017ring of levitation\rPjsy3ss#force\nydh\u0017blessed +3 gray dragon scale mail\nWg\u0016castle\r\u0006#wizwish\nwand of striking\nzjnb8ssLNhyk\u0014hhh.//.#dip\rgnf\u001bwf\u0017blessed +3 gray dragon scale mail\nWf\u0016castle\r#wizwish\rwand of opening\nzgl#wizwish\nwooden flute\ragnCDEFG\ryBgljkkullllb PiDa\nPfPf#untrap\nh\u001bri  ",
+     "frames": {
+      "365": {
+       "screen": "Unknown direction: 'w' (use 'h', 'j', 'k', 'l' or '.').\n\n\n \u000elqqqqqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u000f    ^\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000elqk\u000f \u000ex`lqqqqqk```````````````````````````````````````````````lqqqqqk`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f^\u000ex\u000f \u000ex`x\u000f\u001b[5C\u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C+\u001b[47C\u000ea\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f<  \u000ex\u000f \u000ex`mqqqqwvqqqqqqqwqqqqqqqqqqwqqqqq\u000f+\u000eqqqqqwqqqqqqqwqwqqqqqqvwqqqqj`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000etqqqu\u000f \u000ex``````x\u000f\u001b[8C\u000ex\u000f\u001b[10C+\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex``````mqj\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex~~~~~`x\u000f\u001b[8C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex`\u000f\u001b[9C\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex~~~~~`x\u000f\u001b[8C\u000etqqqqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqvqvqqqqqqqu`\u000f\u001b[5C\u000elqqqj\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f   \u000ex~~~~~`\u000f#   {    +\u001b[10C\u000ea\u000f\u001b[9C\\ \u000ex\u000f ^   ^   ^   ^  ^+\u001b[6C\u000ex\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000elqj~\u000ff\u000e~~~`x\u000f\u001b[8C\u000etqqqqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqwqwqqqqqqqu`\u000f\u001b[5C\u000ex\u000f \u000eqqqqu\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000e~~~\u000f@\u000e~~`x\u000f\u001b[8C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex`\u000f\u001b[5C\u000ex\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000etqj\u000f \u000ex`\u000f;\u000e````x\u000f\u001b[8C\u000ex\u000f\u001b[10C+\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex``````tqqqk\u000f \u000ex\u000f\n \u000ex\u000f^\u000ex\u000f   \u000ex`lqqqqvwqqqqqqqvqqqqqqqqqqvqqqqq\u000f+\u000eqqqqqvqqqqqqqvqvqqqqqqwvqqqqk`x\u000f  ^\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000elqu`x\u000f\u001b[5C+\u001b[47C\u000ea\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`x\u000f  `  \u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000eqqj\u000f \u000ex`mqqqqqj```````````````````````````````````````````````mqqqqqj`x\u000f \u000emqj\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f\u001b[5C\u000ex\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nWizard the Digger\u001b[14CSt:8 Dx:8 Co:15 In:18 Wi:16 Ch:10 Lawful\nDlvl:26 $:0 HP:13(13) Pw:2(2) AC:9 Xp:1",
+       "cursor": [
+        12,
+        18,
+        1
+       ]
+      },
+      "366": {
+       "screen": "Unknown direction: 'w' (use 'h', 'j', 'k', 'l' or '.').\n\n\n \u000elqqqqqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u000f    ^\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000elqk\u000f \u000ex`lqqqqqk```````````````````````````````````````````````lqqqqqk`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f^\u000ex\u000f \u000ex`x\u000f\u001b[5C\u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C+\u001b[47C\u000ea\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f<  \u000ex\u000f \u000ex`mqqqqwvqqqqqqqwqqqqqqqqqqwqqqqq\u000f+\u000eqqqqqwqqqqqqqwqwqqqqqqvwqqqqj`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000etqqqu\u000f \u000ex``````x\u000f\u001b[8C\u000ex\u000f\u001b[10C+\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex``````mqj\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex~~~~~`x\u000f\u001b[8C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex`\u000f\u001b[9C\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex~~~~~`x\u000f\u001b[8C\u000etqqqqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqvqvqqqqqqqu`\u000f\u001b[5C\u000elqqqj\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f   \u000ex~~~~~`\u000f#   {    +\u001b[10C\u000ea\u000f\u001b[9C\\ \u000ex\u000f ^   ^   ^   ^  ^+\u001b[6C\u000ex\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000elqj~\u000ff\u000e~~~`x\u000f\u001b[8C\u000etqqqqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqwqwqqqqqqqu`\u000f\u001b[5C\u000ex\u000f \u000eqqqqu\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000e~~~\u000f@\u000e~~`x\u000f\u001b[8C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex`\u000f\u001b[5C\u000ex\u000f\u001b[5C\u000ex\u000f\n \u000ex\u000f \u000etqj\u000f \u000ex`\u000f;\u000e````x\u000f\u001b[8C\u000ex\u000f\u001b[10C+\u001b[11C\u000ex\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex``````tqqqk\u000f \u000ex\u000f\n \u000ex\u000f^\u000ex\u000f   \u000ex`lqqqqvwqqqqqqqvqqqqqqqqqqvqqqqq\u000f+\u000eqqqqqvqqqqqqqvqvqqqqqqwvqqqqk`x\u000f  ^\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000elqu`x\u000f\u001b[5C+\u001b[47C\u000ea\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`x\u000f  `  \u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000eqqj\u000f \u000ex`mqqqqqj```````````````````````````````````````````````mqqqqqj`x\u000f \u000emqj\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f\u001b[5C\u000ex\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nWizard the Digger\u001b[14CSt:8 Dx:8 Co:15 In:18 Wi:16 Ch:10 Lawful\nDlvl:26 $:0 HP:13(13) Pw:2(2) AC:9 Xp:1",
+       "cursor": [
+        13,
+        19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "^A after a failed #jump has nothing to repeat ('Illegal move!' is ECMD_FAIL)",
+   "segments": [
+    {
+     "seed": 67042,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Sir,role:Knight\nOPTIONS=race:gnome,gender:female,align:lawful\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017mirror\ndk\u0004y#wizwish\rlarge box\rj\u0004ngylluuukkKujjlZal  <tby #pray\ry  Rfcusssss_lll.#ride\nbhYs\u0004bbhhhFkhhh>nnJFyyy<buuuk\u0010bbbgbjjjFyBYnnjyyy\u001b\u001b#pray\ny  qh  w-#jump\rnn.\u0001\u001b\u001b#dip\nhyj",
+     "frames": {
+      "164": {
+       "screen": "Illegal move!\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~\u001b[94m\u000f`\u001b[39m\u000ex\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[5C\u000elqk~~~\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:9 Co:12 In:7 Wi:13 Ch:18 Lawful\nTutorial:1 $:0 HP:16(16) Pw:6(6) AC:10 Xp:1",
+       "cursor": [
+        11,
+        7,
+        1
+       ]
+      },
+      "165": {
+       "screen": "There is no command available to repeat.\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~\u001b[94m\u000f`\u001b[39m\u000ex\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[5C\u000elqk~~~\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:9 Co:12 In:7 Wi:13 Ch:18 Lawful\nTutorial:1 $:0 HP:16(16) Pw:6(6) AC:10 Xp:1",
+       "cursor": [
+        11,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "^A after fireassist's queued pole swap was interrupted repeats the swap",
+   "segments": [
+    {
+     "seed": 36926,
+     "datetime": "20000205090000",
+     "nethackrc": "OPTIONS=name:Septor,role:Knight\nOPTIONS=race:elf,gender:female,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=!legacy\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017scroll of identify\rgb\u0007python\nuNhhhYyllluyyjjujZab  #untrap\nkwb \u001b\u001b#wizwish\n2 daggers\ndhku\u0017water\rn#wizgenesis\rjellyfish\n\u0007garter snake\rHs#force\nycu>oussscj#wizgenesis\rair elemental\nzjuE-lstalguNnshyj3sj#force\nydi> #untrap\rk\u0001n9s\u0017saddle\r#wizgenesis\rwarhorse\rajb#ride\nh#wizwish\rweb\rjjKk#ride\rghjllu>sFkhhh#ride\nlllsykkkkkkzib  oy#wizgenesis\rpurple worm\n#monster\rss#force\rzfnE-b#pray\ry byyyZa<  \u0001clwf\u0017wand of striking\n\u0007air elemental\rsnnnbsbslllNFy#untrap\rl#pray\ny  #pray\ny  , ",
+     "frames": {
+      "392": {
+       "screen": "The saddled pony misses it.\n\n\n\u001b[58C\u000elqqqqqqqqqqqqqqk\u000f\n\u001b[58C\u000e~~~~~~~~\u001b[90m~~~~~~~\u001b[39mx\u000f\n\u001b[58C\u000ex~~\u001b[36m\u000f)\u001b[39m\u000e~~\u001b[90m~~~~~~~~~\u001b[39mx\u000f\n\u001b[58C\u000ex\u001b[35m\u000fSw\u001b[39m\u000e~\u001b[32m\u000f%\u001b[90m\u000e~~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[58C\u000em\u001b[97m\u000f@\u001b[39m\u000eqqqqqqqqqqqqqj\u000f\n\u001b[59C\u001b[33mu\u001b[39m#\n\u001b[58CI\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:8 Co:11 In:7 Wi:17 Ch:17 Lawful\nDlvl:1 $:0 HP:10(16) Pw:6(6) AC:3 Xp:1",
+       "cursor": [
+        59,
+        7,
+        1
+       ]
+      },
+      "393": {
+       "screen": "You are empty handed.  b - a +1 lance (alternate weapon; not wielded).--More--\n\n\n\u001b[58C\u000elqqqqqqqqqqqqqqk\u000f\n\u001b[58C\u000e~~~~~~~~\u001b[90m~~~~~~~\u001b[39mx\u000f\n\u001b[58C\u000ex~~\u001b[36m\u000f)\u001b[39m\u000e~~\u001b[90m~~~~~~~~~\u001b[39mx\u000f\n\u001b[58C\u000ex\u001b[35m\u000fSw\u001b[39m\u000e~\u001b[32m\u000f%\u001b[90m\u000e~~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[58C\u000em\u001b[97m\u000f@\u001b[39m\u000eqqqqqqqqqqqqqj\u000f\n\u001b[59C\u001b[33mu\u001b[39m#\n\u001b[58CI\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:8 Co:11 In:7 Wi:17 Ch:17 Lawful\nDlvl:1 $:0 HP:10(16) Pw:6(6) AC:3 Xp:1",
+       "cursor": [
+        78,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "^A after fireassist's queued launcher wield was interrupted repeats the wield",
+   "segments": [
+    {
+     "seed": 20723,
+     "datetime": "20001013090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Samurai\nOPTIONS=race:elf,gender:female,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=!legacy\nOPTIONS=hitpointbar\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\nsink\n\u0004y  uunqn  #wizwish\nring of teleportation\nPj\u0004j  Hhhh2sByhy\u0004l_jjj.#chat\nkqf  \u0001#loot\ry:\u001bBln15s#wizwish\nsink\rkyjJskgj\u001b\u001b\u0004b s#wizgenesis\nair elemental\rtdk#monster\n#monster\n#terrain\rd\u001btdjs#monster\rhhlkgbsyyBFbuuuNyZbn  qf  #wizwish\rsink\r#wizwish\rring of polymorph\n#dip\ngy#wizwish\rring of hunger\ndf\u0004n  Jhhseg  tgu n16seg   5sKFyZb.  Rh\u0007Juiblex\ntdb:FnzfbukFjnj\u0014jjj.\u0004jcj\u0017wand of teleportation\n#wizgenesis\rfog cloud\nsqgE-hnuuukkkFnj#dip\rhng rj  #force\rycn#force\ny",
+     "frames": {
+      "94": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[53C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqk\u000f\n\u001b[53C\u000ex~~\u001b[97m\u000f{\u001b[39m\u000e~~\u001b[31m\u000f*\u001b[39m\u000e~~~~~~\u001b[97m\u000f=\u001b[39m\u000ex\u000f\n\u001b[53C\u001b[33m+\u001b[97m@\u001b[39m\u000e~~\u001b[97m\u000fd\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[53C\u000ex~~~~~~~~~~~~~x\u000f\n\u001b[53C\u000emqqqqqqqqqqqqqj\u000f\n\n[\u001b[7mWizard the Hatamoto\u001b[11C\u001b[27m] St:15 Dx:15 Co:18 In:11 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1",
+       "cursor": [
+        0,
+        0,
+        1
+       ]
+      },
+      "95": {
+       "screen": "You don't have that object.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[53C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqk\u000f\n\u001b[53C\u000ex~~\u001b[97m\u000f{\u001b[39m\u000e~~\u001b[31m\u000f*\u001b[39m\u000e~~~~~~\u001b[97m\u000f=\u001b[39m\u000ex\u000f\n\u001b[53C\u001b[33m+\u001b[97m@\u001b[39m\u000e~~\u001b[97m\u000fd\u001b[39m\u000e~~~~~~~~~x\u000f\n\u001b[53C\u000ex~~~~~~~~~~~~~x\u000f\n\u001b[53C\u000emqqqqqqqqqqqqqj\u000f\n\n[\u001b[7mWizard the Hatamoto\u001b[11C\u001b[27m] St:15 Dx:15 Co:18 In:11 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1",
+       "cursor": [
+        54,
+        18,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "with color off a plain corridor beside a mapped corridor engraving is not an engraving",
+   "segments": [
+    {
+     "seed": 68725,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Ranger\nOPTIONS=race:gnome,gender:male,align:neutral\nOPTIONS=symset:DECgraphics\nOPTIONS=!verbose\nOPTIONS=!color\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017potion of sleeping\ndgN\u0004b  \u0017potion of sleeping\ndf\u0004l  #wizwish\rboomerang\rdgjh\u0004l  \u0007gnome lord\r\u0004n7sbs#untrap\rj\u0001agy tbk cn<ef  n14s#wizwish\nblessed amulet of life saving\rWf\u0016castle\r\u0006#wizwish\rwooden flute\ragnCDEFG\rhUkkFbukKFylRjdeRhDa\n\u0014yyy.\u0017blessed amulet of life saving\nWf\u0016castle\r#wizgenesis\rsoldier\r#wizgenesis\rgiant eel\nHnsFu6sbbbnnFu2s8skoy#jump\ruu.tgk oy\u0004yrj  #wizwish\nmirror\ndggb\u0004l#wizwish\ncrystal ball\rdhH\u0004bybbbuuuHlllJsgnH_kkk.wb#sit\n#wizwish\nring mail\nWl \u0017+2 small shield\nWh #wizwish\r+2 cloak of protection\rWj \u0007incubus\nys  ysFknnnkkkUssFlkkkk,a\neg  ",
+     "frames": {
+      "257": {
+       "screen": "corridor\n\n\n\n\n\n\n\n\n\n\n\u001b[35C\u000elqaqqk\u000f\n\u001b[35C\u000ex~\u000f$\u000e~~\u000f@#\u001b[15C\u000eqk\u000f\n\u001b[35C\u000ex~\u000f?\u000e~~x\u000f\u001b[16C\u000e~x\u000f\n\u001b[35C\u000ex~~~\u000f<%#\u001b[6C\u000e~~~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~x\u000f\u001b[16C\u000e~\u000f+\n\u001b[35C\u000emqqqqj\u000f\u001b[17C\u000ex\u000f\n\n\n\n\n\nWizard the Tenderfoot\u001b[10CSt:18 Dx:9 Co:13 In:15 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        41,
+        14,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "interactive key binding fails on the recorder (uninitialized cmdstr, upstream issue #21)",
+   "segments": [
+    {
+     "seed": 5,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial\n",
+     "moves": " \u001b#optionsfull\n>>>>>>h\raKa\r\u001b\u001bKl",
+     "frames": {
+      "26": {
+       "screen": "Key binding failed?!--More--\n\n\n\n\n\n\n\n\n\n\n\n\u001b[56C|\n\u001b[53C----.. -\u001b[97mf\u001b[39m--\n\u001b[53C|.......\u001b[97m@\u001b[39m.|\n\u001b[53C|.........|\n\u001b[53C|.........|\n\u001b[53C----...----\n\u001b[56C....\n\u001b[56C|..\n\u001b[56C---\n\nBob the Stripling\u001b[14CSt:18/08 Dx:11 Co:18 In:8 Wi:9 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        28,
+        0,
+        1
+       ]
+      },
+      "30": {
+       "screen": "You swap places with your kitten.\n\n\n\n\n\n\n\n\n\n\n\n\u001b[56C|    #\n\u001b[53C----\u001b[90m..\u001b[39m -\u001b[97m@\u001b[39m--\n\u001b[53C|\u001b[90m.....\u001b[39m..\u001b[97mf\u001b[39m.|\n\u001b[53C|\u001b[90m...\u001b[39m......|\n\u001b[53C|\u001b[90m.\u001b[39m........|\n\u001b[53C----...----\n\u001b[56C....\n\u001b[56C|..\n\u001b[56C---\n\nBob the Stripling\u001b[14CSt:18/08 Dx:11 Co:18 In:8 Wi:9 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        61,
+        13,
+        1
+       ]
+      }
+     }
+    }
+   ]
   }
  ]
 }

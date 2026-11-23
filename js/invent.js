@@ -8441,6 +8441,18 @@ async function dofire_first_turn() {
     return !!game._cmdqAbandonRetry;
 }
 
+// C ref: cmd.c rhack() — each command dofire() queued on CQ_CANNED ran as its
+// own command and put itself alone on CQ_REPEAT (a key its getobj() popped off
+// CQ_CANNED is not recorded); when stop_occupation() then drops the queued
+// dofire, a following ^A repeats that last queued command instead of firing.
+async function record_canned_repeat(fn) {
+    if (game.in_doagain) return;
+    const cmd = await import('./cmd.js');
+    cmdq_clear(CQ_REPEAT);
+    cmd.cmdq_add_ec(CQ_REPEAT, fn);
+    game._itemaction_repeat = true; /* rhack()'s epilogue records nothing over it */
+}
+
 // C ref: cmd.c rhack() — is the next canned entry the extended command `name`?
 // getlin()/getdir()/getobj() reached during a queued command's turn consume
 // entries from the front of CQ_CANNED, so the queue can differ from what
@@ -8552,7 +8564,10 @@ export async function dofire(getDir) {
             // stop_occupation()'s cmdq_clear(CQ_CANNED) drops the queued dofire
             // if anything interrupted the hero during the swap's turn (a monster
             // attack) — same abandonment as the launcher swap below.
-            if (game._cmdqAbandonRetry) return ECMD_OK;
+            if (game._cmdqAbandonRetry) {
+                await record_canned_repeat('doswapweapon');
+                return ECMD_OK;
+            }
             await moveloop_input_redraw(); /* next moveloop_core() head, before the requeued dofire */
             return await dofire(getDir);
         } else {
@@ -8663,7 +8678,11 @@ export async function dofire(getDir) {
             // gained a spurious --More--).  ECMD_OK (not ECMD_TIME): the
             // swap's turn was already taken inline above, and no further
             // time elapses for the abandoned fire.
-            if (game._cmdqAbandonRetry) { await flush_screen(1); return ECMD_OK; }
+            if (game._cmdqAbandonRetry) {
+                await record_canned_repeat('doswapweapon');
+                await flush_screen(1);
+                return ECMD_OK;
+            }
             if (!(await dofire_cmdq_head('dofire'))) return await dofire_cmdq_remainder();
             cmdq_pop(CQ_CANNED); /* rhack() pops the requeued dofire */
             await moveloop_input_redraw(); /* next moveloop_core() head, before the requeued dofire */
@@ -8726,7 +8745,10 @@ export async function dofire(getDir) {
                         await flush_screen(1);
                         // C: stop_occupation() during the swap's turn did
                         // cmdq_clear(CQ_CANNED), dropping dowield + dofire.
-                        if (game._cmdqAbandonRetry) return ECMD_OK;
+                        if (game._cmdqAbandonRetry) {
+                            await record_canned_repeat('doswapweapon');
+                            return ECMD_OK;
+                        }
                         await moveloop_input_redraw(); /* next moveloop_core() head, before dowield's message pages the swap line */
                         redrewForDowield = true;
                         // C ref: dowield()'s pline() -> update_topl() decides
@@ -8766,7 +8788,10 @@ export async function dofire(getDir) {
                         await flush_screen(1);
                     // C: an interrupt during the wield's turn dropped the
                     // queued dofire (cmdq_clear(CQ_CANNED)).
-                    if (game._cmdqAbandonRetry) return ECMD_OK;
+                    if (game._cmdqAbandonRetry) {
+                        await record_canned_repeat('dowield');
+                        return ECMD_OK;
+                    }
                     if (!(await dofire_cmdq_head('dofire'))) return await dofire_cmdq_remainder();
                     cmdq_pop(CQ_CANNED); /* rhack() pops the requeued dofire */
                     await moveloop_input_redraw(); /* next moveloop_core() head, before the requeued dofire */

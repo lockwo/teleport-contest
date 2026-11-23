@@ -81,7 +81,7 @@ import { displayed_corr_is_lit, stairway_at, canseemon_shared, bot, stairs_go_do
 import { mflags1_of, mflags2_of, M1_TUNNEL, M1_NEEDPICK, M2_PNAME, is_hider_flag } from './monflags_data.js';
 import { l_nhcore_call } from './nhlua.js';
 import { newuhs } from './eat.js';
-import { coord_desc, gloc_filter_init, gloc_filter_done, gloc_same_area, getpos_sethilite, getpos_toggle_hilite_state, getpos_refresh, getpos_has_hilitefunc, goodpos_shown } from './getpos.js';
+import { coord_desc, gloc_filter_init, gloc_filter_done, gloc_same_area, getpos_sethilite, getpos_toggle_hilite_state, getpos_refresh, getpos_has_hilitefunc, goodpos_shown, gloc_cmap_class, known_vibrating_square_at } from './getpos.js';
 import { menuHeadStyle } from './menuattr.js';
 
 // Run direction deltas for the capital-letter run commands (and the
@@ -2568,6 +2568,29 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
     const terrainmode = game.iflags?.terrainmode || 0;
     const showMonsters = !terrainmode || (terrainmode & 0x08 /* TER_MON */) !== 0;
     const mtmp = showMonsters ? m_at(x, y) : null;
+    // C ref: display.c display_monster() M_AP_FURNITURE: a mimic posing as
+    // furniture draws cmap_to_glyph(mappearance), so getpos.c tests that cmap
+    // symbol, not the terrain under it (a "grave" mimic on room floor is
+    // interesting, a "door" mimic is a door target).
+    if (shows_mimic_furniture(mtmp, x, y)) {
+        const cm = gloc_cmap_class(mtmp.mappearance | 0);
+        switch (gloc) {
+        case GLOC_MONS:
+        case GLOC_OBJS:
+            return false;
+        case GLOC_DOOR:
+            return cm.door;
+        case GLOC_EXPLORE:
+            return cm.explore
+                && (gloc_unexplored(x + 1, y) || gloc_unexplored(x - 1, y)
+                    || gloc_unexplored(x, y + 1) || gloc_unexplored(x, y - 1));
+        case GLOC_VALID:
+            if (validfn) return !!validfn(x, y);
+            /* fallthrough */
+        default:
+            return cm.door || !cm.plain || known_vibrating_square_at(x, y);
+        }
+    }
     switch (gloc) {
     case GLOC_MONS:
         // C's glyph_is_monster(glyph_at(x,y)) tests the displayed glyph, minus

@@ -8112,8 +8112,12 @@ export function is_cmap_engraving_at(x, y) {
     // setting erevealed, and glyph_at() then reports S_engroom just the same.
     if (loc.disp_monster || loc.remembered_glyph?.objotyp != null
         || loc.remembered_glyph?.pile) return false;
+    // disp_color holds NO_COLOR while the color option is off (see the
+    // `colorOn ? newColor : NO_COLOR` store), so an engraved corridor and a
+    // plain one then draw alike; the remembered glyph keeps the real colour.
     const g = engraving_glyph(loc);
-    return loc.disp_ch === g.ch && loc.disp_color === g.color
+    const color = game.iflags?.use_color === false ? loc.remembered_glyph?.color : loc.disp_color;
+    return loc.disp_ch === g.ch && color === g.color
         && !!loc.disp_decgfx === !!g.dec;
 }
 

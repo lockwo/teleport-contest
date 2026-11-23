@@ -8225,12 +8225,20 @@ export async function handler_rebind_keys_add(keyfirst) {
     cmd_destroy_nhwindow(win);
     if (npick > 0) {
         let prevcmd;
+        // C ref: cmd.c:2356 `char cmdstr[BUFSZ];` is never initialized, and the
+        // "nothing" and plain-command arms Strcat() onto it.  On the macOS arm64
+        // recorder that stack slot is never empty here, so bind_key() gets an
+        // unknown command name and the bind fails (upstream issue #21; every
+        // local recording agrees).  Only the CMD_PARAM arm's Snprintf() writes
+        // a clean string.
+        let garbled = false;
 
         i = picks[0].item.a_int;
 
         if (i === -1) {
             ec = null;
             cmdstr += 'nothing';
+            garbled = true;
         } else {
             ec = extcmdlist[i - 1];
 
@@ -8240,6 +8248,7 @@ export async function handler_rebind_keys_add(keyfirst) {
                 cmdstr = `${ec.ef_txt}(${mungspaces(parameter)})`;
             } else {
                 cmdstr += ec.ef_txt;
+                garbled = true;
             }
         }
         /* C label 'bindit:' */
@@ -8254,7 +8263,7 @@ export async function handler_rebind_keys_add(keyfirst) {
         prevcmd = cmdbind_get(key);
 
         const errors = [];
-        const bound = cmd_bind_key(key, cmdstr, true, errors);
+        const bound = !garbled && cmd_bind_key(key, cmdstr, true, errors);
         const { OPT_MENU_DRIVER } = await import('./options.js');
         for (const message of errors) await OPT_MENU_DRIVER.error(message);
         if (bound) {

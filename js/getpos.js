@@ -365,6 +365,21 @@ export function known_vibrating_square_at(x, y) {
     return false;
 }
 
+// C ref: getpos.c:449 gather_locs_interesting() on a DISPLAYED cmap glyph:
+// the symbol tests of its DOOR, EXPLORE and INTERESTING arms.  EXPLORE's
+// unexplored-neighbour test and INTERESTING's known_vibrating_square_at()
+// are the caller's.
+export function gloc_cmap_class(sym) {
+    const door = is_cmap_door(sym) || is_cmap_drawbridge(sym) || sym === S_ndoor;
+    return {
+        door,
+        explore: door || is_cmap_room(sym) || is_cmap_corr(sym),
+        plain: is_cmap_wall(sym) || sym === S_tree || sym === S_bars || sym === S_ice
+            || sym === S_air || sym === S_cloud || is_cmap_lava(sym) || is_cmap_water(sym)
+            || sym === S_ndoor || is_cmap_room(sym) || is_cmap_corr(sym),
+    };
+}
+
 // C ref: getpos.c:556 dxdy_to_dist_descr(dx, dy, fulldir) — the "(east)" /
 // "(3s)" / "(2n,4w)" body of the whatis_coord compass forms.  Three arms in
 // this order: no delta at all -> "here"; an exact one-step direction ->

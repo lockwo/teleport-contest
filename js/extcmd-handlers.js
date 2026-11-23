@@ -1158,20 +1158,24 @@ export async function jump(magic) {
                             /*verbose=*/game.flags?.verbose !== false,
                             false, false, display_jump_positions);
     if (!cc) {
-        // apply.c jump() `return ECMD_CANCEL; /* user pressed ESC */`: rhack() runs
-        // reset_cmd_vars(TRUE), clearing CQ_REPEAT (a following ^A has nothing to repeat).
-        game.context._getobj_cancelled = true;
+        // apply.c jump() `return ECMD_CANCEL; /* user pressed ESC */`: for #jump rhack()
+        // runs reset_cmd_vars(TRUE), clearing CQ_REPEAT (a following ^A has nothing to repeat).
+        if (!magic) game.context._getobj_cancelled = true;
         return 0;
     }
 
     // is_valid_jump_pos(showmsg=TRUE): emits "Illegal move!" / "Too far!" /
     // "There is an obstacle preventing that jump." on failure -> ECMD_FAIL.
+    // For #jump that is rhack()'s result, which runs reset_cmd_vars(TRUE)
+    // (CQ_REPEAT cleared); the jumping spell consumes it in spelleffects().
     if (!(await is_valid_jump_pos(cc.x, cc.y, /*showmsg=*/true, magic))) {
+        if (!magic) game.context._getobj_cancelled = true;
         return 0;
     }
     if (u.usteed && u.ux === cc.x && u.uy === cc.y) {
         const { YMonnam } = await import('./do_name.js');
         await pline(`${YMonnam(u.usteed)} isn't capable of jumping in place.`);
+        if (!magic) game.context._getobj_cancelled = true;
         return 0;                                      // ECMD_FAIL
     }
     let wastrapped = false;
