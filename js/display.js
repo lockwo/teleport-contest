@@ -4686,6 +4686,19 @@ function framed_attr(x, y, attr) {
     return (attr && valid && isok(x, y) && valid(x, y)) ? 0 : attr;
 }
 
+// The screen rows the pending top line occupies, as _buildScreenOutput() draws
+// it: tty_yn_function() prompts go out through custompline(SUPPRESS_HISTORY)
+// -> tty_putstr -> show_topl(), which skips update_topl()'s word-wrap, so
+// topl_putsym() hard-wraps them at column CO-1.  The prompt is `query [yn] (n) `
+// WITH its trailing space (_pending_message is trimmed): an 80-char prompt
+// wraps its last char onto row 1, which tty then clears, so row 1 is a message
+// row (blank) there.  Other messages wrap like update_topl() (topl.c:284-297).
+export function topl_screen_lines(msg = game._pending_message || '') {
+    const promptText = (game._toplPromptFull && game._toplPromptFull.trimEnd() === msg)
+        ? game._toplPromptFull : msg;
+    return (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : topl_rows(msg);
+}
+
 // ── Build screen output ──
 function _buildScreenOutput() {
     const display = game?.nhDisplay;
@@ -4711,15 +4724,10 @@ function _buildScreenOutput() {
         // Message line(s): a topline wider than the screen wraps onto row 1+
         // exactly as the tty's update_topl() does (C ref topl.c:284-297).
         const msg = game._pending_message || '';
-        // C ref: tty_yn_function() sends its prompt through custompline(
-        // SUPPRESS_HISTORY) -> tty_putstr -> show_topl(), which skips
-        // update_topl()'s word-wrap: topl_putsym() hard-wraps at column CO-1.
-        // The prompt is `query [yn] (n) ` WITH its trailing space (_pending_message is
-        // trimmed): an 80-char prompt wraps its last char onto row 1, which tty then
-        // clears, so row 1 is a message row (blank) there.
-        const promptText = (game._toplPromptFull && game._toplPromptFull.trimEnd() === msg)
-            ? game._toplPromptFull : msg;
-        const mlines = (game._toplPromptMsg === msg && msg) ? hard_wrap_topl(promptText) : topl_rows(msg);
+        const mlines = topl_screen_lines(msg);
+        // WIN_MESSAGE's cury: the rows this top line now covers on the terminal,
+        // which stay there after the line is answered until something erases them.
+        game._toplRowsShown = mlines.length;
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
             display.putstr(0, li, ln, NO_COLOR, 0);

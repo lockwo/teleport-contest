@@ -1301,6 +1301,42 @@
      }
     }
    ]
+  },
+  {
+   "name": "a wrapped getobj prompt has its second row cleared before the ? menu",
+   "segments": [
+    {
+     "seed": 99872,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Wizard\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=!tutorial\nOPTIONS=herecmd_menu\nOPTIONS=!fixinv\nOPTIONS=pushweapon\nOPTIONS=whatis_coord:screen\nOPTIONS=autounlock:kick\nOPTIONS=statuslines:3\n",
+     "moves": "  Fpkkp#adjust\nvllllhylRhjll;-#whatis\n#overview\nyhhmW#dip\nhyTxyluuhnl&Thhdq\n?kbbb$k#version\nwknnn#chronicle\njjjuuuRfkkkzh:q& kkkkkhhhnnnQcgjjjlllubhhhh\u000f#therecmdmenu\nl\u001b?hh\\#enhance\nunm`kk:&lljjFlh#turn\n#sit\n`-lllldnnnunbbyyskRkkkbblltjjJkakkbl\u001b\u001b\u001b\u001bSy",
+     "frames": {
+      "77": {
+       "screen": "\u001b[35C\u001b[7mPotions\u001b[0m\n\u001b[35Cf - an uncursed potion of gain energy\n\u001b[35Cg - a blessed potion of speed\n\u001b[35Ch - an uncursed potion of monster detection\n\u001b[35C(end)\n\n\n\n\n\n\n\n\n\n\u001b[10C\u000elqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqqqk\u000f\n\u001b[10C\u000ex~~~~~~~~~~~~~x\u000f\n\u001b[10C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~~~x\u000f\n\u001b[10C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[10C\u000e~~~~~~\u001b[93m\u000f:\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[10C\u000ex~~\u001b[33m\u000f(\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[10C\u000emqqqqqqqqqqqqqj\u000f\nBob the Evoker\u001b[17CSt:9 Dx:10 Co:16 In:18 Wi:11 Ch:11\nNeutral $:0 HP:12(12) Pw:7(7) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "78": {
+       "screen": "\u001b[35C\u001b[7mPotions\u001b[0m\n\u001b[35Cf - an uncursed potion of gain energy\n\u001b[35Cg - a blessed potion of speed\n\u001b[35Ch - an uncursed potion of monster detection\n\u001b[35C(end)\n\n\n\n\n\n\n\n\n\n\u001b[10C\u000elqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqqqk\u000f\n\u001b[10C\u000ex~~~~~~~~~~~~~x\u000f\n\u001b[10C\u000ex\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~~~x\u000f\n\u001b[10C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[10C\u000e~~~~~~\u001b[93m\u000f:\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[10C\u000ex~~\u001b[33m\u000f(\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[10C\u000emqqqqqqqqqqqqqj\u000f\nBob the Evoker\u001b[17CSt:9 Dx:10 Co:16 In:18 Wi:11 Ch:11\nNeutral $:0 HP:12(12) Pw:7(7) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    },
+    {
+     "seed": 99873,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Wizard\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=!tutorial\nOPTIONS=herecmd_menu\nOPTIONS=!fixinv\nOPTIONS=pushweapon\nOPTIONS=whatis_coord:screen\nOPTIONS=autounlock:kick\nOPTIONS=statuslines:3\n",
+     "moves": " j qlllnl#kick\nFyU>/#kick\nhhhlkhhhhaRbc#loot\ngyukkkkkkksayyyiGqlllmkkkh,Tnmhelluu&\u0012#force\nhhhjjpO#dip\n#history\nuTlx$hvjjjptbbwLbbbro?-#herecmdmenu\n\u001b#perminv\n\u001b#optionsfull\n\u001b#untrap\n#pray\nky*#optionsfull\n\u001b",
+     "frames": {}
+    }
+   ]
   }
  ]
 }

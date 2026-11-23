@@ -2106,11 +2106,19 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
     // can contain monster moves that no flush_screen() has published yet.
     const inheritedTrunc = game._menuTruncCarry;
     // tty_clear_nhwindow(WIN_MESSAGE) is a no-op only when toplin is already
-    // EMPTY (the stale case).  Otherwise it erases the message, so the later
-    // docorner() teardown has nothing to the left of the menu to restore.
+    // EMPTY (the stale case).  Otherwise it erases the message (home(); cl_end();
+    // and docorner(1, cury + 1) for every further row a wrapped line spilled
+    // onto), so the later docorner() teardown has nothing to the left of the
+    // menu to restore.
     if (!game._disclose_inventory_auto
         && !(game._toplinStale && game._toplinStale === game._pending_message)) {
+        const spilled = Math.max(1, game._toplRowsShown | 0);
+        game._toplRowsShown = 1;
         display.clearRow(0);
+        for (let r = 1; r < spilled; r++) {
+            display.clearRow(r);
+            render_map_row_to_grid(r);
+        }
         game._pending_message = '';
         game._toplPromptMsg = null;
     }
