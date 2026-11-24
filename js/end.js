@@ -6,7 +6,7 @@
 
 import { NetHackGameOver } from './panic.js';
 import { the } from './objnam.js';
-import { rawPrintBias, resetRawPrint, setFinalCursor, raw_putstr } from './rawprint.js';
+import { rawPrintBias, setFinalCursor, raw_putstr } from './rawprint.js';
 import { MGIVENNAME, OBJ_FREE } from './const.js';
 import { setONAME } from './const.js';
 import { game } from './gstate.js';
@@ -221,7 +221,6 @@ export async function outrip_and_score(how) {
     // topten() in wizard/discover mode: raw_print("") then raw_print(msg) — two
     // lines to the bare screen (no --More--); cursor ends on the row after.
     // C ref: topten.c topten() wizard branch + tty raw_print.
-    resetRawPrint();
     disp.clearScreen();
     const wizard = !!game.flags?.debug;
     const msg = `Since you were in ${wizard ? 'wizard' : 'discover'} mode,`
@@ -920,7 +919,6 @@ async function quit_final_message() {
     const { nhgetch } = await import('./input.js');
     const NO_COLOR = 8; // terminal.js NO_COLOR
     const wizard = !!game.flags?.debug;
-    resetRawPrint();
     disp.clearScreen();
     const msg = `Since you were in ${wizard ? 'wizard' : 'discover'} mode,`
         + ' the score list will not be checked.';
@@ -1445,7 +1443,6 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
 
     // topten() real (non-wizard) output.
     // C ref: end.c:1579-1581 exits the tty before raw topten output.
-    resetRawPrint();
     if (scoreSkipped) {
         // C ref: topten.c:725 — `if (wizard || discover) { if (how != PANICKED)
         // { topten_print(""); topten_print("Since you were in %s mode, the score
@@ -1529,7 +1526,8 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     // (blank trailing page handled by the pager above)
 
     disp.clearScreen();
-    // A new raw-output stream starts after tty_exit_nhwindows().
+    // No-reset reference recorder: teardown clears the shadow, but preserves
+    // the raw cursor (termcap.c:876-936, wintty.c:810-844).
     let row = rawPrintBias();
     const printLine = (text, so) => {
         raw_putstr(disp, row++, text, NO_COLOR, so ? ATR_BOLD : 0);

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { runSegment } from '../js/jsmain.js';
 import { decodeScreen, diffCell } from '../frozen/screen-decode.mjs';
 
-const cases = ['full-run-regressions', 'tty-publication', 'notice-glyph', 'air-status-row'].flatMap(name =>
+const cases = ['full-run-regressions', 'tty-publication', 'notice-glyph', 'air-status-row', 'inventory-dismissal'].flatMap(name =>
     JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8')).cases);
 
 for (const c of cases) {

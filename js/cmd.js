@@ -1598,7 +1598,8 @@ export async function rhack(key) {
         // (reads a direction).  ECMD_CANCEL (cancelled direction) and ECMD_OK
         // (no door / already closed) elapse no turn; closing an open door is
         // ECMD_TIME.
-        game.context.move = ((await doclose()) & ECMD_TIME) ? 1 : 0;
+        // C ref: lock.c:974-975, cmd.c:3810-3813: cancellation clears CQ_REPEAT.
+        game.context.move = (ecmd_note(await doclose()) & ECMD_TIME) ? 1 : 0;
     } else if (ch === 's') {
         // C ref: cmd.c dosearch -> detect.c dosearch0(0): search adjacent
         // squares for hidden doors/passages/traps; takes a turn unless
@@ -7005,7 +7006,7 @@ const spkeys_binds = [
 // (msghist(): cw->data[]/maxrow/maxcol, filled by remember_topl()).  The
 // Single and combination modes allow ^P to advance history at a wrapped More.
 export async function doprev_message() {
-    const { msghist, is_dec_prefix_msg } = await import('./display.js');
+    const { msghist, is_dec_prefix_msg, put_topl_line, expand_utf8_markers } = await import('./display.js');
     const { tty_text_window } = await import('./invent.js');
     const h = msghist();
     const mode = String(game.iflags?.prevmsg_window ?? 's')[0].toLowerCase();
@@ -7013,14 +7014,11 @@ export async function doprev_message() {
     // C ref: topl.c redotoplin(str) — put `str` back on the topline; a message
     // that wraps onto a second row blocks on --More-- at once.
     const redotoplin = async (str) => {
-        /* C ref: topl.c redotoplin():128 — only the `/` command, still inside
-           tty_putmixed(), may put a graphics character on the top line.  A
-           recalled message is not mixed, so that leading graphics glyph is
-           not redrawn: a DECgraphics high-bit code or a meta-bit (IBMGraphics)
-           byte shows blank (the recorder's nomux_putch() drops the negative
-           signed char byte on macOS). */
+        // C ref: recorder topl.c:350 and termcap.c:842: a signed symbol
+        // byte advances the cursor without overwriting the previous cell.
         if (str && (Object.values(DEC_TO_UNICODE).includes(str[0]) || is_dec_prefix_msg(str)))
-            str = ' ' + str.slice(1);
+            str = '\x80' + str.slice(1);
+        str = expand_utf8_markers(str, '\x80');
         // C redotoplin() calls putsyms(): hard-wrap at CO-1, including the
         // unwrapped query+answer stored by getline.c:81.
         const lines = [];
@@ -7038,15 +7036,10 @@ export async function doprev_message() {
             game._pending_message = '';
             return key;
         }
-        // C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` touches only the top
-        // row and never calls flush_screen().  Under a getlin the screen behind the prompt is
-        // not the map (a menu's "Search for:", or the map left by an options menu with the
-        // status rows disabled), so rebuilding it from the model would repaint what tty leaves.
+        // C ref: topl.c:126-137: redotoplin() only touches the message row,
+        // even outside getlin. It never flushes the map or status.
         const disp = game.nhDisplay;
-        if (game._getlin_inread && disp?.setCell) {
-            for (let x = 0; x < disp.cols; x++) disp.setCell(x, 0, ' ', NO_COLOR, 0);
-            disp.putstr(0, 0, lines[0], NO_COLOR, 0);
-        } else await flush_screen(1);
+        if (disp?.setCell) put_topl_line(disp, 0, lines[0]);
         disp?.setCursor(Math.min(lines[0].length, COLNO - 1), 0);
         return 0;
     };
@@ -8225,20 +8218,12 @@ export async function handler_rebind_keys_add(keyfirst) {
     cmd_destroy_nhwindow(win);
     if (npick > 0) {
         let prevcmd;
-        // C ref: cmd.c:2356 `char cmdstr[BUFSZ];` is never initialized, and the
-        // "nothing" and plain-command arms Strcat() onto it.  On the macOS arm64
-        // recorder that stack slot is never empty here, so bind_key() gets an
-        // unknown command name and the bind fails (upstream issue #21; every
-        // local recording agrees).  Only the CMD_PARAM arm's Snprintf() writes
-        // a clean string.
-        let garbled = false;
 
         i = picks[0].item.a_int;
 
         if (i === -1) {
             ec = null;
             cmdstr += 'nothing';
-            garbled = true;
         } else {
             ec = extcmdlist[i - 1];
 
@@ -8248,7 +8233,6 @@ export async function handler_rebind_keys_add(keyfirst) {
                 cmdstr = `${ec.ef_txt}(${mungspaces(parameter)})`;
             } else {
                 cmdstr += ec.ef_txt;
-                garbled = true;
             }
         }
         /* C label 'bindit:' */
@@ -8263,7 +8247,7 @@ export async function handler_rebind_keys_add(keyfirst) {
         prevcmd = cmdbind_get(key);
 
         const errors = [];
-        const bound = !garbled && cmd_bind_key(key, cmdstr, true, errors);
+        const bound = cmd_bind_key(key, cmdstr, true, errors);
         const { OPT_MENU_DRIVER } = await import('./options.js');
         for (const message of errors) await OPT_MENU_DRIVER.error(message);
         if (bound) {

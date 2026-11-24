@@ -36,6 +36,8 @@ import { nhgetch } from './input.js';
 export const SAVE_SKIP_KEYS = new Set([
     // runtime environment (kept fresh by the restoring segment)
     'nhDisplay', '_preNhgetchHook', '_animationFrameHook', '_pendingDisplay', 'storage', 'datetime',
+    // termcap.c's raw capture cursor belongs to this process, never its save.
+    '_nomux_raw',
     // gc.cmd_bind points into the current process's command table.
     'cmd_bind',
     // PRNG state — savegamestate() writes no RNG state at all, and the

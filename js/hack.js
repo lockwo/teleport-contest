@@ -1777,6 +1777,10 @@ function terrain_description(x, y, full = false) {
         _td_full = true;
         try { return terrain_description(x, y); } finally { _td_full = false; loc.seenv = saved; }
     }
+    // C ref: pager.c lookat():728-729: a remembered GLYPH_NOTHING
+    // describes darkness even if the underlying terrain has since changed.
+    if (loc.remembered_glyph?.nothing
+        && loc.disp_ch === loc.remembered_glyph.ch) return 'dark part of a room';
     if (!loc.seenv && loc.remembered_glyph == null) return 'unexplored area';
     // A square drawn BLANK is S_stone (S_darkroom's symbol is '.', not ' ', so
     // it can't collide here).  Reading levl[][].typ instead of the displayed
@@ -1873,13 +1877,12 @@ function terrain_description(x, y, full = false) {
       const _shown = !!_tt?.tseen && loc.disp_ch === trap_glyph(_tt).ch
           && loc.disp_color === trap_glyph(_tt).color;
       const _t = (!_tm || (_tm & TER_TRP) || _shown) ? _tt : null;
-      if (_t && _t.tseen) return trap_description(_t.ttyp, x, y);
-      /* C: glyph_at() is the REMEMBERED trap glyph even after the trap is gone
-         (a boulder filled the pit while the hero was blind); map_trap() stamps
-         its ttyp so the description follows the glyph, not the live ftrap chain. */
-      if (!_t && (!_tm || (_tm & TER_TRP)) && loc.mapped_trap_ttyp
+      // C ref: pager.c:1267, lookat(): the displayed trap glyph can still be
+      // a land mine after an unseen explosion has replaced the live trap.
+      if ((!_tm || (_tm & TER_TRP) || _shown) && loc.mapped_trap_ttyp
           && loc.remembered_glyph?.ch === loc.disp_ch)
-          return trap_description(loc.mapped_trap_ttyp, x, y); }
+          return trap_description(loc.mapped_trap_ttyp, x, y);
+      if (_t && _t.tseen) return trap_description(_t.ttyp, x, y); }
     // C ref: defsym.h rows 21/24 — a revealed engraving is DISPLAYED as
     // S_engroom/S_engrcorr, whose explanation is "engraving", so
     // do_screen_description() reports that rather than the floor/corridor
@@ -2410,18 +2413,29 @@ function gloc_glyph_covered(x, y, loc, mtmp) {
 
 // C ref: display.c MAP_TRP/map_trap() — glyph_at() is the trap glyph only when
 // the hero's map actually carries it: a discovered trap not covered by deep
-// water/lava whose glyph was drawn or remembered (disp_trap / the
-// mapped_trap_ttyp stamp).  A trap carried by a Plane of Water bubble onto a
-// never-seen square keeps the level's base water glyph there (movebubbles()
-// resets levl[][] and moves only btrap->tx/ty), so tseen alone says nothing.
+// water/lava whose glyph was drawn or remembered.  A trap carried by a
+// Plane of Water bubble onto a never-seen square keeps the level's base water
+// glyph there (movebubbles() resets levl[][] and moves only btrap->tx/ty),
+// so tseen alone says nothing.
 function gloc_trap_glyph_shown(x, y, loc) {
+    if (covers_objects(loc)) return false;
+    const rg = loc.remembered_glyph;
+    // C ref: getpos.c:451 reads glyph_at().  A trap glyph remembered by
+    // map_trap() stays on screen after the trap itself was replaced out of
+    // sight (a land mine exploding into a pit), so the stamped ttyp decides
+    // while that glyph is the one displayed; #terrain's background view does
+    // not display it.
+    if (loc.mapped_trap_ttyp) {
+        const mg = trap_glyph({ ttyp: loc.mapped_trap_ttyp });
+        if (loc.disp_ch === mg.ch && rg?.ch === mg.ch && rg.color === mg.color) return true;
+    }
     const trap = t_at(x, y);
-    if (!trap || !trap.tseen || covers_objects(loc)) return false;
-    if (loc.disp_trap || loc.mapped_trap_ttyp) return true;
+    if (!trap || !trap.tseen) return false;
+    if (loc.disp_trap) return true;
     // Other draw paths (arrival vision of an already-seen hole/pit) show the
     // trap glyph without the disp_trap stamp: the displayed and remembered
     // glyph are then the trap's own symbol, never the base-element water glyph.
-    const tg = trap_glyph(trap), rg = loc.remembered_glyph;
+    const tg = trap_glyph(trap);
     return loc.disp_ch === tg.ch && rg?.ch === tg.ch && rg.color === tg.color;
 }
 
@@ -3609,6 +3623,7 @@ export async function reveal_terrain(which_subset) {
                     const g = reveal_terrain_getglyph(x, y, swallowed, dg, which_subset);
                     const gc = g.cell || dg.cell;
                     show_glyph_cell(x, y, gc.ch, gc.color, gc.dec, bg_attr(gc));
+                    loc.disp_trap = g.kind === 'trap';
                     /* the stripped-monster/cloud square whose reveal_terrain_getglyph()
                        result is the region's own glyph (traps kept) is a cloud glyph */
                     if (g.gascloud)
@@ -3644,6 +3659,10 @@ export async function reveal_terrain(which_subset) {
                     const tg = trap_glyph(trap);
                     if (rg.objotyp != null || loc.invisMon || (rg.ch === tg.ch && rg.color === tg.color)) {
                         show_glyph_cell(x, y, tg.ch, tg.color, tg.dec);
+                        // C ref: detect.c:2223,2383 keeps trap_to_glyph(t) in
+                        // gbuf.  getpos.c:1075 reads that displayed trap even
+                        // though terrainmode disables the map-memory fallback.
+                        loc.disp_trap = true;
                         continue;
                     }
                 }

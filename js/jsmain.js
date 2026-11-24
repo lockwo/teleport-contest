@@ -482,13 +482,6 @@ export class NethackGame {
             if (saved && !(await this._restoreMenu(saved, optsel))) {
                 const mesg = 'Until next time then...';
                 bail(mesg);
-                // tty_exit_nhwindows(mesg) clears the screen and raw_print()s the
-                // farewell; nh_terminate()'s final capture records that screen,
-                // homed, and nothing after it (the process is gone).
-                const disp = game.nhDisplay;
-                disp?.clearScreen?.();
-                disp?.putstr?.(0, 0, mesg, NO_COLOR, 0);
-                disp?.setCursor?.(0, 0);
                 await game._preNhgetchHook?.();
                 throw new NetHackGameOver();
             }
@@ -1079,7 +1072,8 @@ export class NethackGame {
             if (++tryct > 1) {
                 if (tryct > 10) {
                     bail('Giving up after 10 tries.\n');
-                    return;
+                    await game._preNhgetchHook?.();
+                    throw new NetHackGameOver();
                 }
                 this._asknameRetry = true;
             }

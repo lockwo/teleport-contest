@@ -1287,7 +1287,20 @@ export async function dopray() {
     // anger counters and upgrades gp.p_type to 3 (coaligned "pleased").
     if (game.flags?.debug && gp.type >= 0) {
         game._yn_need_more = true; // page the pending "begin praying" line first
-        const forced = (await y_n('Force the gods to be pleased?')) === 'y';
+        // C ref: pray.c:2236-2247: paranoid confirmation is never recalled,
+        // so the wizard response must also bypass and stay out of CQ_REPEAT.
+        let forced;
+        if (bits & 0x0020) {
+            const save_doagain = game.in_doagain;
+            game.in_doagain = false;
+            try {
+                forced = (await y_n('Force the gods to be pleased?', 'yn\x1b', 'n', false)) === 'y';
+            } finally {
+                game.in_doagain = save_doagain;
+            }
+        } else {
+            forced = (await y_n('Force the gods to be pleased?')) === 'y';
+        }
         if (forced) {
             u.ublesscnt = 0;
             if ((u.uluck || 0) < 0) u.uluck = 0;

@@ -7,9 +7,9 @@
 // state and behavior that callers can move to incrementally.
 
 import { game } from './gstate.js';
+import { raw_print } from './rawprint.js';
 import { panic } from './panic.js';
 import { nhgetch } from './input.js';
-import { resetRawPrint } from './rawprint.js';
 import { bot, cls, docrt, flush_screen, pline, show_glyph_cell } from './display.js';
 import {
     BL_ALIGN, BL_CAP, BL_CH, BL_CO, BL_CONDITION, BL_DX, BL_ENE, BL_ENEMAX,
@@ -68,7 +68,10 @@ function copyright_banner_line(i) {
 function getwindowsz() { return { rows: displayRows(), cols: displayCols() }; }
 function gettty() {}
 function setftty() {}
-function settty() {}
+function settty(str) {
+    display()?.clearScreen();
+    if (str) raw_print(display(), str);
+}
 function term_startup(size) {
     size.cols = displayCols();
     size.rows = displayRows();
@@ -471,7 +474,6 @@ export function tty_get_color_string() { return null; }
 
 export function tty_exit_nhwindows(str) {
     tty_suspend_nhwindows(str);
-    resetRawPrint();
     free_pickinv_cache();
     for (let i = 0; i < MAXWIN; i++) {
         if (i === BASE_WINDOW) continue;

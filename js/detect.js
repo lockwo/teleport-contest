@@ -701,6 +701,10 @@ export function glyph_at(x, y, remembered = false) {
         if (tg && tg.ch === sym)
             return { kind: 'trap', trap: t, ttyp: t.ttyp, x, y };
     }
+    // C ref: pager.c:728-729 and display.c:245-247: GLYPH_NOTHING is not S_stone,
+    // even though both draw blank.  Preserve its identity independently of typ.
+    if (loc.remembered_glyph?.nothing && sym === loc.remembered_glyph.ch)
+        return { kind: 'nothing', x, y };
     if (!loc.seenv && loc.remembered_glyph == null)
         return { kind: 'unexplored', x, y };
     /* C ref: display.c show_region() draws a gas cloud with show_glyph() only, so
@@ -767,15 +771,14 @@ function magic_map_background(x, y, show) {
     let g = back_to_glyph(x, y);
     if (!cansee(x, y) && !loc.waslit) {
         if (loc.typ === ROOM && g.ch === defsyms[S_room].sym) {
-            // flags.dark_room and iflags.use_color both default on, so the
-            // DARKROOMSYM arm is taken rather than GLYPH_NOTHING.  C ref:
-            // sym.h DARKROOMSYM is S_stone on the Rogue level, else
-            // S_darkroom ('.' at CLR_BLACK).
-            g = (game.flags?.dark_room !== false && game.flags?.color !== false
-                 && !Is_rogue_level(game.u?.uz))
-                ? { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
-                    dec: false, darkroom: true }
-                : { ch: ' ', color: NO_COLOR, dec: false };
+            // C ref: display.c:245-247: color is iflags.use_color, and the
+            // no-color arm remembers GLYPH_NOTHING rather than S_stone.
+            g = (game.flags?.dark_room && game.iflags?.use_color)
+                ? (Is_rogue_level(game.u?.uz)
+                    ? { ch: ' ', color: NO_COLOR, dec: false }
+                    : { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
+                        dec: false, darkroom: true })
+                : { ch: ' ', color: NO_COLOR, dec: false, nothing: true };
         } else if (loc.typ === CORR && is_litcorr_cell(g)) {
             g = corr_glyph_cell(false);
         }
@@ -794,6 +797,7 @@ function magic_map_background(x, y, show) {
         if (glyph_is_unexplored(old) || glyph_is_cmap(old)) {
             loc.remembered_glyph = { ch: g.ch, color: g.color, decgfx: g.dec, wall: !!g.wall, bars: !!g.bars };
             if (g.darkroom) loc.remembered_glyph.darkroom = true;
+            if (g.nothing) loc.remembered_glyph.nothing = true;
             loc.mapped_trap_ttyp = 0;
         }
     }

@@ -1,14 +1,24 @@
-// rawprint.js - cursor bookkeeping shared by the raw_print() paths that run
-// after the tty windows are gone (end.js topten() output, panic.js).
+// Raw capture follows the no-reset reference recorder, termcap.c:880-960.
 import { game } from './gstate.js';
+import { NO_COLOR } from './terminal.js';
 
-// C ref: tty_exit_nhwindows() calls nomux_reset_raw_mode() after suspending
-// the terminal, before topten() starts a new raw-output stream.
-export function resetRawPrint() {
-    delete game._nomux_raw;
+export function raw_print(disp, text, attr = 0, ttyAlive = true) {
+    text = String(text ?? '');
+    if (!game._nomux_raw) {
+        if (ttyAlive && !text) return;
+        disp?.clearScreen();
+        game._nomux_raw = { row: 0, col: 0 };
+    }
+    const raw = game._nomux_raw;
+    for (const line of text.split('\n')) {
+        raw_putstr(disp, raw.row, line, NO_COLOR, attr);
+        raw.row++;
+        raw.col = 0;
+    }
+    disp?.setCursor(0, raw.row);
 }
 
-// Before teardown, raw output continues from the startup-error cursor.
+// tty_suspend_nhwindows(NULL) emits one empty line if raw mode is active.
 export function rawPrintBias() {
     return game._nomux_raw ? game._nomux_raw.row + 1 : 0;
 }

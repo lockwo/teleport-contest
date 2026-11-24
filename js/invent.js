@@ -11944,25 +11944,11 @@ async function search_inventory_menu(rows, byLet) {
     return null;
 }
 
-// C ref: win/tty/wintty.c tty_select_menu() -> tty_dismiss_nhwindow() ->
-// erase_menu_or_text(): a full-width (offx == 0) menu is erased with docrt(),
-// so a hero picking an item re-sights every square (a hallucinating hero's
-// see_monsters()/newsym() display-RNG draws) before the next window opens.
-async function inventory_menu_dismissed() {
-    corner_menu_destroyed();
-    if (game._menuOffx > 0) return;
-    await docrt();
-    /* erase_menu_or_text() is `docrt(); flush_screen(1);` and runs inside
-       windows.c select_menu()'s gb.bot_disabled: the map is flushed (no gnew
-       glyph is left to print over the shared status row) but bot() is a no-op,
-       so the status window stays blank with disp.botlx pending. */
-    game._statusDocrt = false;
-    game._statusClsBlank = true;
-    game.botlx = true;
-}
-
 // C ref: invent.c display_pickinv() -> select_menu(PICK_ONE).  The three
 // inventory callers differ after a pick, but share paging and menu commands.
+// C ref: wintty.c:2794 dismisses every menu result once, with bot disabled.
+// Picks and cancellations share dismiss_invent_screen() so docrt()/docorner()
+// also preserve postponed map flushes and the status window's blanked rows.
 // C ref: windows.c select_menu() holds gb.bot_disabled for the whole
 // win_select_menu(), dismissal included: a full-width menu's docrt() leaves
 // the status rows blank (disp.botlx pending) until the next bot().
@@ -12067,7 +12053,7 @@ async function select_inventory_menu_inner(rows, byLet, pickNone) {
                 return null;
             }
             if (picked) {
-                await inventory_menu_dismissed();
+                await dismiss_invent_screen();
                 return picked;
             }
             /* hooked_tty_getlin() ends with clear_nhwindow(WIN_MESSAGE). */
@@ -12086,7 +12072,7 @@ async function select_inventory_menu_inner(rows, byLet, pickNone) {
         }
         const picked = byLet.get(ch);
         if (!picked) { count = keptCount; counting = keptCounting; repaint = false; continue; }
-        await inventory_menu_dismissed();
+        await dismiss_invent_screen();
         return picked;
     }
 }
@@ -12190,14 +12176,7 @@ export async function display_inventory_interactive(lets = null, force_invmenu =
         if (!lets || String(lets).includes(obj.invlet)) byLet.set(obj.invlet, obj);
     if (special) byLet.set(special.ch, { invlet: special.ch, special: true });
     game._invmenu_esc = false;
-    const picked = await select_inventory_menu(rows, byLet);
-    if (picked) {
-        /* C ref: wintty.c tty_select_menu -> tty_destroy_nhwindow ->
-           erase_menu_or_text(): picking an entry tears the menu down (docrt()
-           for a full-width one) exactly as ESC does. */
-        game._modal_screen = 'invent';
-        await dismiss_invent_screen();
-    }
+    await select_inventory_menu(rows, byLet);
     /* C: display_inventory(lets, TRUE) yields '\033' when the menu was ESC'd */
     return game._invmenu_esc ? '\x1b' : '';
 }
@@ -12459,11 +12438,7 @@ export async function display_used_invlets(avoidlet) {
     }
     game._invmenu_esc = false;
     const picked = await select_inventory_menu(rows, byLet);
-    if (picked) {
-        game._modal_screen = 'invent';
-        await dismiss_invent_screen();
-        return picked.invlet;
-    }
+    if (picked) return picked.invlet;
     return game._invmenu_esc ? '\x1b' : '\0';
 }
 

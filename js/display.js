@@ -1185,11 +1185,21 @@ function utf8_marker_len(ch) {
     return cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
 }
 // Text as the capture shows it: each marker becomes one blank per byte.
-export function expand_utf8_markers(text) {
+export function expand_utf8_markers(text, skippedByte = ' ') {
     if (typeof text !== 'string' || !utf8_symhandling()) return text;
     let out = '';
-    for (const c of text) out += is_utf8_marker(c) ? ' '.repeat(utf8_marker_len(c)) : c;
+    for (const c of text) out += is_utf8_marker(c) ? skippedByte.repeat(utf8_marker_len(c)) : c;
     return out;
+}
+
+// C ref: topl.c:136 and recorder topl.c:350: putsyms() advances over signed
+// bytes which nomux_putch() does not capture. Only cl_end(), after the text,
+// erases cells. GameDisplay.putstr() preserves those skipped cells.
+export function put_topl_line(display, row, text) {
+    text = expand_utf8_markers(text, '\x80');
+    display.putstr(0, row, text, NO_COLOR, 0);
+    for (let x = text.length; x < display.cols; x++)
+        display.setCell(x, row, ' ', NO_COLOR, 0);
 }
 // C ref: wintty.c process_text_window() — under H_UTF8 the first byte of each
 // line goes out through g_putch(), whose capture lands one column right (curx
@@ -1594,10 +1604,15 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
     // S_room and S_darkroom are different glyphs even when they print the same
     // symbol (DECgraphics), so a lit/dark flip is gnew too.
     const newDark = dark || (!keepColor && color === CLR_BLACK && newColor === NO_COLOR);
+    // C ref: display.c:2031 show_glyph(): GLYPH_UNEXPLORED and S_stone
+    // are distinct glyphs, although both use a blank terminal character.
+    const unexplored = ch === unexplored_ch() && !loc.remembered_glyph;
     if (loc.disp_ch !== ch || (loc.disp_glyph_color ?? loc.disp_color) !== newColor
         || !!loc.disp_decgfx !== !!decgfx || (loc.disp_attr | 0) !== (attr | 0)
-        || !!loc.disp_dark !== !!newDark)
+        || !!loc.disp_dark !== !!newDark
+        || (ch === ' ' && (loc.disp_unexplored ?? true) !== unexplored))
         loc._gchg = true;
+    loc.disp_unexplored = unexplored;
     loc.disp_ch = ch;
     loc.disp_warning = false;
     loc.disp_monster = false;
@@ -1922,13 +1937,17 @@ export function getpos_find_feature(ch, cx, cy) {
              && (matchCh === ch || stairCh === ch)) || engraving)
             return true;
         const trap = game.level?.traps?.find((t) => t.tx === tx && t.ty === ty);
-        // C getpos.c:1085 only matches a trap through the glyph shown or
-        // remembered here (glyph_is_cmap), so an object lying on the trap
-        // (remembered object glyph) hides it from the search.
-        if (trap?.tseen && !remembered?.objotyp && !remembered?.pile && !loc.invisMon
-            && (trap_glyph(trap).ch === ch
-                /* C: `c == '^' && is_cmap_trap(sidx)` also matches webs etc. */
-                || ch === '^')) return true;
+        // C ref: getpos.c:1075-1087 matches displayed or remembered glyphs,
+        // never tseen alone.  A discovered trap can be remembered as floor.
+        if (trap?.tseen) {
+            const tg = trap_glyph(trap);
+            const displayed = loc.disp_trap && loc.disp_ch === tg.ch;
+            const memorized = game.level.flags.hero_memory && !game.iflags?.terrainmode
+                && remembered?.ch === tg.ch && remembered.color === tg.color
+                && !remembered.decgfx && !remembered.objotyp && !remembered.pile;
+            if ((displayed || memorized) && (tg.ch === ch || ch === '^'))
+                return true;
+        }
         return false;
     };
     for (let ty = cy; ty <= ROWNO - 1; ty++) {
@@ -2281,7 +2300,10 @@ export async function swallowed(first) {
                 // C ref: display.c clear_glyph_buffer() — nul_gbuf.gnew is 0, so
                 // nothing but the stomach drawn below is printed over the status.
                 const l = game.level.at(x, y);
-                if (l) l._gchg = false;
+                if (l) {
+                    l._gchg = false;
+                    l.disp_unexplored = true;
+                }
             }
         // C ref: cls() sets disp.botlx; swallowed() then runs bot() before any map
         // glyph is flushed, and (unlike docrt()'s memory loop) marks no cell gnew.
@@ -2356,7 +2378,7 @@ export function remembered_glyph_sig(loc) {
     const r = loc?.remembered_glyph;
     if (!r) return null;
     return JSON.stringify([r.ch, r.darkroom ? null : r.color, !!r.decgfx, !!r.pile,
-        !!r.bwEngr, !!r.female, !!r.darkroom, r.objotyp || 0, r.hallucotyp || 0,
+        !!r.bwEngr, !!r.female, !!r.darkroom, !!r.nothing, r.objotyp || 0, r.hallucotyp || 0,
         r.corpsenm ?? null]);
 }
 
@@ -2486,7 +2508,7 @@ function feel_location_terrain(x, y) {
             if (remBoulder || loc.invisMon) {
                 if (loc.typ !== ROOM && loc.seenv) map_bg = true;
                 else do_room_glyph = true;
-            } else if (rg && rg.objotyp == null && !rg.darkroom) {
+            } else if (rg && rg.objotyp == null && !rg.darkroom && !rg.nothing) {
                 const floor = terrain_glyph(loc, x, y);
                 do_room_glyph = rg.ch === ' '
                     || (loc.typ === ROOM && rg.ch === floor.ch && !!rg.decgfx === !!floor.dec
@@ -3175,6 +3197,10 @@ async function docrt_live() {
             const rg = loc?.remembered_glyph;
             if (rg) show_glyph_cell(x, y, rg.ch, rg.color, rg.decgfx, bg_attr(rg), false, !!rg.darkroom);
             else show_glyph_cell(x, y, unexplored_ch(), NO_COLOR, false, 0);
+            // C ref: display.c:1747-1754: cls() resets gbuf to unexplored.
+            // Reposting a remembered S_stone is a write even though both
+            // glyphs print a space. An unexplored square is not a write.
+            loc._gchg = !!rg;
         }
     }
     vision_recalc(0);
@@ -5651,8 +5677,11 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
     // C more() only writes the message window. A later vision or timer
     // change must not repaint map or status pixels before this pager ends.
     for (let y = 0; y < mlines.length; y++) {
-        for (let x = 0; x < disp.cols; x++) disp.setCell(x, y, ' ', NO_COLOR, 0);
-        disp.putstr(0, y, mlines[y], NO_COLOR, 0);
+        if (prewrapped) put_topl_line(disp, y, mlines[y]);
+        else {
+            for (let x = 0; x < disp.cols; x++) disp.setCell(x, y, ' ', NO_COLOR, 0);
+            disp.putstr(0, y, mlines[y], NO_COLOR, 0);
+        }
         // putmixed's leading glyph is unsigned output, not a plain string byte.
         if (y === 0 && mlines[y] && is_dec_prefix_msg(msg))
             disp.setCell(0, y, mlines[y][0], NO_COLOR, 0);
@@ -7590,7 +7619,7 @@ export function reglyph_darkroom() {
 // the Rogue level, a remembered S_darkroom becomes S_room if the square was lit
 // and GLYPH_NOTHING otherwise, so a Rogue-level floor square the hero felt while
 // leaving (feel_location's S_darkroom) comes back blank on re-entry.
-export function reglyph_remembered_darkroom(blankNothing = false) {
+export function reglyph_remembered_darkroom() {
     const lvl = game.level;
     if (!lvl) return;
     // C ref: display.c reglyph_darkroom():1824-1832 — the corridor arm: with
@@ -7620,10 +7649,9 @@ export function reglyph_remembered_darkroom(blankNothing = false) {
             for (let y = 0; y < ROWNO; y++) {
                 const loc = lvl.at(x, y);
                 const rg = loc?.remembered_glyph;
-                // C ref: display.c reglyph_darkroom() — a S_darkroom memory kept blank by a
-                // use_color-off process shows as floor again once color is on.  A plain blank
-                // memory (GLYPH_NOTHING vs S_stone) cannot be told apart here, so it is left.
-                if (rg && (rg.darkroom || blankNothing) && rg.ch === ' ' && rg.objotyp == null && !rg.pile && !rg.bwEngr
+                // C ref: display.c:1845-1847: only GLYPH_NOTHING, not a
+                // blank S_stone, becomes S_darkroom when color is enabled.
+                if (rg && rg.nothing && rg.ch === ' ' && rg.objotyp == null && !rg.pile && !rg.bwEngr
                     && rg.hallucotyp == null && loc.typ === ROOM && loc.seenv && !cansee(x, y)) {
                     const f = terrain_glyph(loc, x, y);
                     loc.remembered_glyph = { ch: f.ch, color: f.color, decgfx: f.dec, wall: false, bars: false, darkroom: true };
@@ -7643,8 +7671,11 @@ export function reglyph_remembered_darkroom(blankNothing = false) {
         for (let y = 0; y < ROWNO; y++) {
             const loc = lvl.at(x, y);
             if (!loc?.remembered_glyph?.darkroom) continue;
-            if (loc.waslit) delete loc.remembered_glyph.darkroom;
-            else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false };
+            if (loc.waslit) {
+                const floor = terrain_glyph({ typ: ROOM }, x, y);
+                loc.remembered_glyph = { ch: floor.ch, color: floor.color, decgfx: floor.dec };
+            }
+            else loc.remembered_glyph = { ch: ' ', color: NO_COLOR, decgfx: false, nothing: true };
         }
 }
 

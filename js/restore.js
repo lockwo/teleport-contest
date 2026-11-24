@@ -293,6 +293,7 @@ const UNSAVED_GLOBALS = [
     'program_state', 'a11y', 'keybind', 'menu_cmd_alias', 'symset', 'roguesymset',
     'symoverride', 'apelist', 'preferred_pet', 'plnamelen', 'wsettings',
     '_winStop', '_winNoStop', '_yn_need_more', '_startup_selected_character',
+    '_nomux_raw',
     /* gc./gd./ge./gf. */
     'cmd_bind', '_cmdq_repeat', '_cmdq_canned', 'last_command_count', 'domove_attempting',
     'did_dig_msg', 'current_wand', 'clicklook_cc', 'item_action_in_progress',
@@ -426,7 +427,6 @@ export async function dorestore() {
     const saved_symset = saved.symset, saved_roguesymset = saved.roguesymset;
     const saved_symoverride = saved.symoverride || {}, saved_roguesymoverride = saved.roguesymoverride || {};
     const saved_customcolors = saved.flags?.customcolors;
-    const saved_darkroom_off = !saved.flags?.dark_room || saved.iflags?.use_color === false;
     Object.assign(game, saved);
     reset_unsaved_globals(fresh);
     reset_iflags_type_options(fresh);
@@ -618,9 +618,7 @@ export async function dorestore() {
        This port stores rendered cells: re-render them from the saved process's names. */
     reglyph_remembered_terrain(false, saved_symset, saved_customcolors, saved_symoverride);
     reglyph_remembered_terrain(true, saved_roguesymset, saved_customcolors, saved_roguesymoverride);
-    /* A blank memory is GLYPH_NOTHING only if the saving process had dark_room off or color
-       off (else it is S_stone and stays): the same blanks occur in an ordinary same-rc save. */
-    reglyph_remembered_darkroom(saved_darkroom_off);
+    reglyph_remembered_darkroom();
     vision_reset();
     /* C ref: restore.c dorecover() — vision_reset() (which sets
        vision_full_recalc = 1) and NO vision_recalc(): the first recompute is

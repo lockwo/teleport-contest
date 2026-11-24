@@ -46,10 +46,11 @@ import { mflags1_of, mflags2_of, msound_of } from './monflags_data.js';
 import { find_mac, species } from './worn.js';
 import {
     SDOOR, SCORR, DOOR, CORR, D_LOCKED, D_CLOSED, STONE, STATUE_TRAP,
-    ACCESSIBLE, IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND, FACE, NOSE, HEAD,
+    IS_FURNITURE, IS_AIR, IS_ROOM, IS_WALL, IS_DOOR, HAND, FACE, NOSE, HEAD,
     STOMACH, TIMEOUT,
     ZAP_POS, isok, M_AP_OBJECT,
 } from './const.js';
+import { accessible } from './monmove.js';
 // C ref: apply.c do_break_wand() — the shared explode() call, its direction
 // table, the dig-a-pit-vs-hole choice, and the room type the digging branch
 // treats as "no liquid to fill it".
@@ -1849,7 +1850,8 @@ export async function use_pole(obj, autohit) {
             await _display.pline('Thump!  Your blow bounces harmlessly off the boulder.');
             const { wake_nearto } = await import('./mon.js');
             await wake_nearto(cc.x, cc.y, 25);
-        } else if (!ACCESSIBLE(loc?.typ | 0) || IS_FURNITURE(loc?.typ | 0)) {
+        } else if (!accessible(cc.x, cc.y) || IS_FURNITURE(loc?.typ | 0)) {
+            // C ref: apply.c:3546 uses accessible(), which also excludes closed doors.
             /* similar to 'F'orcefight with a melee weapon; we know that
                the spot can be seen or we wouldn't have gotten this far */
             await _display.pline(`You uselessly attack ${await pole_target_name(cc.x, cc.y)}.`);

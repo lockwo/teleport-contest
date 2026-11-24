@@ -1,0 +1,173 @@
+{
+ "cases": [
+  {
+   "name": "death-in-transit-inventory-pick-restores-corner-glyph-buffer",
+   "segments": [
+    {
+     "seed": 451212,
+     "datetime": "20261113093000",
+     "nethackrc": "OPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\nOPTIONS=hilite_pet\n",
+     "moves": "Dazz\nnhhfy  ullf $ hllllllluyhhhyyhhh:hyy\u001byyhhhhhhyhh_ \nJnYnJ\u001bhhhhhhhbbbafbb\u001bbhb,nnnn_@Llll.Lj jjnnnnnlnlllnn10.Ljj5slu\u001b_@Lulll. llllllluujbHhhhhbbbbbbbhbFyFhFh h\u001bnlchll#seetools\nllR\u001b20sljljjjlljlulluyhh\u001bhlllljnlkkkk_@YHHHH. Fyoh_@HHHyyyyyh.FhFhFhFhyhH,hhhh_@HHyyyhh.yFyFy_@HHyhh.\u001bjwajj:jjb_>.> \u000f\nhhhyyyyh15sFkFkFkFk20sFk20s\u001bw?\u001b10sl10szfl20sl10sh15sl10s10sh10slhh10s15s20sll15sh10sR\u001b15sl15sh15sl15snyhh10s20sFk\u001bFkFkFkFkFkkFkkkkkFkFkFkFkFkFkFkkkkkkkk\u001byyyykjjj20sj10sjj15sj20skk15sjjj20sj20sFkFkFkFkFk ejE- Elbereth\nFk30sFk40sejkK\u001bkKyyyyhhbyyhhhpsFjsjFj ejFjFjFjFjFjsjZajFj ej\u001bFjE- Elbereth\nhst$nhsjbsbqdbsbulll15ssFlFlnln10syyyyhyHh\u001bhhhsFnFnFnZa nejFnnFnFnfl40s50s40ssE- Elbereth\nZah  yby  y nn\u001b",
+     "frames": {}
+    },
+    {
+     "seed": 7814667,
+     "datetime": "20270101093000",
+     "nethackrc": "OPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=!tutorial\nOPTIONS=hilite_pet\n",
+     "moves": "Dazz\ny\n ulsssllljjjjjjllljlllllj\u001bjjbhhhhhhhhhhbjlalllllllll\u001blllssussssyllFlssukkkkklluak\u001bsssyyy,qf20snjjkkuuunllllllll:luuuu10.\u001bluyullllf\u001bb 20sjjid\njwbwbj10.j^\u001bjjjblbbyy\u001bh20shhhhyyyyhk10skkqkknlLFnkjj5sn\u001buFlFlsFll30sl\u0012uuuul_ #\nyKlJu.5sksFkk_>.> \u000f\nn10.bh\u001bhk#whatdoes\n \nkjnjjblbhjbhhyyyytdl hyhyk\u001byhykyhhhhsshsyysyysyssyhyu\u001bsbysh, psh,\n_@Lnnl.ysspsslqhsnnsnss\u001bkssh, psssfnFn FnFn  \u001b",
+     "frames": {}
+    },
+    {
+     "seed": 9414936,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=!autopickup\nOPTIONS=suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=disclose:yi ya yv yg yc yo\nOPTIONS=hilite_pet\n",
+     "moves": "Dazz\ny\n  nFyybj#cast\nbjjli\u001bi\u001bi\u001bi\u001bjlli\u001bi\u001bi\u001bi\u001blji\u001bjll\u001bli\u001bli\u001bljFbFbb:i\u001bhhhbbhhi\u001bi\u001by:yi\u001byhyi\u001bri\n\u001byhi\u001bhyyi\u001bhykk10si,l\ni\u001byhi\u001byyi\u001bhi\u001bhhi\u001b\u001bi\u001bhhhFbbFbE- Elbereth\nTshhhhb40skkkkbllbh\u001bbhhhh10ssi\u001bsFhFhFhhi\u001bhhhZbsFhh hi\u001bi\u001bh\u001bhhi\u001bt\u001bhi\u001bi\u001bhi\u001bhhi\u001bi\u001bhhhybjnl\u0004li\u001bl\u0004ll\u0004li\u001bli\u001bi\u001b\u001blli\u001bi\u001bZbl20si\u001bi\u001bl:llll_ \ndbBLb,_>,> \u000f\nyyyyFbhhykjjbhhh\u001bhhhhi\u001b10si\u001bf \u001bhhjjbhi\u001bhyi\u001bubbi\u001bhhi\u001by\u001bku,,,i\u001bi\u001bkklli\u001bi\u001bh i\u001bhbjjhbi\u001bblli\u001bi\u001bbh\u001bhi\u001bhhi\u001bi\u001bi\u001bbi\u001bhhi\u001bi\u001by^lki\u001bkkkkkhhy\u001bssFbyi\u001byyyi\u001byyybbi\u001bbi\u001b3sbhbjyybi\u001bhji\u001b\u001bji\u001bjji\u001blli\u001bji\u001bi\u001bi\u001bi\u001bjjjjljjzckb_>.> \u000f\nyy\u001byTu10s Fji\u001bi\u001bi\u001bsi\u001bsssl si\u001bi\u001bi\u001bssi\u001bi\u001bssn\u001bE- Elbereth\nsnsjsi\u001bsli\u001bsi\u001bf\n*\u001bllslujlbshFhFh\u001bp20sdW fhyhhyhFy\n Fyhbsy ylun40s\n yey  y y n\n ",
+     "frames": {}
+    },
+    {
+     "seed": 6313495,
+     "datetime": "20260305000100",
+     "nethackrc": "OPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+     "moves": "Dazz\ny\n   nyuk FkFkFk FkuuuuyH hhjbh5shhhr\u001bhhy\u001byyyqkbbbbhbn10sFjFjFjE- Elbereth\n40s Fbbh3s nj\u001bsFj ubj\u001bjjjE- Elbereth\njj40sjFj20sbE- x\n_ \u001b\u001b_@Lnll.yFyFy_>. sFhE- Elbereth\nFh Fh Fhullln\u001bl50s_>.2s> \u000f\nbjhhhhbhbhyksyFyFyFyy,rl nljjbbbl\u001bbFh  j E- Elbereth\nhhh50sb40shbFhsFhFh__.:akuhbhhyy\u001bhhh#seeall\ni\nhhyhhFhFh yyykku_>._>,_>.rl \u001b_>,>   yby ",
+     "frames": {
+      "333": {
+       "screen": "Do you want to see your attributes? [ynq] (n)\n\n\n\u001b[23C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nDazz the Rambler\u001b[15CSt:11 Dx:12 Co:17 In:11 Wi:9 Ch:15 Neutral\nDlvl:3 $:783 HP:0(10) Pw:1(1) AC:10 Xp:1",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      },
+      "334": {
+       "screen": "Dazz the Tourist's attributes:\n\nBackground:\n You were a Rambler, a level 1 male human Tourist.\n You were neutral, on a mission for The Lady\n who was opposed by Blind Io (lawful) and Offler (chaotic).\n You were left-handed.\n You were in the Dungeons of Doom, on level 3.\n You entered the dungeon 304 turns ago.\n It was nighttime.\n There was a full moon in effect when your adventure ended.\n You had 14 experience points, 6 more were needed to attain level 2.\n\nBasics:\n You had 0 out of 10 hit points.\n You had 1 out of 1 energy points (spell power).\n Your armor class was 10.\n Your wallet contained 783 zorkmids.\n Autopickup was off.\n\nFinal Characteristics:\n Your strength was 11 (limit:18/100).\n Your dexterity was 12 (limit:18).\n --More--",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "335": {
+       "screen": " Your constitution was 17 (limit:18).\n Your intelligence was 11 (limit:18).\n Your wisdom was 9 (limit:18).\n Your charisma was 15 (limit:18).\n\nFinal Status:\n You were chained to a heavy iron ball.\n You weren't hungry.\n You were unencumbered.\n You were bare handed.\n You were unskilled in bare handed combat.\n\nFinal Attributes:\n You were nominally aligned.\n You were lucky.\n You are dead.\n\nMiscellaneous:\n You didn't encounter any bones levels.\n Total elapsed playing time was none.\n --More--",
+       "cursor": [
+        9,
+        20,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "death-inventory-pick-restores-hero-before-attributes",
+   "segments": [
+    {
+     "seed": 4609395,
+     "datetime": "20261113093000",
+     "nethackrc": "OPTIONS=name:Fuzz,role:Priest,race:human,gender:male,align:neutral,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+     "moves": "   nullllPll10. lllllobl_ \u001bYljJYkhL.lHH,hhhbjnljjjjjj\u001bjjoujjjluullnukkl5suuukkklu5slu\u001bbbhbjjjbb;hFlhFlhFlhlhFlhFlhFlhFlhFlhl\u001bhbjj_@Uuuuu. lljjjjjblbjbllbjjln10suluzk\u001bukllussf $ kZbkFkk yulljjjjjjjlf \u001bj\u001bq\u001bl\u000f\nbhhh;hFllFhlFhlFhlFhlFhlFhlFhl\u001bllunjjlnulkkkkk#pray\ny  R\u001bl__.:uukkl^u#loot\nh3s5slkk\u001bkyyyyuyyyyuuuukyhuuulnlljllFnFnj\u001bR\u001bljlllub_@Hbbbbb._>.>     y,cy ",
+     "frames": {
+      "354": {
+       "screen": "Do you want to see your attributes? [ynq] (n)\n\n\n\n\n\u001b[70C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nFuzz the Aspirant\u001b[14CSt:14 Dx:14 Co:16 In:7 Wi:15 Ch:9 Neutral\nDlvl:2 $:0 HP:0(14) Pw:7(7) AC:7 Xp:1",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      },
+      "355": {
+       "screen": "Fuzz the Priest's attributes:\n\nBackground:\n You were an Aspirant, a level 1 human Priest.\n You were neutral, on a mission for Camaxtli\n who was opposed by Quetzalcoatl (lawful) and Huhetotl (chaotic).\n You were right-handed.\n You were in the Dungeons of Doom, on level 2.\n You entered the dungeon 253 turns ago.\n Bad things happened on Friday the 13th.\n You had 8 experience points, 12 more were needed to attain level 2.\n\nBasics:\n You had 0 out of 14 hit points.\n You had all 7 energy points (spell power).\n Your armor class was 7.\n Your wallet was empty.\n Autopickup was off.\n\nFinal Characteristics:\n Your strength was 14 (limit:18/100).\n Your dexterity was 14 (limit:18).\n Your constitution was 16 (limit:18).\n --More--",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "356": {
+       "screen": " Your intelligence was 7 (limit:18).\n Your wisdom was 15 (limit:18).\n Your charisma was 9 (limit:18).\n\nFinal Status:\n You were chained to a heavy iron ball.\n You weren't hungry.\n You were unencumbered.\n You were bare handed.\n You were unskilled in bare handed combat.\n\nFinal Attributes:\n You were nominally aligned.\n You were guarded.\n Your spell casting was enhanced by wearing a robe.\n You were unlucky.\n Camaxtli was angry with you.\n You are dead.\n\nMiscellaneous:\n You didn't encounter any bones levels.\n Total elapsed playing time was none.\n --More--",
+       "cursor": [
+        9,
+        22,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "death-inventory-pick-preserves-blank-status-row",
+   "segments": [
+    {
+     "seed": 2505976,
+     "datetime": "20260305000100",
+     "nethackrc": "OPTIONS=name:Vesper,role:Wizard,race:human,gender:female,align:chaotic,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+     "moves": "   nnnjjjljjjjbunnlluklbjhhhbnlllFl\u000f l\u001bluuk_ \u001b.lFl_>.2s> \u000f\u001bsul\u0004lFhl\u0004ll\u0004lluurm yy uukkll\u0004ll\u0004ll\u001bnyhbjjbbb_@LLkkkkkk.Flqf      40sllLLl\u0004lllllullllukkl\u001bllubhhbjjhhhhbhhhhbnll;l_hhFl_hFlhFl_hFlhFlhsl_hFl\u001bhhyull_@LLukk.jjjjjjblbhhlnulllllllllV\u001blllll#untrap\nnllnb^ul,rp  jackal\nl\u0004llukkk;kFjjFkJ\u001bjjFjjjlljjlllFn_{.:,rp j _>,_>.>   yey ",
+     "frames": {
+      "325": {
+       "screen": "Do you want to see your attributes? [ynq] (n)\n\n\n\n\n\n\u001b[33C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nVesper the Evoker\nDlvl:3 $:0 HP:0(12) Pw:8(8) AC:9 Xp:1",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      },
+      "326": {
+       "screen": "Vesper the Wizard's attributes:\n\nBackground:\n You were an Evoker, a level 1 female human Wizard.\n You were chaotic, on a mission for Anhur\n who was opposed by Ptah (lawful) and Thoth (neutral).\n You were right-handed.\n You were in the Dungeons of Doom, on level 3.\n You entered the dungeon 293 turns ago.\n It was nighttime.\n There was a full moon in effect when your adventure ended.\n You had 9 experience points, 11 more were needed to attain level 2.\n\nBasics:\n You had 0 out of 12 hit points.\n You had all 8 energy points (spell power).\n Your armor class was 9.\n Your wallet was empty.\n Autopickup was off.\n\nFinal Characteristics:\n Your strength was 13 (limit:18/100).\n Your dexterity was 17 (limit:18).\n --More--",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "327": {
+       "screen": " Your constitution was 12 (limit:18).\n Your intelligence was 18 (limit:18).\n Your wisdom was 9 (limit:18).\n Your charisma was 10 (limit:18).\n\nFinal Status:\n You were chained to a heavy iron ball.\n You weren't hungry.\n You were unencumbered.\n You were wielding a quarterstaff.\n You had basic skill with quarterstaff.\n\nFinal Attributes:\n You were fervently aligned.\n You were magic-protected.\n You were warded.\n You were lucky.\n You are dead.\n\nMiscellaneous:\n You didn't encounter any bones levels.\n Total elapsed playing time was none.\n --More--",
+       "cursor": [
+        9,
+        22,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "death-inventory-pick-repaints-shared-status-row",
+   "segments": [
+    {
+     "seed": 4804821,
+     "datetime": "20001013090000",
+     "nethackrc": "OPTIONS=name:Conan,role:Monk,race:human,gender:female,align:lawful,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=autopickup\nOPTIONS=!splash_screen\nOPTIONS=catname:Tom\nOPTIONS=statuslines:3\nOPTIONS=hilite_pet\n",
+     "moves": "    nkuljjjjjjjjbhhhhhhhhhykk\u001bkkkky5syhhhyyyyhhbbbbLlllnnlu\u001bkkklbjjFbjlyybbFhbjjjjbhnubbb:,,llybbYy\u001byyyLlunLFllllllukklllluklukklllu\u001b_\n\nalhhHJknU,_>.s> \u000f\u001bZaujsssjslllllbh;hFlnFyuFbuFb\u001bunlllul10.ulbw-bh#offer\njjjjjjbhhFby\u001byyybbbbllhhhykykie\nkkkyykkuuuukululllll\u001blllllrc llubnjFnjljllllljbhhh\u001bhhh$hhhhyhnLlLyhhyhykkyyyy\u0014\u001byFhFbFbFbbFhFhFhFhFh Fk yhFb\nhjFjFjllulFl\u001bplbbphhhululnppjFbFbFbFbFb FbFbFbss_@HH.Fh_@Hkkkkk.\u001bbnnlllnjqnllnw-lluksklsslssshbjjbhhjb\u001bynlkuunllllqn ellujlFlljjjjjlluuu\u001buluyuukjnlllFnnnnuuuuqn dkk_>.s> \u000f Fk sFkybbjjjbbbbj\u001bbbhhblhjjbbbbnnnnjbyhhbhhqn ehyhy\u001bykkkyl^bjJnbbbbbyhhhhyhylnlnlllullluuuuhhhbhhhyhyykkky15shhh\u001byyi$\nyybbb;bFubFubFubFubFu,bhbn^kyhbhh\u001bhhjqjblbjbhhhyyyybbbbhyyam yy\u001byhbhham hbhhhhsroshhsshshhh_>.>\u001b\u000f\u001b_>.> \u000f\nk\u001byhhsFbsFhhyhbhhyst$kyFusFuuukulnYhhhy_@Nnjjjjj.ns\u001bs_@uulll.FjnjnFnnlllFu uFu su    FkFkFk  f $ k_@HHyyh._@LLuul.Fkquk kFkkyu \u001bkkjjjuuuk10syjk15sk10s3sk10sylh15sklbnj15sFj15sskyu15s\u001bsFjylljhb15ssssn10set   ev eo wxyuu10s  y>sny",
+     "frames": {
+      "969": {
+       "screen": "Do you want to see your attributes? [ynq] (n)\n\u001b[7C\u001b[33m\u000elqqk\u000f\u001b[39m\n \u001b[33m\u000elqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~\u001b[33mmk\u000f\u001b[39m\n\u001b[33m\u000elj\u001b[90m~\u001b[34m\u000f^\u001b[33m\u000emqj\u001b[90m~~~~\u001b[33mx\u000f\u001b[39m\n\u001b[33m\u000ex\u001b[90m~~~~\u001b[33m\u000f^\u001b[90m\u000e~~~~~\u001b[33mx\u001b[39m\u000f\u001b[14C\u001b[90m\u000e~~\u001b[33mm\u000f\u001b[39m\n\u001b[33m\u000emk\u001b[90m~~~~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[12C\u001b[90m\u000e~~\u001b[97m\u000f@\u001b[90m\u000e~\u000f\u001b[39m\n \u001b[33m\u000emqqqk\u001b[90m~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~~\u001b[33ml\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~\u001b[33ml\u000f\u001b[39m\n \u001b[33m\u000elqqqj\u001b[90m~~~\u001b[33mlk\u001b[90m~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000emk\u001b[90m~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mxmqqj\u001b[39m\u000f\u001b[11C\u001b[33m\u000ex\u001b[90m~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000emk\u001b[90m~~~~~\u001b[33mqu\u001b[39m\u000f\u001b[6C\u001b[33m\u000elqqqqk\u001b[39m\u000f   \u001b[33m\u000ex\u001b[39m\u000fI\u001b[33m\u000emk\u000f\u001b[39m\n  \u001b[33m\u000ex\u001b[90m~~~~~~\u001b[33mxlqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f \u001b[33m\u000eqqu\u001b[90m~~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000elj\u001b[90m~~~~\u001b[36m\u000f)\u001b[33m\u000eqvj\u001b[90m~~\u001b[33mmqj\u001b[90m~~~~\u001b[33ml\u001b[39m\u000f   \u001b[90m\u000e~\u001b[33mmq\u001b[94m\u000f^\u001b[33m\u000ex\u001b[90m~\u000f\u001b[39m\n \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~~~~~~~~\u001b[33mx\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33ml\u000f\u001b[39m\n \u001b[33m\u000emk\u001b[90m~~~~~~~~~~~\u001b[33mlqk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000eq\u001b[90m~~~~~\u001b[33mmqj\u000f\u001b[39m\n  \u001b[33m\u000emqk\u001b[90m~~~~~~~~\u001b[33mlj\u001b[39m\u000f \u001b[33m\u000ex\u001b[39m\u000f<\u001b[33m\u000emk\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33mq\u001b[90m~~~\u000f\u001b[39m\n    \u001b[33m\u000ex\u001b[97m\u000f?\u001b[90m\u000e~~~~~~\u001b[33mqu\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[39m\u000f    \u001b[90m\u000e~~~~~~\u001b[33ml\u000f\u001b[39m\n    \u001b[33m\u000emk\u001b[90m~~~~~~~\u001b[33mmk\u001b[39m\u000f \u001b[33m\u000emk\u001b[90m~\u001b[33mmk\u001b[39m\u000f  \u001b[33m\u000ek\u001b[90m~~~~~\u001b[33mqk\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[90m~~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mmqqj\u001b[90m~~~~~~\u001b[33mx\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000emqqvk\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~\u001b[33mlj\u000f\u001b[39m\n\u001b[9C\u001b[33m\u000emk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000emqqqqqqqqqqqj\u000f\u001b[39m\nConan the Novice\u001b[15CSt:18 Dx:15 Co:15 In:8 Wi:15 Ch:8\nLawful $:6 HP:0(49) Pw:28(28) AC:4 Xp:5\nDlvl:5\u001b[34CFoodPois Blind",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      },
+      "970": {
+       "screen": "Do you want an account of creatures vanquished? [ynaq] (n)\n\u001b[7C\u001b[33m\u000elqqk\u000f\u001b[39m\n \u001b[33m\u000elqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~\u001b[33mmk\u000f\u001b[39m\n\u001b[33m\u000elj\u001b[90m~\u001b[34m\u000f^\u001b[33m\u000emqj\u001b[90m~~~~\u001b[33mx\u000f\u001b[39m\n\u001b[33m\u000ex\u001b[90m~~~~\u001b[33m\u000f^\u001b[90m\u000e~~~~~\u001b[33mx\u001b[39m\u000f\u001b[14C\u001b[90m\u000e~~\u001b[33mm\u000f\u001b[39m\n\u001b[33m\u000emk\u001b[90m~~~~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[12C\u001b[90m\u000e~~\u001b[97m\u000f@\u001b[90m\u000e~\u000f\u001b[39m\n \u001b[33m\u000emqqqk\u001b[90m~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~~\u001b[33ml\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~\u001b[33ml\u000f\u001b[39m\n \u001b[33m\u000elqqqj\u001b[90m~~~\u001b[33mlk\u001b[90m~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000emk\u001b[90m~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mxmqqj\u001b[39m\u000f\u001b[11C\u001b[33m\u000ex\u001b[90m~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000emk\u001b[90m~~~~~\u001b[33mqu\u001b[39m\u000f\u001b[6C\u001b[33m\u000elqqqqk\u001b[39m\u000f   \u001b[33m\u000ex\u001b[39m\u000fI\u001b[33m\u000emk\u000f\u001b[39m\n  \u001b[33m\u000ex\u001b[90m~~~~~~\u001b[33mxlqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f \u001b[33m\u000eqqu\u001b[90m~~\u001b[33mx\u000f\u001b[39m\n \u001b[33m\u000elj\u001b[90m~~~~\u001b[36m\u000f)\u001b[33m\u000eqvj\u001b[90m~~\u001b[33mmqj\u001b[90m~~~~\u001b[33ml\u001b[39m\u000f   \u001b[90m\u000e~\u001b[33mmq\u001b[94m\u000f^\u001b[33m\u000ex\u001b[90m~\u000f\u001b[39m\n \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~~~~~~~~\u001b[33mx\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33ml\u000f\u001b[39m\n \u001b[33m\u000emk\u001b[90m~~~~~~~~~~~\u001b[33mlqk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000eq\u001b[90m~~~~~\u001b[33mmqj\u000f\u001b[39m\n  \u001b[33m\u000emqk\u001b[90m~~~~~~~~\u001b[33mlj\u001b[39m\u000f \u001b[33m\u000ex\u001b[39m\u000f<\u001b[33m\u000emk\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33mq\u001b[90m~~~\u000f\u001b[39m\n    \u001b[33m\u000ex\u001b[97m\u000f?\u001b[90m\u000e~~~~~~\u001b[33mqu\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[39m\u000f    \u001b[90m\u000e~~~~~~\u001b[33ml\u000f\u001b[39m\n    \u001b[33m\u000emk\u001b[90m~~~~~~~\u001b[33mmk\u001b[39m\u000f \u001b[33m\u000emk\u001b[90m~\u001b[33mmk\u001b[39m\u000f  \u001b[33m\u000ek\u001b[90m~~~~~\u001b[33mqk\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[90m~~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mmqqj\u001b[90m~~~~~~\u001b[33mx\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000emqqvk\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~\u001b[33mlj\u000f\u001b[39m\n\u001b[9C\u001b[33m\u000emk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000emqqqqqqqqqqqj\u000f\u001b[39m\nConan the Novice\u001b[15CSt:18 Dx:15 Co:15 In:8 Wi:15 Ch:8\nLawful $:6 HP:0(49) Pw:28(28) AC:4 Xp:5\nDlvl:5\u001b[34CFoodPois Blind",
+       "cursor": [
+        59,
+        0,
+        1
+       ]
+      },
+      "971": {
+       "screen": "\u001b[41CVanquished creatures:\n\u001b[7C\u001b[33m\u000elqqk\u000f\u001b[39m\n \u001b[33m\u000elqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~\u001b[33mmk\u001b[39m\u000f\u001b[31C6 fog clouds\n\u001b[33m\u000elj\u001b[90m~\u001b[34m\u000f^\u001b[33m\u000emqj\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f\u001b[31Ca gnome leader\n\u001b[33m\u000ex\u001b[90m~~~~\u001b[33m\u000f^\u001b[90m\u000e~~~~~\u001b[33mx\u001b[39m\u000f\u001b[14C\u001b[90m\u000e~~\u001b[33mm\u001b[39m\u000f\u001b[14Ca dwarf\n\u001b[33m\u000emk\u001b[90m~~~~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[12C\u001b[90m\u000e~~\u001b[97m\u000f@\u001b[90m\u000e~\u001b[39m\u000f\u001b[14C2 rothes\n \u001b[33m\u000emqqqk\u001b[90m~~~~~~\u001b[33mmk\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~~\u001b[33ml\u001b[39m\u000f\u001b[14Ca manes\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000ex\u001b[90m~~\u001b[33ml\u001b[39m\u000f\u001b[15Ca cave spider\n \u001b[33m\u000elqqqj\u001b[90m~~~\u001b[33mlk\u001b[90m~~\u001b[33mx\u001b[39m\u000f\u001b[10C\u001b[33m\u000emk\u001b[90m~\u001b[33mx\u001b[39m\u000f\u001b[15C7 gnomes\n \u001b[33m\u000ex\u001b[90m~~~~~~~\u001b[33mxmqqj\u001b[39m\u000f\u001b[11C\u001b[33m\u000ex\u001b[90m~\u001b[33mx\u001b[39m\u000f\u001b[15C2 jackals\n \u001b[33m\u000emk\u001b[90m~~~~~\u001b[33mqu\u001b[39m\u000f\u001b[6C\u001b[33m\u000elqqqqk\u001b[39m\u000f   \u001b[33m\u000ex\u001b[39m\u000fI\u001b[33m\u000emk\u001b[39m\u000f\u001b[14Ca goblin\n  \u001b[33m\u000ex\u001b[90m~~~~~~\u001b[33mxlqqk\u001b[39m\u000f \u001b[33m\u000elj\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f \u001b[33m\u000eqqu\u001b[90m~~\u001b[33mx\u001b[39m\u000f\u001b[14Ca grid bug\n \u001b[33m\u000elj\u001b[90m~~~~\u001b[36m\u000f)\u001b[33m\u000eqvj\u001b[90m~~\u001b[33mmqj\u001b[90m~~~~\u001b[33ml\u001b[39m\u000f   \u001b[90m\u000e~\u001b[33mmq\u001b[94m\u000f^\u001b[33m\u000ex\u001b[90m~\u001b[39m\u000f\u001b[13C3 lichens\n \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~~~~~~~~\u001b[33mx\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33ml\u001b[39m\u000f\u001b[13C4 newts\n \u001b[33m\u000emk\u001b[90m~~~~~~~~~~~\u001b[33mlqk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000eq\u001b[90m~~~~~\u001b[33mmqj\u000f\u001b[39m\n  \u001b[33m\u000emqk\u001b[90m~~~~~~~~\u001b[33mlj\u001b[39m\u000f \u001b[33m\u000ex\u001b[39m\u000f<\u001b[33m\u000emk\u001b[39m\u000f   \u001b[90m\u000e~~~~~\u001b[33mq\u001b[90m~~~\u001b[39m\u000f\u001b[9C30 creatures vanquished.\n    \u001b[33m\u000ex\u001b[97m\u000f?\u001b[90m\u000e~~~~~~\u001b[33mqu\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[39m\u000f    \u001b[90m\u000e~~~~~~\u001b[33ml\u001b[39m\u000f\u001b[10C--More--\n    \u001b[33m\u000emk\u001b[90m~~~~~~~\u001b[33mmk\u001b[39m\u000f \u001b[33m\u000emk\u001b[90m~\u001b[33mmk\u001b[39m\u000f  \u001b[33m\u000ek\u001b[90m~~~~~\u001b[33mqk\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000ex\u001b[90m~~\u001b[33mx\u001b[90m~~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~\u001b[33mmqqj\u001b[90m~~~~~~\u001b[33mx\u000f\u001b[39m\n\u001b[5C\u001b[33m\u000emqqvk\u001b[90m~~~~\u001b[33mx\u001b[39m\u000f  \u001b[33m\u000ex\u001b[90m~~~~~~~~~~~\u001b[33mlj\u000f\u001b[39m\n\u001b[9C\u001b[33m\u000emk\u001b[90m~\u001b[33mlqj\u001b[39m\u000f  \u001b[33m\u000emqqqqqqqqqqqj\u000f\u001b[39m\nConan the Novice\u001b[15CSt:18 Dx:15 Co:15 In:8 Wi:15 Ch:8\nLawful $:6 HP:0(49) Pw:28(28) AC:4 Xp:5\nDlvl:5\u001b[34CFoodPois Blind",
+       "cursor": [
+        49,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}
