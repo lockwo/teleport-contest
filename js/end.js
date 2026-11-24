@@ -13,7 +13,7 @@ import { game } from './gstate.js';
 import { Goodbye } from './role.js';
 import { midnight, night, getnow, yyyymmdd } from './calendar.js';
 // C ref: monflag.h G_GENOD / G_EXTINCT — the two mvitals[].mvflags "gone" bits.
-import { G_GENOD, G_EXTINCT, G_NOCORPSE, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, STRAT_WAITFORU, In_quest, In_endgame, Is_knox_level, Is_astralevel, PLNMSG_OK_DONT_DIE } from './const.js';
+import { G_GENOD, G_EXTINCT, G_NOCORPSE, COUNTING, WRITING, FREEING, NON_PM, LOW_PM, In_quest, In_endgame, Is_knox_level, Is_astralevel, PLNMSG_OK_DONT_DIE } from './const.js';
 
 // C ref: end.c:1536 -- " on dungeon level N" is omitted in the endgame and in
 // single-level branches (Fort Ludios); the quest reports its own dunlev(), not
@@ -849,6 +849,12 @@ async function done(how) {
                 }
             }
             const clean = await disclose(how, taken);
+            // C ref: end.c:1297-1298, dog.c:831: collect escaping pets now.
+            // A ridden pet drops protected objects before entering mydogs.
+            if (how === ESCAPED || how === ASCENDED) {
+                const { keepdogs } = await import('./dog.js');
+                await keepdogs(true);
+            }
             // C ref: end.c really_done() — "finish_paybill should be called
             // after disclosure but before bones": the shopkeeper who took the
             // hero's possessions gets them dropped on the shop floor (the
@@ -1256,21 +1262,9 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
     if (how < PANICKED) tmp -= Math.trunc(tmp / 10);
     tmp += 50 * (deepest2 - 1);
     if (deepest2 > 20) tmp += 1000 * ((deepest2 > 30) ? 10 : deepest2 - 20);
-    // C ref: end.c really_done() -> keepdogs(TRUE), then outrip_and_score():
-    // an adjacent living pet escapes with the hero and its current HP adds
-    // to the score.  The JS monster list is insertion-ordered; fmon is newest
-    // first, so walk it in reverse before composing the farewell line.
-    const pets = [];
-    if (how === ESCAPED || how === ASCENDED) {
-        const { monnear } = await import('./dogmove.js');
-        for (let i = (game.level?.monsters?.length || 0) - 1; i >= 0; i--) {
-            const mon = game.level.monsters[i];
-            if (mon.mtame && mon.mhp > 0 && monnear(mon, u.ux, u.uy)
-                && !((mon.mstrategy || 0) & STRAT_WAITFORU)) {
-                pets.push(mon);
-            }
-        }
-    }
+    // C ref: end.c:1452-1459: score the chain populated by keepdogs(TRUE).
+    const pets = (how === ESCAPED || how === ASCENDED)
+        ? (game.gm?.mydogs || []) : [];
     // C ref: end.c:1427-1449 — an escape or ascent scores the gems and amulets
     // in the pack (a glass gem counts as one worthless-glass slot) and the
     // artifacts, before the pets' hit points are added.
@@ -1287,7 +1281,7 @@ async function real_death_epilogue(how, scoreSkipped = false, stopprint = false)
         await artifact_score(inv, true, null);
     }
     let urexp = (u?.urexp || 0) + tmp + valuables_pts;
-    for (const pet of pets) urexp += pet.mhp;
+    for (const pet of pets) if (pet.mtame) urexp += pet.mhp;
     // C ref: end.c:1463 — a live Schroedinger's cat adds d(adj_lev(housecat), 8).
     const schroedcat = (how === ESCAPED || how === ASCENDED) && !!game._schroedingers_cat;
     if (schroedcat) {

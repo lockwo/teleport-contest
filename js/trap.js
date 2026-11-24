@@ -15,7 +15,7 @@ import { s_suffix, upstart } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
          feel_location, feel_newsym, docrt, under_water, You_feel, You_see, You_hear, set_msg_mon, have_warning, update_lastseentyp, hold_botl_hp,
-         flush_screen, nh_delay_output } from './display.js';
+         flush_screen, nh_delay_output, display_nhwindow_message, status_hold } from './display.js';
 import { map_trap } from './detect.js';
 import { rn2_on_display_rng } from './disprng.js';
 import { rank_of, has_innate } from './exper.js';
@@ -2177,6 +2177,8 @@ async function domagictrap() {
         const save_conf = u.uprops.Confusion;
         u.uprops.Confusion = 0;
         await seffects(pseudo);
+        // C ref: trap.c:4444 restores HConfusion without dirtying status.
+        status_hold('confusion', false);
         u.uprops.Confusion = save_conf;
         break;
     }
@@ -3560,8 +3562,7 @@ export async function chest_trap(obj, bodypart, disarm) {
     obj.tknown = 0;   /* for xname(); set to 1 below */
     obj.otrapped = 0; /* one-shot; clear first in case the chest kills you */
     await pline(disarm ? 'You set it off!' : 'You trigger a trap!');
-    await topl_more();               /* display_nhwindow(WIN_MESSAGE, FALSE) */
-    game._pending_message = '';
+    await display_nhwindow_message(); /* trap.c:6311: honors WIN_CANCELLED */
     if (Luck > -13 && rn2(13 + Luck) > 7) { /* saved by luck */
         let msg;
         switch (rn2(13)) {

@@ -638,6 +638,7 @@ import { y_monnam, YMonnam, monverbself } from './do_name.js';
 import { exercise, acurr_eff, adjalign } from './attrib.js';
 import { p_skill_of, use_skill } from './enhance.js';
 import { objects, BOULDER } from './mkobj.js';
+import { objdescr_is } from './o_init.js';
 import { Blind_telepat } from './youprop.js';
 import { mflags1_of, M1_HUMANOID, M1_AMORPHOUS, M1_UNSOLID, M1_SLITHY,
          M1_FLY, M1_AMPHIBIOUS, M1_BREATHLESS, mflags2_of,
@@ -768,10 +769,10 @@ export async function use_saddle(otmp) {
     }
     if (Confusion_std() || Fumbling_std() || Glib_std())
         chance -= 20;
-    else if (game.uarmg && objdescr_is_std(game.uarmg, 'riding gloves'))
+    else if (game.uarmg && objdescr_is(game.uarmg, 'riding gloves'))
         /* Bonus for wearing "riding" (but not fumbling) gloves */
         chance += 10;
-    else if (game.uarmf && objdescr_is_std(game.uarmf, 'riding boots'))
+    else if (game.uarmf && objdescr_is(game.uarmf, 'riding boots'))
         /* ... or for "riding boots" */
         chance += 10;
     if (otmp.cursed)
@@ -952,12 +953,6 @@ function touch_petrifies_std(ptr) {
 function Role_if_knight_std() {
     const r = roles?.[game.initrole];
     return (r?.name?.m || '').toLowerCase() === 'knight';
-}
-// C ref: objnam.c objdescr_is(obj, descr) — compares the SHUFFLED appearance
-// string, not the true name (js/eat.js:3206 keeps a private copy).
-function objdescr_is_std(obj, descr) {
-    const o = objects[obj?.otyp];
-    return (o?.descr || o?.oc_descr || '') === descr;
 }
 // C ref: mon.h helpless(mon) — asleep, frozen or otherwise unable to act.
 function helpless_std(mon) {

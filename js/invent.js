@@ -2875,7 +2875,7 @@ export async function dismiss_invent_screen(textWindow = false) {
     // no such bracket, so flush_screen()'s bot() runs BEFORE the map and the
     // gnew map glyphs overwrite the shared status row.
     if (!textWindow) game._statusDocrt = false;
-    await flush_screen(1);
+    if (!(game._menuOffx > 0)) await flush_screen(1);
     // C ref: windows.c select_menu() runs the dismissal with gb.bot_disabled, so
     // docrt()'s cls() blanked the status window and flush_screen()'s bot() was a
     // no-op: the rows stay blank (disp.botlx pending) until the next bot().
@@ -5556,11 +5556,10 @@ async function accessory_or_armor_on(obj) {
                 // C ref: yn_function(qbuf, rightleftchars="rl", '\0', TRUE) — prompt
                 // until a valid finger is chosen; ESC/space (default '\0') cancels.
                 while (!mask) {
-                    // def '' (no shown default) matches C yn_function(..,'\0',TRUE);
-                    // quitchars (space/return/ESC) return '' -> cancel like C's '\0'.
+                    // Preserve C's NUL default in CQ_REPEAT, including on replay.
                     const ans = await y_n(`Which ${ringpfx}${body_part(3)}, Right or Left?`,
-                                          'rl\x1b', '');
-                    if (ans === '' || ans === '\x1b') return ECMD_OK;
+                                          'rl', '\0');
+                    if (ans === '\0' || ans === '\x1b') return ECMD_OK;
                     if (ans === 'l') mask = W_RINGL;
                     else if (ans === 'r') mask = W_RINGR;
                 }
@@ -8552,8 +8551,14 @@ export async function dofire(getDir) {
                 await weldmsg(game.uwep);
                 return ECMD_FAIL;
             }
+            // C ref: cmd.c:3814 resets a no-time dofire before the queued swap.
+            (await import('./cmd.js')).reset_cmd_vars(game.multi < 0);
             await moveloop_input_redraw(); /* queued command = new moveloop_core() iteration */
             await doswapweapon();
+            // C ref: dothrow.c:523-524. The retry stays queued during the
+            // swap's turn, so getlin() can consume it while a monster acts.
+            (await import('./cmd.js')).cmdq_add_ec(CQ_CANNED, 'dofire');
+            await record_canned_repeat('doswapweapon');
             game.context.move = 0;
             // C ref: cmd.c rhack(). The queued doswapweapon returned
             // ECMD_TIME and is not dokick, so the kicked location resets.
@@ -8568,6 +8573,9 @@ export async function dofire(getDir) {
                 await record_canned_repeat('doswapweapon');
                 return ECMD_OK;
             }
+            if (!(await dofire_cmdq_head('dofire'))) return await dofire_cmdq_remainder();
+            cmdq_pop(CQ_CANNED);
+            await record_canned_repeat('dofire');
             await moveloop_input_redraw(); /* next moveloop_core() head, before the requeued dofire */
             return await dofire(getDir);
         } else {
@@ -11741,11 +11749,11 @@ async function itemactions_run(otmp, act, getDir) {
     const seedInvlet = () => cmdq_add_key(CQ_CANNED, obj_to_let(otmp));
     // C ref: rhack() records the queued command on CQ_REPEAT (clearing whatever
     // #repeat targeted before) when it pops the pushed ec off CQ_CANNED.
-    const recordRepeat = async (fn) => {
-        if (game._ia_replay) { game._ia_deferred_repeat = fn; return; }
+    const recordRepeat = async (...fns) => {
+        if (game._ia_replay) { game._ia_deferred_repeat = fns; return; }
         const cmd = await import('./cmd.js');
         cmdq_clear(CQ_REPEAT);
-        cmd.cmdq_add_ec(CQ_REPEAT, fn);
+        for (const fn of fns) cmd.cmdq_add_ec(CQ_REPEAT, fn);
         game._itemaction_repeat = true;
     };
     switch (act) {
@@ -11850,6 +11858,7 @@ async function itemactions_run(otmp, act, getDir) {
     }
     case IA_EAT_OBJ: {
         // C: starts with the m-prefix so floor food is ignored.
+        await recordRepeat('do_reqmenu', 'doeat');
         seedInvlet();
         const { doeat } = await import('./eat.js');
         const iflags = game.iflags || (game.iflags = {});
@@ -11872,6 +11881,7 @@ async function itemactions_run(otmp, act, getDir) {
         return (await dopay()) === ECMD_TIME ? ECMD_TIME : ECMD_OK;
     case IA_QUAFF_OBJ: {
         // C: m-prefix so a fountain/sink here is ignored.
+        await recordRepeat('do_reqmenu', 'dodrink');
         seedInvlet();
         const { dodrink } = await import('./potion.js');
         const iflags = game.iflags || (game.iflags = {});

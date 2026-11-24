@@ -917,6 +917,7 @@ export async function rhack(key) {
     canned_kick_ran = false;
     // A nonzero key is moveloop_core's count repeat of the previous command.
     const countRepeat = key !== 0;
+    const repeatingCommand = !!game.in_doagain;
     const hadForcefight = !!game.context?.forcefight;
     // A #travel/#retravel that picked a destination returned ECMD_TIME in C, so rhack() runs no
     // reset_cmd_vars() (forcefight survives) even when its first step was refused ("Pardon me").
@@ -2048,6 +2049,7 @@ export async function rhack(key) {
             game.multi = 0;
         } else {
             game.context.forcefight = 1;
+            game.domove_attempting = (game.domove_attempting | 0) | DOMOVE_WALK;
             game.context.move = 0;
             game.multi = 0;
             // C ref: cmd.c:3769-3773 — prefix_seen belongs to this rhack call,
@@ -2124,11 +2126,9 @@ export async function rhack(key) {
         // step west, not rush).
         if (game.context.run_prefix || staleRun || staleRush) {
             await Norep_topl(`Double ${ch === 'G' ? 'run' : 'rush'} prefix, canceled.`);
-            game.context.run_prefix = 0;
-            game.context.move = 0;
-            // C ref: rhack() — ECMD_CANCEL runs reset_cmd_vars(TRUE), which zeroes gm.multi; a
-            // count typed before the second prefix must not repeat the canceled command.
-            game.multi = 0;
+            // C ref: cmd.c:3764-3767, an ECMD_CANCEL prefix resets every
+            // command flag, including an intervening F's forcefight.
+            reset_cmd_vars(true);
         } else {
             // C ref: cmd.c do_run()/do_rush() are PREFIXCMDs: rhack marks the
             // prefix and jumps back to `got_prefix_input`, which re-enters
@@ -2214,7 +2214,7 @@ export async function rhack(key) {
         // C ref: cmd.c set_move_cmd() `if (!gd.domove_attempting && !u.dz) svc.context.run = run;` -- a
         // plain walk replaces any run left live by an earlier command (a travel's run == 8 that an F-prefixed
         // dig kept, see above), while an F prefix left domove_attempting set, so its step keeps the run.
-        game.context.run = game.context.forcefight ? svc_context_run() : 0;
+        game.context.run = game.domove_attempting ? svc_context_run() : 0;
         // C ref: cmd.c rhack():3785-3788 DOMOVE_WALK arm — `if (gm.multi)
         // svc.context.mv = TRUE; domove();`.  A counted walk's later steps are
         // then moveloop_core()'s context.mv arm (js/allmain.js), not rhack().
@@ -2292,7 +2292,16 @@ export async function rhack(key) {
     // A nested getobj() can decline without cancelling its timed caller
     // (apply.c doapply() keeps ECMD_TIME when tinning finds no corpse).
     // Only a no-time result lets that null pick cancel the command itself.
-    const getobjCancelled = !!game.context._getobj_cancelled && !game.context.move;
+    // C ref: cmd.c:3753-3759,3814-3815. Record the extended command before
+    // reset_cmd_vars(multi < 0), so a declined death clears that new entry too.
+    // Movement bypasses C's result epilogue. An inline travel loop may also
+    // clear context.move after its command already returned ECMD_TIME.
+    const resetAfterDeath = !game.context.move && !travelTimed
+        && (game.multi | 0) < 0 && !(repeatBind?.flags & (MOVEMENTCMD | PREFIXCMD));
+    const getobjCancelled = (!!game.context._getobj_cancelled && !game.context.move)
+        || resetAfterDeath;
+    const itemactionRepeat = game._itemaction_repeat;
+    game._itemaction_repeat = false;
     game.context._getobj_cancelled = false;
     if (windowKey) {
         // Consumed by the open window: CQ_REPEAT still holds its command.
@@ -2313,7 +2322,8 @@ export async function rhack(key) {
         // "5 " before a real `s` search ate 's','i','l','v' as dismissals,
         // so the search itself, and every command after it, never ran).
         game.multi = 0;
-    } else if (!game.in_doagain) {
+        if (resetAfterDeath) reset_cmd_vars(true);
+    } else if (!repeatingCommand) {
         // C ref: cmd.c rhack() — a PREFIXCMD (F/m/g/G) goes `goto
         // got_prefix_input` BEFORE the recording block, so it never reaches
         // it; only the command it eventually prefixes gets recorded.
@@ -2331,10 +2341,9 @@ export async function rhack(key) {
             // reset_cmd_vars(TRUE) AFTER the ext_tlist recording, so nothing stays queued.
             if (game._ext_tlist && !game.context._pfx_rejected)
                 cmdq_of(CQ_REPEAT).push({ typ: CMDQ_EXTCMD, ec_entry: { ef_txt: game._ext_tlist } }, ...mid);
-        } else if (game._itemaction_repeat) {
-            // C: the item action pushed on CQ_CANNED ran as its own rhack() and
-            // recorded itself on CQ_REPEAT; the menu command ('*', 'i') is not.
-            game._itemaction_repeat = false;
+        } else if (itemactionRepeat) {
+            // C records the queued item action in its own rhack() call.
+            // Consume that ownership even when this command was canceled.
             cmdq_of(CQ_REPEAT).push(...midRepeat);
         } else if (repeatName !== 'do_repeat' && !isPrefixCmd) {
             if (!game.context._prefix_seen && !mPrefixSeen) cmdq_of(CQ_REPEAT).length = 0;
@@ -3839,6 +3848,9 @@ export async function domove(dx, dy, attemptTracked = true) {
     // C ref: hack.c:2990 — domove_core()'s last statement (reached only by a
     // completed move, which is when u.umoved holds) is runmode_delay_output().
     if (game.u?.umoved) await runmode_delay_output();
+    // C ref: hack.c:2706, travel also consumes the pending movement attempt,
+    // without clearing forcefight (only rhack's WALK arm clears that).
+    game.domove_attempting = 0;
     // C ref: hack.c domove(). Once domove_core() returns, by whatever path
     // (blocked step, failed rush, attack, displacement), the kicked location
     // is reset so pets stop avoiding it.
@@ -8073,15 +8085,32 @@ export async function do_fight() {
     return ECMD_OK;
 }
 
+let repeat_copy = null;
+register_process_static(() => { repeat_copy = null; });
+
+// C ref: cmd.c:1652-1655. Inline runs reach this boundary before their
+// monster turns, while the enclosing JS rhack() has not returned yet.
+export function finish_do_repeat() {
+    if (repeat_copy === null) return;
+    game.in_doagain = false;
+    cmdq_of(CQ_REPEAT).length = 0;
+    game._cmdq_repeat = repeat_copy;
+    repeat_copy = null;
+    // Item actions run inline here rather than from C's next canned command.
+    if (game._ia_deferred_repeat) {
+        cmdq_of(CQ_REPEAT).length = 0;
+        for (const fn of game._ia_deferred_repeat) cmdq_add_ec(CQ_REPEAT, fn);
+        game._ia_deferred_repeat = null;
+    }
+    (game.iflags || (game.iflags = {})).menu_requested = false;
+}
+
 // C ref: cmd.c:1638 do_repeat() — the #repeat command (^A).
 export async function do_repeat() {
     let res = ECMD_OK;
     const svc = game.context || (game.context = {});
-    const iflags = game.iflags || (game.iflags = {});
 
     if (!game.in_doagain) {
-        let repeat_copy;
-
         if (!cmdq_peek(CQ_REPEAT)) {
             await Norep_topl('There is no command available to repeat.');
             return ECMD_FAIL;
@@ -8089,18 +8118,7 @@ export async function do_repeat() {
         repeat_copy = cmdq_copy(CQ_REPEAT);
         game.in_doagain = true;
         await rhack(0); /* read and execute command */
-        game.in_doagain = false;
-        cmdq_of(CQ_REPEAT).length = 0;
-        game._cmdq_repeat = repeat_copy;
-        /* C ref: itemactions() only queues its command on CQ_CANNED; it runs (and is
-           recorded on CQ_REPEAT) in the rhack() AFTER this restore.  This port runs it
-           inline inside the replay, so the recording was deferred to here. */
-        if (game._ia_deferred_repeat) {
-            cmdq_of(CQ_REPEAT).length = 0;
-            cmdq_add_ec(CQ_REPEAT, game._ia_deferred_repeat);
-            game._ia_deferred_repeat = null;
-        }
-        iflags.menu_requested = false;
+        finish_do_repeat();
         if (svc.move)
             res = ECMD_TIME;
     }

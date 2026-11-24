@@ -7,7 +7,7 @@ import { Invis_hero as Invis_hero_yp } from './youprop.js';
 // matching the C order exactly; the first probe that "fires" returns.
 
 import { letter } from './hacklib.js';
-import { game } from './gstate.js';
+import { game, svc_context_run } from './gstate.js';
 import { ere_compile } from './pickup.js';
 import { p_coaligned, inhistemple } from './priest.js';
 import { roomAt } from './roomat.js';
@@ -349,7 +349,7 @@ export async function growl(mtmp) {
         await update_topl(`${Monnam(mtmp)} ${vtense(null, verb)}!`);
         game.last_msg = PLNMSG_GROWL; // sounds.c:417 iflags.last_msg
         // C ref: growl() — `if (gc.context.run) nomul(0);` inside the same block.
-        if (game.context?.run) (await import('./hack.js')).nomul(0);
+        if (svc_context_run()) (await import('./hack.js')).nomul(0);
     }
     const { wake_nearto } = await import('./mon.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 18);
@@ -384,7 +384,7 @@ export async function yelp(mtmp) {
     if (!verb) return;
     await update_topl(`${Monnam(mtmp)} ${vtense(null, verb)}!`);
     // C ref: yelp() — `if (gc.context.run) nomul(0);` after the message.
-    if (game.context?.run) (await import('./hack.js')).nomul(0);
+    if (svc_context_run()) (await import('./hack.js')).nomul(0);
     const { wake_nearto } = await import('./mon.js');
     await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 12);
 }
@@ -1161,7 +1161,7 @@ export async function whimper(mtmp) {
     if (whimper_verb) {
         await update_topl(`${Monnam(mtmp)} ${vtense(null, whimper_verb)}.`);
         const { nomul } = await import('./hack.js');
-        if (game.context?.run) nomul(0);
+        if (svc_context_run()) nomul(0);
         const { wake_nearto } = await import('./mon.js');
         await wake_nearto(mtmp.mx, mtmp.my, (ptr?.mlevel ?? 0) * 6);
     }

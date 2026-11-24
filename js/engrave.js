@@ -1298,12 +1298,6 @@ export async function doengrave() {
         game.u.uconduct.literate = (game.u.uconduct.literate || 0) + 1;
     }
 
-    // getlin drew its prompt over the top line; the engrave occupation prints
-    // no message on its first (and, for short words, only) action, so the
-    // captured frame after Enter has a blank message line.  Clear the stale
-    // "You write in the dust ..." pline that --More-- already acknowledged.
-    game._pending_message = '';
-    game._toplin = 0;
 
     // Mix up engraving if surface or state of mind is unsound.  This does not
     // add or remove spaces.  C ref: engrave.c:1219-1227.

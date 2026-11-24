@@ -2840,6 +2840,7 @@ export function set_ustuck(mtmp) {
             impossible(`Sticking to a monster at distu ${mdistu(mtmp)}?`)
                 .catch(() => {});
     }
+    game.botl = true;
     if (game.disp) game.disp.botl = true;
     u.ustuck = mtmp;
     if (!u.ustuck) {

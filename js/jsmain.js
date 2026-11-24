@@ -1322,11 +1322,11 @@ export class NethackGame {
             // that facet (and, since a later facet may have been auto-forced,
             // re-resolves forced facets afterward).
             if (act.k === 'switch' && act.facet !== prompt) {
-                // C ref: makepicks sets nextpick = RS_<facet> and jumps straight
-                // to that facet's menu, leaving any earlier-but-unchosen facets
-                // alone.  Reset the requested facet (so its menu reappears) and
-                // run rigid_role_checks() to fill any single-option facets the
-                // current partial selection now forces.
+                // C ref: role.c:2348-2356,2432-2440,2520-2528,2606-2614.
+                // Switching discards both the current facet (the eventual
+                // ROLE/RACE/GEND/ALGN = k assignment) and the requested one.
+                // Keeping the old facet can constrain the new choice incorrectly.
+                sel[prompt] = ROLE_NONE;
                 const switchTo = act.facet;
                 if (switchTo === 'role') sel.role = ROLE_NONE;
                 else if (switchTo === 'race') sel.race = ROLE_NONE;

@@ -24,7 +24,7 @@ import { t_at as t_at_hk, trapname as trapname_hk, crawl_destination, Levitation
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
-import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR, JUMPING, INTRINSIC } from './const.js';
+import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR, JUMPING, INTRINSIC, DOMOVE_WALK } from './const.js';
 import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { pending_glyph_cursor, cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, furniture_mimic_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg, nh_delay_output } from './display.js';
@@ -568,11 +568,11 @@ async function takeTurn() {
 async function run_movement(run) {
     const u = game.u;
     const c = game.context;
-    c.run = run;
-    // C ref: cmd.c:1631-1632,3785-3790 — F arms DOMOVE_WALK, which
-    // takes precedence even when g/G also armed DOMOVE_RUSH. Do not create
-    // an implicit run count, and clear forcefight before the elapsed turn.
-    if (c.forcefight) {
+    // C ref: cmd.c:3785-3801, only a pending WALK clears forcefight.
+    // Travel can consume that bit while leaving forcefight set for later runs.
+    const walk = !!(game.domove_attempting & DOMOVE_WALK);
+    c.run = walk ? svc_context_run() : run;
+    if (walk) {
         if (game.multi) c.mv = true;
         await domove(u.dx, u.dy);
         c.forcefight = 0;
@@ -2006,19 +2006,12 @@ export function is_valid_travelpt(x, y) {
     const u = game.u;
     if (u && x === u.ux && y === u.uy) return true;
     const loc = game.level?.at(x, y);
-    // C ref: hack.c:1535-1536 — fast-reject only a KNOWN blank stone/secret-
-    // corridor square that hasn't been SEEN (glyph_is_cmap(glyph) && S_stone ==
-    // glyph_to_cmap(glyph) && !seenv), matching terrain_description()'s own
-    // STONE/SCORR split above.  A genuinely never-drawn (GLYPH_UNEXPLORED) cell
-    // does NOT hit this guard and falls through to the real BFS instead — the
-    // old broader "!seenv && remembered_glyph == null" test wrongly rejected
-    // that case too, always reading "no travel path" for a never-explored but
-    // reachable cell even when the BFS would have found one.
-    // glyph_is_cmap(S_stone): a cell remembered as drawn-blank; a never-drawn
-    // one (no seenv, no remembered glyph == GLYPH_UNEXPLORED, see
-    // terrain_description()) is NOT a cmap glyph and goes to the BFS.
-    if (loc && (loc.typ === STONE || loc.typ === SCORR) && !loc.seenv
-        && !game.level?.flags?.arboreal && loc.remembered_glyph != null) return false;
+    // C ref: hack.c:1535-1537. Test the displayed S_stone glyph, not
+    // the underlying terrain, which can be an unseen room or corridor.
+    const rg = loc?.remembered_glyph;
+    if (loc && !loc.seenv && loc.disp_ch === ' ' && !loc.disp_unexplored
+        && rg && !rg.nothing && !rg.darkroom && !loc.disp_monster)
+        return false;
     const tx = u.tx, ty = u.ty;
     u.tx = x; u.ty = y;
     const ret = findtravelpath(TRAVP_VALID);
@@ -2631,6 +2624,10 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // detection, blind telepathy off-screen) without drawing it leaves the
         // remembered object glyph in place, so only a drawn monster hides it.
         if (mtmp && loc.disp_monster) return false;
+        // C ref: getpos.c:462. A web glyph is not an amulet glyph even
+        // when an unseen amulet on the same square shares its character.
+        if (loc.disp_trap || (loc.mapped_trap_ttyp
+            && !loc.disp_objotyp && !loc.disp_hallucobj)) return false;
         const rememberedObject = loc.remembered_glyph;
         // A hallucinated floor object displays a random object glyph
         // (display.h random_obj_to_glyph): still glyph_is_object(), so the
@@ -2659,6 +2656,7 @@ export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false)
         // square that has since become floor (an umber hulk's tunnel, a dug
         // wall) out of the hero's sight.
         return explored && !stoneGlyph
+            && (terrainFull || !loc.disp_unexplored)
             && (isDoorSym || loc.typ === ROOM || loc.typ === CORR)
             && !(loc.typ !== DOOR && loc.remembered_glyph?.wall)
             && !gloc_glyph_covered(x, y, loc, mtmp)
@@ -2913,7 +2911,7 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
         const shown = game.level?.at(x, y);
         const warnlev = ((tmode & 0x08) && shown?.disp_warning) ? Number(shown.disp_ch) : 0;
         const fm = { s: '' };
-        if (shows_mimic_object(mtmp, x, y))
+        if (shows_mimic_object(mtmp, x, y) || shows_mimic_furniture(mtmp, x, y))
             do_screen_description({ x, y }, true, '', { s: '' }, fm, {});
         /* C: the cell shows the S_goodpos glyph that '$' tmp_at()ed over it
            (defsyms[S_goodpos].explanation) whatever lies underneath */
@@ -2923,11 +2921,6 @@ function getpos_describe(x, y, menuForm, validfn, detectMode, terrainMode) {
              ? rndmonnam_dn().name   /* lookat(): "'monster' must actually be a statue" */
              : (mtmp && shown?.disp_monster)   /* lookat(): glyph_is_monster -> look_at_monster ("it" if unspotted) */
              ? look_at_monster(mtmp, x, y, false).buf
-             /* C: glyph_at() of a visible furniture mimic is its cmap glyph, so
-                pager.c do_screen_description() names defsyms[].explanation */
-             : (mtmp && M_AP_TYPE(mtmp) === M_AP_FURNITURE && mtmp.mappearance != null
-                && canspotmon(mtmp) && defsyms[mtmp.mappearance | 0])
-             ? defsyms[mtmp.mappearance | 0].explanation
              : (warnlev >= 1 && def_warnsyms[warnlev]) ? def_warnsyms[warnlev].desc
              : (unseen_creature_desc(x, y, terrainMode)
                 || ((tmode & 0x04) && look_at_object_here(x, y, true))
@@ -3638,14 +3631,13 @@ export async function reveal_terrain(which_subset) {
             // C ref: detect.c:2219-2231 — retain the requested remembered
             // objects, or a seen trap underneath an object being stripped.
             const rg = loc.remembered_glyph;
+            const remembered_trap = glyph_at(x, y, true).kind === 'trap';
             // C ref: detect.c:2232 — a stripped object/trap glyph on a spot whose
             // seenv is 0 (mapped by object/trap detection, never actually seen)
             // becomes the blank default glyph rather than bare terrain.
             if (!full && rg && !loc.seenv && !isHero && !loc.invisMon
                 && ((rg.objotyp != null && !keep_objs)
-                    || (!keep_traps && t_at_hk(x, y)?.tseen
-                        && rg.ch === trap_glyph(t_at_hk(x, y)).ch
-                        && rg.color === trap_glyph(t_at_hk(x, y)).color))) {
+                    || (!keep_traps && remembered_trap))) {
                 show_glyph_cell(x, y, ' ', NO_COLOR, false);
                 continue;
             }
@@ -3735,9 +3727,7 @@ export async function reveal_terrain(which_subset) {
             // of sight) is kept exactly as remembered, not re-derived from the
             // current level state.
             if (rg && rg.objotyp == null && !rg.pile && !rg.darkroom && !rg.bwEngr
-                && !(keep_traps === false && t_at_hk(x, y)?.tseen
-                     && rg.ch === trap_glyph(t_at_hk(x, y)).ch
-                     && rg.color === trap_glyph(t_at_hk(x, y)).color)) {
+                && !(!keep_traps && remembered_trap)) {
                 let rcolor = rg.color;
                 if (rg.ch === '#' && rcolor === CLR_WHITE) rcolor = NO_COLOR;
                 show_glyph_cell(x, y, rg.ch, rcolor, rg.decgfx, bg_attr(rg));
@@ -3754,16 +3744,13 @@ export async function reveal_terrain(which_subset) {
     // The map's last row overlaps the title row of an unclipped three-line
     // tty status window.  show_glyph() emits only changed known-map cells,
     // but TER_FULL replaces even visually blank unexplored glyph-buffer
-    // entries, so its complete shared row overwrites the title.  _term is the
-    // glyph buffer as of the preceding terminal build, saved by
-    // show_glyph_cell() before its first update.
+    // entries, so its complete shared row overwrites the title.
+    // C ref: display.c:2031-2047 only marks changed glyphs gnew.  An untouched
+    // unexplored cell has no prior terminal snapshot and is still not a write.
     const sharedRow = [];
     for (let x = 1; x < COLNO; x++) {
         const loc = game.level?.at(x, ROWNO - 1);
-        const old = loc?._term;
-        if (!loc || (!full && old && old.ch === loc.disp_ch
-            && old.color === loc.disp_color && old.decgfx === loc.disp_decgfx
-            && old.attr === loc.disp_attr && old.dark === loc.disp_dark)) continue;
+        if (!loc || (!full && !loc._gchg)) continue;
         sharedRow[x - 1] = {
             ch: loc.disp_ch, color: loc.disp_color, decgfx: loc.disp_decgfx,
             attr: loc.disp_attr, dark: loc.disp_dark,

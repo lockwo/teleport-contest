@@ -2352,18 +2352,1187 @@
   },
   {
    "name": "terrain-view-feature-search-keeps-displayed-trap",
-   "segments": [{
-    "seed": 42,
-    "datetime": "20260602130000",
-    "nethackrc": "OPTIONS=name:Zoe,role:Ranger\nOPTIONS=!tutorial,!tips\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n",
-    "moves": " y\u001b  h#wizwish\nteleportation trap\nl#terrain\nc ^\u001b",
-    "frames": {
-     "47": {
-      "screen": "teleportation trap\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[49C\u000elqq\u000f\n\u001b[49C\u000ex~~\u000f\n\u001b[49C\u000ex~~\u000f\n\u001b[46C\u000elqqj~~~mqqk\u000f\n\u001b[46C\u000ex~~~~~~~~~x\u000f\n\u001b[46C\u000e~~~~~~~~\u001b[35m\u000f^\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[46C\u000ex~~~~~~~~\u001b[97m\u000f!\u001b[39m\u000e~\u000f\n\u001b[46C\u000emqqqqqqqqqj\u000f\n\nWizard the Tenderfoot\u001b[10CSt:15 Dx:14 Co:16 In:14 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
-      "cursor": [54, 18, 1]
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20260602130000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Ranger\nOPTIONS=!tutorial,!tips\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b  h#wizwish\nteleportation trap\nl#terrain\nc ^\u001b",
+     "frames": {
+      "47": {
+       "screen": "teleportation trap\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[49C\u000elqq\u000f\n\u001b[49C\u000ex~~\u000f\n\u001b[49C\u000ex~~\u000f\n\u001b[46C\u000elqqj~~~mqqk\u000f\n\u001b[46C\u000ex~~~~~~~~~x\u000f\n\u001b[46C\u000e~~~~~~~~\u001b[35m\u000f^\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[46C\u000ex~~~~~~~~\u001b[97m\u000f!\u001b[39m\u000e~\u000f\n\u001b[46C\u000emqqqqqqqqqj\u000f\n\nWizard the Tenderfoot\u001b[10CSt:15 Dx:14 Co:16 In:14 Wi:13 Ch:7 Neutral\nDlvl:1 $:0 HP:14(14) Pw:3(3) AC:7 Xp:1",
+       "cursor": [
+        54,
+        18,
+        1
+       ]
+      }
      }
     }
-   }]
+   ]
+  },
+  {
+   "name": "chargen switching facets discards the current selection (role.c:2609)",
+   "segments": [
+    {
+     "seed": 42490,
+     "datetime": "20000922140000",
+     "nethackrc": "OPTIONS=name:Polly,role:Valkyrie,race:orc,gender:male,align:chaotic\nOPTIONS=symset:DECgraphics\nOPTIONS=symset:DECgraphics\nOPTIONS=!tutorial\nOPTIONS=lit_corridor\n",
+     "moves": "\u001buu/ykk._xxuuu,fdunnnnjjjj  uuuuCnbhhhbb, <nU\u001bn5sllll#sit\n/yn",
+     "frames": {
+      "59": {
+       "screen": "\u001b[41C\u001b[7mPick a race or species\u001b[0m\n\n\u001b[41CValkyrie <race> female <alignment>\n\nNetHack, Copyright 1985-2026\u001b[13Ch - human\n\u001b[9CBy Stichting Mathematisch Ce    d - dwarf\n\u001b[9CVersion 5.0.0 MacOS, built M    * * Random\n\u001b[9CSee license for details.\n\u001b[41C? - Pick another role first\n\u001b[45Crole forces female\n\u001b[41C[ - Pick alignment first\n\u001b[41C~ - Set role/race/&c filtering\n\u001b[41Cq - Quit\n\u001b[41C(end)",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "60": {
+       "screen": "\u001b[41C\u001b[7mPick a race or species\u001b[0m\n\n\u001b[41CValkyrie <race> female <alignment>\n\nNetHack, Copyright 1985-2026\u001b[13Ch - human\n\u001b[9CBy Stichting Mathematisch Ce    d - dwarf\n\u001b[9CVersion 5.0.0 MacOS, built M    * * Random\n\u001b[9CSee license for details.\n\u001b[41C? - Pick another role first\n\u001b[45Crole forces female\n\u001b[41C[ - Pick alignment first\n\u001b[41C~ - Set role/race/&c filtering\n\u001b[41Cq - Quit\n\u001b[41C(end)",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "61": {
+       "screen": "\u001b[41C\u001b[7mPick a race or species\u001b[0m\n\n\u001b[41CValkyrie <race> female <alignment>\n\nNetHack, Copyright 1985-2026\u001b[13Ch - human\n\u001b[9CBy Stichting Mathematisch Ce    d - dwarf\n\u001b[9CVersion 5.0.0 MacOS, built M    * * Random\n\u001b[9CSee license for details.\n\u001b[41C? - Pick another role first\n\u001b[45Crole forces female\n\u001b[41C[ - Pick alignment first\n\u001b[41C~ - Set role/race/&c filtering\n\u001b[41Cq - Quit\n\u001b[41C(end)",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "terrain mapping preserves colorless unknown floor (display.c:244)",
+   "segments": [
+    {
+     "seed": 95756,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Monk\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=mention_walls\nOPTIONS=!color\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\nblessed amulet of life saving\nWg\u0016castle\r\u0006\u0017wand of opening\nzgj#wizwish\rwooden flute\rahnCDEFG\r#wizgenesis\relectric eel\rbjgbYbbbjuuYKFyBajk wd\u0004n\u0017blessed +3 gray dragon scale mail\nWg\u0016castle\n\u0006#wizwish\nring of levitation\nPglllHgjllgjjjjwd\u0014jjj._hhh.#wizwish\rblessed amulet of life saving\rWf\u0016castle\r\u0006#wizwish\nwooden flute\nainAAAAA\n#wizwish\rwand of digging\nzhn\u0017wand of digging\rzfnlsUhFngjgkFjJsh\u001bobdh#wizwish\nblessed amulet of life saving\nWf\u0016castle\n\u0017ring of levitation\rPiukrj  #terrain\na\u001b",
+     "frames": {
+      "490": {
+       "screen": "Showing known terrain only...--More--\n\n\n \u000elqwqqqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u000f \u000ex\u000f   \u000ex`````````\u000f\u001b[45C\u000e`````````x~\u000f   \u000e~x\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`lqqqqqk```````````````````````````````````````````````lqqqqqk`x\u000f \u000elqq\u000f \u000ex\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`x\u000f\u001b[5C\u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f  `  \u000ex`x\u000f \u000ex\u000f \u000e~~x\u000f\n \u000ex\u000f \u000elqj\u000f \u000ex`x\u000f\u001b[5C\u000ea\u000f\u001b[47C+\u001b[5C\u000ex`tqj\u000f \u000ex~x\u000f\n \u000ex\u000f \u000ex\u000f   \u000ex`mqqqqwvqqqqqqwqwqqqqqqqwqqqqq\u000f+\u000eqqqqqwqqqqqqqqqqwqqqqqqqvwqqqqj`x\u000f   \u000ex~x\u000f\n \u000etqj\u000f \u000elqj``````x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C+\u001b[10C\u000ex\u000f\u001b[8C\u000ex``````x\u000f \u000elqu~x\u000f\n \u000ex\u000f   \u000ex\u000f\u001b[7C\u000e`x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex~x\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\u001b[5C\u000e`tqqqqqqqvqvqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqqqqu\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex~x\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\u001b[6C+\u000e~\u000f  \u000e~\u000f   \u000e~\u000f   \u000e~\u000f   \u000e~\u000f \u000ex\u000f \\\u001b[9C+\u001b[10C+    {   #\u000e`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f<\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000emqj\u000f \u000ex\u000f\u001b[5C\u000e`tqqqqqqqwqwqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqqqqu\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex\u000f\u001b[5C\u000e`x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[8C\u000ex`\u000f\u001b[7C\u000ex\u000f   \u000ex\u000f\n \u000ex\u000f \u000eqqwqu``````x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C+\u001b[10C\u000ex\u000f\u001b[8C\u000ex``````lqu\u000f \u000eqqu\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`lqqqqvwqqqqqqvqvqqqqqqqvqqqqq\u000f+\u000eqqqqqvqqqqqqqqqqvqqqqqqqwvqqqqk`x~x\u000f   \u000ex\u000f\n \u000etqk\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C\u000ea\u000f\u001b[47C+\u001b[5C\u000ex`x\u000f \u000emqk\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C\u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f   \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`mqqqqqj```````````````````````````````````````````````mqqqqqj`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f \u000ex\u000f   \u000ex\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqvqqqj\u000f\nWizard the Candidate\u001b[11CSt:16 Dx:13 Co:12 In:11 Wi:14 Ch:9 Lawful\nDlvl:27 $:0 HP:14(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        37,
+        0,
+        1
+       ]
+      },
+      "491": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n \u000elqwqqqwq\u000f not your character.  Game time does not advance.  This mode is used\n \u000ex\u000f \u000ex\u000f   \u000ex`\u000f to look around the map, or to select a location on it.\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`\u000f When in this mode, you can press ESC to return to normal game mode,\n \u000ex\u000f \u000elqj\u000f \u000ex`\u000f and pressing ? will show the key help.\n \u000ex\u000f \u000ex\u000f   \u000ex`\u000f (end)\n \u000etqj\u000f \u000elqj``````x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C+\u001b[10C\u000ex\u000f\u001b[8C\u000ex``````x\u000f \u000elqu~x\u000f\n \u000ex\u000f   \u000ex\u000f\u001b[7C\u000e`x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex~x\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\u001b[5C\u000e`tqqqqqqqvqvqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqqqqu\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex~x\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\u001b[6C+\u000e~\u000f  \u000e~\u000f   \u000e~\u000f   \u000e~\u000f   \u000e~\u000f \u000ex\u000f \\\u001b[9C+\u001b[10C+    {   #\u000e`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f<\u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000emqj\u000f \u000ex\u000f\u001b[5C\u000e`tqqqqqqqwqwqqqqqqqu\u000f\u001b[11C\u000etqqqqqqqqqqu\u000f\u001b[8C\u000ex`\u000f\u001b[5C\u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex\u000f\u001b[5C\u000e`x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C\u000ex\u000f\u001b[10C\u000ex\u000f\u001b[8C\u000ex`\u000f\u001b[7C\u000ex\u000f   \u000ex\u000f\n \u000ex\u000f \u000eqqwqu``````x\u000f\u001b[7C\u000ex\u000f \u000ex\u000f\u001b[7C\u000ex\u000f\u001b[11C+\u001b[10C\u000ex\u000f\u001b[8C\u000ex``````lqu\u000f \u000eqqu\u000f\n \u000ex\u000f   \u000ex\u000f \u000ex`lqqqqvwqqqqqqvqvqqqqqqqvqqqqq\u000f+\u000eqqqqqvqqqqqqqqqqvqqqqqqqwvqqqqk`x~x\u000f   \u000ex\u000f\n \u000etqk\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C\u000ea\u000f\u001b[47C+\u001b[5C\u000ex`x\u000f \u000emqk\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`x\u000f\u001b[5C\u000etqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u000f\u001b[5C\u000ex`x\u000f   \u000ex\u000f \u000ex\u000f\n \u000ex\u000f \u000ex\u000f \u000ex\u000f \u000ex`mqqqqqj```````````````````````````````````````````````mqqqqqj`x\u000f \u000ex\u000f \u000ex\u000f \u000ex\u000f\n \u000ex\u000f\u001b[5C\u000ex`````````\u000f\u001b[45C\u000e`````````x\u000f \u000ex\u000f   \u000ex\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqvqqqj\u000f\nWizard the Candidate\u001b[11CSt:16 Dx:13 Co:12 In:11 Wi:14 Ch:9 Lawful\nDlvl:27 $:0 HP:14(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "terrain strips remembered trap glyph after trap type changes (detect.c:2228)",
+   "segments": [
+    {
+     "seed": 6902,
+     "datetime": "20261113233000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Knight\nOPTIONS=race:gnome,gender:female,align:neutral\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017boulder\ndf#wizwish\rgold piece\rdkhll\u0017pool\rb\u0007shark\n#wizgenesis\rwater moccasin\nYNkkkuuuYuzin  zfh  < \u0017saddle\r#wizgenesis\rpony\naih#ride\rbHsuFhBKFunsBu#ride\rlnyyyjjjgnbbbl\u0001tbh  #force\ry\u0017blessed amulet of life saving\rWf\u0016castle\r\u0006_jjjj.#wizwish\nwooden flute\rahnAAAAA\nllgjhhhlllUb#force\ry #ride\nyyyn#monster\nsubbb7s#ride\rnghk;ll;sbb>uuunnn#jump\ryy.ahy rh  \u00175 arrows\rdkhhh\u0017water\ru#wizgenesis\rshark\n#wizgenesis\npit viper\rHUsss\u001b#terrain\na\u001b\u0017blessed +3 gray dragon scale mail\nWg\u0016castle\r#wizwish\nwand of digging\rzgbuuubbbhhhLFyullyhhsef  >ok\u0014uuu.cnqi  zik  dc",
+     "frames": {
+      "430": {
+       "screen": "Showing known terrain only...  (For instructions type a '?')\n\n\n -----------------------------------------------------------------------------\n |.....|\u001b[34m}}}}}}}}}\u001b[39m.............................................\u001b[34m}}}}}}}}}\u001b[39m|.....|\n |.---.|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|.|.--|\n |.|...|\u001b[34m}\u001b[39m|.....|-----------------------------------------------|.....|\u001b[34m}\u001b[39m|.|...|\n |--.|.|\u001b[34m}\u001b[39m|.....\u001b[33m+\u001b[39m...............................................\u001b[33m+\u001b[39m.....|\u001b[34m}\u001b[39m|.|--.|\n |...|.|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|.|...|\n |.-----\u001b[34m}}}}}}\u001b[39m|.......|.|.......|...........\u001b[33m+\u001b[39m..........|........|\u001b[34m}}}}}}\u001b[39m|.|.--|\n |.|.........\u001b[34m}\u001b[39m|.......|.|.......|...........|..........|........|\u001b[34m}\u001b[39m.....|.|...|\n |.|.---.....\u001b[34m}\u001b[39m|-----------------|...........|----------|........|\u001b[34m}\u001b[39m.....|.---.|\n |.|.|.|......\u001b[33m+\u001b[39m.................|.\u001b[93m\\\u001b[39m.........\u001b[33m+\u001b[39m..........\u001b[33m+\u001b[39m....\u001b[94m{\u001b[39m...\u001b[33m#\u001b[34m}\u001b[39m.....|...|.|\n |.|.|.|.....\u001b[34m}\u001b[39m|-----------------|...........|----------|........|\u001b[34m}\u001b[39m.....-----.|\n |.|.|.|.....\u001b[34m}\u001b[39m|.......|.|.......|...........|..........|........|\u001b[34m}\u001b[39m...........|\n |.|.|.|\u001b[34m}}}}}}\u001b[39m|.......|.|.......|...........\u001b[33m+\u001b[39m..........|........|\u001b[34m}}}}}}\u001b[39m-----.|\n |.|.|.|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|.|<..|\n |.|.|.|\u001b[34m}\u001b[39m|.....\u001b[33m+\u001b[39m...............................................\u001b[33m+\u001b[39m.....|\u001b[34m}\u001b[39m|.|.--|\n |.|...|\u001b[34m}\u001b[39m|..\u001b[94m`\u001b[39m..|-----------------------------------------------|.....|\u001b[34m}\u001b[39m|...|.|\n |.---.|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|.---.|\n |.....|\u001b[34m}}}}}}}}}\u001b[39m.............................................\u001b[34m}}}}}}}}}\u001b[39m|.....|\n -----------------------------------------------------------------------------\nWizard the Gallant\u001b[13CSt:17 Dx:8 Co:10 In:7 Wi:15 Ch:18 Lawful\nDlvl:27 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        72,
+        12,
+        1
+       ]
+      },
+      "431": {
+       "screen": "\n\n\n -----------------------------------------------------------------------------\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |--\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|--\u001b[90m.\u001b[39m|\n |\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m-----\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m.........\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[34mS\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[36m^\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m+\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[97m@\u001b[39m.\u001b[36m)\u001b[39m|\u001b[31m^\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m..........\u001b[91m^\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|<\u001b[90m..\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m^..\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m....^\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Gallant\u001b[13CSt:17 Dx:8 Co:10 In:7 Wi:15 Ch:18 Lawful\nDlvl:27 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        72,
+        12,
+        1
+       ]
+      },
+      "432": {
+       "screen": "For what do you wish?\n\n\n -----------------------------------------------------------------------------\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |--\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|--\u001b[90m.\u001b[39m|\n |\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m-----\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m.........\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[34mS\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[36m^\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m+\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[97m@\u001b[39m.\u001b[36m)\u001b[39m|\u001b[31m^\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m..........\u001b[91m^\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|<\u001b[90m..\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m^..\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m....^\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Gallant\u001b[13CSt:17 Dx:8 Co:10 In:7 Wi:15 Ch:18 Lawful\nDlvl:27 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        22,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "terrain leaves unchanged unexplored glyphs over status untouched (display.c:2031)",
+   "segments": [
+    {
+     "seed": 16849,
+     "datetime": "20260601130000",
+     "nethackrc": "OPTIONS=name:Sir,role:Priest\nOPTIONS=race:dwarf,gender:female,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=time\nOPTIONS=runmode:walk\nOPTIONS=statuslines:3\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0007fog cloud\rFjsFl:#pray\ny #monster\rbbbhhl7sqj  #jump\nbb.#dip\njyf#wizgenesis\rfire vortex\nriE-ulKnllkuuuwg<ec  Rjdh#pray\ny  \u0017wand of fire\n\u0007trapper\ntchbyKByyy#force\nyqi  Zbk  #untrap\ny\u0007fire vortex\rs#terrain\na\u001bssqjrjsHlllhhyybbbbb\u0001wgssssscb#wizwish\nwand of cold\n#wizgenesis\nochre jelly\nzfkE-hzg.E-ntab7syyyuujjjunsukkk\u001b_nnn.#wizwish\npotion of blindness\r#wizgenesis\rfog cloud\rkFlzgks#pray\ny yybhlRi\u001b\u001b\u001b",
+     "frames": {
+      "207": {
+       "screen": "Showing known terrain only...--More--\n\n\n\n\u001b[8C\u000elqqqk\u000f\n\u001b[8C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~\u000f\n\u001b[8C\u000ex~~~x\u000f\n\u001b[8C\u000ex~~~x\u000f\n\u001b[8C\u000ex\u001b[94m\u000f`\u001b[39m\u000e~~x\u000f\n\u001b[8C\u000ex~~~x\u000f\n\u001b[8C\u000em~qqj\u000f\n\u001b[9C#\n\u001b[9C#\n\u001b[9C#\n\u001b[9C\u001b[33m+\u001b[39m\n\n\n\n\n\n\nWizard the Aspirant\u001b[12CSt:15 Dx:11 Co:12 In:9 Wi:18 Ch:10\nChaotic $:0 HP:6(13) Pw:4(9) AC:7 Xp:1\nDlvl:1 T:22",
+       "cursor": [
+        37,
+        0,
+        1
+       ]
+      },
+      "208": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n\u001b[10Cnot your character.  Game time does not advance.  This mode is used\n\u001b[8C\u000el\u000f to look around the map, or to select a location on it.\n\u001b[8C\u000ex\u000f\n\u001b[8C\u000ex\u000f When in this mode, you can press ESC to return to normal game mode,\n\u001b[8C\u000ex\u000f and pressing ? will show the key help.\n\u001b[8C\u000ex\u000f (end)\n\u001b[8C\u000ex~~~x\u000f\n\u001b[8C\u000em~qqj\u000f\n\u001b[9C#\n\u001b[9C#\n\u001b[9C#\n\u001b[9C\u001b[33m+\u001b[39m\n\n\n\n\n\n\nWizard the Aspirant\u001b[12CSt:15 Dx:11 Co:12 In:9 Wi:18 Ch:10\nChaotic $:0 HP:6(13) Pw:4(9) AC:7 Xp:1\nDlvl:1 T:22",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "209": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n\u001b[10Cnot your character.  Game time does not advance.  This mode is used\n\u001b[8C\u000el\u000f to look around the map, or to select a location on it.\n\u001b[8C\u000ex\u000f\n\u001b[8C\u000ex\u000f When in this mode, you can press ESC to return to normal game mode,\n\u001b[8C\u000ex\u000f and pressing ? will show the key help.\n\u001b[8C\u000ex\u000f (end)\n\u001b[8C\u000ex~~~x\u000f\n\u001b[8C\u000em~qqj\u000f\n\u001b[9C#\n\u001b[9C#\n\u001b[9C#\n\u001b[9C\u001b[33m+\u001b[39m\n\n\n\n\n\n\nWizard the Aspirant\u001b[12CSt:15 Dx:11 Co:12 In:9 Wi:18 Ch:10\nChaotic $:0 HP:6(13) Pw:4(9) AC:7 Xp:1\nDlvl:1 T:22",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "escape-steed-drops-special-objects",
+   "segments": [
+    {
+     "seed": 72189,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Knight\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#ride\rk\u0017fountain\nhh\u0004bkkk#monster\nn<uyyygb<nHnhhyssleg  ",
+     "frames": {
+      "57": {
+       "screen": "Fare thee well wizard the Knight...\n\nYou and the saddled pony\nescaped from the dungeon with 7 points,\nand 0 pieces of gold, after 5 moves.\nYou were level 1 with a maximum of 16 hit points when you escaped.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+       "cursor": [
+        8,
+        23,
+        1
+       ]
+      },
+      "58": {
+       "screen": "\nSince you were in wizard mode, the score list will not be checked.",
+       "cursor": [
+        0,
+        2,
+        1
+       ]
+      }
+     },
+     "rng": {
+      "calls": 2854,
+      "tail": [
+       "rn2(100)=52"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "name": "tutorial-dismiss-key-cancels-menu-count",
+   "segments": [
+    {
+     "seed": 64101,
+     "datetime": "20000205090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Knight\nOPTIONS=symset:DECgraphics\nOPTIONS=symset:DECgraphics\nOPTIONS=suppress_alert:3.4.3\nOPTIONS=mention_walls\n",
+     "moves": "\r  < , ,hhhh,\u001b5sUk\u0001\u001bh",
+     "frames": {
+      "20": {
+       "screen": "\n\n\n\n\n\n\n\n\n\u001b[66C\u000elqqqq\u000f \u000eqqqqk\u000f\n\u001b[66C\u000ex~~~~~~\u001b[97m\u000f@\u001b[39m\u000e~~x\u000f\n\u001b[66C\u001b[33m\u000ea\u001b[39m~~\u001b[93m\u000f$\u001b[39m\u000e~~~\u001b[33m\u000fu\u001b[39m\u000e~~x\u000f\n\u001b[66C\u000ex~~~~~~~~~x\u000f\n\u001b[66C\u000emqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\nHero the Gallant\u001b[15CSt:16 Dx:9 Co:11 In:8 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:6(6) AC:3 Xp:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "replayed-travel-ends-repeat-before-monster-turn",
+   "segments": [
+    {
+     "seed": 96302,
+     "datetime": "20000205090000",
+     "nethackrc": "OPTIONS=name:Septor,role:Wizard,race:elf,gender:male,align:neutral\nOPTIONS=symset:DECgraphics\nOPTIONS=autopickup,pickup_types:$\nOPTIONS=runmode:walk\nOPTIONS=time\nOPTIONS=lit_corridor\n",
+     "moves": " sjjbbkkyyssbbbbY bbbb  k#sit\nhhhh___h\u001bn20s\u001b#terrain\na\u001bkk bbyyy_<,<nnnqc uuu\u0004jllll\u0004u;lll,YJ;k;jkkkj  bbN , h ,\u001b #sit\n_<<l.\u0001;ll:>bbjjjj#sit\n kkkkLs#ride\nj",
+     "frames": {
+      "152": {
+       "screen": "Do you want to see your attributes? [ynq] (n)\n\n\n\u001b[5C\u000elqqqqqqqqqk\u000f\n\u001b[5C\u000ex\u001b[90m~\u001b[94m\u000f{\u001b[90m\u000e~~~~~\u001b[93m\u000f<\u001b[90m\u000e~\u001b[39m~\u000f#\n\u001b[5C\u000ex\u001b[90m~~~~~~~~~\u001b[39mx\u000f#\n\u001b[5C\u000ex\u001b[90m~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~\u001b[93m\u000f$\u001b[39m\u000ex\u000f#\n\u001b[5C\u000ex\u001b[90m~~~~~~~~~\u001b[39mx\u000f#\u001b[8C\u000ex\u000f\n\u001b[5C\u000emqqqq~qq\u001b[33m\u000f+\u001b[39m\u000eqj\u000f##  \u000e~\u001b[90m~\u001b[33m\u000f%\u001b[90m\u000e~~\u001b[39mx\u000f\n\u001b[15C###\u001b[7C\u000e~\u000f\n\u001b[16C\u001b[33mk\u001b[39m\u001b[8C\u000ej\u000f\n\u001b[16C\u001b[97m@\u001b[39m\n\u001b[16C\u001b[97m#\u001b[39m\n    \u000ex\u000f\u001b[11C#\n    \u000ex\u001b[90m~\u001b[97m\u000f{\u001b[90m\u000e~\u001b[39m~\u000f\u001b[6C##\n    \u000emqqq\u000f\n\n\n\n\n\n\nSeptor the Evoker\u001b[14CSt:13 Dx:10 Co:10 In:20 Wi:11 Ch:11 Chaotic\nDlvl:1 $:0 HP:0(11) Pw:8(8) AC:9 Xp:1 T:41",
+       "cursor": [
+        46,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "escaped-kick-message-does-not-page-chest-trap",
+   "segments": [
+    {
+     "seed": 12991,
+     "datetime": "20000922140000",
+     "nethackrc": "OPTIONS=name:Dequa,role:Wizard\nOPTIONS=symset:DECgraphics\nOPTIONS=time\n",
+     "moves": "y lb  \u0018 \u001bU N;jjj.\u001bjjabh\u001b  t-n\u001b,\u001b5s_mmhh\u001b  ll>h;nn:\u001beey10s_>\u001b\u001bB jjjjn20snnnnb\u001byyyy U\u001bkk5sUaik N\u001bbbbb10s10sKbbbbkbh#overview\n\u001b\u001bhhhuuuun  ,\u001b,a\r\u0004b bbb  efJU,\r  <  Lnnnnuuuu\u001bkjjj\u0004l uN  \u0004y J:___uu.nnn#sit\nyyyyb k<bn20s#force\n_>>hhh\u001beh s#ride\nn\u001bnnnn20s  >kkl\u001by  _xkkk.Y  qn hhh<b\u001bKnkkkkuu,  h\u001bjjjjn20sj n20syyyyy_ojjj\u001bkklkkk\u001bjj\u001bJ #ride\nbllHuuuu jj  , B  ss#pray\ny    \u0004luuuPdl\u001be",
+     "frames": {
+      "369": {
+       "screen": "You trigger a trap!\n\n\u001b[42C\u000elqqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqk\u000f\n\u001b[42C\u000ex~~~~~~~~~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f\n\u001b[42C\u000e~~~~~~~~~~~~~x\u000f\n\u001b[42C\u000ex~\u001b[97m\u000ff\u001b[39m\u000e~~~~~~~~~~x\u000f\n\u001b[42C\u000ex~~\u001b[97m\u000f@\u001b[33m(\u001b[39m\u000e~~~~~~~~x\u000f\n\u001b[42C\u000emqqqqqq~q\u001b[33m\u000f+\u001b[39m\u000eqqqj\u000f\n\u001b[49C#\n\n\n\n\n\n\n\n\n\n\n\n\n\nDequa the Evoker\u001b[15CSt:8 Dx:11 Co:17 In:18 Wi:10 Ch:11 Neutral\nDlvl:1 $:0 HP:5(11) Pw:8(8) AC:10 Xp:1 T:227",
+       "cursor": [
+        45,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-travel-unseen-remembered-stone",
+   "segments": [
+    {
+     "seed": 15405,
+     "datetime": "20001013090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Barbarian\nOPTIONS=race:dwarf,gender:female,align:neutral\nOPTIONS=!tutorial\nOPTIONS=showscore\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017corpse\ndjYnnn\u0017gold piece\ndgghFj\u00172 daggers\ndi#wizgenesis\rgarter snake\rhhklllgkbnjjhL\u0004l,zi<  #wizwish\n10 rocks\ndkb\u0017pool\rn#wizgenesis\rjellyfish\n\u0007cobra\nlnbb\u0014yyy.\u001b\u001bHyy6s _jjj.#sit\rwc\u00172 daggers\ndk\u0017large box\rdkUH#wizwish\rpool\nb\u0007giant eel\n#wizgenesis\ncobra\rKhhJ4skkjsnRg\u001b\u001b_lll.",
+     "frames": {
+      "271": {
+       "screen": "unexplored (no travel path)\n\n\n\n\u001b[51C-------\n\u001b[50C#.\u001b[33m%\u001b[90m....\u001b[39m|\n\u001b[50C#|\u001b[90m.....\u001b[39m|\n\u001b[50C#.\u001b[90m..\u001b[94m{\u001b[90m..\u001b[39m|\n\u001b[50C#|\u001b[90m...\u001b[33m(\u001b[90m.\u001b[39m|\n\u001b[49C##----\u001b[33m+\u001b[39m--\n\u001b[48C# #\n\u001b[47C####\n\u001b[47C##\n\u001b[46C###\n\u001b[41C-- -- ##\n\u001b[41C|.\u001b[90m...\u001b[39m.##\n\u001b[41C|>..\u001b[90m.\u001b[39m \u001b[97md\u001b[39m#\n\u001b[41C|[....\u001b[97m@\u001b[39m#\n\u001b[41C-----\n\n\n\nWizard the Plunderess\u001b[10CSt:18/01 Dx:17 Co:18 In:7 Wi:8 Ch:6 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        49,
+        17,
+        1
+       ]
+      },
+      "272": {
+       "screen": "unexplored area (no travel path)\n\n\n\n\u001b[51C-------\n\u001b[50C#.\u001b[33m%\u001b[90m....\u001b[39m|\n\u001b[50C#|\u001b[90m.....\u001b[39m|\n\u001b[50C#.\u001b[90m..\u001b[94m{\u001b[90m..\u001b[39m|\n\u001b[50C#|\u001b[90m...\u001b[33m(\u001b[90m.\u001b[39m|\n\u001b[49C##----\u001b[33m+\u001b[39m--\n\u001b[48C# #\n\u001b[47C####\n\u001b[47C##\n\u001b[46C###\n\u001b[41C-- -- ##\n\u001b[41C|.\u001b[90m...\u001b[39m.##\n\u001b[41C|>..\u001b[90m.\u001b[39m \u001b[97md\u001b[39m#\n\u001b[41C|[....\u001b[97m@\u001b[39m#\n\u001b[41C-----\n\n\n\nWizard the Plunderess\u001b[10CSt:18/01 Dx:17 Co:18 In:7 Wi:8 Ch:6 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        50,
+        17,
+        1
+       ]
+      },
+      "273": {
+       "screen": "unexplored area (no travel path)\n\n\n\n\u001b[51C-------\n\u001b[50C#.\u001b[33m%\u001b[90m....\u001b[39m|\n\u001b[50C#|\u001b[90m.....\u001b[39m|\n\u001b[50C#.\u001b[90m..\u001b[94m{\u001b[90m..\u001b[39m|\n\u001b[50C#|\u001b[90m...\u001b[33m(\u001b[90m.\u001b[39m|\n\u001b[49C##----\u001b[33m+\u001b[39m--\n\u001b[48C# #\n\u001b[47C####\n\u001b[47C##\n\u001b[46C###\n\u001b[41C-- -- ##\n\u001b[41C|\u001b[90m...\u001b[39m..##\n\u001b[41C|>\u001b[90m...\u001b[39m ####\n\u001b[41C|[....##\u001b[97m@\u001b[39m\n\u001b[41C-----\n\n\n\nWizard the Plunderess\u001b[10CSt:18/01 Dx:17 Co:18 In:7 Wi:8 Ch:6 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        49,
+        17,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-web-glyph-is-not-unseen-amulet",
+   "segments": [
+    {
+     "seed": 56434,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Septor,role:Caveman\nOPTIONS=race:elf,gender:male,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=lit_corridor\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\nblessed amulet of life saving\nWf\u0016castle\r\u0006#wizgenesis\ngiant eel\n\u0017wand of digging\rziunukhuuktfb ai. \u0014kkk.wd><\u0017tin\ndinH\u001710 rock",
+     "frames": {
+      "134": {
+       "screen": "human caveman called wizard\n\n\n -----------------------------------------------------------------------------\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n |--\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|----\u001b[90m.\u001b[39m|\n |\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m....\u001b[39m<|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|----\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m.........\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m----|\n |\u001b[94m^\u001b[90m..\u001b[39m|\u001b[36m^\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m+\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\"\u001b[90m....\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m........\u001b[39m\"\u001b[90m.\u001b[39m^|\n |\u001b[90m.\u001b[39m|--\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |^\u001b[90m..\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m^\u001b[39m|\u001b[97m@d\u001b[90m.\u001b[39m|\n |----\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|.--|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m....\u001b[36m^\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Troglodyte\u001b[10CSt:17 Dx:13 Co:15 In:7 Wi:9 Ch:14 Lawful\nDlvl:25 $:0 HP:16(16) Pw:2(2) AC:8 Xp:1",
+       "cursor": [
+        74,
+        18,
+        1
+       ]
+      },
+      "135": {
+       "screen": "Unknown direction: 'c' (use 'h', 'j', 'k', 'l' or '.').\n\n\n -----------------------------------------------------------------------------\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n |--\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|----\u001b[90m.\u001b[39m|\n |\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m....\u001b[39m<|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|----\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m.........\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m----|\n |\u001b[94m^\u001b[90m..\u001b[39m|\u001b[36m^\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m+\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\"\u001b[90m....\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m........\u001b[39m\"\u001b[90m.\u001b[39m^|\n |\u001b[90m.\u001b[39m|--\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |^\u001b[90m..\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m^\u001b[39m|\u001b[97m@d\u001b[90m.\u001b[39m|\n |----\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|.--|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m....\u001b[36m^\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Troglodyte\u001b[10CSt:17 Dx:13 Co:15 In:7 Wi:9 Ch:14 Lawful\nDlvl:25 $:0 HP:16(16) Pw:2(2) AC:8 Xp:1",
+       "cursor": [
+        74,
+        18,
+        1
+       ]
+      },
+      "136": {
+       "screen": "wall\n\n\n -----------------------------------------------------------------------------\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m.....\u001b[39m|\n |--\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|----\u001b[90m.\u001b[39m|\n |\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m....\u001b[39m<|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|----\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m.........\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m----|\n |\u001b[94m^\u001b[90m..\u001b[39m|\u001b[36m^\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m+\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\"\u001b[90m....\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m........\u001b[39m\"\u001b[90m.\u001b[39m^|\n |\u001b[90m.\u001b[39m|--\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m+\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |^\u001b[90m..\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m^\u001b[39m|\u001b[97m@d\u001b[90m.\u001b[39m|\n |----\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|.--|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m....\u001b[36m^\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Troglodyte\u001b[10CSt:17 Dx:13 Co:15 In:7 Wi:9 Ch:14 Lawful\nDlvl:25 $:0 HP:16(16) Pw:2(2) AC:8 Xp:1",
+       "cursor": [
+        74,
+        17,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-altar-mimic-needs-lookat",
+   "segments": [
+    {
+     "seed": 20989,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Bob,role:Monk\nOPTIONS=race:elf,gender:male,align:lawful\nOPTIONS=!tutorial\nOPTIONS=autopickup,pickup_types:$\nOPTIONS=hilite_pet\nOPTIONS=autodescribe\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017boulder\rdg5s\u0017scroll of identify\rnH#wizwish\n10 rocks\ndignh\u0017pool\nj\u0007jellyfish\n#wizgenesis\rwater moccasin\r4snYFbuzik  #loot\nyo\u001b<#chat\rjziu  Da\ncj#wizwish\nstatue of a snake\nh\u0017egg\rdhh#wizgenesis\nlurker above\rFllJllPj#jump\nll.\u001bdh#loot\ryq\u001bn19scuRg#wizwish\rtin\ndi\u0017corpse\ndj#wizwish\rpool\rj#wizgenesis\ngiant eel\n#wizgenesis\ngiant mimic\nHkkkyyyajb ohPh_bbb.afh #force\ryrg  #sit\r#wizwish\ngold piece\ndikk\u0017egg\ndhs\u0007snake\nbbbyuullNssjjjj#untrap\rhahu #pray\ry  dj_hh",
+     "frames": {
+      "449": {
+       "screen": "neutral altar\n\n\n\n\n\u001b[67C------\n\u001b[67C|....|\n\u001b[67C|....|\n\u001b[67C|\u001b[97m@\u001b[39m..\u001b[34m;\u001b[39m|\n\u001b[67C|`...|\n\u001b[66C#\u001b[33m+\u001b[31m(\u001b[7m\u001b[97md\u001b[27m\u001b[39m._|\n\u001b[67C|\u001b[34m}\u001b[97m?\u001b[39m.\u001b[33m!\u001b[39m|\n\u001b[67C------\n\n\n\n\n\n\n\n\n\nWizard the Candidate\u001b[11CSt:16 Dx:17 Co:8 In:8 Wi:13 Ch:10 Lawful\nDlvl:1 $:0 HP:1(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        71,
+        10,
+        1
+       ]
+      },
+      "450": {
+       "screen": "floor of a room\n\n\n\n\n\u001b[67C------\n\u001b[67C|....|\n\u001b[67C|....|\n\u001b[67C|\u001b[97m@\u001b[39m..\u001b[34m;\u001b[39m|\n\u001b[67C|`...|\n\u001b[66C#\u001b[33m+\u001b[31m(\u001b[7m\u001b[97md\u001b[27m\u001b[39m._|\n\u001b[67C|\u001b[34m}\u001b[97m?\u001b[39m.\u001b[33m!\u001b[39m|\n\u001b[67C------\n\n\n\n\n\n\n\n\n\nWizard the Candidate\u001b[11CSt:16 Dx:17 Co:8 In:8 Wi:13 Ch:10 Lawful\nDlvl:1 $:0 HP:1(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        70,
+        10,
+        1
+       ]
+      },
+      "451": {
+       "screen": "tame little dog\n\n\n\n\n\u001b[67C------\n\u001b[67C|....|\n\u001b[67C|....|\n\u001b[67C|\u001b[97m@\u001b[39m..\u001b[34m;\u001b[39m|\n\u001b[67C|`...|\n\u001b[66C#\u001b[33m+\u001b[31m(\u001b[7m\u001b[97md\u001b[27m\u001b[39m._|\n\u001b[67C|\u001b[34m}\u001b[97m?\u001b[39m.\u001b[33m!\u001b[39m|\n\u001b[67C------\n\n\n\n\n\n\n\n\n\nWizard the Candidate\u001b[11CSt:16 Dx:17 Co:8 In:8 Wi:13 Ch:10 Lawful\nDlvl:1 $:0 HP:1(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        69,
+        10,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-feature-finds-remembered-removed-web",
+   "segments": [
+    {
+     "seed": 2847,
+     "datetime": "20260301000000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Archeologist\nOPTIONS=race:human,gender:female,align:lawful\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=mention_walls\nOPTIONS=sparkle\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017blessed +3 gray dragon scale mail\rWg\u0016castle\r\u0006\u0017wooden flute\nahnCDEFG\njbbK\u0017wand of digging\nzhkLFbjjnsbbbnyyyk7s#untrap\rl\u0001\u0004jRjzfl  #untrap\ry\u0017blessed +3 gray dragon scale mail\rWf\u0016castle\n\u0006\u0017wand of striking\nzgl_jjjj.\u0017wand of striking\nzglnskkgkyuBgnyychtch \u0010^j,",
+     "frames": {
+      "256": {
+       "screen": "web\n\n\n \u000elqqqwqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mlqqqqqk\u001b[34m```````````````````````````````````````````````\u001b[39mlqqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mlqq\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqqwqqqqqqqqqqwqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqwqqqqqqqwqwqqqqqqvwqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mmqj\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[34m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u000f<\u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mlqqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[31m\u000f*\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[33m\u000f#\u001b[90m\u000e~~~\u001b[94m\u000f{\u001b[90m\u000e~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~\u001b[93m\u000f\\\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~\u001b[33m\u000f^+\u001b[90m\u000e~~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[33m\u000fY\u001b[39m\u000elqvqj\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[97m\u000f@\u001b[39m\u000ex\u001b[90m~~~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[35m\u000fo\u001b[39m\u000ex\u001b[90m~\u001b[39mqqk\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mlqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[93m\u000f$\u001b[39m\u000ex\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqqvqqqqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqvqvqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mlqu\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u000f\"\u000ex\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nWizard the Digger\u001b[14CSt:13 Dx:10 Co:10 In:17 Wi:17 Ch:8 Lawful\nDlvl:29 $:0 HP:1(13) Pw:2(2) AC:9 Xp:1",
+       "cursor": [
+        6,
+        18,
+        1
+       ]
+      },
+      "257": {
+       "screen": "dark part of a room\n\n\n \u000elqqqwqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mlqqqqqk\u001b[34m```````````````````````````````````````````````\u001b[39mlqqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mlqq\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqqwqqqqqqqqqqwqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqwqqqqqqqwqwqqqqqqvwqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mmqj\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[34m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u000f<\u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mlqqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[31m\u000f*\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[33m\u000f#\u001b[90m\u000e~~~\u001b[94m\u000f{\u001b[90m\u000e~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~\u001b[93m\u000f\\\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~\u001b[33m\u000f^+\u001b[90m\u000e~~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[33m\u000fY\u001b[39m\u000elqvqj\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[97m\u000f@\u001b[39m\u000ex\u001b[90m~~~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[35m\u000fo\u001b[39m\u000ex\u001b[90m~\u001b[39mqqk\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mlqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[93m\u000f$\u001b[39m\u000ex\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqqvqqqqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqvqvqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mlqu\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u000f\"\u000ex\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nWizard the Digger\u001b[14CSt:13 Dx:10 Co:10 In:17 Wi:17 Ch:8 Lawful\nDlvl:29 $:0 HP:1(13) Pw:2(2) AC:9 Xp:1",
+       "cursor": [
+        6,
+        19,
+        1
+       ]
+      },
+      "258": {
+       "screen": "The ape hits!--More--\n\n\n \u000elqqqwqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqqqk\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mlqqqqqk\u001b[34m```````````````````````````````````````````````\u001b[39mlqqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mlqq\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqqwqqqqqqqqqqwqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqwqqqqqqqwqwqqqqqqvwqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mmqj\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[34m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u000f<\u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mlqqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[31m\u000f*\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[33m\u000f#\u001b[90m\u000e~~~\u001b[94m\u000f{\u001b[90m\u000e~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~\u001b[93m\u000f\\\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~\u001b[33m\u000f^+\u001b[90m\u000e~~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[33m\u000fY\u001b[39m\u000elqvqj\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[34m`\u001b[90m~~~~~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[97m\u000f@\u001b[39m\u000ex\u001b[90m~~~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[35m\u000fo\u001b[39m\u000ex\u001b[90m~\u001b[39mqqk\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mlqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[93m\u000f$\u001b[39m\u000ex\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqqvqqqqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqvqvqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33ma\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mlqu\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u000f\"\u000ex\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000emqqqqqvqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nWizard the Digger\u001b[14CSt:13 Dx:10 Co:10 In:17 Wi:17 Ch:8 Lawful\nDlvl:29 $:0 HP:0(13) Pw:2(2) AC:9 Xp:1",
+       "cursor": [
+        21,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-feature-does-not-find-unseen-stairs",
+   "segments": [
+    {
+     "seed": 43528,
+     "datetime": "20261113233000",
+     "nethackrc": "OPTIONS=name:Hero,role:Priest\nOPTIONS=mention_walls\n",
+     "moves": "   kqn qc  ,\u001bss,a\r  l  \u0004u:;ll:KBqa  U  ;kkkk;kkkkllljqc bbbynnnY5snnnLqd \u0004n,\u001bjeh lkk\u001byy B  NN,\u001bwab\u001bhhhN i\u001b_mk,Hee#force\nh10s  yj  ;u,5suuuuyyy_oy\u001bbbbyyyy___ll.edyllll:jjjjYjjjjn  \u0004n\u001bsljj\u001bllllb yyyy#ride\nbbbbb  uuuu;h:\u001b\u0004b  n\u001b10s  ;kkk.Yed  kk;yy:jYjjlllluu njjjj,ss5s u\u001bkn20syyyy\u001bkkk>\u001bH\u001b,\rnnnnn>  uuu_oobbb,ss kkkk;hhhh;#ride\nn\u001byyh jj #overview\n\u001bJ  uyyyYhhhh\u001b5seantak\u001b \u0010yy\u0010\u001b>\u001b\u0010_._>>k",
+     "frames": {
+      "380": {
+       "screen": "Can't find dungeon feature '>'.\n\n\u001b[8C----------------\n\u001b[8C|....._......\u001b[91m*\u001b[39m.|\n\u001b[8C|...\u001b[97m?\u001b[39m..........|\n\u001b[8C|\u001b[97m@\u001b[39m...\u001b[97mf\u001b[39m.........|\n\u001b[8C-\u001b[33m+\u001b[39m--\u001b[33m+\u001b[39m----.----.-\n\u001b[17C######\n\u001b[18C##  #\n\u001b[17C##   ###\n\u001b[21C####\n\u001b[24C.\n\u001b[24C\u001b[90m..\u001b[39m\n\u001b[24C\u001b[90m...\u001b[39m\n\u001b[25C\u001b[90m....\u001b[39m\n\u001b[25C\u001b[90m.....\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m|\n\u001b[25C-------\n\n\n\nHero the Aspirant\u001b[14CSt:13 Dx:12 Co:16 In:11 Wi:16 Ch:7 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:7(7) AC:7 Xp:1",
+       "cursor": [
+        10,
+        7,
+        1
+       ]
+      },
+      "381": {
+       "screen": "Can't find dungeon feature '>'.\n\n\u001b[8C----------------\n\u001b[8C|....._......\u001b[91m*\u001b[39m.|\n\u001b[8C|...\u001b[97m?\u001b[39m..........|\n\u001b[8C|\u001b[97m@\u001b[39m...\u001b[97mf\u001b[39m.........|\n\u001b[8C-\u001b[33m+\u001b[39m--\u001b[33m+\u001b[39m----.----.-\n\u001b[17C######\n\u001b[18C##  #\n\u001b[17C##   ###\n\u001b[21C####\n\u001b[24C.\n\u001b[24C\u001b[90m..\u001b[39m\n\u001b[24C\u001b[90m...\u001b[39m\n\u001b[25C\u001b[90m....\u001b[39m\n\u001b[25C\u001b[90m.....\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m|\n\u001b[25C-------\n\n\n\nHero the Aspirant\u001b[14CSt:13 Dx:12 Co:16 In:11 Wi:16 Ch:7 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:7(7) AC:7 Xp:1",
+       "cursor": [
+        10,
+        7,
+        1
+       ]
+      },
+      "382": {
+       "screen": "wall (no travel path)\n\n\u001b[8C----------------\n\u001b[8C|....._......\u001b[91m*\u001b[39m.|\n\u001b[8C|...\u001b[97m?\u001b[39m..........|\n\u001b[8C|\u001b[97m@\u001b[39m...\u001b[97mf\u001b[39m.........|\n\u001b[8C-\u001b[33m+\u001b[39m--\u001b[33m+\u001b[39m----.----.-\n\u001b[17C######\n\u001b[18C##  #\n\u001b[17C##   ###\n\u001b[21C####\n\u001b[24C.\n\u001b[24C\u001b[90m..\u001b[39m\n\u001b[24C\u001b[90m...\u001b[39m\n\u001b[25C\u001b[90m....\u001b[39m\n\u001b[25C\u001b[90m.....\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m\n\u001b[25C\u001b[90m......\u001b[39m|\n\u001b[25C-------\n\n\n\nHero the Aspirant\u001b[14CSt:13 Dx:12 Co:16 In:11 Wi:16 Ch:7 Chaotic\nDlvl:1 $:0 HP:14(14) Pw:7(7) AC:7 Xp:1",
+       "cursor": [
+        10,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-monochrome-targets-retain-inverse",
+   "segments": [
+    {
+     "seed": 71405,
+     "datetime": "20261124220000",
+     "nethackrc": "OPTIONS=name:Sir,role:Knight\nOPTIONS=race:orc,gender:female,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=!color\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017sink\rqy  n2sFlJHuYnyyy,a\n#jump\rjj.#wizwish\rsaddle\n#w",
+     "frames": {
+      "54": {
+       "screen": "(For instructions type a '?')  Move cursor to the desired position:\n\n\n\n\u001b[53C\u000elqqqqqqqqqqk\u000f\n\u001b[53C\u000ex~~~~\u000f%[@\u000e~~~x\u000f\n\u001b[53C\u000ex~~~~~~\u000fu\u000e~~~x\u000f\n\u001b[53Cx\u000e~~~~~~~\u001b[7m\u000f{\u001b[27m\u000e~~x\u000f\n\u001b[53C\u000ex~~\u000f%\u000e~~~~\u000f^\u000e~~x\u000f\n\u001b[53C\u000em~qqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:8 Co:11 In:7 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:0(2) AC:3 Xp:1",
+       "cursor": [
+        60,
+        5,
+        1
+       ]
+      },
+      "55": {
+       "screen": "Automatic description of features under cursor is off.--More--\n\n\n\n\u001b[53C\u000elqqqqqqqqqqk\u000f\n\u001b[53C\u000ex~~~~\u000f%[@\u000e~~~x\u000f\n\u001b[53C\u000ex~~~~~~\u000fu\u000e~~~x\u000f\n\u001b[53Cx\u000e~~~~~~~\u001b[7m\u000f{\u001b[27m\u000e~~x\u000f\n\u001b[53C\u000ex~~\u000f%\u000e~~~~\u000f^\u000e~~x\u000f\n\u001b[53C\u000em~qqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:8 Co:11 In:7 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:0(2) AC:3 Xp:1",
+       "cursor": [
+        62,
+        0,
+        1
+       ]
+      },
+      "56": {
+       "screen": "Automatic description of features under cursor is off.--More--\n\n\n\n\u001b[53C\u000elqqqqqqqqqqk\u000f\n\u001b[53C\u000ex~~~~\u000f%[@\u000e~~~x\u000f\n\u001b[53C\u000ex~~~~~~\u000fu\u000e~~~x\u000f\n\u001b[53Cx\u000e~~~~~~~\u001b[7m\u000f{\u001b[27m\u000e~~x\u000f\n\u001b[53C\u000ex~~\u000f%\u000e~~~~\u000f^\u000e~~x\u000f\n\u001b[53C\u000em~qqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:15 Dx:8 Co:11 In:7 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:0(2) AC:3 Xp:1",
+       "cursor": [
+        62,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "getpos-mapping-tip-keeps-published-hallucination",
+   "segments": [
+    {
+     "seed": 51268,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Healer\nOPTIONS=race:gnome,gender:male,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\nblessed +3 gray dragon scale mail\nWf\u0016castle\r\u0006b6sKjjjnnb6sJbbbsnnnnnn>#jump\rjj.wd#untrap\nked  dh#wizwish\nwand of teleportation\n#wizgenesis\nfire vortex\nris#pray\ny uuuJsFluu#loot\ryq\u001bzhb  n25sn21s#chat\nn\u0017wand of digging\r\u0007purple worm\r#pray\ry sskklhsbbgjBweqj  tck >afl _uuu.qg  \u001b\u0017blessed amulet of life saving\nWf\u0016castle\n\u0006\u0017w",
+     "frames": {
+      "328": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n -------- not your character.  Game time does not advance.  This mode is used\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m to look around the map, or to select a location on it.\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m When in this mode, you can press ESC to return to normal game mode,\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m and pressing ? will show the key help.\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m (end)\n |--\u001b[90m.\u001b[39m|--\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|<---\u001b[90m.\u001b[39m|\n |\u001b[34m^\u001b[90m..\u001b[39m|\u001b[90m.......\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m..^\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m-\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[97m(\u001b[31m+\u001b[97m@\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.........\u001b[39m|\u001b[36m)\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m-\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m----|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m..\u001b[36m^\u001b[90m..\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Rhizotomist\u001b[9CSt:9 Dx:9 Co:15 In:11 Wi:15 Ch:16 Neutral\nDlvl:27 $:1566 HP:8(12) Pw:6(6) AC:8 Xp:1 Hallu",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "329": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n -------- not your character.  Game time does not advance.  This mode is used\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m to look around the map, or to select a location on it.\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m When in this mode, you can press ESC to return to normal game mode,\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m and pressing ? will show the key help.\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m (end)\n |--\u001b[90m.\u001b[39m|--\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|<---\u001b[90m.\u001b[39m|\n |\u001b[34m^\u001b[90m..\u001b[39m|\u001b[90m.......\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m..^\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m-\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[97m(\u001b[31m+\u001b[97m@\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.........\u001b[39m|\u001b[36m)\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m-\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m----|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m..\u001b[36m^\u001b[90m..\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Rhizotomist\u001b[9CSt:9 Dx:9 Co:15 In:11 Wi:15 Ch:16 Neutral\nDlvl:27 $:1566 HP:8(12) Pw:6(6) AC:8 Xp:1 Hallu",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "330": {
+       "screen": "\u001b[10CTip: Farlooking or selecting a map location\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n -------- not your character.  Game time does not advance.  This mode is used\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m to look around the map, or to select a location on it.\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m When in this mode, you can press ESC to return to normal game mode,\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m and pressing ? will show the key help.\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m (end)\n |--\u001b[90m.\u001b[39m|--\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m|<---\u001b[90m.\u001b[39m|\n |\u001b[34m^\u001b[90m..\u001b[39m|\u001b[90m.......\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m..^\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m......\u001b[33m+^\u001b[90m..\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m...\u001b[33m^\u001b[90m.\u001b[39m|\u001b[90m.\u001b[93m\\\u001b[90m.........\u001b[33m-\u001b[90m..........\u001b[33m+\u001b[90m....\u001b[94m{\u001b[90m...\u001b[33m#\u001b[34m}\u001b[90m.....\u001b[39m|\u001b[90m.\u001b[39m|\u001b[97m(\u001b[31m+\u001b[97m@\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m--|\u001b[90m.....\u001b[34m}\u001b[39m|-----------------|\u001b[90m...........\u001b[39m|----------|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.....\u001b[39m-----\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.....\u001b[34m}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[39m|\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}\u001b[90m.........\u001b[39m|\u001b[36m)\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[34m}}}}}}\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.......\u001b[39m|\u001b[90m...........\u001b[33m+\u001b[90m..........\u001b[39m|\u001b[90m........\u001b[39m|\u001b[34m}}}}}}\u001b[39m---\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m|\u001b[90m...\u001b[39m|\u001b[34m}\u001b[39m-----------------------------\u001b[33m+\u001b[39m-------------------------------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.....\u001b[33m-\u001b[90m...............................................\u001b[33m+\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m..\u001b[94m`\u001b[90m..\u001b[39m|-----------------------------------------------|\u001b[90m.....\u001b[39m|\u001b[34m}\u001b[39m|\u001b[90m...\u001b[39m|\u001b[90m.\u001b[39m|\n |\u001b[90m.\u001b[39m----|\u001b[34m}\u001b[39m-------\u001b[34m}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}\u001b[39m-------\u001b[34m}\u001b[39m|\u001b[90m.\u001b[39m---\u001b[90m.\u001b[39m|\n |\u001b[90m.....\u001b[39m|\u001b[34m}}}}}}}}}\u001b[90m.............................................\u001b[34m}}}}}}}}}\u001b[39m|\u001b[90m..\u001b[36m^\u001b[90m..\u001b[39m|\n -----------------------------------------------------------------------------\nWizard the Rhizotomist\u001b[9CSt:9 Dx:9 Co:15 In:11 Wi:15 Ch:16 Neutral\nDlvl:27 $:1566 HP:8(12) Pw:6(6) AC:8 Xp:1 Hallu",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "RepeatCmd: NUL ring finger answer replays without impossible",
+   "segments": [
+    {
+     "seed": 60490,
+     "datetime": "20260503025436",
+     "nethackrc": "OPTIONS=name:Hero,role:Barbarian\nOPTIONS=race:dwarf,gender:female,align:chaotic\nOPTIONS=symset:DECgraphics\nOPTIONS=showexp\nOPTIONS=showscore\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\rring of polymorph control\rPf\u0017potion of polymorph\rzi.trapper\rlllgbsFuFj#monster\nFy8sgljjjhuZb<  >clahj <#wizwish\nring of polymorph control\rPf#wizwish\rwand of polymorph\rqhpurple worm\ni\u001bFlFbs//y.lgk6sujyhsYgn\u001btay ss#wizwish\rring of polymorph control\rPg\u0017potion of polymorph\nzi.purple worm\ns#terrain\na\u001b#monster\nFl;nnn,FuFkyyyed  okn29sohdb\u001b#wizwish\rring of polymorph control\rPh\u0017potion of polymorph\rzf.giant eel\n#sit\rFy\u0017boulder\rdg#sit\nnnjjjByyyuuuy#untrap\rb#sit\r\u0001i\u001b",
+     "frames": {
+      "469": {
+       "screen": "\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[5C\u000elqk~\u001b[97m\u000f@\u001b[39m\u000e~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Plunderess\u001b[10CSt:18/04 Dx:16 Co:18 In:7 Wi:8 Ch:6 Chaotic\nTutorial:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1/0",
+       "cursor": [
+        9,
+        7,
+        1
+       ]
+      },
+      "470": {
+       "screen": "\u001b[41C\u001b[7mRings\u001b[0m\n\u001b[41Ca - a topaz ring\n\u001b[41Cb - a topaz ring\n\u001b[41C(end)\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[5C\u000elqk~\u001b[97m\u000f@\u001b[39m\u000e~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Plunderess\u001b[10CSt:18/04 Dx:16 Co:18 In:7 Wi:8 Ch:6 Chaotic\nTutorial:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1/0",
+       "cursor": [
+        47,
+        3,
+        1
+       ]
+      },
+      "471": {
+       "screen": "\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[5C\u000elqk~\u001b[97m\u000f@\u001b[39m\u000e~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Plunderess\u001b[10CSt:18/04 Dx:16 Co:18 In:7 Wi:8 Ch:6 Chaotic\nTutorial:1 $:0 HP:16(16) Pw:2(2) AC:10 Xp:1/0",
+       "cursor": [
+        9,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "RepeatCmd: canceled inventory action does not suppress next movement recording",
+   "segments": [
+    {
+     "seed": 52392,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Healer\nOPTIONS=symset:DECgraphics\nOPTIONS=autodescribe\nOPTIONS=showscore\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\n2 daggers\ndjn5s#wizwish\nchest\ndk\u0007snake\rJnJyy#dip\niyg#untrap\rn\u0001Pg",
+     "frames": {
+      "74": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[31C\u000el~qqqk\u000f\n\u001b[31C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000emqqqqj\u000f\n\n\n\n\nWizard the Rhizotomist\u001b[9CSt:11 Dx:7 Co:14 In:10 Wi:16 Ch:17 Neutral\nDlvl:1 $:1853 HP:9(12) Pw:7(7) AC:8 Xp:1",
+       "cursor": [
+        32,
+        16,
+        1
+       ]
+      },
+      "75": {
+       "screen": "You don't have anything else to put on.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[31C\u000el~qqqk\u000f\n\u001b[31C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000emqqqqj\u000f\n\n\n\n\nWizard the Rhizotomist\u001b[9CSt:11 Dx:7 Co:14 In:10 Wi:16 Ch:17 Neutral\nDlvl:1 $:1853 HP:9(12) Pw:7(7) AC:8 Xp:1",
+       "cursor": [
+        32,
+        16,
+        1
+       ]
+      },
+      "76": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[31C\u000el~qqqk\u000f\n\u001b[31C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000f\n\u001b[31C\u000e~\u001b[97m\u000ff\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~~x\u000f\n\u001b[31C\u000emqqqqj\u000f\n\n\n\n\nWizard the Rhizotomist\u001b[9CSt:11 Dx:7 Co:14 In:10 Wi:16 Ch:17 Neutral\nDlvl:1 $:1853 HP:9(12) Pw:7(7) AC:8 Xp:1",
+       "cursor": [
+        32,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "RepeatCmd: monster scroll naming consumes queued polearm fire retry",
+   "segments": [
+    {
+     "seed": 17619,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Septor,role:Knight\nOPTIONS=race:dwarf,gender:female,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=autodescribe\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\rblessed amulet of life saving\rWf\u0016castle\n7sy\u0017wand of opening\nzfhs7skbgh#sit\n\u0014kkk.#force\ny#sit\ref  wd#wizwish\nbl",
+     "frames": {
+      "120": {
+       "screen": "\n\n\n\n\u001b[73C\u000e~\u001b[33m\u000f%\u001b[39m\u000e~\u000f\n\u001b[73C\u000ex\u001b[97m\u000f@\u001b[39m\u000eq\u000f\n\u001b[73C\u000ex\u000f`\u000e~\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:10 In:9 Wi:17 Ch:17 Lawful\nDlvl:25 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        74,
+        5,
+        1
+       ]
+      },
+      "121": {
+       "screen": "\n\n\n\n\u001b[73C\u000e~\u001b[33m\u000f%\u001b[39m\u000e~\u000f\n\u001b[73C\u000ex\u001b[97m\u000f@\u001b[39m\u000eq\u000f\n\u001b[73C\u000ex\u000f`\u000e~\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:10 In:9 Wi:17 Ch:17 Lawful\nDlvl:25 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        74,
+        5,
+        1
+       ]
+      },
+      "122": {
+       "screen": "\n\n\n\n\u001b[73C\u000e~\u001b[33m\u000f%\u001b[39m\u000e~\u000f\n\u001b[73C\u000ex\u001b[97m\u000f@\u001b[39m\u000eq\u000f\n\u001b[73C\u000ex\u000f`\u000e~\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:10 In:9 Wi:17 Ch:17 Lawful\nDlvl:25 $:0 HP:16(16) Pw:4(4) AC:3 Xp:1",
+       "cursor": [
+        74,
+        5,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "RepeatCmd: declined death during wizard wish clears repeat queue",
+   "segments": [
+    {
+     "seed": 90767,
+     "datetime": "20260601130000",
+     "nethackrc": "OPTIONS=name:Septor,role:Samurai\nOPTIONS=race:elf,gender:male,align:lawful\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=time\nOPTIONS=sparkle\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\nring of polymorph control\rPg\u0017wand of polymorph\rzh.vampire bat\r#sit\rBl\u00175 rocks\rdg\u0017boulder\ndgghbbbhbFlh6syyllyybDb\n\u0004k\u0001\u0014bbb.#wizwish\nsaddle\r#wizgenesis\rwarhorse\n#tame\naiu#ride\n \u0017lava\njyy>4sUyjjjuuul7s\u0004b#pray\ry  \u0001#c",
+     "frames": {
+      "221": {
+       "screen": "There is no command available to repeat.\n\n\n\n\u001b[40C\u000elqqqqqqqqk\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~\u000f=\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[37C###\u001b[31m\u000e`\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000emqqqq\u001b[33m\u000f+\u001b[39m\u000eq~qj\u000f\n\n\n\n\u001b[59C\u000eqqq\u000f \u000eqqqqk\u000f\n\u001b[59C\u000e~~~\u001b[36m\u000f(\u001b[39m\u000e~\u001b[33m\u000f%\u001b[39m\u000e~~x\u000f\n\u001b[41C\u000el\u000f \u000eq\u000f\u001b[11C\u000e~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~\u000f   #\u001b[97m@\u001b[39m#\u000e~~~~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u000f\u001b[11C\u000eqqqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Hatamoto\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1 T:19",
+       "cursor": [
+        50,
+        16,
+        1
+       ]
+      },
+      "222": {
+       "screen": "#\n\n\n\n\u001b[40C\u000elqqqqqqqqk\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~\u000f=\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[37C###\u001b[31m\u000e`\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000emqqqq\u001b[33m\u000f+\u001b[39m\u000eq~qj\u000f\n\n\n\n\u001b[59C\u000eqqq\u000f \u000eqqqqk\u000f\n\u001b[59C\u000e~~~\u001b[36m\u000f(\u001b[39m\u000e~\u001b[33m\u000f%\u001b[39m\u000e~~x\u000f\n\u001b[41C\u000el\u000f \u000eq\u000f\u001b[11C\u000e~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~\u000f   #\u001b[97m@\u001b[39m#\u000e~~~~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u000f\u001b[11C\u000eqqqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Hatamoto\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1 T:19",
+       "cursor": [
+        2,
+        0,
+        1
+       ]
+      },
+      "223": {
+       "screen": "# c\n\n\n\n\u001b[40C\u000elqqqqqqqqk\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[40C\u000ex\u001b[90m~~~~~~\u000f=\u001b[93m<\u001b[39m\u000ex\u000f\n\u001b[37C###\u001b[31m\u000e`\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[40C\u000emqqqq\u001b[33m\u000f+\u001b[39m\u000eq~qj\u000f\n\n\n\n\u001b[59C\u000eqqq\u000f \u000eqqqqk\u000f\n\u001b[59C\u000e~~~\u001b[36m\u000f(\u001b[39m\u000e~\u001b[33m\u000f%\u001b[39m\u000e~~x\u000f\n\u001b[41C\u000el\u000f \u000eq\u000f\u001b[11C\u000e~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~\u000f   #\u001b[97m@\u001b[39m#\u000e~~~~~~~~~~~~~~~x\u000f\n\u001b[41C\u000ex\u000f\u001b[11C\u000eqqqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Hatamoto\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1 T:19",
+       "cursor": [
+        3,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "double-rush-cancels-fight-prefix",
+   "segments": [
+    {
+     "seed": 39186,
+     "datetime": "20000205090000",
+     "nethackrc": "OPTIONS=name:Septor,role:Caveman,race:elf,gender:female,align:lawful\nOPTIONS=symset:DECgraphics\nOPTIONS=!legacy\nOPTIONS=autodescribe\n",
+     "moves": " jjjk  lJHY\u0004j Jb_ouuu,  bU  #ride\nl  BkU>ly\u0004nss\u001bhhhh  _ohh.\u001b/ykk.;jj;,\u001b  <#overview\n\u001bnn_aan\u001beeyjjbbbbjjj ynjjBnnnnkkk\u001bU\u001bssjjj _ll\u001b_ajj,  uuu\u001bkk<  Y\u001bebyu_o,kk  ;k.  J#sit\nUjjjj  kk_aayyy.bn20s  Luuuu ssy;k:U\u0004k  hhKnJ ;nnn;_m,_on.lll_dl\u001been\u001bb\u001by JN10sLssyyy\u001bUJ#overview\n\u001b,a\r\u001bEgj jjjj5sn  n;yyyy:5s  #sit\n qa nnn  uuuuhhjjjjuuuunnllD-  kknnnnnnnnUy\u001b:\u001bl<egyubbbkkkJ_mmbb,\u001b#chat\nj  ss\u001b,\u001buhhhh  egFgy\u001b n",
+     "frames": {
+      "393": {
+       "screen": "It's a wall.\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[97m@\u001b[39m\u000e~~~~~~x\u000f\n\u001b[5C\u000elqk~~~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nSeptor the Troglodyte\u001b[10CSt:18/05 Dx:15 Co:11 In:10 Wi:9 Ch:8 Lawful\nTutorial:1 $:0 HP:18(18) Pw:1(1) AC:10 Xp:1",
+       "cursor": [
+        8,
+        6,
+        1
+       ]
+      },
+      "394": {
+       "screen": "\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[97m@\u001b[39m\u000e~~~~~~x\u000f\n\u001b[5C\u000elqk~~~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nSeptor the Troglodyte\u001b[10CSt:18/05 Dx:15 Co:11 In:10 Wi:9 Ch:8 Lawful\nTutorial:1 $:0 HP:18(18) Pw:1(1) AC:10 Xp:1",
+       "cursor": [
+        8,
+        6,
+        1
+       ]
+      },
+      "395": {
+       "screen": "Unknown command ' '.\n\n\n\n\u001b[7C\u000elqqqqqqqk\u000f\n\u001b[5C\u000emqj~~~~~~~x\u000f\n    \u000eq~~\u001b[94m\u000f`\u001b[97m@\u001b[39m\u000e~~~~~~x\u000f\n\u001b[5C\u000elqk~~~\u001b[94m\u000f`\u001b[39m\u000e~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000ex~~~~~~~x\u000f\n\u001b[7C\u000emqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nSeptor the Troglodyte\u001b[10CSt:18/05 Dx:15 Co:11 In:10 Wi:9 Ch:8 Lawful\nTutorial:1 $:0 HP:18(18) Pw:1(1) AC:10 Xp:1",
+       "cursor": [
+        8,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "forcefight-outlives-walk-attempt-through-travel",
+   "segments": [
+    {
+     "seed": 17385,
+     "datetime": "20260414173108",
+     "nethackrc": "OPTIONS=name:Shade,role:Valkyrie\nOPTIONS=symset:DECgraphics\nOPTIONS=mention_walls\n",
+     "moves": "y ky nhh5sdd.ednbbb5s;llll:rau,a\r  JLhhh\u001byyyyyyyl, bbbb;j,s  qy \u001b#ride\nnb#sit\nby\u001b;n:10sl u  ,uuuujjyjjjjLLi\u001b #sit\nNkbuuullllKHh;uuu:hhhkkkk;nn: uuuL;llll.lll  sshhhhN\u0004k lhhhh_ddj,lllyyywhl J\u001bjjj_xxbb,yB>sshhhh <;nnn;nnnn\u001bJ  BH,\r  bbbh bbbeah\u001bNNqd \u001bqa k\u001bhjjjjJ, b#overview\n\u001b llll\u001bbbbbkkLyyyy>10s buuU__bbb\u001b yynnnnKnnn  jjjjk  yyuuu__.uul  uuJ#sit\njjjjlll  B bbbbKn20sbb\u001b<\u001befy#sit\n10s  ssl  j jjjWcy\u001bbbeeyJ>10sy \u0004j ;ll;lll  <ULbbb;uuu,U/yll.hhhjjY\u001b>U\u001bU\u001buuuuFg  _mmjjj,Kk>\u001by",
+     "frames": {
+      "468": {
+       "screen": "You harmlessly attack the fountain.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[72C##\n\u001b[71C\u000elq~qk\u000f\n\u001b[66C#####\u000e~~\u001b[93m\u000f$\u001b[39m\u000e~x\u000f\n\u001b[62C#####    \u000ex~~\u001b[94m\u000f{\u001b[39m\u000ex\u000f\n\u001b[71C\u000ex\u001b[97m\u000fd\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[71C\u000emqqqj\u000f\n\n\n\nShade the Stripling\u001b[12CSt:12 Dx:14 Co:18 In:10 Wi:11 Ch:10 Lawful\nDlvl:1 $:1 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        74,
+        17,
+        1
+       ]
+      },
+      "469": {
+       "screen": "You can't go down here.\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[72C##\n\u001b[71C\u000elq~qk\u000f\n\u001b[66C#####\u000e~~\u001b[93m\u000f$\u001b[39m\u000e~x\u000f\n\u001b[62C#####    \u000ex~~\u001b[94m\u000f{\u001b[39m\u000ex\u000f\n\u001b[71C\u000ex\u001b[97m\u000fd\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[71C\u000emqqqj\u000f\n\n\n\nShade the Stripling\u001b[12CSt:12 Dx:14 Co:18 In:10 Wi:11 Ch:10 Lawful\nDlvl:1 $:1 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        74,
+        17,
+        1
+       ]
+      },
+      "470": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[72C##\n\u001b[71C\u000elq~qk\u000f\n\u001b[66C#####\u000e~~\u001b[93m\u000f$\u001b[39m\u000e~x\u000f\n\u001b[62C#####    \u000ex~~\u001b[94m\u000f{\u001b[39m\u000ex\u000f\n\u001b[71C\u000ex\u001b[97m\u000fd\u001b[39m\u000e~\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n\u001b[71C\u000emqqqj\u000f\n\n\n\nShade the Stripling\u001b[12CSt:12 Dx:14 Co:18 In:10 Wi:11 Ch:10 Lawful\nDlvl:1 $:1 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        74,
+        17,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "monster-potion-occupant-stops-search",
+   "segments": [
+    {
+     "seed": 43326,
+     "datetime": "20261124220000",
+     "nethackrc": "OPTIONS=name:Sir,role:Tourist\nOPTIONS=race:elf,gender:male,align:chaotic\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=autopickup,pickup_types:$\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017ring of polymorph control\rPg#wizwish\nwand of polymorph\nqhvampire bat\n#sit\rFn#monster\r#sit\rjFueg  #sit\n< \u0014hhh.ahu cu\u0017ring of polymorph control\nPf\u0017potion of polymorph\rzh.pony\r#sit\r#wizwish\nboulder\rdi#wizwish\rboulder\rdi#sit\ns\u00175 rocks\rdillFk#chat\rjwc#untrap\nu #dip\nhyhajj #pray\ry  \u001b\u0017ring of polymorph control\rPh\u0017potion of polymorph\rzh.jellyfish\n#wizwish\rchest\ndh#sit\nsFuFnlu\u001b\u001bou_yyy.ai. aiu  n20s\u0017scroll of ",
+     "frames": {
+      "404": {
+       "screen": "You hear some noises.  You hear a chugging sound.  You stop searching.\n\n\u001b[57C\u000elqqqqqqqqqqqqqqk\u000f\n\u001b[57C\u000ex\u001b[90m~\u001b[39m~~~~~~~~~~~~~x\u000f\n\u001b[56C\u001b[97m@\u001b[33m\u000ea\u001b[39m~~~~~~~~~~~~~~x\u000f\n\u001b[56C#\u000ex\u001b[90m~\u001b[39m~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~~~~~x\u000f\n\u001b[57C\u000ex\u001b[97m\u000f!\u001b[39m `\u001b[33m(\u001b[39m\u000e~~~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~x\u000f\n\u001b[57C\u000emq~qqqqqqqqqqqqj\u000f\n\u001b[59C#\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Rambler\u001b[13CSt:10 Dx:13 Co:15 In:14 Wi:10 Ch:14 Neutral\nDlvl:1 $:590 HP:12(12) Pw:2(2) AC:10 Xp:1 Burdened",
+       "cursor": [
+        56,
+        4,
+        1
+       ]
+      },
+      "405": {
+       "screen": "In what direction?\n\n\u001b[57C\u000elqqqqqqqqqqqqqqk\u000f\n\u001b[57C\u000ex\u001b[90m~\u001b[39m~~~~~~~~~~~~~x\u000f\n\u001b[56C\u001b[97m@\u001b[33m\u000ea\u001b[39m~~~~~~~~~~~~~~x\u000f\n\u001b[56C#\u000ex\u001b[90m~\u001b[39m~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~~~~~x\u000f\n\u001b[57C\u000ex\u001b[97m\u000f!\u001b[39m `\u001b[33m(\u001b[39m\u000e~~~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~x\u000f\n\u001b[57C\u000emq~qqqqqqqqqqqqj\u000f\n\u001b[59C#\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Rambler\u001b[13CSt:10 Dx:13 Co:15 In:14 Wi:10 Ch:14 Neutral\nDlvl:1 $:590 HP:12(12) Pw:2(2) AC:10 Xp:1 Burdened",
+       "cursor": [
+        19,
+        0,
+        1
+       ]
+      },
+      "406": {
+       "screen": "cmdassist: Invalid direction key!\n\nValid direction keys are:\n\u001b[10Cy  k  u\n\u001b[11C\\ | /\n\u001b[10Ch- . -l\n\u001b[11C/ | \\\n\u001b[10Cb  j  n\n\n\u001b[10C<  up\n\u001b[10C>  down\n\u001b[10C.  direct at yourself\n\n(Suppress this message with !cmdassist in config file.)\n\n\n\n\n\n\n\n\n\n--More--",
+       "cursor": [
+        8,
+        23,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "inventory-eat-action-records-prefixed-repeat",
+   "segments": [
+    {
+     "seed": 42552,
+     "datetime": "20260601130000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Valkyrie\nOPTIONS=race:gnome,gender:male,align:neutral\nOPTIONS=!tutorial\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#ride\nn#wizwish\ntree\rnnbKk<kkJgkuuu>FlK#monster\nl8sFusnnnUUllhhjFkrg  rg  Db\nbUahb \u001bDa\n\u0017saddle\n\u0007pony\naij#ride\rnnlblFnnbbblyHFkhhhhjjjyyyk#dip\nini#sit\ragl ahy \u0001oyd",
+     "frames": {
+      "162": {
+       "screen": "You don't have anything to eat.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[17C-.---\n\u001b[17C|.\u001b[33mu\u001b[39m.|\n\u001b[17C|...|\n\u001b[7C|\u001b[9C|.\u001b[90m*\u001b[39m..\n\u001b[7C|.....    ..\u001b[97m@\u001b[39m.|\n\u001b[7C|\u001b[9C-----\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:18 In:9 Wi:9 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Satiated",
+       "cursor": [
+        19,
+        18,
+        1
+       ]
+      },
+      "163": {
+       "screen": "In what direction?\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[17C-.---\n\u001b[17C|.\u001b[33mu\u001b[39m.|\n\u001b[17C|...|\n\u001b[7C|\u001b[9C|.\u001b[90m*\u001b[39m..\n\u001b[7C|.....    ..\u001b[97m@\u001b[39m.|\n\u001b[7C|\u001b[9C-----\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:18 In:9 Wi:9 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Satiated",
+       "cursor": [
+        19,
+        0,
+        1
+       ]
+      },
+      "164": {
+       "screen": "You see no door there.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[17C-.---\n\u001b[17C|.\u001b[33mu\u001b[39m.|\n\u001b[17C|...|\n\u001b[7C|\u001b[9C|.\u001b[90m*\u001b[39m..\n\u001b[7C|.....    ..\u001b[97m@\u001b[39m.|\n\u001b[7C|\u001b[9C-----\n\n\nWizard the Stripling\u001b[11CSt:17 Dx:13 Co:18 In:9 Wi:9 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 Satiated",
+       "cursor": [
+        19,
+        18,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "engrave-add-queued-getlin-preserves-prompt",
+   "segments": [
+    {
+     "seed": 61412,
+     "datetime": "20261113233000",
+     "nethackrc": "OPTIONS=name:Septor,role:Priest,race:orc,gender:male,align:lawful\nOPTIONS=symset:DECgraphics\nOPTIONS=!tutorial\nOPTIONS=time\nOPTIONS=autodescribe\n",
+     "moves": " Y\u001b_@@.l,\u001brdy\u001bN;n.\u001b, k\u001bllluuuJ jnnnn\u001b#ride\nkjjjjjjjJ yyyyuuuu\u001b5s,\u001bllqa uuuuuu>ks#ride\nyhYU  uubbhhjn20s  b  #sit\nbbb #sit\n#ride\nklqy hhhyyyJ\u001bHn bbbb10sEdnbyyylllhnn_o,,a\rqa   ussunn5su\u001bllhhhhHyyy>Uk\u001bs,a\r\u0001Kuuuuhh U#force\n  ;y:hh\u001bJyyy  >  ;jj,U  L\u001b,\redn\u001byy\u0010kkkk\u001b\u0004hWab\u001b,a\ryyyyuuuu\u0004nshhhhYykkkk\u0004n 10s> i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+     "frames": {
+      "220": {
+       "screen": "What do you want to add to the writing in the dust here? y--More--\n\n\u001b[34C\u000eqqqqqqqqk\u000f\n\u001b[31C##\u000e~\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[31C#   \u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[27C######    \u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[29C####    \u001b[90m\u000e~~~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f\n\u001b[23C\u000elqqqqk\u001b[97m\u000fd\u001b[33md\u001b[39m##\u000e~\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[23C\u000ex~~~~~\u001b[97m\u000f@\u001b[39m    \u000eqqqqqqqqj\u000f\n\u001b[23C\u000ex~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f#\n\u001b[23C\u000ex~\u001b[90m~~~\u001b[39mx\u000f\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000e~\u001b[90m~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000emqqqqj\u000f\n\n\n\n\n\n\n\nSeptor the Aspirant\u001b[12CSt:9 Dx:15 Co:11 In:9 Wi:18 Ch:13 Lawful\nDlvl:1 $:0 HP:13(14) Pw:7(7) AC:7 Xp:1 T:48",
+       "cursor": [
+        66,
+        0,
+        1
+       ]
+      },
+      "221": {
+       "screen": "The little dog misses the jackal.  The jackal misses!\n\n\u001b[34C\u000eqqqqqqqqk\u000f\n\u001b[31C##\u000e~\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[31C#   \u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[27C######    \u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[29C####    \u001b[90m\u000e~~~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f\n\u001b[23C\u000elqqqqk\u001b[97m\u000fd\u001b[33md\u001b[39m##\u000e~\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[23C\u000ex~~~~~\u001b[97m\u000f@\u001b[39m    \u000eqqqqqqqqj\u000f\n\u001b[23C\u000ex~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f#\n\u001b[23C\u000ex~\u001b[90m~~~\u001b[39mx\u000f\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000e~\u001b[90m~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000emqqqqj\u000f\n\n\n\n\n\n\n\nSeptor the Aspirant\u001b[12CSt:9 Dx:15 Co:11 In:9 Wi:18 Ch:13 Lawful\nDlvl:1 $:0 HP:13(14) Pw:7(7) AC:7 Xp:1 T:49",
+       "cursor": [
+        29,
+        8,
+        1
+       ]
+      },
+      "222": {
+       "screen": "Unknown command ' '.\n\n\u001b[34C\u000eqqqqqqqqk\u000f\n\u001b[31C##\u000e~\u001b[90m~~~~~~~~\u001b[39mx\u000f\n\u001b[31C#   \u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[27C######    \u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[29C####    \u001b[90m\u000e~~~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f\n\u001b[23C\u000elqqqqk\u001b[97m\u000fd\u001b[33md\u001b[39m##\u000e~\u001b[90m~~~~~~~~\u001b[39m~\u000f\n\u001b[23C\u000ex~~~~~\u001b[97m\u000f@\u001b[39m    \u000eqqqqqqqqj\u000f\n\u001b[23C\u000ex~~~\u001b[93m\u000f<\u001b[39m\u000ex\u000f#\n\u001b[23C\u000ex~\u001b[90m~~~\u001b[39mx\u000f\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000e~\u001b[90m~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[23C\u000ex\u001b[90m~~~~\u001b[39mx\u000f\n\u001b[23C\u000emqqqqj\u000f\n\n\n\n\n\n\n\nSeptor the Aspirant\u001b[12CSt:9 Dx:15 Co:11 In:9 Wi:18 Ch:13 Lawful\nDlvl:1 $:0 HP:13(14) Pw:7(7) AC:7 Xp:1 T:49",
+       "cursor": [
+        29,
+        8,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "pet-yelp-ends-residual-travel-run",
+   "segments": [
+    {
+     "seed": 25226,
+     "datetime": "20000205090000",
+     "nethackrc": "OPTIONS=name:Dequa,role:Monk,race:orc,gender:male,align:neutral\nOPTIONS=autopickup,pickup_types:$\nOPTIONS=!tutorial\nOPTIONS=time\nOPTIONS=!legacy\n",
+     "moves": "  kuuuuh;kkkk;  5shhh  K kuuuB\u001bbbbjjjjnk rfy llllnhhhlUb#pray\ny  bbb  jjjjjYbb>uuuullll<\u001bkk,\r ;b:,\rhhhh\u001bshhh_>yy,10s\u0004l5sqy \u001bH;jjjj:  Uegy___k,  N,a\rJ>\u001bL#chat\nj  #sit\nh  \u0004u edn yssLbYbuLuuuuyyn l#sit\nh\u001b>5syykkk\u001bbB5sJyY  k  nnnnn,jjjUyyyyul#sit\nU\u001bbbb uu#untrap\nn \u0004nnjjjL\u0004nuuu ,a\r\u0004n yyyeb \u0004yu5sKyy 5s10s, nnn#ride\nhY;hh:  nkkuu\u001b#ride\nh\u0004u<uuu;n.knkkk\u001bjjnuUyyyssbbllh 5s  n20s j  jjjb,  hhhhs\u0010llllkYdd.\u001b<\u001bqe nbbbn20sH;kkk;kkkkbbbyyyykllllPjk _xk\u001bL,\u001b  n20sn20s \u0004yh#ride\nl Khhbs  5sB\u001b>_xhh,_on\u001bBuuuuUqa ;uuu,ssuuuuKn20s",
+     "frames": {
+      "122": {
+       "screen": "You kick the kitten.  The kitten yowls!\n\n\n\u001b[69C-----\n\u001b[69C\u001b[90m....\u001b[39m|\n\u001b[68C|\u001b[90m....\u001b[39m|\n\u001b[67C#.\u001b[90m....\u001b[39m|\n\u001b[58C------   #|\u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|   # \u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m.####  \u001b[90m..\u001b[97m?\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|#\u001b[5C----\n\u001b[58C\u001b[33m+\u001b[90m...\u001b[93m<\u001b[39m|#\n\u001b[58C------#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C###\u001b[97m@\u001b[39m##\n\u001b[69C#\n\u001b[69C##\n\n\nDequa the Candidate\u001b[12CSt:17 Dx:15 Co:12 In:9 Wi:11 Ch:8 Neutral\nDlvl:1 $:0 HP:14(14) Pw:0(0) AC:4 Xp:1 T:54",
+       "cursor": [
+        67,
+        17,
+        1
+       ]
+      },
+      "123": {
+       "screen": "Unknown command ' '.\n\n\n\u001b[69C-----\n\u001b[69C\u001b[90m....\u001b[39m|\n\u001b[68C|\u001b[90m....\u001b[39m|\n\u001b[67C#.\u001b[90m....\u001b[39m|\n\u001b[58C------   #|\u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|   # \u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m.####  \u001b[90m..\u001b[97m?\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|#\u001b[5C----\n\u001b[58C\u001b[33m+\u001b[90m...\u001b[93m<\u001b[39m|#\n\u001b[58C------#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C###\u001b[97m@\u001b[39m##\n\u001b[69C#\n\u001b[69C##\n\n\nDequa the Candidate\u001b[12CSt:17 Dx:15 Co:12 In:9 Wi:11 Ch:8 Neutral\nDlvl:1 $:0 HP:14(14) Pw:0(0) AC:4 Xp:1 T:54",
+       "cursor": [
+        67,
+        17,
+        1
+       ]
+      },
+      "124": {
+       "screen": "\n\n\n\u001b[69C-----\n\u001b[69C\u001b[90m....\u001b[39m|\n\u001b[68C|\u001b[90m....\u001b[39m|\n\u001b[67C#.\u001b[90m....\u001b[39m|\n\u001b[58C------   #|\u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|   # \u001b[90m....\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m.####  \u001b[90m..\u001b[97m?\u001b[39m|\n\u001b[58C|\u001b[90m....\u001b[39m|#\u001b[5C----\n\u001b[58C\u001b[33m+\u001b[90m...\u001b[93m<\u001b[39m|#\n\u001b[58C------#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C#\n\u001b[64C###\u001b[97m@\u001b[39m##\n\u001b[69C#\n\u001b[69C##\n\n\nDequa the Candidate\u001b[12CSt:17 Dx:15 Co:12 In:9 Wi:11 Ch:8 Neutral\nDlvl:1 $:0 HP:14(14) Pw:0(0) AC:4 Xp:1 T:54",
+       "cursor": [
+        67,
+        17,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "corner-menu-dismissal-keeps-shared-status-title",
+   "segments": [
+    {
+     "seed": 46660,
+     "datetime": "20261113233000",
+     "nethackrc": "OPTIONS=name:Zoe,role:Tourist\nOPTIONS=symset:DECgraphics\nOPTIONS=statuslines:3\nOPTIONS=sparkle\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b\u0017blessed amulet of life saving\nWf\u0016castle\n\u0006\u0017wooden flute\ragnCDEFG\r_yyyyy.uyyygkgkBbFnksok/yk.D\u001b#dip\rjyf#force\ryPj\u0001sFhn#wizwish\rblessed low boots\rWi#wizwish\rblessed small shield\nWk#wizwish\rcursed elven mithril-coat\nWg#wizwish\ncursed ring mail\rWi #wizgenesis\rwater nymph\rsnFhnFbFys \u001bnFkjNkeb  #pray\ny  ec  #loot\ny:\u001bZbl  \u0017blessed +3 gray dragon scale mail\nWf\u0016castle\r\u0006\u0017wand of opening\rzgy#wizgenesis\relectric eel\rnuhhLyyNhhhFyNKsw-D\u001b#force\rywe#sit\n#dip\nhyjsss\u0017blessed amulet of life saving\rWf\u0016castle\r#wizwish\nwooden flute\rahnCDEFG\nyj#pray\ry  dfrj  wa#wizwish\r+2 ring mail\nWi \u0007nymph\rn\u001bs \u001bs yK3sujjjs_yyy.FhnUls\u0017blessed amulet of life saving\rWf\u0016castle\n\u0006#wizwish\rwand of digging\nzfy\u0017wand of opening\nzjkHukkkHkjY>ssss\u001b\u0004k#untrap\nled   ",
+     "frames": {
+      "672": {
+       "screen": "\u001b[34C\u001b[7mDo what with the tripe ration?\u001b[0m\n\n\u001b[34Cc - Name this specific tripe ration\n \u000elqqqqqwqqqqqqqqqqqqqqqqqqqqqqqqq\u000f d - Drop this item\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~\u001b[39m\u000f e - Eat this\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[34m`\u001b[39mlqqqqqk\u001b[34m`````````````````\u001b[39m\u000f i - Adjust inventory by assigning new letter\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqq\u000f t - Throw this item\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~\u001b[39m\u000f w - Wield this item in your hands\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqwqwqqqqqqqw\u000f / - Look up information about this\n \u000etqj\u001b[90m~\u001b[39mlqj\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u000f (end)\n \u000ex\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u000f`\u000ex\u000f\n \u000ex\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~\u001b[33m\u000f+^\u001b[90m\u000e~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[93m\u000f\\\u001b[90m\u000e~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~\u001b[94m\u000f{\u001b[90m\u000e~~~\u001b[33m\u000f#\u001b[34m\u000e`\u001b[90m~~~~~\u001b[39mx\u001b[92m\u000f^\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mmqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqvqvqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqqqqvqqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqwqu\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~\u001b[39mx\u001b[34m`\u001b[39mtqqqk\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~\u001b[94m\u000f^\u001b[39m\u000ex\u000f\nWizard the Rambler\u001b[12C\u000eqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nNeutral $:125 HP:7(14) Pw:6(6)\nDlvl:27",
+       "cursor": [
+        40,
+        9,
+        1
+       ]
+      },
+      "673": {
+       "screen": "\u001b[34C\u001b[7mDo what with the tripe ration?\u001b[0m\n\n\u001b[34Cc - Name this specific tripe ration\n \u000elqqqqqwqqqqqqqqqqqqqqqqqqqqqqqqq\u000f d - Drop this item\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~\u001b[39m\u000f e - Eat this\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[34m`\u001b[39mlqqqqqk\u001b[34m`````````````````\u001b[39m\u000f i - Adjust inventory by assigning new letter\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqq\u000f t - Throw this item\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~\u001b[39m\u000f w - Wield this item in your hands\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqwqwqqqqqqqw\u000f / - Look up information about this\n \u000etqj\u001b[90m~\u001b[39mlqj\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u000f (end)\n \u000ex\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u000f`\u000ex\u000f\n \u000ex\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~\u001b[33m\u000f+^\u001b[90m\u000e~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[93m\u000f\\\u001b[90m\u000e~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~\u001b[94m\u000f{\u001b[90m\u000e~~~\u001b[33m\u000f#\u001b[34m\u000e`\u001b[90m~~~~~\u001b[39mx\u001b[92m\u000f^\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mmqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqvqvqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqqqqvqqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqwqu\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~\u001b[39mx\u001b[34m`\u001b[39mtqqqk\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~\u001b[94m\u000f^\u001b[39m\u000ex\u000f\nWizard the Rambler\u001b[12C\u000eqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqvqqqqqj\u000f\nNeutral $:125 HP:7(14) Pw:6(6)\nDlvl:27",
+       "cursor": [
+        40,
+        9,
+        1
+       ]
+      },
+      "674": {
+       "screen": "\n\n\n \u000elqqqqqwqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqwqqqwqk\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u000f<\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[34m`\u001b[39mlqqqqqk\u001b[34m```````````````````````````````````````````````\u001b[39mlqqqqqk\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~\u001b[94m\u000f`\u001b[90m\u000e~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m\u000f^\u000e~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mtqq\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mtqqqu\u000f\n \u000ex\u001b[90m~\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[34m`\u001b[39mmqqqqwvqqqqqqwqwqqqqqqqwqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqwqqqqqqqqqqwqqqqqqqvwqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mx\u001b[93m\u000f$\u001b[90md\u001b[32mn\u001b[39m\u000ex\u000f\n \u000etqj\u001b[90m~\u001b[39mlqj\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[97m\u000f@\u001b[39m\u000ex\u000f\n \u000ex\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u001b[90m~~~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~~\u001b[91m\u000f^\u001b[39m\u000ex\u000f`\u000ex\u000f\n \u000ex\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqvqvqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mx\u001b[90m~\u001b[39mqqu\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~\u001b[33m\u000f+^\u001b[90m\u000e~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~~~\u001b[33m\u000f^\u001b[90m\u000e~\u001b[39mx\u001b[90m~\u001b[93m\u000f\\\u001b[90m\u000e~~~~~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~\u001b[94m\u000f{\u001b[90m\u000e~~~\u001b[33m\u000f#\u001b[34m\u000e`\u001b[90m~~~~~\u001b[39mx\u001b[92m\u000f^\u001b[90m\u000e~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mtqqqqqqqwqwqqqqqqqu\u001b[90m~~~~~~~~~~~\u001b[39mtqqqqqqqqqqu\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~\u001b[39mmqk\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~\u001b[34m`\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m`\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[90m~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~~~~\u001b[39m~\u001b[90m~~~~~~~~~~\u001b[39mx\u001b[90m~~~~~~~~\u001b[39mx\u001b[34m``````\u001b[39mx\u001b[90m~\u001b[39mmqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mlqqqqvwqqqqqqvqvqqqqqqqvqqqqq\u001b[33m\u000f+\u001b[39m\u000eqqqqqvqqqqqqqqqqvqqqqqqqwvqqqqk\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mx\u000f\n \u000ex\u001b[90m~\u001b[39mqqwqu\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[33ma\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[33m\u000f+\u001b[90m\u000e~~~~~\u001b[39mx\u001b[34m`\u001b[39mtqqqk\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~~~\u001b[39mtqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqu\u001b[90m~~~~~\u001b[39mx\u001b[34m`\u001b[39mx\u001b[90m~~~\u001b[39mx\u001b[90m~\u001b[39mx\u000f\n \u000etqq\u001b[90m~\u001b[39mx\u001b[90m~\u001b[39mx\u001b[34m`\u001b[39mmqqqqqj\u001b[34m```````````````````````````````````````````````\u001b[39mmqqqqqj\u001b[34m`\u001b[39mx\u001b[90m~\u001b[39mqqj\u001b[90m~\u001b[39mx\u000f\n \u000ex\u001b[90m~~~~~\u001b[39mx\u001b[34m`````````\u001b[90m~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\u001b[34m`````````\u001b[39mx\u001b[90m~~~~\u001b[94m\u000f^\u001b[39m\u000ex\u000f\nWizard the Rambler\u001b[13CSt:13 Dx:12 Co:12 In:13 Wi:8 Ch:18\u000eqqqqqqvqqqqqj\u000f\nNeutral $:125 HP:7(14) Pw:6(6) AC:10 Xp:2 Satiated\nDlvl:27",
+       "cursor": [
+        76,
+        9,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "polearm-fireassist-clears-finished-travel-run",
+   "segments": [
+    {
+     "seed": 43296,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Sir,role:Knight,race:dwarf,gender:female,align:neutral\nOPTIONS=symset:DECgraphics\nOPTIONS=time\n",
+     "moves": "  LkkkbbbU<\u001b,\u001bhL\u001buuu\u001bnqa  <jjjj<\u001b,a\r  yyyJ ac.\u001bkj>u  bbH  Hjj_@jj.l\u001bnkkkeell\u0004kjss  Phu yyyy#overview\n\u001b  nnnK\u001bn20s#ride\nulb#force\n#sit\nllllk>lljjhhnnnyb  uHuuhhh<\u001b_>>ll\u001bbbbUrflLkkk_aan\u001b;b,  H  ljubbbb  \u0004b_@nnn\u001blln\u001bkjjknnnn  #overview\n\u001b#ride\ny;nn,llll\u001bH\u001byyyyK n20sjjjjsu  Ziy  uuuukkkk#sit\njjuuuhh kk#overview\n\u001bll_.Ny\u001b_o,fay\u001b#sit\nb 10s#sit\nean  n20s_<<hh.  ;ll.Pjluubllluubbbb;k;nyyy\u001bLuuk 5suuuk uuuxbj\u001bnjjjjkk#sit\n",
+     "frames": {
+      "323": {
+       "screen": "a - a +1 long sword (alternate weapon; not wielded).\n\n\u001b[57C\u000elqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[39m\u000ex\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000elqqqqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39m~\u000f##\u001b[7C\u000ex~~~\u000f>\u000e~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[50C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqj~~~\u000f#########\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n\u001b[50C\u001b[33m+\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f #\u001b[7C\u000em\u001b[33m\u000fu\u001b[39m\u000eqqqqj\u000f\n\u001b[50C\u000emqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:3(3) AC:3 Xp:1 T:138",
+       "cursor": [
+        71,
+        11,
+        1
+       ]
+      },
+      "324": {
+       "screen": "#\n\n\u001b[57C\u000elqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[39m\u000ex\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000elqqqqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39m~\u000f##\u001b[7C\u000ex~~~\u000f>\u000e~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[50C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqj~~~\u000f#########\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n\u001b[50C\u001b[33m+\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f #\u001b[7C\u000em\u001b[33m\u000fu\u001b[39m\u000eqqqqj\u000f\n\u001b[50C\u000emqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:3(3) AC:3 Xp:1 T:138",
+       "cursor": [
+        2,
+        0,
+        1
+       ]
+      },
+      "325": {
+       "screen": "# sit\n\n\u001b[57C\u000elqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\n\u001b[57C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[39m\u000ex\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000elqqqqqk\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f\u001b[9C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39m~\u000f##\u001b[7C\u000ex~~~\u000f>\u000e~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[57C\u000ex\u001b[90m~~\u001b[39mx\u000f #\u001b[7C\u000ex~~~~~x\u000f\n\u001b[50C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000eqj~~~\u000f#########\u000e~\u001b[97m\u000f@\u001b[39m\u000e~~~~x\u000f\n\u001b[50C\u001b[33m+\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f #\u001b[7C\u000em\u001b[33m\u000fu\u001b[39m\u000eqqqqj\u000f\n\u001b[50C\u000emqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\nSir the Gallant\u001b[16CSt:14 Dx:8 Co:12 In:8 Wi:15 Ch:18 Lawful\nDlvl:1 $:0 HP:16(16) Pw:3(3) AC:3 Xp:1 T:138",
+       "cursor": [
+        3,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "travel-frontier-skips-displayed-unexplored",
+   "segments": [
+    {
+     "seed": 26685,
+     "datetime": "20000922140000",
+     "nethackrc": "OPTIONS=name:Sir,role:Ranger\n",
+     "moves": "  \u0004y n20sll5sh nnnjbbbLb\u001bl;jjj;UYsshhhhhh 10s  bbbbuy#sit\nnnnnLH,\r  ,l<qn s;kkkk:uuu\u001blll,a\rNuuuu;l;J<Ach#ride\nh_aak\u001b  k  hlll  Bbbbb;l.\u0001  ,kkbbb;j:BJull  #ride\nk\u001bllll\u001bKj  lhhkkkkh eh \u0004h yyyaelKh\u001bU_ll,Y N10s  __\u001bssBnnnnjjbb_@\u001bhhU  kkyynn\u001bbhnnn\u001b\u0004l hhh_bbb\u001bPd \u001b\u001bCl;n,ln Yy_l., knnn_mmk.llllhhhh  Yhhh  ;bbbb:knbbb  bb_dbb.K#untrap\nj\u001b;nnn.#ride\nbeg #ride\nhlYb jj<lllluukkkk5skyyyyJ nnnnJ>ebn\u001bkkk  N\u001bynnn,\r>\u001bwgu klllLJkk,\rnn#untrap\nhbb  ;y: yy jLyhhh jjjjbbbqf \u0004yyyy nnn_m,HH  ebbbbeb lllB\u001bh;kkkk;;hhhh.nny\u001b;n:_xhh,lllln20sb\u0004j L yyy_mbbb\u001bbb  \u0004u  _dduu,  nnnnUKss  , #sit\nlll  _oll\u001b",
+     "frames": {
+      "507": {
+       "screen": "Where do you want to travel to?  (For instructions type a '?')\n\n\n\u001b[14C--------------\n\u001b[14C.\u001b[90m............\u001b[39m|\n\u001b[14C|\u001b[90m............\u001b[39m.\n\u001b[14C|\u001b[90m....\u001b[93m<\u001b[90m.......\u001b[39m|\n\u001b[14C-----.----- --\n\u001b[17C#######\n\u001b[20C# -.-\n\u001b[22C\u001b[90m...\u001b[39m\n\n\n\u001b[20C\u001b[90m.\u001b[39m  --\n\u001b[19C\u001b[90m.\u001b[39m  \u001b[90m.\u001b[33m+\u001b[39m\n\n\u001b[20C\u001b[90m.\u001b[39m   \u001b[97m[\u001b[39m|\n\u001b[20C--## |\n\u001b[21C|## |\n\u001b[21C----\n\n\nSir the Tenderfoot\u001b[13CSt:13 Dx:9 Co:13 In:13 Wi:15 Ch:12 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        19,
+        14,
+        1
+       ]
+      },
+      "508": {
+       "screen": "Where do you want to travel to?  (For instructions type a '?')\n\n\n\u001b[14C--------------\n\u001b[14C.\u001b[90m............\u001b[39m|\n\u001b[14C|\u001b[90m............\u001b[39m.\n\u001b[14C|\u001b[90m....\u001b[93m<\u001b[90m.......\u001b[39m|\n\u001b[14C-----.----- --\n\u001b[17C#######\n\u001b[20C# -.-\n\u001b[22C\u001b[90m...\u001b[39m\n\n\n\u001b[20C\u001b[90m.\u001b[39m  --\n\u001b[19C\u001b[90m.\u001b[39m  \u001b[90m.\u001b[33m+\u001b[39m\n\n\u001b[20C\u001b[90m.\u001b[39m   \u001b[97m[\u001b[39m|\n\u001b[20C--## |\n\u001b[21C|## |\n\u001b[21C----\n\n\nSir the Tenderfoot\u001b[13CSt:13 Dx:9 Co:13 In:13 Wi:15 Ch:12 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        18,
+        14,
+        1
+       ]
+      },
+      "509": {
+       "screen": "Where do you want to travel to?  (For instructions type a '?')\n\n\n\u001b[14C--------------\n\u001b[14C.\u001b[90m............\u001b[39m|\n\u001b[14C|\u001b[90m............\u001b[39m.\n\u001b[14C|\u001b[90m....\u001b[93m<\u001b[90m.......\u001b[39m|\n\u001b[14C-----.----- --\n\u001b[17C#######\n\u001b[20C# -.-\n\u001b[22C\u001b[90m...\u001b[39m\n\n\n\u001b[20C\u001b[90m.\u001b[39m  --\n\u001b[19C\u001b[90m.\u001b[39m  \u001b[90m.\u001b[33m+\u001b[39m\n\n\u001b[20C\u001b[90m.\u001b[39m   \u001b[97m[\u001b[39m|\n\u001b[20C--## |\n\u001b[21C|## |\n\u001b[21C----\n\n\nSir the Tenderfoot\u001b[13CSt:13 Dx:9 Co:13 In:13 Wi:15 Ch:12 Neutral\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        17,
+        14,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "encumbrance-publication-signature-uses-current-load",
+   "segments": [
+    {
+     "seed": 94395,
+     "datetime": "20260503025436",
+     "nethackrc": "OPTIONS=name:Septor,role:Knight,race:elf,gender:male,align:chaotic\nOPTIONS=symset:DECgraphics\nOPTIONS=time\nOPTIONS=lit_corridor\n",
+     "moves": "\u001bn20s_oo, hhh llll10sH\u001bFfu lllhhhullll10seghhllf-hnnnnuuuuUnn_dy,10s qe _aall,jjjj bb  Hyyy\u001bHL_ml, 5s ,a\rlllkllllkkkknnnn5s\u001bnhh>\u001bbhlh#sit\nJ\u001b, H n,\u001byyyy jjjjefN ,\u001bhYBj  lllljjjjkkk  h YssL n\u001blY;kkk,qy _xxh,yjb_h.#ride\nuu;uuuu:#ride\nnqf \u001bh5s\u0004j  yuBNyl\u0004k j>yyyyn20s\u001buuu  Uk  yyyllnnqd \u0018 \u001bL;bbb.\u0004k h\u001b___kk,kj;hh:ef\u0004yJ_<\u001bn i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+     "frames": {
+      "124": {
+       "screen": "You rebalance your load.  Movement is difficult.\n\n\n\n\n\n\u001b[43C\u000elqqqqqqqqqqqqqk\u000f\n\u001b[43C\u000ex~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[43C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~\u000f+\u000e~~x\u000f\n\u001b[43C\u000ex~~~~~\u001b[97m\u000f@\u001b[39m\u000e~\u001b[33m\u000fu\u001b[39m\u000e~~~~~x\u000f\n\u001b[43C\u000em~q\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqqqj\u000f\n\n\n\n\u001b[42C\u000e~\u000f\n\u001b[41C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[41C\u001b[90m\u000e~\u000f\u001b[39m\n\u001b[40C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[39C\u000emqq\u000f\n\n\n\nSeptor the Gallant\u001b[13CSt:13 Dx:9 Co:11 In:10 Wi:15 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 T:23 Stressed",
+       "cursor": [
+        49,
+        9,
+        1
+       ]
+      },
+      "125": {
+       "screen": "\n\n\n\n\n\n\u001b[43C\u000elqqqqqqqqqqqqqk\u000f\n\u001b[43C\u000ex~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[43C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~~\u000f+\u000e~~x\u000f\n\u001b[43C\u000ex~~~~~\u001b[97m\u000f@\u001b[39m\u000e~\u001b[33m\u000fu\u001b[39m\u000e~~~~~x\u000f\n\u001b[43C\u000em~q\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqqqj\u000f\n\n\n\n\u001b[42C\u000e~\u000f\n\u001b[41C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[41C\u001b[90m\u000e~\u000f\u001b[39m\n\u001b[40C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[39C\u000emqq\u000f\n\n\n\nSeptor the Gallant\u001b[13CSt:13 Dx:9 Co:11 In:10 Wi:15 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 T:25 Stressed",
+       "cursor": [
+        49,
+        9,
+        1
+       ]
+      },
+      "126": {
+       "screen": "\n\n\n\n\n\n\u001b[43C\u000elqqqqqqqqqqqqqk\u000f\n\u001b[43C\u000ex~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~~~~~~x\u000f\n\u001b[43C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~~~~~~\u001b[33m\u000fu\u001b[39m+\u000e~~x\u000f\n\u001b[43C\u000ex~~~~\u001b[97m\u000f@\u001b[93m$\u001b[39m\u000e~\u001b[93m\u000f$\u001b[39m\u000e~~~~~x\u000f\n\u001b[43C\u000em~q\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqqqj\u000f\n\n\n\n\u001b[42C\u000e~\u000f\n\u001b[41C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[41C\u001b[90m\u000e~\u000f\u001b[39m\n\u001b[40C\u001b[90m\u000e~~\u000f\u001b[39m\n\u001b[39C\u000emqq\u000f\n\n\n\nSeptor the Gallant\u001b[13CSt:13 Dx:9 Co:11 In:10 Wi:15 Ch:17 Lawful\nDlvl:1 $:0 HP:16(16) Pw:5(5) AC:3 Xp:1 T:27 Stressed",
+       "cursor": [
+        48,
+        9,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "magic-trap-confusion-restore-keeps-published-status",
+   "segments": [
+    {
+     "seed": 75163,
+     "datetime": "20260722013000",
+     "nethackrc": "OPTIONS=name:Hero,role:Wizard\nOPTIONS=!tutorial\nOPTIONS=symset:DECgraphics\nOPTIONS=autopickup,pickup_types:$\nOPTIONS=autodescribe\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\rcursed Hawaiian shirt\nWg\u0017blessed small shield\rWm#wizwish\nspeed boots\rWh#wizwish\n50 gold pieces\n#wizgenesis\rnymph\r  s yyykjjjyyFl5snnkkuLnntdy _uuu.olol#force\ry\u001b#wizwish\rsink\nqn  qn  3sjkhhlllqj  tcu oltbh #chat\nb#wizwish\rcursed leather gloves\rWm\u00171 gold pieces\n\u0007nymph\nnFkFys  s ybbyyyjuuuuuNss, Zbj  \u0004lqh  ,n8s #wizwish\rsink\n\u0004k  qyy  qyy  Hbs#force\ny<#force\ny",
+     "frames": {
+      "360": {
+       "screen": "You feel like someone is helping you.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[36C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000ek\u000f\n\u001b[36C\u000ex~~~~~x\u000f\n\u001b[36C\u000ex~~\u001b[93m\u000f<\u001b[97mf@\u001b[39m\u000ex\u000f\n\u001b[36C\u001b[33m+\u001b[39m\u000e~~~~\u001b[97m\u000f{\u001b[39m\u000ex\u000f\n\u001b[36C\u000emqqqqqj\u000f\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:15 Co:12 In:18 Wi:9 Ch:13 Chaotic\nDlvl:1 $:50 HP:11(12) Pw:7(7) AC:9 Xp:1",
+       "cursor": [
+        41,
+        16,
+        1
+       ]
+      },
+      "361": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[36C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000ek\u000f\n\u001b[36C\u000ex~~~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[36C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~\u001b[33m\u000f%\u001b[39m\u000ex\u000f\n\u001b[36C\u001b[33m+\u001b[39m\u000e~~\u001b[97m\u000ff\u001b[39m\u000e~\u001b[97m\u000f{\u001b[39m\u000ex\u000f\n\u001b[36C\u000emqqqqqj\u000f\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:15 Co:12 In:18 Wi:9 Ch:13 Chaotic\nDlvl:1 $:50 HP:11(12) Pw:7(7) AC:9 Xp:1",
+       "cursor": [
+        40,
+        15,
+        1
+       ]
+      },
+      "362": {
+       "screen": "You can't go up here.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[36C\u000elqqqq\u001b[33m\u000f+\u001b[39m\u000ek\u000f\n\u001b[36C\u000ex~~~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[36C\u000ex~~\u001b[93m\u000f<\u001b[39m\u000e~\u001b[33m\u000f%\u001b[39m\u000ex\u000f\n\u001b[36C\u001b[33m+\u001b[39m\u000e~~\u001b[97m\u000ff\u001b[39m\u000e~\u001b[97m\u000f{\u001b[39m\u000ex\u000f\n\u001b[36C\u000emqqqqqj\u000f\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:15 Co:12 In:18 Wi:9 Ch:13 Chaotic\nDlvl:1 $:50 HP:11(12) Pw:7(7) AC:9 Xp:1",
+       "cursor": [
+        40,
+        15,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "pet-kills-holder-publishes-pending-map",
+   "segments": [
+    {
+     "seed": 91830,
+     "datetime": "20260503025436",
+     "nethackrc": "OPTIONS=name:Hero,role:Caveman\nOPTIONS=race:elf,gender:female,align:neutral\nOPTIONS=!tutorial\nOPTIONS=!autopickup\nOPTIONS=!verbose\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\rring of polymorph control\rPh#wizwish\rwand of polymorph\nzg.pony\r#monster\nLHh3sylbBghn29s#force\nyqh   Hdf\u0018\u001b#wizwish\rring of polymorph control\rPh\u0017potion of polymorph\rqixorn\n#monster\nFjsFksK4shhh6sbnbk#chat\rn\u0004b>Zaj  zfu  tcn ",
+     "frames": {
+      "229": {
+       "screen": "Slasher bites the lichen.  The lichen is killed!--More--\n\n   -------\n   |..\u001b[92m%\u001b[39m...\n   |.\u001b[97m@d\u001b[39m.\u001b[93m<\u001b[39m|\n   |......\n   -----\u001b[33m+\u001b[39m-\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Troglodyte\u001b[10CSt:18/03 Dx:11 Co:18 In:9 Wi:9 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:3(3) AC:8 Xp:1",
+       "cursor": [
+        56,
+        0,
+        1
+       ]
+      },
+      "230": {
+       "screen": "Slasher bites the lichen.  The lichen is killed!--More--\n\n   -------\n   |..\u001b[92m%\u001b[39m...\n   |.\u001b[97m@d\u001b[39m.\u001b[93m<\u001b[39m|\n   |......\n   -----\u001b[33m+\u001b[39m-\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Troglodyte\u001b[10CSt:18/03 Dx:11 Co:18 In:9 Wi:9 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:3(3) AC:8 Xp:1",
+       "cursor": [
+        56,
+        0,
+        1
+       ]
+      },
+      "231": {
+       "screen": "Slasher bites the lichen.  The lichen is killed!--More--\n\n   -------\n   |..\u001b[92m%\u001b[39m...\n   |.\u001b[97m@d\u001b[39m.\u001b[93m<\u001b[39m|\n   |......\n   -----\u001b[33m+\u001b[39m-\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Troglodyte\u001b[10CSt:18/03 Dx:11 Co:18 In:9 Wi:9 Ch:7 Neutral\nDlvl:1 $:0 HP:15(15) Pw:3(3) AC:8 Xp:1",
+       "cursor": [
+        56,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "saddle-shuffled-riding-gloves",
+   "segments": [
+    {
+     "seed": 64810,
+     "datetime": "20260601130000",
+     "nethackrc": "OPTIONS=name:Bob,role:Knight\nOPTIONS=!tutorial\nOPTIONS=!legacy\nOPTIONS=playmode:debug\n",
+     "moves": " y\u001b#wizwish\rsaddle\r#wizgenesis\rdog\n#tame\ragy#ride\rl3sHFlhhhhykBgjhy\u0001#untrap\nn#ride\nh\u0017iron bars\rnnnbyyyjjj#ride\rnyu_jjj.#pray\ny  cy\u0017saddle\r#wizgenesis\npony\nafn#ride\nj\u0017pit\nujjj:Hhbhhh7sgn5sgkbbbuuuyn17sed  #jump\nuu. #wizwish\rsaddle\n\u0007warhorse\r#tame\nagu#ride\rh\u0017level teleporter\nh\u0004nusnnJUUbzh>  \u001b\u001bn25s\u001b\u001b\u0001_hhh.#ride\n Fbs\u0006khhnhh#ride\rhjFuh\u0004kbbkyk\u0004ubHujkynnn<#terrain\nb\u001b#chat\ny\u0017saddle\n#wizgenesis\rhorse\naju#ride\nuN#ride\rbbbkgl#ride\nHhNy>gnjjj#monster\rjUuyyynyyysD\u001b\u0004nn25s",
+     "frames": {
+      "398": {
+       "screen": "You put the saddle on the horse.  The warhorse kicks!--More--\n\n\n\n\n\u001b[49C---------------\n\u001b[49C|.....\u001b[93m$\u001b[36m)\u001b[39m.\u001b[33mu\u001b[39m....|\n\u001b[49C.\u001b[36m+\u001b[39m....\u001b[33mu\u001b[39m.\u001b[97m?\u001b[39m.....|\n\u001b[49C|...\u001b[33mu\u001b[97m@\u001b[39m........\u001b[33m+\u001b[39m\n\u001b[49C|.............|\n\u001b[49C|...........!.|\n\u001b[49C---------------\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:11 In:8 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:10(16) Pw:6(6) AC:3 Xp:1 Burdened",
+       "cursor": [
+        61,
+        0,
+        1
+       ]
+      },
+      "399": {
+       "screen": "You put the saddle on the horse.  The warhorse kicks!--More--\n\n\n\n\n\u001b[49C---------------\n\u001b[49C|.....\u001b[93m$\u001b[36m)\u001b[39m.\u001b[33mu\u001b[39m....|\n\u001b[49C.\u001b[36m+\u001b[39m....\u001b[33mu\u001b[39m.\u001b[97m?\u001b[39m.....|\n\u001b[49C|...\u001b[33mu\u001b[97m@\u001b[39m........\u001b[33m+\u001b[39m\n\u001b[49C|.............|\n\u001b[49C|...........!.|\n\u001b[49C---------------\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:11 In:8 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:10(16) Pw:6(6) AC:3 Xp:1 Burdened",
+       "cursor": [
+        61,
+        0,
+        1
+       ]
+      },
+      "400": {
+       "screen": "You put the saddle on the horse.  The warhorse kicks!--More--\n\n\n\n\n\u001b[49C---------------\n\u001b[49C|.....\u001b[93m$\u001b[36m)\u001b[39m.\u001b[33mu\u001b[39m....|\n\u001b[49C.\u001b[36m+\u001b[39m....\u001b[33mu\u001b[39m.\u001b[97m?\u001b[39m.....|\n\u001b[49C|...\u001b[33mu\u001b[97m@\u001b[39m........\u001b[33m+\u001b[39m\n\u001b[49C|.............|\n\u001b[49C|...........!.|\n\u001b[49C---------------\n\n\n\n\n\n\n\n\n\n\nWizard the Gallant\u001b[13CSt:14 Dx:8 Co:11 In:8 Wi:16 Ch:18 Lawful\nDlvl:1 $:0 HP:10(16) Pw:6(6) AC:3 Xp:1 Burdened",
+       "cursor": [
+        61,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "corner-container-menu-clears-apply-prompt-outside-window",
+   "segments": [
+    {
+     "seed": 12,
+     "datetime": "20260503045501",
+     "nethackrc": "OPTIONS=symset:DECgraphics\n",
+     "moves": "Dodeco\rn[l\"m/hmy   nH#l\rK  #l\r:\u001b\u001bnknlnLll ,b\rnNuuLLi ln,@Oo$\"!=/?\r f  ykkKkyhhhuulLNlnll> bhhll@@ly< uLlhBjbbhbhhjhhll> nlLllulLKKyyYkkqy  BHHHHYJlkkkll  nlLllnlllqy yyyKLbbHHbHhbNbhhhkkkjjhhkkkkkYhhhhjJKYhhHkkYykhhhulll9skk9s9ssssssssbkk kljhksssssl9sh9si aji$\r$\r9s Dodeco\r  a?jo$\rd$hhk.khkjnjlkyy.kh.khh.k",
+     "frames": {
+      "259": {
+       "screen": "\u001b[38C\u001b[7mDo what with your bag?\u001b[0m\n\n\u001b[34C\u000elqq\u000f : - Look inside the bag\n\u001b[34C\u000ex\u001b[90m~~\u001b[39m\u000f o - take something out\n\u001b[34C\u000ex\u001b[90m~~\u001b[39m\u000f i - put something in\n\u001b[34C\u000em~q\u000f b - both; take out, then put in\n\u001b[38Cr - both reversed; put in, then take out\n\u001b[38Cs - stash one item into the bag\n\n\u001b[38Cq * do nothing\n\u001b[38C(end)\n\u001b[44C###\u001b[11C###\n\u001b[44C########\u001b[8C##\n\u001b[45C#\u001b[5C#####\u001b[5C#\u001b[8C\u000elqqk\u000f\n\u001b[45C###\u001b[7C## #  ##\u001b[7C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[47C#\u000elqqqqqqq\u001b[33ma\u001b[39mq\u001b[33ma\u001b[39mqqq~k\u000f\u001b[6C\u000ex~~x\u000f\n\u001b[47C#\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\u001b[6C\u000emqqj\u000f\n\u001b[47C#\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[47C#\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[48C\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[48C\u000emqqqqqqqqqqqqqqj\u000f\n\nDodeco the Candidate\u001b[11CSt:13 Dx:18 Co:12 In:11 Wi:9 Ch:12 Lawful\nDlvl:2 $:1163 HP:14(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        44,
+        10,
+        1
+       ]
+      },
+      "260": {
+       "screen": "\u001b[23C\u001b[7mPut in what type of objects?\u001b[0m\n\n\u001b[23CA - Auto-select every relevant item\n\u001b[27C(ignored unless some other choices are also picked)\n\n\u001b[23Ca - All types\n\u001b[23Cb - Coins\n\u001b[23Cc - Armor\n\u001b[23Cd - Comestibles\n\u001b[23Ce - Scrolls\n\u001b[23Cf - Spellbooks\n\u001b[23Cg - Potions\n\u001b[23Ch - Tools\n\n\u001b[23CB - Items known to be Blessed\n\u001b[23CU - Items known to be Uncursed\n\u001b[23CX - Items of unknown Bless/Curse status\n\u001b[23CP - Just picked up: 1163 gold pieces\n\u001b[23C(end)\n\u001b[48C\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[48C\u000emqqqqqqqqqqqqqqj\u000f\n\nDodeco the Candidate\u001b[11CSt:13 Dx:18 Co:12 In:11 Wi:9 Ch:12 Lawful\nDlvl:2 $:1163 HP:14(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        29,
+        18,
+        1
+       ]
+      },
+      "261": {
+       "screen": "\u001b[23C\u001b[7mPut in what type of objects?\u001b[0m\n\n\u001b[23CA - Auto-select every relevant item\n\u001b[27C(ignored unless some other choices are also picked)\n\n\u001b[23Ca - All types\n\u001b[23Cb + Coins\n\u001b[23Cc - Armor\n\u001b[23Cd - Comestibles\n\u001b[23Ce - Scrolls\n\u001b[23Cf - Spellbooks\n\u001b[23Cg - Potions\n\u001b[23Ch - Tools\n\n\u001b[23CB - Items known to be Blessed\n\u001b[23CU - Items known to be Uncursed\n\u001b[23CX - Items of unknown Bless/Curse status\n\u001b[23CP - Just picked up: 1163 gold pieces\n\u001b[23C(end)\n\u001b[48C\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[48C\u000emqqqqqqqqqqqqqqj\u000f\n\nDodeco the Candidate\u001b[11CSt:13 Dx:18 Co:12 In:11 Wi:9 Ch:12 Lawful\nDlvl:2 $:1163 HP:14(14) Pw:5(5) AC:4 Xp:1",
+       "cursor": [
+        29,
+        18,
+        1
+       ]
+      }
+     }
+    }
+   ]
   }
  ]
 }

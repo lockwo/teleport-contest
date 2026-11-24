@@ -414,11 +414,11 @@ async function seffect_magic_mapping(sobj) {
     const cval = (scursed && !confused);
     // C: `HConfusion = 1` is a raw store that never sets disp.botl, so the
     // status line keeps its published (unconfused) state until the next bot().
-    if (cval) { status_hold('conf', false); set_confused(1); } // to screw up map
+    if (cval) { status_hold('confusion', false); set_confused(1); } // to screw up map
     await do_mapping();
     if (cval) {
         set_confused(0); // restore
-        if (game._statusHold) delete game._statusHold.conf;
+        if (game._statusHold) delete game._statusHold.confusion;
         await pline_append("Unfortunately, you can't grasp the details.");
     }
 }

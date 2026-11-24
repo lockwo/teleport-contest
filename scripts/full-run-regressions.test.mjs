@@ -23,6 +23,14 @@ for (const c of cases) {
             // blank final capture), so a segment's screen count must match.
             if (segment.screens != null)
                 assert.equal(replay.getScreens().length, segment.screens, 'screen count');
+            if (segment.rng) {
+                const rng = replay.getRngLog()
+                    .filter(line => /^(?:rn2|rnd|rn1|rnl|rne|rnz|d)\(/.test(line))
+                    .map(line => line.replace(/\s*@\s.*$/, '').replace(/^\d+\s+/, '').trim());
+                assert.equal(rng.length, segment.rng.calls, 'RNG call count');
+                assert.deepEqual(rng.slice(-segment.rng.tail.length), segment.rng.tail,
+                    'final RNG calls');
+            }
             for (const [index, want] of Object.entries(segment.frames)) {
                 const got = decodeScreen(replay.getScreens()[Number(index)]);
                 const expected = decodeScreen(want.screen);

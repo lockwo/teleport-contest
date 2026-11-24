@@ -13,7 +13,7 @@ import { nhgetch } from './input.js';
 import { NO_COLOR, DEC_TO_UNICODE } from './terminal.js';
 import { mklev, l_nhcore_init, u_on_upstairs, makelevel_fill_and_mineralize } from './mklev.js';
 import { makedog } from './dog.js';
-import { rhack, domove, dosearch, dosearch0, donull, monster_nearby } from './cmd.js';
+import { rhack, domove, dosearch, dosearch0, donull, monster_nearby, finish_do_repeat } from './cmd.js';
 import { Hallucination_u, docrt, cls, bot, flush_screen, pline, topl_more, update_topl, have_warning, m_at, status_hold, bot_snapshot } from './display.js';
 import { vision_recalc, vision_reset, init_vision_globals, Blind } from './vision.js';
 import { phase_of_the_moon, friday_13th, NEW_MOON, FULL_MOON, night } from './calendar.js';
@@ -756,17 +756,18 @@ async function ask_do_tutorial() {
     let counting = false, count = 0, reset_count = true;
     for (;;) {
         if (reset_count) { counting = false; count = 0; } else reset_count = true;
-        // C ref: xwaitforspace(resp) rings the bell and keeps reading INSIDE the
-        // wait, so an ignored key never reaches the reset_count test above.
+        // C ref: getline.c:250: the remembered dismiss key also ends the wait.
+        // An unrecognized menu command then resets a pending count.
+        const dismiss = game._dismissMore;
         let c, idx;
         do { c = await nhgetch(); if (c === 27) game._dismissMore = 1; idx = RESP.indexOf(String.fromCharCode(c)); }
-        while (idx < 0);                        // tty_nhbell(), re-read
+        while (idx < 0 && c !== dismiss);       // tty_nhbell(), re-read
         let ch = String.fromCharCode(c);
-        if (idx >= SELECTORS.length) {          // map_menu_cmd() unless explicit
+        if (idx < 0 || idx >= SELECTORS.length) { // map_menu_cmd() unless explicit
             ch = map_menu_cmd(ch);
             c = ch.charCodeAt(0);
         }
-        if (idx < SELECTORS.length) {           // MENU_EXPLICIT_CHOICE
+        if (idx >= 0 && idx < SELECTORS.length) { // MENU_EXPLICIT_CHOICE
             if (ch === 'y') { game._tutorial_yes = true; await do_tutorial_goto(); }
             break;
         }
@@ -1933,6 +1934,7 @@ export async function moveloop_input_redraw() {
 // moveloop_core() (whose rhack() ran those steps) not to run it a second time.
 export async function end_turn_callbacks() {
     const g = game;
+    finish_do_repeat();
     g._end_turn_cb_ran = true;
     // allmain.c:541 — `if (gv.vision_full_recalc) vision_recalc(0)` follows
     // every domove()/rhack() and precedes the NEXT iteration's turn work, so a

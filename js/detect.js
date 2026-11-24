@@ -770,14 +770,14 @@ function magic_map_background(x, y, show) {
     if (!loc) return;
     let g = back_to_glyph(x, y);
     if (!cansee(x, y) && !loc.waslit) {
-        if (loc.typ === ROOM && g.ch === defsyms[S_room].sym) {
+        // back_to_glyph(ROOM) is S_room even when its active symbol is DECgraphics.
+        if (loc.typ === ROOM) {
             // C ref: display.c:245-247: color is iflags.use_color, and the
             // no-color arm remembers GLYPH_NOTHING rather than S_stone.
             g = (game.flags?.dark_room && game.iflags?.use_color)
                 ? (Is_rogue_level(game.u?.uz)
                     ? { ch: ' ', color: NO_COLOR, dec: false }
-                    : { ch: defsyms[S_darkroom].sym, color: defsyms[S_darkroom].color,
-                        dec: false, darkroom: true })
+                    : { ...g, color: defsyms[S_darkroom].color, darkroom: true })
                 : { ch: ' ', color: NO_COLOR, dec: false, nothing: true };
         } else if (loc.typ === CORR && is_litcorr_cell(g)) {
             g = corr_glyph_cell(false);

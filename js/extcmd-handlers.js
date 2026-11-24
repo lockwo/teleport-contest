@@ -1505,12 +1505,6 @@ export async function wiz_wish() {
     // it; without this call, a wish crossing a capacity threshold would defer
     // its load message to whichever later command finally consumes a move.
     await encumber_msg();
-    // C ref: wizcmds.c:43 returns ECMD_OK; cmd.c:3814 rhack() then runs
-    // reset_cmd_vars(), whose `gm.multi = 0` cancels the multi = -1 a
-    // declined death (end.c:730 savelife) left behind, so no turn passes and
-    // the "You survived..." nomovemsg is never announced.
-    const { reset_cmd_vars } = await import('./cmd.js');
-    reset_cmd_vars(false);
     return 0;
 }
 
@@ -1958,9 +1952,21 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     // row (status_sweep); a short window opened right after must inherit it,
     // not draw a freshly recomputed FULL status the real terminal never redrew.
     const carriedCuts = status_cuts_snapshot();
-    disp.clearScreen();
+    if (fullScreen) disp.clearScreen();
     if (!fullScreen) {
-        render_map_to_grid();
+        // C ref: wintty.c:1940 clears WIN_MESSAGE before drawing a corner
+        // window. Only an already-EMPTY stale message survives that clear.
+        if (!(game._toplinStale && game._toplinStale === game._pending_message)) {
+            const spilled = Math.max(1, game._toplRowsShown | 0);
+            game._toplRowsShown = 1;
+            disp.clearRow(0);
+            for (let r = 1; r < spilled; r++) {
+                disp.clearRow(r);
+                render_map_row_to_grid(r);
+            }
+            game._pending_message = '';
+            game._toplPromptMsg = null;
+        }
         for (let r = 0; r <= moreRow && r < 22; r++)
             for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
@@ -1972,10 +1978,8 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     }
     disp.putstr(textCol, moreRow, morestr, NO_COLOR, 0);
     if (!fullScreen) {
-        // render_map_to_grid() already laid down a FULL fresh status (its own
-        // renderStatusLines() call).  Dismissing THIS window later sweeps the
-        // rows its content reaches; the sweep inherited from the window torn
-        // down before it is already on screen.
+        // A corner window overwrites only its own rectangle. Keep the physical
+        // map and status outside it, including their shared terminal row.
         status_sweep(offx, moreRow);
         // docrt()'s cls() blanked the status window and nothing has run bot()
         // since (see botl_flush): it stays blank under this window.
@@ -4528,6 +4532,11 @@ export async function wiz_map_extcmd() {
                    [u?.uprops, 'Hallucination'], [u?.uprops, 'HHallucination'],
                    [u?.uprops, 'Confusion']].filter(([o, k]) => o && o[k]);
     const saved = slots.map(([o, k]) => o[k]);
+    // C ref: wizcmds.c:184. Temporarily clearing these properties does not
+    // dirty botl, so a mapping browse keeps the previously published status.
+    const { status_hold, Hallucination_u } = await import('./display.js');
+    status_hold('hallucination', Hallucination_u());
+    status_hold('confusion', (u.uprops?.Confusion || 0) > 0);
     for (const [o, k] of slots) o[k] = typeof o[k] === 'boolean' ? false : 0;
     try {
         // C ref: wizcmds.c:185-188 `t->tseen = 1; map_trap(t, TRUE);` — the trap
@@ -4958,7 +4967,6 @@ export async function doextcmd() {
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
     game.context.move = res === 1 ? 1 : 0;
-    if (res !== 1) reset_multi_no_time();
     return res;
 }
 

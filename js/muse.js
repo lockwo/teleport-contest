@@ -74,7 +74,7 @@ import { resists_blnd_u } from './mhitu.js';
 import { mon_has_special, mon_has_amulet } from './monspecial.js';
 import { inhishop } from './shk.js';
 import { rloc, RLOC_MSG, tele_restrict, noteleport_level, enexto_gpflags, In_W_tower } from './teleport.js';
-import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon, is_pool, is_lava, is_ice, xdir, ydir, DIR_ERR } from './const.js';
+import { In_sokoban, In_V_tower, Is_rogue_level, Is_earthlevel, HAND, Trap_Killed_Mon, is_pool, is_lava, is_ice, xdir, ydir, DIR_ERR, MM_NOMSG } from './const.js';
 import { ICE, POOL, MOAT, WATER, LAVAPOOL, LAVAWALL,
     STAIRS, LADDER, SCORR, CORR, PIT, HOLE, TRAPDOOR, TELEP_TRAP, WEB,
     BEAR_TRAP, FIRE_TRAP, POLY_TRAP, W_NONDIGGABLE, D_LOCKED, D_CLOSED, D_BROKEN,
@@ -463,14 +463,10 @@ async function precheck(mon, obj) {
             if (!cc) return 0;
             await mquaffmsg(mon, obj);
             await m_useup(mon, obj);
-            const was_full = game._full_mon_gen;
-            let mtmp;
-            game._full_mon_gen = true;
-            try {
-                mtmp = makemon(ptr, cc.x, cc.y, 0);
-            } finally {
-                game._full_mon_gen = was_full;
-            }
+            const mtmp = makemon(ptr, cc.x, cc.y, MM_NOMSG);
+            // C ref: muse.c:79,106 -> makemon.c:1503, the silent
+            // creation still checks whether the occupant interrupts us.
+            if (mtmp) await makemon_appears_msg(mtmp, cc.x, cc.y, MM_NOMSG);
             if (!mtmp) {
                 if (vis) await update_topl('The potion turns out to be empty.');
             } else if (occupant === 'ghost') {

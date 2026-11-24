@@ -1931,9 +1931,20 @@ export function getpos_find_feature(ch, cx, cy) {
         // C getpos.c:1075-1088 rejects an object/pile glyph before consulting
         // the map memory, so a hidden engraving cannot win this search.
         const remembered = loc.remembered_glyph;
+        // C ref: getpos.c:1075-1088. Mapped trap glyphs survive after the
+        // live trap disappears (including webs removed by monsters).
+        if (loc.mapped_trap_ttyp) {
+            const tg = trap_glyph({ ttyp: loc.mapped_trap_ttyp });
+            const displayed = loc.disp_ch === tg.ch && !loc.disp_monster
+                && !loc.disp_objotyp && !loc.disp_hallucobj;
+            const memorized = game.level.flags.hero_memory && !game.iflags?.terrainmode
+                && remembered?.ch === tg.ch && !remembered.objotyp && !remembered.pile;
+            if ((displayed || memorized) && (tg.ch === ch || ch === '^'))
+                return true;
+        }
         const engraving = ch === engravingSym && !remembered?.objotyp
             && !remembered?.pile && is_cmap_engraving_at(tx, ty);
-        if ((!GP_EXCLUDED_TYP.has(loc.typ)
+        if (((terrainFull || loc.seenv) && !GP_EXCLUDED_TYP.has(loc.typ)
              && (matchCh === ch || stairCh === ch)) || engraving)
             return true;
         const trap = game.level?.traps?.find((t) => t.tx === tx && t.ty === ty);
@@ -3477,7 +3488,7 @@ function _botConditions() {
     // (Blindf_on/Blindf_off: setworn() changes Blind well before toggle_blindness() sets disp.botl).
     const blindHeld = status_held('blind', null);
     if (blindHeld === true || (blindHeld !== false && Blind())) out.push('Blind');
-    if ((u.uprops?.Confusion || 0) > 0) out.push('Conf');
+    if (status_held('confusion', (u.uprops?.Confusion || 0) > 0)) out.push('Conf');
     // C ref: youprop.h Deaf — HDeaf || EDeaf (mon.js Deaf()).
     // _deafPending: incr_itimeout(&HDeaf) happens INSIDE the drum's pline, so
     // the --More-- frame that carries "You beat a deafening row!" still shows
@@ -3488,7 +3499,7 @@ function _botConditions() {
     if (flyHeld === true || (flyHeld !== false && Flying_hero())) out.push('Fly');
     // C ref: youprop.h Hallucination — HHallucination && !Halluc_resistance.
     // potion.js set_hallucination() writes the timer to four aliases at once.
-    if (Hallucination_u()) out.push('Hallu');
+    if (status_held('hallucination', Hallucination_u())) out.push('Hallu');
     if (Levitation_hero()) out.push('Lev');
     // steed.c mount_steed()/dismount_steed() flip u.usteed ahead of the "You aren't
     // stealthy anymore." / "You seem less noisy now." plines and set disp.botl
@@ -3871,6 +3882,11 @@ function _renderStatus() {
     /* steed.c mount/dismount: u.usteed flips before the stealth plines, disp.botl after */
     if (status_held('ride', null) === false) condBits &= ~0x00010000; /* BL_MASK_RIDE */
     else if (status_held('ride', null) === true) condBits |= 0x00010000;
+    // wizcmds.c:184 temporarily clears these without publishing new status.
+    if (status_held('hallucination', null) === false) condBits &= ~0x00000400;
+    else if (status_held('hallucination', null) === true) condBits |= 0x00000400;
+    if (status_held('confusion', null) === false) condBits &= ~0x00000008;
+    else if (status_held('confusion', null) === true) condBits |= 0x00000008;
     /* potion.c make_sick() cure: its message is printed before disp.botl is set */
     if (game._statusHold && 'sicktype' in game._statusHold) {
         const st = game._statusHold.sicktype | 0;
@@ -4709,7 +4725,8 @@ export function render_map_to_grid(changedOnly = false) {
 // pet/pile/detect/engraving inverse attribute in tty_print_glyph's else-if chain.
 function framed_attr(x, y, attr) {
     const valid = game._getposFrameValid;
-    return (attr && valid && isok(x, y) && valid(x, y)) ? 0 : attr;
+    return (game.iflags?.use_color !== false && attr && valid
+        && isok(x, y) && valid(x, y)) ? 0 : attr;
 }
 
 // The screen rows the pending top line occupies, as _buildScreenOutput() draws
@@ -5880,12 +5897,12 @@ async function botl_flush(direct = false) {
     // taking the signature, or the poll's next _statusSig() mismatches this
     // one and invents a time_botl (T: advancing with no bot() in C).
     delete game._statusHold;
-    if (game.flags?.time) game._pubSig = _statusSig();
     game._shownMoves = game.moves || 1;
     if (game.u?.uhp !== -1)
         delete game._botlFrozen;
     const { near_capacity } = await import('./invent.js');
     game._curcap = near_capacity();
+    if (game.flags?.time) game._pubSig = _statusSig();
     game._ttyCommit = { force: botlxForce, keepPhys: !!game._botlxKeepScreen };
     try {
         bot_snapshot(direct);
@@ -6194,7 +6211,8 @@ export async function yn_cmdq_answer(resp, def) {
     // it sets iflags.debug_fuzzer = fuzzer_impossible_continue while the
     // messages are printed, so tty more() returns at once (no --More--
     // key is read) and the report lines overwrite one another.
-    if (resp && res && !resp.includes(res)) {
+    // C tests the numeric char `res`: a NUL default cancels silently.
+    if (resp && res && res !== '\0' && !resp.includes(res)) {
         const altres = (def && def !== '\0') ? def : '\x1b';
         if (!game.in_doagain || game.flags?.debug) {
             const iflags = game.iflags || (game.iflags = {});
