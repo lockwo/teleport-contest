@@ -28,6 +28,7 @@ import { update_topl, pline, topl_more, render_map_to_grid, docrt, reglyph_darkr
 import { NO_COLOR, ATR_INVERSE } from './terminal.js';
 import { menuHeadAttr, menuHeadColor, menuHeadStyle } from './menuattr.js';
 import { menu_ctx } from './windows.js';
+import { paintMenuLine } from './invent.js';
 import { display_file } from './pager.js';
 import { MENU_TRADITIONAL, MENU_COMBINATION } from './const.js';
 import { OPTMENUHELP } from './pager_data.js';
@@ -572,8 +573,11 @@ const OPT_VALUE = {
     autounlock: autounlock_val,
     symset: () => symsetStr(),
     roguesymset: () => symsetStr(true),
-    // optfn_suppress_alert(): "(none)" when flags.suppress_alert is 0.
-    suppress_alert: () => flagStr('suppress_alert', '(none)'),
+    // C ref: options.c:4151-4157 and hack.h FEATURE_NOTICE_VER_*.
+    suppress_alert: () => {
+        const v = game.flags?.suppress_alert || 0;
+        return v ? `${v >>> 24}.${(v >>> 16) & 255}.${(v >>> 8) & 255}` : '(none)';
+    },
     pickup_types: () => pickupTypesStr(),
     // optfn_msg_window(): iflags.prevmsg_window s/c/f, anything else reversed.
     msg_window: () => ({ s: 'single', c: 'combination', f: 'full' }
@@ -800,7 +804,10 @@ function renderOptionsPage(entries, page, npages, selected, counts = null, plus 
             if (text) {
                 const lead = text.match(/^ */)[0].length;
                 d.putstr(0, r, text.slice(0, lead), NO_COLOR, 0);
-                d.putstr(lead, r, text.slice(lead), e.inv ? menuHeadColor() : NO_COLOR, e.inv ? menuHeadAttr() : 0);
+                if (e.inv)
+                    d.putstr(lead, r, text.slice(lead), menuHeadColor(), menuHeadAttr());
+                else
+                    paintMenuLine(d, 1, r, { text: text.slice(1) }, true);
             }
         } else {
             // Selectable: " <accel> <-|+> <body>" at col 0 (leading space + text
@@ -811,7 +818,9 @@ function renderOptionsPage(entries, page, npages, selected, counts = null, plus 
             const mark = selected.has(i) ? (counts?.has(i) ? '#' : plus?.has(i) ? '+' : '*') : '-';
             const body = e.kind === 'bool' ? liveOptValue(e.name, e.body).text : e.body;
             /* wintty.c process_menu_window(): ++curx < cols stops before the last column */
-            d.putstr(0, r, ` ${e.a} ${mark} ${body}`.slice(0, 79), NO_COLOR, 0);
+            d.putstr(0, r, ' ', NO_COLOR, 0);
+            paintMenuLine(d, 1, r,
+                { text: `${e.a} ${mark} ${body}`.slice(0, 78) }, true);
         }
     }
     // Page footer (morestr): "(N of M)" with no trailing space when paged,
@@ -882,7 +891,12 @@ function renderPickupMenu(selected, preselected, searchBlankTop, blankStatus, co
     for (let r = 0; r < lines.length; r++) {
         clearRow(d, offx, r);
         const l = lines[r];
-        if (l.text) d.putstr(offx + 1, r, l.text, l.inv ? menuHeadColor() : NO_COLOR, l.inv ? menuHeadAttr() : 0);
+        if (l.text)
+            paintMenuLine(d, offx + 1, r, {
+                text: l.text, header: l.inv,
+                color: l.inv ? menuHeadColor() : NO_COLOR,
+                attr: l.inv ? menuHeadAttr() : 0,
+            }, true);
     }
     if (searchBlankTop) clearRow(d, 0, 0);
     const footRow = lines.length;
@@ -1295,9 +1309,14 @@ function renderSimpleMenuPage(page, pageIdx, npages) {
             d.putstr(0, r, ' ', NO_COLOR, 0);
             d.putstr(1, r, head, menuHeadColor(), menuHeadAttr());
         } else if (it.type === 'item') {
-            d.putstr(0, r, ` ${it.sel} - ${it.body}`.slice(0, 79), NO_COLOR, 0);
+            // C ref: windows.c:1803 and wintty.c:1437: color the body,
+            // leaving the selector and selection indicator unstyled.
+            d.putstr(0, r, ' ', NO_COLOR, 0);
+            paintMenuLine(d, 1, r,
+                { text: `${it.sel} - ${it.body}`.slice(0, 78) }, true);
         } else if (it.type === 'text') {
-            d.putstr(0, r, (' ' + it.body).slice(0, 79), NO_COLOR, 0);
+            d.putstr(0, r, ' ', NO_COLOR, 0);
+            paintMenuLine(d, 1, r, { text: it.body.slice(0, 78) }, true);
         }
         // 'blank' rows need no drawing (already cleared).
         r++;

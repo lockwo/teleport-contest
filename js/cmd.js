@@ -242,6 +242,14 @@ const kC = (c) => 0x1f & (typeof c === 'string' ? c.charCodeAt(0) : c);   // glo
 const kM = (c) => 0x80 | (typeof c === 'string' ? c.charCodeAt(0) : c);   // global.h M()
 const kHighc = (k) => (k >= 97 && k <= 122) ? (k & ~0x20) : k;           // hacklib.c highc()
 
+// C cmd.c:5255-5259: pgetchar() returns signed char before widening to int.
+// Keep that EOF check before converting back to the JS unsigned key domain.
+function altmeta_key(sym) {
+    sym = (sym << 24) >> 24;
+    if (sym === -1 || sym === 0 || sym === 27) return 27;
+    return (sym | 0x80) & 0xff;
+}
+
 // C ref: hacklib.c visctrl() — "^X" / "M-x" rendering, for bad_command's
 // "Unknown command '%s'." (a control key must not be emitted raw).
 function visctrl_code(k) {
@@ -891,8 +899,7 @@ async function get_count(inkey) {
         // input_state = commandInp before each readchar(), so with `altmeta`
         // on a bare ESC combines with the NEXT key into one M-<c> keystroke.
         if (key === 27 && game.iflags?.altmeta) {
-            const next = await nhgetch();
-            key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+            key = altmeta_key(await nhgetch());
         }
     }
     // C parse(): clear the count echo from the top line once a command key
@@ -1012,8 +1019,7 @@ export async function rhack(key) {
         // window is up belongs to process_menu_window()/xwaitforspace(), which
         // read with tty_nhgetch() directly: no ESC combining there.
         if (!replay && key === 27 && game.iflags?.altmeta && !game._modal_screen) {
-            const next = await nhgetch();
-            key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+            key = altmeta_key(await nhgetch());
         }
         // C ref: wintty.c tty_clear_nhwindow(NHW_MESSAGE) — a non-empty top line is
         // wiped with home(): the cursor sits at (0,0), not on the hero.  A ^A replay
@@ -2292,14 +2298,10 @@ export async function rhack(key) {
     // A nested getobj() can decline without cancelling its timed caller
     // (apply.c doapply() keeps ECMD_TIME when tinning finds no corpse).
     // Only a no-time result lets that null pick cancel the command itself.
-    // C ref: cmd.c:3753-3759,3814-3815. Record the extended command before
-    // reset_cmd_vars(multi < 0), so a declined death clears that new entry too.
-    // Movement bypasses C's result epilogue. An inline travel loop may also
-    // clear context.move after its command already returned ECMD_TIME.
-    const resetAfterDeath = !game.context.move && !travelTimed
-        && (game.multi | 0) < 0 && !(repeatBind?.flags & (MOVEMENTCMD | PREFIXCMD));
-    const getobjCancelled = (!!game.context._getobj_cancelled && !game.context.move)
-        || resetAfterDeath;
+    // Do not infer ECMD_OK from context.move here: deferred_goto arrival
+    // effects and timed commands can clear it while leaving multi negative.
+    // The no-time handler must capture its result before those effects.
+    const getobjCancelled = !!game.context._getobj_cancelled && !game.context.move;
     const itemactionRepeat = game._itemaction_repeat;
     game._itemaction_repeat = false;
     game.context._getobj_cancelled = false;
@@ -2322,7 +2324,6 @@ export async function rhack(key) {
         // "5 " before a real `s` search ate 's','i','l','v' as dismissals,
         // so the search itself, and every command after it, never ran).
         game.multi = 0;
-        if (resetAfterDeath) reset_cmd_vars(true);
     } else if (!repeatingCommand) {
         // C ref: cmd.c rhack() — a PREFIXCMD (F/m/g/G) goes `goto
         // got_prefix_input` BEFORE the recording block, so it never reaches
@@ -2804,8 +2805,7 @@ export async function getdir(s) {
     // (curses arrow keys) instead of cancelling by itself; the prompt stays on
     // screen until that second key arrives, same as C's blocking second read.
     if (key === 27 && game.iflags?.altmeta) {
-        const next = await nhgetch();
-        key = (next === 0 || next === 27) ? 27 : (next | 0x80);
+        key = altmeta_key(await nhgetch());
     }
     delete game._modal_screen;
     // C ref: cmd.c getdir() `if (redraw_cmd(dirsym)) { docrt_flags(docrtRefresh);
@@ -8848,6 +8848,7 @@ export function reset_cmd_vars(reset_cmdq) {
     /* C has one svc.context.run; zero every piece this port splits it into
        (see gstate.js svc_context_run()), and gd.domove_attempting's rush bit */
     svc.run = 0;
+    svc.run_prefix = 0;
     svc.run_leftover8 = 0;
     svc.stale_run = svc.cmd_stale_run = 0;
     svc.nopick = svc.forcefight = false;
@@ -9830,10 +9831,7 @@ export async function readchar_core(io) {
            getpos() [Alt+digit] or getdir() [curses arrow keys] */
         sym = cmd_readchar_queue_len() ? cmd_readchar_queue_shift()
                                        : await pgetchar();
-        if (sym === -1 || sym === 0)
-            sym = 0x1b;
-        else if (sym !== 0x1b)
-            sym |= 0x80;   /* force the 8th bit on */
+        sym = altmeta_key(sym);
     } else if (sym === 0) {
         /* click event */
         game.clicklook_cc = { x: -1, y: -1 };

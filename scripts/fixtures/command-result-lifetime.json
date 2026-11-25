@@ -1,0 +1,67 @@
+{
+  "cases": [
+    {
+      "name": "cmd.c:3815 reset precedes deferred_goto arrival paralysis (fz22)",
+      "segments": [
+        {
+          "seed": 5965574,
+          "datetime": "20261113093000",
+          "nethackrc": "OPTIONS=name:Nyx,role:Samurai,race:human,gender:female,align:lawful,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+          "moves": "   n#levelchange\n5\n   \u0017blessed amulet of life saving\n\u0017blessed +1 yellow dragon scale mail\nWg\u0017blessed ring of conflict\nPh\u001b\u0017blessed +1 yellow dragon scale mail\nWiea[jjnnngjgjkjW\u001b_ \nYHbbjUuY.q#wizmap\n\u0007Pelias\ny\u0016?\n>C#overview\n\nybbhhUuknNkol2s\u0016?\ni\u00073 long worm\n\u0016?\nhluhnnjj  jbllnyY  Yyu uFhq\u0016?\n>y \u001b\u001b#name\nafoo\n/M \u0016?\ng #wizintrinsic\nh6d\n +[\u0004lA@BU\n\u001b\u0012#seearmor\nkuz#wizmondiff\n (\u0016mine end\n?\nf        r",
+          "screens": 391,
+          "rng": {
+            "calls": 27385,
+            "tail": [
+              "rn2(12)=5",
+              "rn2(12)=2",
+              "rn2(12)=1",
+              "rn2(12)=5",
+              "rn2(70)=46",
+              "rn2(3)=0",
+              "rn2(50)=43",
+              "rn2(2)=1",
+              "rn2(200)=26",
+              "rn2(20)=0",
+              "rn2(91)=0",
+              "rnd(3)=1"
+            ]
+          },
+          "frames": {
+            "387": {
+              "screen": "You are frightened to death, and unable to move.--More--\n\n\n\n\n\n\n\n\n\n\n\n\u001b[20C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\nWizard the Ronin\u001b[15CSt:15 Dx:17 Co:16 In:8 Wi:9 Ch:8 Lawful\nDlvl:16 $:0 HP:44(44) Pw:26(26) AC:4 Xp:5 Strngl Blind Hallu",
+              "cursor": [
+                56,
+                0,
+                1
+              ]
+            },
+            "388": {
+              "screen": "You find it hard to breathe.  You're gasping for air.--More--\n\n\n\n\n\n\n\n\n\n\n\n\u001b[20C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\nWizard the Ronin\u001b[15CSt:15 Dx:17 Co:16 In:8 Wi:9 Ch:8 Lawful\nDlvl:16 $:0 HP:44(44) Pw:26(26) AC:4 Xp:5 Strngl Blind Hallu",
+              "cursor": [
+                61,
+                0,
+                1
+              ]
+            },
+            "389": {
+              "screen": "You can no longer breathe.  You regain your composure.\n\n\n\n\n\n\n\n\n\n\n\n\u001b[20C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\nWizard the Ronin\u001b[15CSt:15 Dx:17 Co:16 In:8 Wi:9 Ch:8 Lawful\nDlvl:16 $:0 HP:44(44) Pw:26(26) AC:4 Xp:5 Strngl Blind Hallu",
+              "cursor": [
+                20,
+                12,
+                1
+              ]
+            },
+            "390": {
+              "screen": "What do you want to read? [*]\n\n\n\n\n\n\n\n\n\n\n\n\u001b[20C\u001b[97m@\u001b[39m\n\n\n\n\n\n\n\n\n\nWizard the Ronin\u001b[15CSt:15 Dx:17 Co:16 In:8 Wi:9 Ch:8 Lawful\nDlvl:16 $:0 HP:44(44) Pw:26(26) AC:4 Xp:5 Strngl Blind Hallu",
+              "cursor": [
+                30,
+                0,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

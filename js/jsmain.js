@@ -25,7 +25,7 @@ import {
     ROLE_MALE, ROLE_FEMALE, ROLE_LAWFUL, ROLE_NEUTRAL, ROLE_CHAOTIC,
     PICK_RANDOM, PL_NSIZ,
 } from './const.js';
-import { bail } from './wintty.js';
+import { bail, tty_init_message_history } from './wintty.js';
 import { NO_COLOR } from './terminal.js';
 import { menuHeadStyle } from './menuattr.js';
 import { menuColorStyle, paintMenuLine } from './invent.js';
@@ -456,6 +456,8 @@ export class NethackGame {
         // here rather than at parse time because the boundaries only exist once
         // the display and the capture hook are installed.
         await config_error_report(opts);
+        // C ref: allmain.c:719 creates WIN_MESSAGE before asking for a name.
+        tty_init_message_history();
 
         // C ref: sys/unix/unixmain.c main() — restore_saved_game()/dorecover()
         // is attempted FIRST, using whatever plname is already known (from

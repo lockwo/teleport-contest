@@ -1505,6 +1505,13 @@ export async function wiz_wish() {
     // it; without this call, a wish crossing a capacity threshold would defer
     // its load message to whichever later command finally consumes a move.
     await encumber_msg();
+    // C ref: wizcmds.c:43 returns ECMD_OK, so cmd.c:3814-3815 resets
+    // command state. Capture multi here, before deferred level-arrival
+    // effects can install a new paralysis after the command has returned.
+    // A negative multi also clears the command recorded later by rhack().
+    if (game.multi < 0) game.context._getobj_cancelled = true;
+    const { reset_cmd_vars } = await import('./cmd.js');
+    reset_cmd_vars(game.multi < 0);
     return 0;
 }
 
@@ -1908,9 +1915,9 @@ function floor_lockboxes_here() {
 
 // C ref: win/tty/wintty.c tty_display_nhwindow NHW_MENU (H2344_BROKEN offx) +
 // process_menu_window()/process_text_window().  Draw a partial-width corner
-// window over the map: clear the screen, lay the map + status back down, blank
-// the window's column band, draw the lines (each already "selector - text" or a
-// header), then the morestr, and park the cursor after it.
+// window over the physical map: blank only the window's column band, draw the
+// lines (each already "selector - text" or a header), then the morestr, and
+// park the cursor after it.
 //   lines   : [{ text, attr }] (attr defaults to normal; the title is inverse)
 //   maxcol  : window width for the offx calc (add_menu uses len+2; putstr len+1)
 //   morestr : "(end)" for a menu, "--More--" for a text window
@@ -1980,7 +1987,7 @@ export function draw_corner_window(lines, maxcol, morestr, curPad) {
     if (!fullScreen) {
         // A corner window overwrites only its own rectangle. Keep the physical
         // map and status outside it, including their shared terminal row.
-        status_sweep(offx, moreRow);
+        status_sweep(offx, isMenu ? moreRow : moreRow - 1);
         // docrt()'s cls() blanked the status window and nothing has run bot()
         // since (see botl_flush): it stays blank under this window.
         if (game._statusClsBlank) blank_status_rows(disp);
@@ -2088,6 +2095,8 @@ async function look_in_container(box, menuUp = false) {
         // process_text_window(): dmore(quitchars); ESC leaves dismiss_more == 1 (^A then dismisses too).
         if (xwaitforspace_quit(k)) break;
     }
+    // C ref: end.c:1658 destroys this NHW_MENU text window before returning.
+    await dismiss_invent_screen(true);
 }
 
 // C ref: use_container() inokay — the hero carries something other than the
@@ -3524,8 +3533,10 @@ function render_overview_menu(lines) {
             for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
     }
     const textCol = offx + 1;
-    // The message window (row 0) is cleared in full when the menu is raised.
-    for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
+    // C ref: wintty.c:1048,1940: clearing an EMPTY message window does
+    // not erase its stale text, even when a corner menu is raised.
+    if (!(game._toplinStale && game._toplinStale === game._pending_message))
+        for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0);
     const moreRow = lines.length;
     for (let r = 0; r <= moreRow; r++) {
         for (let c = offx; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0);
@@ -4967,6 +4978,7 @@ export async function doextcmd() {
     // C ref: doextcmd returns the command's ECMD_* result; ECMD_TIME (1)
     // makes the move loop advance a turn.  Commands we don't model return 0.
     game.context.move = res === 1 ? 1 : 0;
+    if (res !== 1) reset_multi_no_time();
     return res;
 }
 

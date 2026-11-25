@@ -128,6 +128,11 @@ export function get_saved_games() {
     for (let i = 0; i < storage.length; i++) {
         const key = storage.key(i);
         if (!key || !key.startsWith(prefix)) continue;
+        // C ref: files.c:1504: sscanf("%d%63s") reads the uid and
+        // character name from one filename. Leading name digits become
+        // part of the uid, so those files are not owned by the current uid
+        // for menu enumeration. Direct named restoration still finds them.
+        if (/^[0-9]/.test(key.slice(prefix.length))) continue;
         const blob = storage.getItem(key);
         if (blob == null) continue;
         let hdr;
@@ -292,6 +297,11 @@ const UNSAVED_GLOBALS = [
     /* process / option state (rc re-read by the restoring process) */
     'program_state', 'a11y', 'keybind', 'menu_cmd_alias', 'symset', 'roguesymset',
     'symoverride', 'apelist', 'preferred_pet', 'plnamelen', 'wsettings',
+    /* options.c gp.plinemsg_types, gm.menu_colorings, status and condition
+       hilites and gr.rfilter: rc-file globals that savegamestate() never
+       writes (a RegExp also cannot survive the save blob) */
+    'msgtypes', 'msgtype_type', 'menucolors', 'status_hilites', 'cond_hilites',
+    'conds', 'rfilter',
     '_winStop', '_winNoStop', '_yn_need_more', '_startup_selected_character',
     '_nomux_raw',
     /* gc./gd./ge./gf. */

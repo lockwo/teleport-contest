@@ -3,6 +3,17 @@
 
 import { game } from './gstate.js';
 
+// Darwin libc atoi(): decimal strtol with signed-long saturation, then an
+// int32 conversion. Config values can exceed Number's exact integer range.
+export function c_atoi(s) {
+    const prefix = /^[\t\n\v\f\r ]*([+-]?[0-9]+)/.exec(String(s));
+    if (!prefix) return 0;
+    let n = BigInt(prefix[1]);
+    if (n > 0x7fffffffffffffffn) n = 0x7fffffffffffffffn;
+    else if (n < -0x8000000000000000n) n = -0x8000000000000000n;
+    return Number(BigInt.asIntN(32, n));
+}
+
 export function isok(x, y) {
     const { COLNO, ROWNO } = await_const();
     return x >= 1 && x <= COLNO - 1 && y >= 0 && y <= ROWNO - 1;

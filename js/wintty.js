@@ -15,7 +15,7 @@ import {
     BL_ALIGN, BL_CAP, BL_CH, BL_CO, BL_CONDITION, BL_DX, BL_ENE, BL_ENEMAX,
     BL_EXP, BL_FLUSH, BL_GOLD, BL_HD, BL_HP, BL_HPMAX, BL_HUNGER, BL_IN,
     BL_LEVELDESC, BL_RESET, BL_SCORE, BL_STR, BL_TIME, BL_TITLE, BL_VERS,
-    BL_WI, COLNO, CONDITION_COUNT, MAXBLSTATS, MENU_BEHAVE_PERMINV,
+    BL_WI, COLNO, CONDITION_COUNT, MAXBLSTATS, MAX_MSG_HISTORY, MENU_BEHAVE_PERMINV,
     MENU_FIRST_PAGE, MENU_INVERT_ALL, MENU_INVERT_PAGE, MENU_ITEMFLAGS_SELECTED,
     MENU_LAST_PAGE, MENU_NEXT_PAGE, MENU_PREVIOUS_PAGE, MENU_SEARCH,
     MENU_SELECT_ALL, MENU_SELECT_PAGE, MENU_UNSELECT_ALL, MENU_UNSELECT_PAGE,
@@ -484,6 +484,14 @@ export function tty_exit_nhwindows(str) {
     if (game.iflags) game.iflags.window_inited = 0;
 }
 
+// C ref: wintty.c:888-893. Creating WIN_MESSAGE also normalizes the option
+// itself, so the options menu must report the allocated history size.
+export function tty_init_message_history() {
+    game.iflags.msg_history = Math.max(20,
+        Math.min(MAX_MSG_HISTORY, game.iflags.msg_history ?? 20));
+    return game.iflags.msg_history;
+}
+
 export function tty_create_nhwindow(type) {
     let newid = wins.findIndex(w => !w);
     if (newid < 0) panic('No window slots!');
@@ -495,7 +503,7 @@ export function tty_create_nhwindow(type) {
         newwin.cols = ttyDisplay?.cols ?? displayCols();
         break;
     case NHW_MESSAGE:
-        newwin.rows = newwin.maxrow = max(game.iflags?.msg_history || 20, 20);
+        newwin.rows = newwin.maxrow = tty_init_message_history();
         newwin.cols = newwin.maxcol = 0;
         newwin.data = Array(newwin.rows).fill('');
         newwin.datlen = Array(newwin.rows).fill(0);

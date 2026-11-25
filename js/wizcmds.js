@@ -565,8 +565,8 @@ export async function wiz_fuzzer() {
 }
 // include/flag.h enum debug_fuzzer_states.
 const fuzzer_impossible_panic = 1, fuzzer_impossible_continue = 2;
-// include/hack.h FEATURE_NOTICE_VER(3,7,0) == ((3<<16)|(7<<8)|0).
-const FEATURE_NOTICE_VER_3_7_0 = (3 << 16) | (7 << 8) | 0;
+// include/hack.h FEATURE_NOTICE_VER(3,7,0).
+const FEATURE_NOTICE_VER_3_7_0 = (3 << 24) | (7 << 16);
 
 /* ------------------------------------------------------------------ */
 /*  #seenv / #vision / #wmode                                         */

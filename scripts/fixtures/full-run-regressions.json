@@ -1,6 +1,173 @@
 {
  "cases": [
   {
+   "name": "restore-menu-digit-leading-save-uid",
+   "segments": [
+    {
+     "seed": 231306,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Alice,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=!safe_wait\n",
+     "moves": " Sy",
+     "frames": {}
+    },
+    {
+     "seed": 231307,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Bob,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=!safe_wait\n",
+     "moves": " Sy",
+     "frames": {}
+    },
+    {
+     "seed": 231308,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:123Bob,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=playmode:explore\nOPTIONS=!safe_wait\n",
+     "moves": "   \u001b\u001bSy",
+     "frames": {}
+    },
+    {
+     "seed": 231310,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Eve,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=playmode:explore\nOPTIONS=!safe_wait\n",
+     "moves": "   \u001b\u001bSy",
+     "frames": {}
+    },
+    {
+     "seed": 231309,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:wizard,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=playmode:debug\nOPTIONS=!safe_wait\n",
+     "moves": " Sy",
+     "frames": {}
+    },
+    {
+     "seed": 231306,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup\nOPTIONS=color\nOPTIONS=!safe_wait\nOPTIONS=selectsaved\n",
+     "moves": "q",
+     "frames": {
+      "0": {
+       "screen": "\u001b[17CNetHack, Copyright 1985-2026\n\u001b[26CBy Stichting Mathematisch Centrum and M. Stephenson.\n\u001b[26CVersion 5.0.0 MacOS, built May  2 2026 12:00:00.\n\u001b[26CSee license for details.\n\n\u001b[17CSelect one of your saved games\n\u001b[17Ca - - Alice-Val-Hum-Fem-Law\n\u001b[17Cb - - Bob-Val-Hum-Fem-Law\n\u001b[17Cc - X Eve-Val-Hum-Fem-Law\n\u001b[17Cd - D wizard-Val-Hum-Fem-Law\n\u001b[17Cn - Start a new character\n\u001b[17Cq * Never mind (quit)\n\u001b[17C(end)",
+       "cursor": [
+        23,
+        12,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Until next time then...",
+       "cursor": [
+        0,
+        1,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "config-physical-line-bound",
+   "segments": [
+    {
+     "seed": 11011,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Misc,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup,playmode:debug\nOPTIONS=color\nOPTIONS=!safe_wait\nOPTIONS=pettype:none,suppress_alert:3.4.3\nBIND=x:annotate                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                \nOPTIONS=time\n",
+     "moves": "\n\n\n\n\n\u001b",
+     "frames": {
+      "0": {
+       "screen": "\nOPTIONS=pettype:none,suppress_alert:3.4.3\n * Line 5: Line too long, skipping.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\u001b[23CIt is written in the Book of Tyr:\n\n\u001b[27CAfter the Creation, the cruel god Moloch rebelled\n\u001b[27Cagainst the authority of Marduk the Creator.\n\u001b[27CMoloch stole from Marduk the most powerful of all\n\u001b[27Cthe artifacts of the gods, the Amulet of Yendor,\n\u001b[27Cand he hid it in the dark cavities of Gehennom, the\n\u001b[27CUnder World, where he now lurks, and bides his time.\n\n\u001b[23CYour god Tyr seeks to possess the Amulet, and with it\n\u001b[23Cto gain deserved ascendance over the other gods.\n\n\u001b[23CYou, a newly trained Stripling, have been heralded\n\u001b[23Cfrom birth as the instrument of Tyr.  You are destined\n\u001b[23Cto recover the Amulet for your deity, or die in the\n\u001b[23Cattempt.  Your hour of destiny has come.  For the sake\n\u001b[23Cof us all:  Go bravely with Tyr!\n\u001b[23C--More--\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:17 Co:15 In:7 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Velkommen wizard, welcome to NetHack!  You are a lawful human Valkyrie.\n\n\n\n\u001b[67C-----------\n\u001b[67C|...\u001b[33m%\u001b[39m.....|\n\u001b[67C\u001b[33m+\u001b[39m.........|\n\u001b[67C|.\u001b[97m@\u001b[39m.......|\n\u001b[67C\u001b[33m+\u001b[39m.........|\n\u001b[67C--.--------\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:17 Co:15 In:7 Wi:8 Ch:8 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1 T:1",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "menucolor-options-body-prefix",
+   "segments": [
+    {
+     "seed": 231306,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Misc,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!autopickup,playmode:debug\nOPTIONS=color,symset:DECgraphics\nOPTIONS=menucolors,menu_headings:bold\nMENUCOLOR=\".*\"=red\n",
+     "moves": " i \u001b\\ \u001bZ \u001b#enhance\n \u001bO\u001b",
+     "frames": {
+      "22": {
+       "screen": " \u001b[1mOptions\u001b[0m\n\n ? - \u001b[31mshow help\u001b[39m\n\n \u001b[1m General\u001b[24C\u001b[0m\n a - \u001b[31mfruit\u001b[19C[slime mold]\u001b[39m\n b - \u001b[31mnumber_pad\u001b[14C[0=off]\u001b[39m\n c - \u001b[31mprice_quotes\u001b[12C[ ]\u001b[39m\n\n \u001b[1m Behavior\u001b[23C\u001b[0m\n d - \u001b[31mautodig\u001b[17C[ ]\u001b[39m\n e - \u001b[31mautoopen\u001b[16C[X]\u001b[39m\n f - \u001b[31mautopickup\u001b[14C[ ]\u001b[39m\n g - \u001b[31mautopickup exceptions   [(0 currently set)]\u001b[39m\n h - \u001b[31mautoquiver\u001b[14C[ ]\u001b[39m\n i - \u001b[31mautounlock\u001b[14C[apply-key]\u001b[39m\n j - \u001b[31mcmdassist\u001b[15C[X]\u001b[39m\n k - \u001b[31mdropped_nopick\u001b[10C[X]  (for autopickup)\u001b[39m\n l - \u001b[31mfireassist\u001b[14C[X]\u001b[39m\n m - \u001b[31mpickup_stolen\u001b[11C[X]  (for autopickup)\u001b[39m\n n - \u001b[31mpickup_thrown\u001b[11C[X]  (for autopickup)\u001b[39m\n o - \u001b[31mpickup_types\u001b[12C[all]  (for autopickup)\u001b[39m\n p - \u001b[31mpushweapon\u001b[14C[ ]\u001b[39m\n (1 of 2)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "23": {
+       "screen": "\n\n\u001b[21C\u000elqqqqqqk\u000f\n\u001b[21C\u000ex~~~~~\u001b[97m\u000ff\u001b[39m\u000ex\u000f\n\u001b[21C\u001b[33m\u000ea\u001b[39m~~~~\u001b[97m\u000f@\u001b[39m\u000e~x\u000f\n\u001b[21C\u000ex~~~\u001b[35m\u000fx\u001b[39m\u000e~~x\u000f\n\u001b[21C\u000emqqq~qqj\u000f\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/05 Dx:11 Co:16 In:7 Wi:8 Ch:11 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        26,
+        4,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "final-overview-retains-acknowledged-quit-prompt",
+   "segments": [
+    {
+     "seed": 924001,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hero,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,suppress_alert:3.4.3,pettype:none\nOPTIONS=playmode:debug,!autopickup,!color,statuslines:2\nOPTIONS=disclose:-i-a-v-g-c+o\n",
+     "moves": " m\u0016 w\n   \u0018    \u001b\u000f m\u0016 E\n   \u0018    \u001b#overview\n #quit\nyn  ",
+     "frames": {
+      "50": {
+       "screen": "Dump core? [ynq] (q)\u001b[21CThe Dungeons of Doom:\n\u001b[44CLevel 1:\n\u001b[47CA fountain.\n\u001b[41CThe Gnomish Mines: levels 5 to 8\n\u001b[44CLevel 8: [minetn]\n\u001b[41CSokoban:\n\u001b[33C-----\u001b[6CLevel 5: [soko4] <- You were here.\n\u001b[33C|...|\u001b[9CUnsolved.\n\u001b[33C|.`.--- (end)\n\u001b[33C|..`...@..`.|\n\u001b[33C|.`--->---..|\n\u001b[32C---.---------|\n\u001b[32C|.....|<.^.^.|\n\u001b[32C|....`|----^.|\n\u001b[32C|...`.|   |^--\n\u001b[32C|...`.-----^|\n\u001b[32C|..`.`^^^^^^|\n\u001b[32C----------..|\n\u001b[41C----\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:11 Co:16 In:12 Wi:8 Ch:8 Lawful\nDlvl:5 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        47,
+        8,
+        1
+       ]
+      },
+      "51": {
+       "screen": "Farvel wizard the Valkyrie...\n\nYou quit in Sokoban on dungeon level 5 with 350 points,\nand 0 pieces of gold, after 2 moves.\nYou were level 1 with a maximum of 16 hit points when you quit.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+       "cursor": [
+        8,
+        23,
+        1
+       ]
+      },
+      "52": {
+       "screen": "\nSince you were in wizard mode, the score list will not be checked.",
+       "cursor": [
+        0,
+        2,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
    "name": "options-toggle-symset",
    "segments": [
     {
@@ -3527,6 +3694,464 @@
        "cursor": [
         29,
         18,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "macOS save lookup uses full Unicode case folding (files.c:1055)",
+   "segments": [
+    {
+     "seed": 13,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Σ,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!selectsaved\n",
+     "moves": "  Sy",
+     "frames": {}
+    },
+    {
+     "seed": 13,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:ς,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!tutorial,!selectsaved\n",
+     "moves": "  i\u001b.",
+     "frames": {
+      "0": {
+       "screen": "Velkommen   , the human Valkyrie, welcome back to NetHack!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[5C---.---\u001b[30C|\n\u001b[5C|.\u001b[97mf@\u001b[39m...\u001b[20C..\u001b[97m{\u001b[39m.......|\n\u001b[5C|.....|\u001b[30C|\n\u001b[5C|.....|\n\u001b[5C-------\n\n\n   the Stripling\u001b[15CSt:18/01 Dx:13 Co:15 In:8 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        16,
+        1
+       ]
+      },
+      "1": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[5C---.---\u001b[30C|\n\u001b[5C|.\u001b[97mf@\u001b[39m...\u001b[20C..\u001b[97m{\u001b[39m.......|\n\u001b[5C|.....|\u001b[30C|\n\u001b[5C|.....|\n\u001b[5C-------\n\n\n   the Stripling\u001b[15CSt:18/01 Dx:13 Co:15 In:8 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        16,
+        1
+       ]
+      },
+      "2": {
+       "screen": "Unknown command ' '.\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[5C---.---\u001b[30C|\n\u001b[5C|.\u001b[97mf@\u001b[39m...\u001b[20C..\u001b[97m{\u001b[39m.......|\n\u001b[5C|.....|\u001b[30C|\n\u001b[5C|.....|\n\u001b[5C-------\n\n\n   the Stripling\u001b[15CSt:18/01 Dx:13 Co:15 In:8 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        16,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "wizard-identify-uses-rebound-high-byte-group-selector",
+   "segments": [
+    {
+     "seed": 90123,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Byte,role:Wizard,race:human,gender:male,align:neutral,!legacy,!news,!tips\nOPTIONS=playmode:debug,symset:DECgraphics,color,statuslines:3\nBIND=^I:nothing\nBIND=\\xe9:wizidentify\n",
+     "moves": " n\u0017wand of fire\n\u0017wand of cold\n#wizidentify\né\ni ",
+     "frames": {
+      "43": {
+       "screen": "\u001b[11CDebug Identify -- unidentified or partially identified items\n\u001b[11C_ - select any or all of them to permanently identify (M-i for all)\n\u001b[11C\u001b[7mWands\u001b[0m\n\u001b[11Co - a cursed wand of fire (0:6)\n\u001b[11Cp - a wand of cold (0:6)\n\u001b[11C(end)\n\n\n\n\n\n\n    \u000elqqqqqqqqqqqqk\u000f\n    \u000ex~~~~~~\u001b[33m\u000f(\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~\u001b[33m\u000fZ\u001b[39m\u000e~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n    \u000emqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:17 Co:14 In:18 Wi:8 Ch:9\nNeutral $:0 HP:12(12) Pw:8(8) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        17,
+        5,
+        1
+       ]
+      },
+      "44": {
+       "screen": "\u001b[11CDebug Identify -- unidentified or partially identified items\n\u001b[11C_ + select any or all of them to permanently identify (M-i for all)\n\u001b[11C\u001b[7mWands\u001b[0m\n\u001b[11Co - a cursed wand of fire (0:6)\n\u001b[11Cp - a wand of cold (0:6)\n\u001b[11C(end)\n\n\n\n\n\n\n    \u000elqqqqqqqqqqqqk\u000f\n    \u000ex~~~~~~\u001b[33m\u000f(\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~\u001b[33m\u000fZ\u001b[39m\u000e~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n    \u000emqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:17 Co:14 In:18 Wi:8 Ch:9\nNeutral $:0 HP:12(12) Pw:8(8) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        17,
+        5,
+        1
+       ]
+      },
+      "45": {
+       "screen": "o - a cursed wand of fire (0:6).  p - a wand of cold (0:6).\n\n\n\n\n\n\n\n\n\n\n\n    \u000elqqqqqqqqqqqqk\u000f\n    \u000ex~~~~~~\u001b[33m\u000f(\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~\u001b[33m\u000fZ\u001b[39m\u000e~~~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~x\u000f\n    \u000ex~~~~~~\u001b[97m\u000ff\u001b[39m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n    \u000emqqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Evoker\u001b[14CSt:9 Dx:17 Co:14 In:18 Wi:8 Ch:9\nNeutral $:0 HP:12(12) Pw:8(8) AC:9 Xp:1\nDlvl:1",
+       "cursor": [
+        11,
+        14,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "altmeta-signed-pgetchar-eof-cancels-direction-and-position",
+   "segments": [
+    {
+     "seed": 90123,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Byte,role:Wizard,race:human,gender:male,align:neutral,!legacy,!news,!tips\nOPTIONS=altmeta\n",
+     "moves": " no\u001bÿ",
+     "frames": {
+      "5": {
+       "screen": "Never mind.\n\n\n\u001b[11C----------\n\u001b[11C|........|\n\u001b[11C|........|\n\u001b[11C|\u001b[94m{\u001b[39m.\u001b[97mf\u001b[39m.....|\n\u001b[11C|...\u001b[97m@\u001b[39m.....\n\u001b[11C----\u001b[33m+\u001b[39m-- --\n\n\n\n\n\n\n\n\n\n\n\n\n\nByte the Evoker\u001b[16CSt:10 Dx:12 Co:15 In:18 Wi:9 Ch:11 Neutral\nDlvl:1 $:0 HP:12(12) Pw:6(6) AC:9 Xp:1",
+       "cursor": [
+        15,
+        7,
+        1
+       ]
+      }
+     }
+    },
+    {
+     "seed": 90123,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Byte,role:Wizard,race:human,gender:male,align:neutral,!legacy,!news,!tips\nOPTIONS=altmeta\n",
+     "moves": " n_ \u001bÿ",
+     "frames": {
+      "6": {
+       "screen": "\n\n\n\u001b[11C----------\n\u001b[11C|........|\n\u001b[11C|........|\n\u001b[11C|\u001b[94m{\u001b[39m.\u001b[97mf\u001b[39m.....|\n\u001b[11C|...\u001b[97m@\u001b[39m.....\n\u001b[11C----\u001b[33m+\u001b[39m-- --\n\n\n\n\n\n\n\n\n\n\n\n\n\nByte the Evoker\u001b[16CSt:10 Dx:12 Co:15 In:18 Wi:9 Ch:11 Neutral\nDlvl:1 $:0 HP:12(12) Pw:6(6) AC:9 Xp:1",
+       "cursor": [
+        15,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Darwin atoi numeric-overflow",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=msghistory:4294967297,pile_limit:4294967297,statuslines:4294967299\n",
+     "moves": "\n   i\u001bO\u001b#version\n \u001b.",
+     "frames": {
+      "0": {
+       "screen": "Velkommen RcProbe, welcome to NetHack!  You are a lawful human Valkyrie.\n--More--\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7\nLawful $:0 HP:16(16) Pw:2(2) AC:6 Xp:1\nDlvl:1",
+       "cursor": [
+        8,
+        1,
+        1
+       ]
+      },
+      "1": {
+       "screen": "You are lucky!  Full moon tonight.--More--\n\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7\nLawful $:0 HP:16(16) Pw:2(2) AC:6 Xp:1\nDlvl:1",
+       "cursor": [
+        42,
+        0,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\u001b[21C\u001b[7mDo you want a tutorial?\u001b[0m\n\n\u001b[21Cy - Yes, do a tutorial\n\u001b[12C------.- n - No, just start play\n\u001b[12C.......|\n\u001b[12C|......| Put \"OPTIONS=!tutorial\" in .nethackrc to skip this query.\n\u001b[12C|....\u001b[97m@\u001b[39m.| (end)\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7\nLawful $:0 HP:16(16) Pw:2(2) AC:6 Xp:1\nDlvl:1",
+       "cursor": [
+        27,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "Darwin atoi numeric-hilite-overflow",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=hilite_status:hitpoints/4294967297%/red\n",
+     "moves": "\n   i\u001bO\u001b#version\n \u001b.",
+     "frames": {
+      "0": {
+       "screen": "Velkommen RcProbe, welcome to NetHack!  You are a lawful human Valkyrie.\n--More--\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        1,
+        1
+       ]
+      },
+      "1": {
+       "screen": "You are lucky!  Full moon tonight.--More--\n\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        0,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\u001b[21C\u001b[7mDo you want a tutorial?\u001b[0m\n\n\u001b[21Cy - Yes, do a tutorial\n\u001b[12C------.- n - No, just start play\n\u001b[12C.......|\n\u001b[12C|......| Put \"OPTIONS=!tutorial\" in .nethackrc to skip this query.\n\u001b[12C|....\u001b[97m@\u001b[39m.| (end)\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        27,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "MSGTYPE hide preserves pre-welcome status AC",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nMSGTYPE=hide \"[[:alpha:]]\"\nMENUCOLOR=\"[[:alpha:]]\"=red\nAUTOPICKUP_EXCEPTION=\"<[[:alpha:]]\"\n",
+     "moves": "\n   i\u001bO\u001b#version\n \u001b.",
+     "frames": {
+      "0": {
+       "screen": "\u001b[21C\u001b[7mDo you want a tutorial?\u001b[0m\n\n\u001b[21Cy - \u001b[31mYes, do a tutorial\u001b[39m\n\u001b[12C------.- n - \u001b[31mNo, just start play\u001b[39m\n\u001b[12C.......|\n\u001b[12C|......| \u001b[31mPut \"OPTIONS=!tutorial\" in .nethackrc to skip this query.\u001b[39m\n\u001b[12C|....\u001b[97m@\u001b[39m.| (end)\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1",
+       "cursor": [
+        27,
+        6,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\u001b[21C\u001b[7mDo you want a tutorial?\u001b[0m\n\n\u001b[21Cy - \u001b[31mYes, do a tutorial\u001b[39m\n\u001b[12C------.- n - \u001b[31mNo, just start play\u001b[39m\n\u001b[12C.......|\n\u001b[12C|......| \u001b[31mPut \"OPTIONS=!tutorial\" in .nethackrc to skip this query.\u001b[39m\n\u001b[12C|....\u001b[97m@\u001b[39m.| \u001b[31m(Please choose 'y' or 'n'.)\u001b[39m\n\u001b[12C|.....\u001b[97md\u001b[39m| (end)\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1",
+       "cursor": [
+        27,
+        7,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\u001b[21C\u001b[7mDo you want a tutorial?\u001b[0m\n\n\u001b[21Cy - \u001b[31mYes, do a tutorial\u001b[39m\n\u001b[12C------.- n - \u001b[31mNo, just start play\u001b[39m\n\u001b[12C.......|\n\u001b[12C|......| \u001b[31mPut \"OPTIONS=!tutorial\" in .nethackrc to skip this query.\u001b[39m\n\u001b[12C|....\u001b[97m@\u001b[39m.| \u001b[31m(Please choose 'y' or 'n'.)\u001b[39m\n\u001b[12C|.....\u001b[97md\u001b[39m| (end)\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:0 Xp:1",
+       "cursor": [
+        27,
+        7,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "TTY message history option normalized abc-values",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=msghistory:abc,pile_limit:abc,suppress_alert:5.0.0junk\nOPTIONS=!tutorial\n",
+     "moves": "  #optionsfull\n              \u001b.",
+     "frames": {
+      "19": {
+       "screen": " a - whatis_menu\u001b[13C[false]\n b - whatis_moveskip\u001b[9C[false]\n\n \u001b[7mCompounds (selecting will prompt for new value):\u001b[0m\n\u001b[5Cwindowtype\u001b[14C[tty]\n\u001b[5Cplaymode\u001b[16C[normal]\n\u001b[5Cname\u001b[20C[RcProbe]\n\u001b[5Crole\u001b[20C[Valkyrie]\n\u001b[5Crace\u001b[20C[human]\n\u001b[5Cgender\u001b[18C[female]\n\u001b[5Calignment\u001b[15C[lawful]\n\u001b[5Ccatname\u001b[17C[(none)]\n\u001b[5Cdogname\u001b[17C[(none)]\n\u001b[5Chorsename\u001b[15C[(none)]\n\u001b[5Cmsghistory\u001b[14C[20]\n\u001b[5Cpettype\u001b[17C[random]\n\u001b[5Csoundlib\u001b[16C[nosound]\n c - autounlock\u001b[14C[apply-key]\n d - boulder\u001b[17C[`]\n e - crash_email\u001b[13C[unknown]\n f - crash_name\u001b[14C[unknown]\n g - crash_urlmax\u001b[12C[-1]\n h - disclose\u001b[16C[ni na nv ng nc no]\n (5 of 7)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "20": {
+       "screen": " a - fruit\u001b[19C[slime mold]\n b - glyph\u001b[19C[(to be done)]\n c - hilite_status\u001b[11C[(none)]\n d - menu_headings\u001b[11C[no-color&inverse]\n e - menu_objsyms\u001b[12C[conditional]\n f - menuinvertmode\u001b[10C[1]\n g - menustyle\u001b[15C[full]\n h - msg_window\u001b[14C[single]\n i - number_pad\u001b[14C[0=off]\n j - packorder\u001b[15C[$\")[%?+!=/(*`0_]\n k - paranoid_confirmation   [pray trap swim]\n l - petattr\u001b[17C[inverse]\n m - pickup_burden\u001b[11C[stressed]\n n - pickup_types\u001b[12C[all]\n o - pile_limit\u001b[14C[0]\n p - roguesymset\u001b[13C[default]\n q - runmode\u001b[17C[run]\n r - scores\u001b[18C[3 top/2 around]\n s - sortdiscoveries\u001b[9C[by order of discovery within each class]\n t - sortloot\u001b[16C[loot]\n u - sortvanquished\u001b[10C[t: traditional: by monster level]\n v - statushilites\u001b[11C[0 (off: don't highlight status fields)]\n w - statuslines\u001b[13C[2]\n (6 of 7)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "21": {
+       "screen": " a - suppress_alert\u001b[10C[5.0.0]\n b - symset\u001b[18C[default]\n c - versinfo\u001b[16C[1: number (5.0.0)]\n d - whatis_coord\u001b[12C[none]\n e - whatis_filter\u001b[11C[none]\n\n \u001b[7mOther settings:\u001b[0m\n f - autocompletions\u001b[9C[(0 currently set)]\n g - autopickup exceptions   [(0 currently set)]\n h - bind keys\u001b[15C[(0 currently set)]\n i - menu colors\u001b[13C[(0 currently set)]\n j - message types\u001b[11C[(0 currently set)]\n k - status condition fields [(16 currently set)]\n l - status highlight rules  [(0 currently set)]\n (7 of 7)",
+       "cursor": [
+        9,
+        14,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "TTY message history option normalized negative-values",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=msghistory:-1,pile_limit:-5,number_pad:-1,scores:5top/2around/own\nOPTIONS=!tutorial\n",
+     "moves": "  #optionsfull\n              \u001b.",
+     "frames": {
+      "19": {
+       "screen": " a - whatis_menu\u001b[13C[false]\n b - whatis_moveskip\u001b[9C[false]\n\n \u001b[7mCompounds (selecting will prompt for new value):\u001b[0m\n\u001b[5Cwindowtype\u001b[14C[tty]\n\u001b[5Cplaymode\u001b[16C[normal]\n\u001b[5Cname\u001b[20C[RcProbe]\n\u001b[5Crole\u001b[20C[Valkyrie]\n\u001b[5Crace\u001b[20C[human]\n\u001b[5Cgender\u001b[18C[female]\n\u001b[5Calignment\u001b[15C[lawful]\n\u001b[5Ccatname\u001b[17C[(none)]\n\u001b[5Cdogname\u001b[17C[(none)]\n\u001b[5Chorsename\u001b[15C[(none)]\n\u001b[5Cmsghistory\u001b[14C[128]\n\u001b[5Cpettype\u001b[17C[random]\n\u001b[5Csoundlib\u001b[16C[nosound]\n c - autounlock\u001b[14C[apply-key]\n d - boulder\u001b[17C[`]\n e - crash_email\u001b[13C[unknown]\n f - crash_name\u001b[14C[unknown]\n g - crash_urlmax\u001b[12C[-1]\n h - disclose\u001b[16C[ni na nv ng nc no]\n (5 of 7)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "20": {
+       "screen": " a - fruit\u001b[19C[slime mold]\n b - glyph\u001b[19C[(to be done)]\n c - hilite_status\u001b[11C[(none)]\n d - menu_headings\u001b[11C[no-color&inverse]\n e - menu_objsyms\u001b[12C[conditional]\n f - menuinvertmode\u001b[10C[1]\n g - menustyle\u001b[15C[full]\n h - msg_window\u001b[14C[single]\n i - number_pad\u001b[14C[-1=off, y & z swapped]\n j - packorder\u001b[15C[$\")[%?+!=/(*`0_]\n k - paranoid_confirmation   [pray trap swim]\n l - petattr\u001b[17C[inverse]\n m - pickup_burden\u001b[11C[stressed]\n n - pickup_types\u001b[12C[all]\n o - pile_limit\u001b[14C[5]\n p - roguesymset\u001b[13C[default]\n q - runmode\u001b[17C[run]\n r - scores\u001b[18C[5 top/2 around/own]\n s - sortdiscoveries\u001b[9C[by order of discovery within each class]\n t - sortloot\u001b[16C[loot]\n u - sortvanquished\u001b[10C[t: traditional: by monster level]\n v - statushilites\u001b[11C[0 (off: don't highlight status fields)]\n w - statuslines\u001b[13C[2]\n (6 of 7)",
+       "cursor": [
+        9,
+        23,
+        1
+       ]
+      },
+      "21": {
+       "screen": " a - suppress_alert\u001b[10C[(none)]\n b - symset\u001b[18C[default]\n c - versinfo\u001b[16C[1: number (5.0.0)]\n d - whatis_coord\u001b[12C[none]\n e - whatis_filter\u001b[11C[none]\n\n \u001b[7mOther settings:\u001b[0m\n f - autocompletions\u001b[9C[(0 currently set)]\n g - autopickup exceptions   [(0 currently set)]\n h - bind keys\u001b[15C[(0 currently set)]\n i - menu colors\u001b[13C[(0 currently set)]\n j - message types\u001b[11C[(0 currently set)]\n k - status condition fields [(16 currently set)]\n l - status highlight rules  [(0 currently set)]\n (7 of 7)",
+       "cursor": [
+        9,
+        14,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "suppress_alert accepts atoi patch suffix and stores packed version",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=msghistory:abc,pile_limit:abc,suppress_alert:5.0.0junk\nOPTIONS=!tutorial\n",
+     "moves": "  #optionsfull\n              \u001b.",
+     "frames": {
+      "21": {
+       "screen": " a - suppress_alert\u001b[10C[5.0.0]\n b - symset\u001b[18C[default]\n c - versinfo\u001b[16C[1: number (5.0.0)]\n d - whatis_coord\u001b[12C[none]\n e - whatis_filter\u001b[11C[none]\n\n \u001b[7mOther settings:\u001b[0m\n f - autocompletions\u001b[9C[(0 currently set)]\n g - autopickup exceptions   [(0 currently set)]\n h - bind keys\u001b[15C[(0 currently set)]\n i - menu colors\u001b[13C[(0 currently set)]\n j - message types\u001b[11C[(0 currently set)]\n k - status condition fields [(16 currently set)]\n l - status highlight rules  [(0 currently set)]\n (7 of 7)",
+       "cursor": [
+        9,
+        14,
+        1
+       ]
+      },
+      "22": {
+       "screen": "\n\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        17,
+        6,
+        1
+       ]
+      },
+      "23": {
+       "screen": "Unknown command ' '.\n\n\n\u001b[12C------.-\n\u001b[12C.......|\n\u001b[12C|......|\n\u001b[12C|....\u001b[97m@\u001b[39m.|\n\u001b[12C|.....\u001b[97md\u001b[39m|\n\u001b[12C|...\u001b[33m(\u001b[39m..|\n\u001b[12C---\u001b[33m+\u001b[39m----\n\n\n\n\n\n\n\n\n\n\n\n\nRcProbe the Stripling\u001b[10CSt:15 Dx:16 Co:18 In:8 Wi:12 Ch:7 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        17,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "packed feature warning suppress-fuzzer-boundary",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=playmode:debug,!tutorial,suppress_alert:3.7.0\n",
+     "moves": "  #debugfuzzer\n   n\n\u001b",
+     "frames": {
+      "15": {
+       "screen": "Do you want to start fuzz testing? [yes|n] (n)\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        47,
+        0,
+        1
+       ]
+      },
+      "16": {
+       "screen": "Do you want to start fuzz testing? [yes|n] (n)\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        48,
+        0,
+        1
+       ]
+      },
+      "17": {
+       "screen": "Do you want to start fuzz testing? [yes|n] (n)\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        49,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "packed feature warning suppress-fuzzer-old",
+   "segments": [
+    {
+     "seed": 42,
+     "datetime": "20261124090000",
+     "nethackrc": "OPTIONS=name:RcProbe,role:Valkyrie,race:human,gender:female,align:lawful\nOPTIONS=!legacy\nOPTIONS=playmode:debug,!tutorial,suppress_alert:3.0.0\n",
+     "moves": "  #debugfuzzer\n   n\n\u001b",
+     "frames": {
+      "15": {
+       "screen": "The fuzz tester will make NetHack execute random keypresses.--More--\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        68,
+        0,
+        1
+       ]
+      },
+      "16": {
+       "screen": "There is no conventional way out of this mode.--More--\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        54,
+        0,
+        1
+       ]
+      },
+      "17": {
+       "screen": "Do you want to start fuzz testing? [yes|n] (n)\n\n\n\u001b[46C-----\n\u001b[46C|.\u001b[93m$\u001b[39m..\n\u001b[46C|\u001b[97md@\u001b[35mx\u001b[39m|\n\u001b[46C--.--\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:16 Dx:12 Co:18 In:9 Wi:11 Ch:9 Lawful\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        47,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "restore-rereads-rc-message-and-menu-rules",
+   "segments": [
+    {
+     "seed": 424242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Rules,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,!autopickup,pettype:none\nOPTIONS=showexp,time,color,statushilites:5,suppress_alert:3.4.3\nOPTIONS=hilite_status:hitpoints/<50%/red,hilite_status:gold/changed/yellow\nMSGTYPE=hide \"You see here .*\"\nMSGTYPE=stop \"There is a .*\"\nMENUCOLOR=\" uncursed \"=green&bold\nMENUCOLOR=\"dagger\"=red\n",
+     "moves": "ii  llllllSy",
+     "frames": {}
+    },
+    {
+     "seed": 424242,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Rules,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,!autopickup,pettype:none\nOPTIONS=showexp,time,color,statushilites:5,suppress_alert:3.4.3\nOPTIONS=hilite_status:hitpoints/<50%/red,hilite_status:gold/changed/yellow\nMSGTYPE=hide \"You see here .*\"\nMSGTYPE=stop \"There is a .*\"\nMENUCOLOR=\" uncursed \"=green&bold\nMENUCOLOR=\"dagger\"=red\n",
+     "moves": "ii  ?a   \u001bO>>>\u001bllll,\u001bhhhhi :",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Rules, the human Valkyrie, welcome back to NetHack!\n\n\n\u001b[52C--------\n\u001b[52C|\u001b[93m$\u001b[39m.....|\n\u001b[52C\u001b[33m-\u001b[93m<\u001b[39m....\u001b[97m@\u001b[39m|\n\u001b[52C------.-\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nRules the Stripling\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:6",
+       "cursor": [
+        58,
+        5,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\u001b[31C\u001b[7mWeapons\u001b[0m\n\u001b[31Ca - a blessed +1 spear (weapon in right hand)\n\u001b[31Cb - \u001b[31ma +0 dagger (alternate weapon; not wielded)\u001b[39m\n\u001b[31C\u001b[7mArmor\u001b[0m\n\u001b[31Cc - \u001b[1m\u001b[32man uncursed +3 small shield (being worn)\u001b[0m\n\u001b[31C\u001b[7mComestibles\u001b[0m\n\u001b[31Cd - \u001b[1m\u001b[32man uncursed food ration\u001b[0m\n\u001b[31C(end)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nRules the Stripling\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:6",
+       "cursor": [
+        37,
+        7,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\u001b[31C\u001b[7mWeapons\u001b[0m\n\u001b[31Ca - a blessed +1 spear (weapon in right hand)\n\u001b[31Cb - \u001b[31ma +0 dagger (alternate weapon; not wielded)\u001b[39m\n\u001b[31C\u001b[7mArmor\u001b[0m\n\u001b[31Cc - \u001b[1m\u001b[32man uncursed +3 small shield (being worn)\u001b[0m\n\u001b[31C\u001b[7mComestibles\u001b[0m\n\u001b[31Cd - \u001b[1m\u001b[32man uncursed food ration\u001b[0m\n\u001b[31C(end)\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nRules the Stripling\u001b[12CSt:18 Dx:14 Co:18 In:8 Wi:9 Ch:8 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1/0 T:6",
+       "cursor": [
+        37,
+        7,
         1
        ]
       }

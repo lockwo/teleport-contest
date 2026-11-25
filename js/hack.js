@@ -2810,7 +2810,7 @@ async function getpos(goalText, startx, starty, validfn, force = false, verbose 
     const u0 = game.u;
     const udx = u0?.dx, udy = u0?.dy, udz = u0?.dz;
     try {
-        return await getpos_inner(goalText, startx, starty, validfn, force, verbose, detectMode, terrainMode);
+        return await getpos_inner(goalText, startx, starty, validfn, force, verbose, detectMode, terrainMode, hilitefn);
     } finally {
         getpos_sethilite(null, null);
         if (u0) { u0.dx = udx; u0.dy = udy; u0.dz = udz; }
@@ -2998,7 +2998,7 @@ export async function getpos_menu(ccp, gloc, validfn = null, detectMode = false,
     return true;
 }
 
-async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false) {
+async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false, hilitefn = null) {
     const u = game.u;
     let cx = startx, cy = starty;
     // C ref: getpos.c:815 -- "temporary? if we have a queued direction, return the
@@ -3073,14 +3073,14 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             const disp = game.nhDisplay;
             if (disp?.setCursor) disp.setCursor(pend ? pend[0] : cx - 1, pend ? pend[1] : cy + 1);
         }
-    } else if (!showGoal && gp_iflags().terrainmode) {
-        // C ref: getpos.c getpos, curs()/flush_screen(0) after handle_tip().
-        // browse_map leaves its detection message pending.  Publish it here
-        // when neither the tip nor a verbose prompt will render a frame.
+    } else if (!showGoal && !hilitefn) {
+        // C ref: getpos.c:853-854 always positions and flushes the map before
+        // the first readchar, including nonverbose naming after a corner menu.
+        // Hilite callers already publish their forced glyph redraw and cursor.
         const pend = pending_glyph_cursor();
         await flush_screen(0);
         const disp = game.nhDisplay;
-        if (pend && disp?.setCursor) disp.setCursor(pend[0], pend[1]);
+        if (disp?.setCursor) disp.setCursor(pend ? pend[0] : cx - 1, pend ? pend[1] : cy + 1);
     }
 
     // C: auto_describe(cx,cy) — see getpos_describe().
@@ -3123,10 +3123,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         } else if (!firstPass) {
             // C getpos.c `nxtc:` — curs(WIN_MAP, cx, cy) + flush_screen(0) after
             // EVERY key, so the cursor tracks the cell even with no message
-            // drawn (autodescribe off via '#').  Only the loop iterations are
-            // emulated here: C's identical PRE-loop pair is left to the
-            // caller-side render, which already reproduces flush_screen()
-            // leaving the tty cursor on the last glyph drawn, not at (cx,cy).
+            // drawn (autodescribe off via '#').
             // flush_screen(0)'s bot() runs AFTER curs(): with disp.botl/botlx
             // pending (a getpos_menu() whose dismissal ran under bot_disabled)
             // it redraws the status fields and the tty cursor stays at the end

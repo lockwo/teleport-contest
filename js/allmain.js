@@ -379,11 +379,9 @@ async function newgame_real() {
     if (game.iflags?.purge_monsters) await (await import('./mon.js')).dmonsfree();
     await (await import('./engrave.js')).save_engravings(WRITING);
 
-    // C ref: allmain.c welcome(TRUE).
-    await cls();
-    await docrt();
-    await flush_screen(1);
-    await bot();
+    // C ref: allmain.c:914 and pline.c:239-274. The greeting's pline owns
+    // the flush. A hidden greeting must leave the published pre-AC status
+    // intact, rather than forcing a redraw before message filtering.
     await pline(welcomeMessage());
     // C ref: allmain.c newgame():843-848 — notice_all_mons(TRUE) runs right
     // after welcome(TRUE), announcing every monster already visible from the

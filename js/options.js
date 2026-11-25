@@ -28,6 +28,7 @@ import { makeplural } from './plural.js';
 // fruitadd()'s 127-fruit overflow fallback is `return rnd(127)`.
 import { rnd } from './rng.js';
 import { sanitize_name } from './engrave.js';
+import { c_atoi } from './hacklib.js';
 // condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
 // modules that import this one, so parseNethackrc() loads them dynamically.
 let conditions = [], condition_aliases = [];
@@ -2005,7 +2006,7 @@ function optfn_msg_window(o, negated, opts, op, result) {
 function optfn_msghistory(o, negated, opts, op, result) {
     op = string_for_env_opt(o.name, opts, negated);
     if ((negated && op === '') || (!negated && op !== '')) {
-        result.iflags.msg_history = negated ? 0 : (parseInt(op, 10) || 0);
+        result.iflags.msg_history = negated ? 0 : c_atoi(op) >>> 0;
         keep(o, negated ? 0 : op, result);
     } else if (negated) {
         bad_negation(o.name, true);
@@ -2028,7 +2029,7 @@ function optfn_number_pad(o, negated, opts, op, result) {
         bad_negation(o.name, true);
         return OPTN_ERR;
     } else {
-        const mode = parseInt(op, 10) || 0;
+        const mode = c_atoi(op);
         if (mode < -1 || mode > 4 || (mode === 0 && op[0] !== '0')) {
             config_error_add(`Illegal ${o.name} parameter '${op}'`);
             return OPTN_ERR;
@@ -2330,7 +2331,7 @@ function optfn_pile_limit(o, negated, opts, op, result) {
     op = string_for_opt(opts, negated);
     let v;
     if ((negated && op === '') || (!negated && op !== '')) {
-        v = negated ? 0 : (parseInt(op, 10) || 0);
+        v = negated ? 0 : c_atoi(op);
     } else if (negated) {
         bad_negation(o.name, true);
         return OPTN_ERR;
@@ -2409,7 +2410,7 @@ function optfn_scores(o, negated, opts, op, result) {
         if (neg) i += (op[i] === '!') ? 1 : (op[i + 2] !== '-') ? 2 : 3;
         let inum = 1;
         if (digit(op[i])) {
-            inum = parseInt(op.slice(i), 10);
+            inum = c_atoi(op.slice(i));
             while (i < op.length && digit(op[i])) i++;
         }
         while (op[i] === ' ') i++;
@@ -2536,7 +2537,7 @@ function optfn_statuslines(o, negated, opts, op, result, error = config_error_ad
         itmp = 2;
         retval = OPTN_ERR;
     } else if (op !== '') {
-        itmp = parseInt(op, 10) || 0;
+        itmp = c_atoi(op);
     }
     if (itmp < 2 || itmp > 3) {
         error(`'${o.name}:${op}' is invalid; must be 2 or 3`);
@@ -2606,7 +2607,8 @@ export async function handler_statuslines() {
     return true;
 }
 
-// C ref: version.c get_feature_notice_ver() — strictly "maj.min.patch".
+// C ref: version.c:440-459. Only the first two components are scanned for
+// nondigits. The patch component is passed directly to atoi(), including junk.
 function get_feature_notice_ver(str) {
     const parts = [];
     let cur = '';
@@ -2622,9 +2624,9 @@ function get_feature_notice_ver(str) {
     }
     if (parts.length !== 3) return 0;
     const [a, b, c] = parts;
-    if (!/^[0-9]*$/.test(c)) return 0;
-    return ((parseInt(a, 10) || 0) << 24) | ((parseInt(b, 10) || 0) << 16)
-           | ((parseInt(c, 10) || 0) << 8);
+    return Number(BigInt.asUintN(64,
+        (BigInt(c_atoi(a)) << 24n) | (BigInt(c_atoi(b)) << 16n)
+        | (BigInt(c_atoi(c)) << 8n)));
 }
 
 // C ref: version.c get_current_feature_ver() — FEATURE_NOTICE_VER of the
@@ -2639,7 +2641,7 @@ function feature_alert_opts(op, optn, result) {
         config_error_add(`${optn}=${op} Invalid reference to a future version ignored`);
         return 0;
     }
-    result.flags.suppress_alert = op;
+    result.flags.suppress_alert = fnv;
     return 1;
 }
 
@@ -3063,7 +3065,7 @@ function match_str2clr(str, suppress_msg) {
     let c = CLR_MAX, found = false;
     for (const [name, color] of COLORNAMES)
         if (fuzzymatch(str, name, ' -_', true)) { c = color; found = true; break; }
-    if (!found && digit(str[0])) c = parseInt(str, 10) || 0;
+    if (!found && digit(str[0])) c = c_atoi(str);
     if (c < 0 || c >= CLR_MAX) {
         if (!suppress_msg) config_error_add(`Unknown color '${str.slice(0, 60)}'`);
         c = CLR_MAX;
@@ -3541,7 +3543,7 @@ function parse_status_hl2(s, from_configfile, result) {
             const stripped = tmp.replace(/[%<>=+]/g, '');
             numeric = true;
             dt = percent ? ANY_INT : row[1];
-            if (dt === ANY_INT) hilite.value.a_int = parseInt(stripped, 10) || 0;
+            if (dt === ANY_INT) hilite.value.a_int = c_atoi(stripped);
             else if (dt === ANY_LONG) hilite.value.a_long = parseInt(stripped, 10) || 0;
 
             const op = grt ? '>' : gte ? '>=' : lt ? '<' : le ? '<=' : '=';
@@ -4403,7 +4405,15 @@ export async function parseNethackrc(rc) {
     // pending there is dropped (cnf_parser_done() frees parser->buf unprocessed).
     const rcLines = rc.split('\n');
     if (rcLines[rcLines.length - 1] === '') rcLines.pop();
-    for (const rawLine of rcLines) {
+    for (const [lineIndex, rawLine] of rcLines.entries()) {
+        // C ref: cfgfiles.c:1668,1702: fgets has a 4*BUFSZ buffer.
+        // Reject before config_error_nextline(), so the error belongs to
+        // the preceding line, and discard the rest of this physical line.
+        const missingNewline = lineIndex === rcLines.length - 1 && !rc.endsWith('\n');
+        if (rawLine.length >= (missingNewline ? 1022 : 1023)) {
+            config_error_add('Line too long, skipping');
+            continue;
+        }
         let line = rawLine.replace(/[\r]+$/, '');
         const morelines = line.endsWith('\\');
         if (morelines) line = line.slice(0, -1);
@@ -4412,7 +4422,8 @@ export async function parseNethackrc(rc) {
         const ep = line.replace(/^[ \t]+/, '');
         const ignoreline = !ep || ep[0] === '#';
         const oldline = pending !== null;
-        if (!ignoreline) pending = (pending !== null) ? pending + ' ' + ep : ep;
+        if (!ignoreline)
+            pending = ((pending !== null) ? pending + ' ' + ep : ep).slice(0, 1023);
         if (morelines || (ignoreline && !oldline)) continue;
         const buf = pending;
         pending = null;

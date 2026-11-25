@@ -801,6 +801,10 @@ async function done(how) {
                 // erases the paged line, so an automatic disclosure menu that
                 // follows overlays a blank top row.
                 game.nhDisplay?.clearRow?.(0);
+            } else {
+                // C ref: wintty.c:1880 forgets an acknowledged message without
+                // erasing it. A subsequent automatic corner menu must retain it.
+                await d.display_nhwindow_message();
             }
             // Acking that --More-- is where the deferred status redraw lands:
             // every frame from the first disclosure prompt on shows the zeroed
@@ -2460,12 +2464,9 @@ export async function container_contents(list, identified, all_containers,
                     if (kc === ' ' || kc === '\r' || kc === '\n' || kc === '\x1b'
                         || (game._dismissMore && k === game._dismissMore)) break;
                 }
-                // C ref: draw_corner_window()'s callers all clear the modal
-                // flag once their window is dismissed (e.g.
-                // extcmd-handlers.js:1803); without this the next disclose()
-                // query renders behind the stale overlay (display.js:2729
-                // `if (game._modal_screen) return;`).
-                delete game._modal_screen;
+                // C ref: end.c:1658 destroys the contents window before
+                // recursing or displaying the next container.
+                await I.dismiss_invent_screen(true);
                 if (all_containers)
                     await container_contents(box.cobj, identified, true,
                                              reportempty);

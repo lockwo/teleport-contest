@@ -122,7 +122,7 @@ import { spot_time_left, obj_split_timers } from './timeout.js';
 import { obj_sheds_light, obj_split_light_source, obj_merge_light_sources as merge_light_sources,
          show_transient_light, transient_light_cleanup,
          get_obj_location as get_obj_location_light } from './light.js';
-import { waterbody_name as waterbody_name_for_ice } from './cmd.js';
+import { waterbody_name as waterbody_name_for_ice, cmd_from_func, cmd_visctrl } from './cmd.js';
 import { BRK_FROM_INV } from './const.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { base_armcat } from './objarmor_data.js';
@@ -11025,11 +11025,14 @@ export async function wiz_identify() {
     if (!unid_cnt) {
         plan.push({ str: '(all items are permanently identified already)' });
     } else {
-        // visctrl(C('I')) == "^I"; the primary selector is '_'.
+        // C wizcmds.c:53-60 and invent.c:3247-3249 use the live command key,
+        // falling back to ^I when #wizidentify has no keyboard binding.
+        const boundKey = cmd_from_func('wiz_identify');
+        const identifyKey = boundKey !== '\0' ? boundKey : '\x09';
         let prompt = `select ${unid_cnt === 1 ? 'it' : 'any or all of them'} to permanently identify`;
-        if (unid_cnt > 1) prompt += ' (^I for all)';
+        if (unid_cnt > 1) prompt += ` (${cmd_visctrl(identifyKey)} for all)`;
         items.push({ selector: '_', desc: prompt, obj: null, selected: false,
-                     count: -1, gselector: '\x09', skipinvert: true });
+                     count: -1, gselector: identifyKey, skipinvert: true });
         plan.push({ item: items[0] });
         const headStyle = menuHeadStyle(!!game.program_state?.gameover);
         // C ref: wizcmds.c wiz_identify() sets iflags.override_ID before calling

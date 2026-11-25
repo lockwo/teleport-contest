@@ -1,0 +1,139 @@
+{
+  "cases": [
+    {
+      "name": "container-disclosure-destroys-previous-window",
+      "segments": [
+        {
+          "seed": 3829302,
+          "datetime": "20260812093000",
+          "nethackrc": "OPTIONS=name:Magellan,role:Archeologist,race:human,gender:female,align:neutral,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+          "moves": "   ned nnlhHhuuGujjnqb,E- ad aerarium\nh3sblahr7s bjr\u001bbai#ride\nk#quaff\nh5s\u0018\n\u001bjbhj\u0001jWb>hhhyyhykaa.kahsfkk#help\n@d         \u001bkkk\u001bkhh>yy>y15sFbybE- x\nbbkjgbyJjlGlhhhs10.yyhhhht\u001b>t\u001bah,o\nhb\u001bhjjbhkuybyyyyhhhh>R\u001bhyy>5syzWyhFkhhbh\u001bhshhh,hhWhtf \u001br\u001bbhPhhhhh#travel\n \n\u001bjt\u001bbl\u001bbhblbhhbhbhjbshyk/okkkE- X\nlu#call\ndm\u001b\u001bkkklullhb#overview\n\n$hbjjjhbjjjbynlLwe bunWjjjFbb\u001bunL_>.luu3s5suulhhkkkae\njbb10.bWbjbyhyKy_>.> khhhhr\u001bllu\u001b#dip\n?a 5sz5skjjnnlllllll\u0004lf anQan5sl\u0004ll\u0004lf\u001bay uhhHhhhhnnnjzjFn\u001bjFlll jll,,,,,jbnnVr\u001b20s  FhFhlFhlll\u001b10sr\u001bobl#untrap\nyukllllll5sl10s10.ulllL#autopickup\n3skkk>\u001bkjjjjnukkkkk10syk#turn\nyyy5sukl>n  ybj\u001bhhhh5s3sh20s>hb>bbbhbnnlFlllull,,\u001bhbkklunlae\nlzlf I $ nlllr\u001bu20s5sll>uyhyhnyhy\u001bkjnllnlljjlllll\u0004ll\u0004l >l\u0004llbr\u001bTc_>.> ybhjFuFu5s10sj\u001b20sjjjjjjj#inventtype\ne\nllllll#knownclass\na njhhhhh\u0010hh\u001bh_<.< ulnnj#throw\n$ujbbbb5sr\u001bjlllllluP*.dqkkyu\u001bwellqs_>.R\u001b_<,nh15s_>.i\u001b#teleport\n(e\n_>,20shhhae\n jnyy yhlln20s\u001bjnulljl_<.Fnhyr\u001byh:qyhnyhyfukj bhhh#help\neki I,PU\n\u000f#\nhj\u001bbhhhhh\u000f#\u001bb#inventtype\ndea\u001bfhbb#monster\nfhWcfhfht$h15sFhFhbhbnnyyy l \u001bhhhhhhhbb pyhhhHP\u001byyhbb lnnnjjn nnbbb yybb#wear\n\u001b5suulnulnnlFlFllllluullllpllullln  ulN\u001b R\u001bulukKFnnn\nFn   y^i   y",
+          "frames": {
+            "1136": {
+              "screen": "\u001b[41CContents of the large box:\n\u001b[38C#\n\u001b[5C#\u001b[28C\u000elqqq~q\u000f   a cursed scroll of scare monster\n \u000elqqq~qk\u000f\u001b[25C#\u000e~\u001b[90m~~~\u001b[31m\u000f*\u001b[90m\u000e~\u001b[39m\u000f   an uncursed potion of sleeping\n \u000ex\u001b[90m~~~~\u001b[39m\u000f<\u000ex\u000f\u001b[6C\u000elqqqqqqqqqqqqk\u000f\u001b[5C#\u000ex\u001b[90m~~~~~\u001b[39m\u000f --More--\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f######\u000ex\u001b[90m~~\u001b[33m\u000f/\u001b[97m?\u001b[90m\u000e~\u001b[39mx\u000f   #    \u000elqqqqqqqqqqqqqqk\u000f\n \u000ex\u001b[90m~~~~~\u001b[39m~\u000f######\u000e~\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\u001b[5C\u001b[97m@\u001b[39m\u000emqqqqqj\u000f########\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #####\u001b[33m+\u001b[39m\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f   ###\u001b[33mr\u001b[39m##\u001b[93m$\u001b[39m###########\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f###\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f####   #\u001b[9C####\u000ex\u001b[90m~~~~~\u001b[39m\u000f>\u001b[90m\u000e~~~~~~~~\u001b[39m~\u000f #####\u001b[33m+\u001b[39m\n \u000emqqqq~j\u000f\u001b[6C\u000emq~qqqqqqqqqqj\u000f\u001b[7C##\u001b[11C#\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #\n\u001b[6C#\u001b[9C#\u001b[19C#\u001b[11C#\u000emqqqqqqqqq\u001b[33ma\u001b[39mqqqqj\u000f #\n\u001b[6C#\u001b[29C#\u001b[19C#############\n\u001b[6C##\u001b[26C# #\u001b[23C#   #\n\u001b[7C###\u001b[13C\u000el\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqq~k\u000f#\u001b[23C##  #\n \u000elqqqqqqq~k\u000f\u001b[12C\u000ex\u001b[90m~~~~~~~~~~\u000f^\u001b[39m\u000ex\u000f#\u001b[27C#\n \u000ex\u001b[90m~~~~\u000f^\u000e~~~\u001b[39mx\u000f\u001b[5C#######\u000e~\u001b[90m~~~~\u001b[36m\u000f^\u001b[90m\u000e~~~~~~\u001b[39mx\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\u001b[5C#\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~\u001b[39m~\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f######\u001b[6C\u000ex\u001b[90m~~~~~~~~~\u001b[39m\u000f*\u001b[90m\u000e~\u001b[39mx\u000f\n \u000emqqqqqqqqj\u000f\u001b[12C\u000emqqqqqqqqqqqj\u000f",
+              "cursor": [
+                49,
+                4,
+                1
+              ]
+            },
+            "1137": {
+              "screen": "\u001b[41CContents of the sack:\n\u001b[38C#\n\u001b[5C#\u001b[28C\u000elqqq~q\u000f   an uncursed scroll of magic mapping\n \u000elqqq~qk\u000f\u001b[25C#\u000e~\u001b[90m~~~\u001b[31m\u000f*\u001b[90m\u000e~\u001b[39m\u000f --More--\n \u000ex\u001b[90m~~~~\u001b[39m\u000f<\u000ex\u000f\u001b[6C\u000elqqqqqqqqqqqqk\u000f\u001b[5C#\u000ex\u001b[90m~~~~~\u001b[39mx\u000f####\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f######\u000ex\u001b[90m~~\u001b[33m\u000f/\u001b[97m?\u001b[90m\u000e~\u001b[39mx\u000f   #    \u000elqqqqqqqqqqqqqqk\u000f\n \u000ex\u001b[90m~~~~~\u001b[39m~\u000f######\u000e~\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\u001b[5C\u001b[97m@\u001b[39m\u000emqqqqqj\u000f########\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #####\u001b[33m+\u001b[39m\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f   ###\u001b[33mr\u001b[39m##\u001b[93m$\u001b[39m###########\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f###\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f####   #\u001b[9C####\u000ex\u001b[90m~~~~~\u001b[39m\u000f>\u001b[90m\u000e~~~~~~~~\u001b[39m~\u000f #####\u001b[33m+\u001b[39m\n \u000emqqqq~j\u000f\u001b[6C\u000emq~qqqqqqqqqqj\u000f\u001b[7C##\u001b[11C#\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #\n\u001b[6C#\u001b[9C#\u001b[19C#\u001b[11C#\u000emqqqqqqqqq\u001b[33ma\u001b[39mqqqqj\u000f #\n\u001b[6C#\u001b[29C#\u001b[19C#############\n\u001b[6C##\u001b[26C# #\u001b[23C#   #\n\u001b[7C###\u001b[13C\u000el\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqq~k\u000f#\u001b[23C##  #\n \u000elqqqqqqq~k\u000f\u001b[12C\u000ex\u001b[90m~~~~~~~~~~\u000f^\u001b[39m\u000ex\u000f#\u001b[27C#\n \u000ex\u001b[90m~~~~\u000f^\u000e~~~\u001b[39mx\u000f\u001b[5C#######\u000e~\u001b[90m~~~~\u001b[36m\u000f^\u001b[90m\u000e~~~~~~\u001b[39mx\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\u001b[5C#\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~\u001b[39m~\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f######\u001b[6C\u000ex\u001b[90m~~~~~~~~~\u001b[39m\u000f*\u001b[90m\u000e~\u001b[39mx\u000f\n \u000emqqqqqqqqj\u000f\u001b[12C\u000emqqqqqqqqqqqj\u000f",
+              "cursor": [
+                49,
+                3,
+                1
+              ]
+            },
+            "1138": {
+              "screen": "Do you want to see your attributes? [ynq] (n)\n\u001b[38C#\n\u001b[5C#\u001b[28C\u000elqqq~qk\u000f\n \u000elqqq~qk\u000f\u001b[25C#\u000e~\u001b[90m~~~\u001b[31m\u000f*\u001b[90m\u000e~\u001b[39m~\u000f#\n \u000ex\u001b[90m~~~~\u001b[39m\u000f<\u000ex\u000f\u001b[6C\u000elqqqqqqqqqqqqk\u000f\u001b[5C#\u000ex\u001b[90m~~~~~\u001b[39mx\u000f####\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f######\u000ex\u001b[90m~~\u001b[33m\u000f/\u001b[97m?\u001b[90m\u000e~\u001b[39mx\u000f   #    \u000elqqqqqqqqqqqqqqk\u000f\n \u000ex\u001b[90m~~~~~\u001b[39m~\u000f######\u000e~\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\u001b[5C\u001b[97m@\u001b[39m\u000emqqqqqj\u000f########\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #####\u001b[33m+\u001b[39m\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f   ###\u001b[33mr\u001b[39m##\u001b[93m$\u001b[39m###########\u000ex\u001b[90m~~~~~~~~~~~~~~\u001b[33ma\u001b[39m\u000f###\n \u000ex\u001b[90m~~~~~\u001b[39mx\u000f\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f####   #\u001b[9C####\u000ex\u001b[90m~~~~~\u001b[39m\u000f>\u001b[90m\u000e~~~~~~~~\u001b[39m~\u000f #####\u001b[33m+\u001b[39m\n \u000emqqqq~j\u000f\u001b[6C\u000emq~qqqqqqqqqqj\u000f\u001b[7C##\u001b[11C#\u000e~\u001b[90m~~~~~~~~~~~~~~\u001b[39mx\u000f #\n\u001b[6C#\u001b[9C#\u001b[19C#\u001b[11C#\u000emqqqqqqqqq\u001b[33ma\u001b[39mqqqqj\u000f #\n\u001b[6C#\u001b[29C#\u001b[19C#############\n\u001b[6C##\u001b[26C# #\u001b[23C#   #\n\u001b[7C###\u001b[13C\u000el\u001b[33m\u000f+\u001b[39m\u000eqqqqqqqqq~k\u000f#\u001b[23C##  #\n \u000elqqqqqqq~k\u000f\u001b[12C\u000ex\u001b[90m~~~~~~~~~~\u000f^\u001b[39m\u000ex\u000f#\u001b[27C#\n \u000ex\u001b[90m~~~~\u000f^\u000e~~~\u001b[39mx\u000f\u001b[5C#######\u000e~\u001b[90m~~~~\u001b[36m\u000f^\u001b[90m\u000e~~~~~~\u001b[39mx\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39mx\u000f\u001b[5C#\u001b[6C\u000ex\u001b[90m~~~~~~~~~~~\u001b[39m~\u000f#\n \u000ex\u001b[90m~~~~~~~~\u001b[39m~\u000f######\u001b[6C\u000ex\u001b[90m~~~~~~~~~\u001b[39m\u000f*\u001b[90m\u000e~\u001b[39mx\u000f\n \u000emqqqqqqqqj\u000f\u001b[12C\u000emqqqqqqqqqqqj\u000f\n\n\n\nMagellan the Digger\u001b[12CSt:12 Dx:10 Co:8 In:17 Wi:16 Ch:10 Neutral\nDlvl:2 $:19 HP:0(22) Pw:7(7) AC:9 Xp:2 Stressed",
+              "cursor": [
+                46,
+                0,
+                1
+              ]
+            },
+            "1139": {
+              "screen": "Magellan the Archeologist's attributes:\n\nBackground:\n You were a Digger, a level 2 female human Archeologist.\n You were neutral, nominally on a mission for Camaxtli\n who was opposed by Quetzalcoatl (lawful) and Huhetotl (chaotic).\n You were right-handed.\n You were in the Dungeons of Doom, on level 2.\n You entered the dungeon 1109 turns ago.\n There was a new moon in effect when your adventure ended.\n You had 27 experience points, 13 more were needed to attain level 3.\n\nBasics:\n You had 0 out of 22 hit points.\n You had all 7 energy points (spell power).\n Your armor class was 9.\n Your wallet contained 19 zorkmids.\n Autopickup was on for all types.\n\nFinal Characteristics:\n Your strength was 12 (limit:18/100).\n Your dexterity was 10 (peak:11, limit:18).\n Your constitution was 8 (limit:18).\n --More--",
+              "cursor": [
+                9,
+                23,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "nonverbose-naming-publishes-target-cursor",
+      "segments": [
+        {
+          "seed": 9304900,
+          "datetime": "20260812093000",
+          "nethackrc": "OPTIONS=name:Polly,role:Barbarian,race:human,gender:male,align:chaotic,playmode:debug,symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=lit_corridor\nOPTIONS=!verbose\nOPTIONS=!safe_pet\nOPTIONS=catname:Tom\nOPTIONS=boulder:#\nOPTIONS=fruit:kiwi\n",
+          "moves": "   n#levelchange\n5\n  \n\u0017blessed amulet of life saving\nPe\u0017blessed +2 black dragon scale mail\nWf\u0017blessed +2 gauntlets of power\n\u0017blessed amulet of life saving\nPh\u0017blessed ring of free action\nRFj \u00162\n#timeout\n nUnnnkuh\u00169\n\u0007barrow wight\n\u001628\n  \u0016vladstower\n0\ny \nn \u0010\u0016?\n>z >yB gbbjjJ   This is a longer annotation line for testing\n\u00173 potion of paralysis\nk \n  n  u  n u  \n \u0016?\nhz_ \nllLVia#wizsmell\n#pray\n\u001b#close\nykj     n j\n  h    n\u001b\u001612\n\u001641\n \u001bzr\u001b\u0007trapper\nuuj  jjy  n bbk     n k  kyyl  l  jll\u0017uncursed scroll of food detection\nzed\u0016?\nr\u00161\n\u0017The Staff of Aesculapius\n  n ynnnnjjjyyygy*.c\nZ(^hllllllllllLllu\u0016?\nslljj nngunlllL+\u001b\u0017blessed +5 yellow dragon scales\nQbn\u0007water elemental\n#down\nrk bbbllGllllllkkKkll\u0016 s\u0017cursed +4 ring of stealth\n+ab   Rex\nPml dalNluwbr\u001bZ#wizwish\nuncursed spellbook of magic mapping\n\u00167\n#herecmdmenu\nc#quiver\n\u001b\u0017uncursed horn of plenty\nyhhhhghuyGn#wizseenv\n \u001buuaof\n\u001b#chat\n\u001b\u0007peaceful fire giant\n<#jump\nwban \\\u001b=rn x\n#pray\ny y#call\n,yy",
+          "frames": {
+            "931": {
+              "screen": "\u001b[32C\u001b[7mWhat do you want to name?\u001b[0m\n\n\u001b[32Cm - a monster\n\u001b[32Ci - a particular object in inventory\n\u001b[32Co - the type of an object in inventory\n\u001b[32Cf - the type of an object upon the floor\n\u001b[11C\u000elqqqqqqqqqqqqk\u000f\u001b[7Cd - the type of an object on discoveries list\n\u001b[11C\u000ex\u001b[90m~~~~\u001b[97m\u000f@\u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\u001b[7Ca - record an annotation for the current level\n\u001b[11C\u000ex\u001b[90m~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\u001b[7C(end)\n\u001b[11C\u000ex\u001b[90m~~\u001b[36m\u000f!\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f\n\u001b[11C\u000emqqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\nWizard the Pillager\u001b[12CSt:18/01 Dx:18 Co:17 In:7 Wi:7 Ch:5 Chaotic\nDlvl:7 $:0 HP:33(40) Pw:6(6) AC:7 Xp:4 Satiated Blind",
+              "cursor": [
+                38,
+                8,
+                1
+              ]
+            },
+            "932": {
+              "screen": "\n\n\n\n\n\n\u001b[11C\u000elqqqqqqqqqqqqk\u000f\n\u001b[11C\u000ex\u001b[90m~~~~\u001b[97m\u000f@\u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[11C\u000ex\u001b[90m~~\u001b[36m\u000f!\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f\n\u001b[11C\u000emqqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\nWizard the Pillager\u001b[12CSt:18/01 Dx:18 Co:17 In:7 Wi:7 Ch:5 Chaotic\nDlvl:7 $:0 HP:33(40) Pw:6(6) AC:7 Xp:4 Satiated Blind",
+              "cursor": [
+                16,
+                7,
+                1
+              ]
+            },
+            "933": {
+              "screen": "wall\n\n\n\n\n\n\u001b[11C\u000elqqqqqqqqqqqqk\u000f\n\u001b[11C\u000ex\u001b[90m~~~~\u001b[97m\u000f@\u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[11C\u000ex\u001b[90m~~\u001b[36m\u000f!\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f\n\u001b[11C\u000emqqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\nWizard the Pillager\u001b[12CSt:18/01 Dx:18 Co:17 In:7 Wi:7 Ch:5 Chaotic\nDlvl:7 $:0 HP:33(40) Pw:6(6) AC:7 Xp:4 Satiated Blind",
+              "cursor": [
+                15,
+                6,
+                1
+              ]
+            },
+            "934": {
+              "screen": "unexplored area\n\n\n\n\n\n\u001b[11C\u000elqqqqqqqqqqqqk\u000f\n\u001b[11C\u000ex\u001b[90m~~~~\u001b[97m\u000f@\u001b[90m\u000e~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~\u001b[93m\u000f$\u001b[90m\u000e~~~~~\u001b[33m\u000f+\u001b[39m\n\u001b[11C\u000ex\u001b[90m~~\u001b[36m\u000f!\u001b[90m\u000e~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39mx\u000f\n\u001b[11C\u000ex\u001b[90m~~~~~~~~~~~~\u001b[39m~\u000f\n\u001b[11C\u000emqqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\nWizard the Pillager\u001b[12CSt:18/01 Dx:18 Co:17 In:7 Wi:7 Ch:5 Chaotic\nDlvl:7 $:0 HP:33(40) Pw:6(6) AC:7 Xp:4 Satiated Blind",
+              "cursor": [
+                14,
+                5,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "double-rush-cancel-clears-pending-prefix",
+      "segments": [
+        {
+          "seed": 4987176,
+          "datetime": "20260509014722",
+          "nethackrc": "OPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+          "moves": "Yara\nyy \nnullln|; \u001buFblFhnFybFubFuDrO_unnlhk15sFuu15sFbu20sFb\u001bu10sv ouk\u001bkkFkFk__.D- k#wipe\nkkkk?n     l#conduct\n u#cha\ntest\nbnnn_,i\u001b\u001b#\nnn2jnybbjjjjjnway8slwoO>hh\nllllll#invoke\n\u001bl\fukyh#wizgenesis\n\u001b\u0006202syhhyhhiedOnh>elg\n@\nlFl\u001bFlnlFlFlIB\n#conduct\n lFnFlFlFln\u001bFlFlllFnFn\u001b;lFhaOsn; hyhhyhD.\n4cl\n;#vanquish\nyFnysuuuuLmlFhyFn\u001b*a\nyig\ny#unt\nu_>:y#ju\nylnllnlnjbhHHukkkkkuuuulloklLscy_>.sssd9k oslDcf j\nl\u001bl>#c\n_.bGghhh",
+          "frames": {
+            "404": {
+              "screen": "Double rush prefix, canceled.\n\n\n\u001b[14C\u000elqqqqqqqqqqk\u000f\n\u001b[14C\u000ex\u001b[90m~~~~~~~~~~\u001b[36m\u000f)\u001b[97m?\u001b[39m###\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f`\u001b[97m@\u001b[39m##\n\u001b[13C#\u000ex\u001b[90m~~~~~~~\u001b[97m\u000fF\u001b[90m\u000e~~\u001b[39m~\u000f#\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[13C#\u000emqq\u001b[33ma\u001b[39mqqqqqqqj\u000f\n\u001b[13C#   \u001b[97m%\u001b[90m(\u001b[39m#\n\u001b[13C#\u001b[5C####\n\u001b[13C#\u001b[8C####\n\u001b[5C\u000elqqqqqqk\u000f#\u001b[11C#\n\u001b[5C\u000ex\u001b[90m~~~\u001b[33m\u000f(\u001b[90m\u000e~~\u001b[39mx\u000f#\u001b[8C\u000elqq~qqk\u000f\n\u001b[5C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[90m\u000e~~~~\u001b[39m~\u000f#########\u001b[33m\u000ea\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000ex\u001b[90m~~\u001b[33m\u000f%\u001b[90m\u000e~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f#\u001b[8C\u000ex\u001b[90m~~~~\u001b[33m\u000f(+\u001b[39m\n\u001b[5C\u000ex\u001b[90m~~~~~~\u001b[33m\u000f+\u001b[39m\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000emqqqqqqj\u000f\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[22C\u000emqqqqqj\u000f\n\n\n\nYara the Rambler\u001b[15CSt:10 Dx:12 Co:15 In:13 Wi:10 Ch:15 Neutral\nDlvl:1 $:993 HP:10(10) Pw:2(2) AC:10 Xp:1",
+              "cursor": [
+                27,
+                5,
+                1
+              ]
+            },
+            "405": {
+              "screen": "You try to move the boulder, but in vain.\n\n\n\u001b[14C\u000elqqqqqqqqqqk\u000f\n\u001b[14C\u000ex\u001b[90m~~~~~~~~~~\u001b[36m\u000f)\u001b[97m?\u001b[39m###\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f`\u001b[97m@\u001b[39m##\n\u001b[13C#\u000ex\u001b[90m~~~~~~~\u001b[97m\u000fF\u001b[90m\u000e~~\u001b[39m~\u000f#\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[13C#\u000emqq\u001b[33ma\u001b[39mqqqqqqqj\u000f\n\u001b[13C#   \u001b[97m%\u001b[90m(\u001b[39m#\n\u001b[13C#\u001b[5C####\n\u001b[13C#\u001b[8C####\n\u001b[5C\u000elqqqqqqk\u000f#\u001b[11C#\n\u001b[5C\u000ex\u001b[90m~~~\u001b[33m\u000f(\u001b[90m\u000e~~\u001b[39mx\u000f#\u001b[8C\u000elqq~qqk\u000f\n\u001b[5C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[90m\u000e~~~~\u001b[39m~\u000f#########\u001b[33m\u000ea\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000ex\u001b[90m~~\u001b[33m\u000f%\u001b[90m\u000e~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f#\u001b[8C\u000ex\u001b[90m~~~~\u001b[33m\u000f(+\u001b[39m\n\u001b[5C\u000ex\u001b[90m~~~~~~\u001b[33m\u000f+\u001b[39m\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000emqqqqqqj\u000f\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[22C\u000emqqqqqj\u000f\n\n\n\nYara the Rambler\u001b[15CSt:10 Dx:12 Co:15 In:13 Wi:10 Ch:15 Neutral\nDlvl:1 $:993 HP:10(10) Pw:2(2) AC:10 Xp:1",
+              "cursor": [
+                27,
+                5,
+                1
+              ]
+            },
+            "406": {
+              "screen": "You try to move the boulder, but in vain.\n\n\n\u001b[14C\u000elqqqqqqqqqqk\u000f\n\u001b[14C\u000ex\u001b[90m~~~~~~~~~~\u001b[36m\u000f)\u001b[97m?\u001b[39m###\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f`\u001b[97m@\u001b[39m##\n\u001b[13C#\u000ex\u001b[90m~~~~~~~\u001b[97m\u000fF\u001b[90m\u000e~~\u001b[39m~\u000f#\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[13C#\u000emqq\u001b[33ma\u001b[39mqqqqqqqj\u000f\n\u001b[13C#   \u001b[97m%\u001b[90m(\u001b[39m#\n\u001b[13C#\u001b[5C####\n\u001b[13C#\u001b[8C####\n\u001b[5C\u000elqqqqqqk\u000f#\u001b[11C#\n\u001b[5C\u000ex\u001b[90m~~~\u001b[33m\u000f(\u001b[90m\u000e~~\u001b[39mx\u000f#\u001b[8C\u000elqq~qqk\u000f\n\u001b[5C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[90m\u000e~~~~\u001b[39m~\u000f#########\u001b[33m\u000ea\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000ex\u001b[90m~~\u001b[33m\u000f%\u001b[90m\u000e~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f#\u001b[8C\u000ex\u001b[90m~~~~\u001b[33m\u000f(+\u001b[39m\n\u001b[5C\u000ex\u001b[90m~~~~~~\u001b[33m\u000f+\u001b[39m\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000emqqqqqqj\u000f\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[22C\u000emqqqqqj\u000f\n\n\n\nYara the Rambler\u001b[15CSt:10 Dx:12 Co:15 In:13 Wi:10 Ch:15 Neutral\nDlvl:1 $:993 HP:10(10) Pw:2(2) AC:10 Xp:1",
+              "cursor": [
+                27,
+                5,
+                1
+              ]
+            },
+            "407": {
+              "screen": "You try to move the boulder, but in vain.\n\n\n\u001b[14C\u000elqqqqqqqqqqk\u000f\n\u001b[14C\u000ex\u001b[90m~~~~~~~~~~\u001b[36m\u000f)\u001b[97m?\u001b[39m###\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f`\u001b[97m@\u001b[39m##\n\u001b[13C#\u000ex\u001b[90m~~~~~~~\u001b[97m\u000fF\u001b[90m\u000e~~\u001b[39m~\u000f#\n\u001b[13C#\u000e~\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[13C#\u000emqq\u001b[33ma\u001b[39mqqqqqqqj\u000f\n\u001b[13C#   \u001b[97m%\u001b[90m(\u001b[39m#\n\u001b[13C#\u001b[5C####\n\u001b[13C#\u001b[8C####\n\u001b[5C\u000elqqqqqqk\u000f#\u001b[11C#\n\u001b[5C\u000ex\u001b[90m~~~\u001b[33m\u000f(\u001b[90m\u000e~~\u001b[39mx\u000f#\u001b[8C\u000elqq~qqk\u000f\n\u001b[5C\u000ex\u001b[90m~\u001b[93m\u000f<\u001b[90m\u000e~~~~\u001b[39m~\u000f#########\u001b[33m\u000ea\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000ex\u001b[90m~~\u001b[33m\u000f%\u001b[90m\u000e~\u001b[93m\u000f$\u001b[90m\u000e~\u001b[39mx\u000f#\u001b[8C\u000ex\u001b[90m~~~~\u001b[33m\u000f(+\u001b[39m\n\u001b[5C\u000ex\u001b[90m~~~~~~\u001b[33m\u000f+\u001b[39m\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[5C\u000emqqqqqqj\u000f\u001b[9C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[22C\u000emqqqqqj\u000f\n\n\n\nYara the Rambler\u001b[15CSt:10 Dx:12 Co:15 In:13 Wi:10 Ch:15 Neutral\nDlvl:1 $:993 HP:10(10) Pw:2(2) AC:10 Xp:1",
+              "cursor": [
+                27,
+                5,
+                1
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

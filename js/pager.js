@@ -23,7 +23,7 @@ import { on_qstart_level, ok_to_quest } from './questok.js';
 import { nhgetch, xwaitforspace_quit, xwaitforspace_note } from './input.js';
 import { worm_known } from './worm.js';
 import { key2txt, displayed_corr_is_lit, mon_to_glyph_pub, render_map_to_grid, match_warn_of_mon, pline, topl_more, flush_screen, canspotself, useDECgraphics, obj_is_generic, remembered_glyph_otyp, remember_topl, yn_prompt_history, yn_cmdq_answer, yn_cmdq_save, displayed_doormask, symOverrideChar, symsetHighByte, wall_angle, page_topline_before_window, docrt, note_corner_window, apply_utf8_forget } from './display.js';
-import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr } from './invent.js';
+import { renderWindowScreen, dismiss_invent_screen, distant_name_pub, floor_object_name, doname_vague_quan, ice_descr, paintMenuLine } from './invent.js';
 import { observe_object } from './o_init.js';
 import { doextversion } from './version.js';
 import { option_help_lines, map_menu_cmd, mapped_menu_cmds, default_menu_cmds } from './options.js';
@@ -676,7 +676,8 @@ function renderHelpMenu(offx, lines) {
     for (let r = 0; r < lines.length; r++) {
         for (let c = offx; c < COLS; c++) d.setCell(c, r, ' ', NO_COLOR, 0);
         const ln = lines[r];
-        if (ln && ln.text) d.putstr(offx + 1, r, ln.text, ln.color ?? NO_COLOR, ln.attr || 0);
+        if (ln && ln.text)
+            paintMenuLine(d, offx + 1, r, { ...ln, header: r === 0 }, true);
     }
     const footRow = lines.length;
     for (let c = offx; c < COLS; c++) d.setCell(c, footRow, ' ', NO_COLOR, 0);

@@ -223,7 +223,7 @@ export async function do_write_config_file() {
         await pline('Strange, could not figure out config file name.');
         return ECMD_OK;
     }
-    if (((game.flags?.suppress_alert) | 0) < ((3 << 16) | (7 << 8))) {
+    if (((game.flags?.suppress_alert) | 0) < ((3 << 24) | (7 << 16))) {
         await pline('Warning: saveoptions is highly experimental!');
         await pline('Some settings are not saved!');
         await pline('All manual customization and comments are removed from the file!');

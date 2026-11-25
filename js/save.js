@@ -25,6 +25,7 @@ import { restore_level_chains } from './mkroom.js';
 import { NO_COLOR } from './terminal.js';
 import { y_n, pline, docrt, getmsghistory } from './display.js';
 import { nhgetch } from './input.js';
+import { apfsCaseFold } from './apfs.js';
 
 // Keys on the game object that must NOT travel in the save file.  These are
 // either the runtime environment that the restoring segment sets up fresh (the
@@ -129,7 +130,7 @@ export function saveFileKey() {
     } catch {
         return null;
     }
-    return `${SAVE_KEY_PREFIX}${txt.normalize('NFD').toLowerCase()}`;
+    return `${SAVE_KEY_PREFIX}${apfsCaseFold(txt)}`;
 }
 
 // C ref: save.c:174-214 dosave0() — "While copying level files around, zero out
