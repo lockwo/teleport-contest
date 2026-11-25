@@ -6,6 +6,7 @@ import { panic } from './panic.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu, putstr } from './windows.js';
 import { nhgetch } from './input.js';
 import { NO_COLOR } from './terminal.js';
+import { raw_print as capture_raw_print } from './rawprint.js';
 import { ere_compile } from './pickup.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
 // role.c str2role()/str2race()/str2gend()/str2align() and the races/genders/
@@ -648,6 +649,10 @@ function raw_print(str) {
     if (raw_stream) raw_stream.push(str);
 }
 
+function raw_printf(str) {
+    if (raw_stream) raw_stream.push({ raw_printf: str });
+}
+
 // C ref: hack.h wait_synch() -> wintty.c getret(): the reader below eats input
 // until Return, and each eaten key is one captured input boundary.
 function wait_synch() {
@@ -737,7 +742,7 @@ function get_uchars(bufp, list, modlist, size, name) {
             i++;
             break;
         default:
-            raw_print(`Syntax error in ${name}`);
+            raw_printf(`Syntax error in ${name}`);
             wait_synch();
             return count;
         }
@@ -839,42 +844,13 @@ export async function config_error_report(result) {
     const raw = result?.config_error_raw;
     if (!raw || !raw.length) return;
     const disp = game.nhDisplay;
-    const rows = disp?.rows ?? 24, cols = disp?.cols ?? 80;
-    /* nomux_enter_raw_mode() clears the shadow buffer ONCE, on the first
-       raw_print: exit_nhwindows/settty switch off the alt screen, so the
-       visible terminal is blank first.  Its row/col then only ever advance,
-       which is why a later wait_synch() finds the earlier text still there. */
-    if (disp?.clearScreen) disp.clearScreen();
-    let row = 0, col = 0;
-    /* nomux_raw_putch() stores every byte >= 32 in the shadow buffer; the
-       harness decodes each captured row as UTF-8, so multibyte text takes one
-       cell per decoded character while the raw cursor counts bytes. */
-    const rowBytes = new Map();
-    const putch = (ch) => {
-        if (ch === '\n') { row++; col = 0; return; }
-        const code = ch.charCodeAt(0);
-        if (code < 32) return;
-        if (row >= 0 && row < rows && col >= 0 && col < cols) {
-            if (!rowBytes.has(row)) rowBytes.set(row, []);
-            rowBytes.get(row)[col] = code & 0xff;
-        }
-        col++;
-    };
-    const paint = () => {
-        for (const [r, bytes] of rowBytes) {
-            const filled = Array.from(bytes, (b) => b ?? 32);
-            let c = 0;
-            for (const dch of new TextDecoder('utf-8').decode(Uint8Array.from(filled)))
-                if (c < cols) disp?.setCell?.(c++, r, dch, NO_COLOR, 0);
-        }
-    };
     for (const item of raw) {
-        if (typeof item === 'string') {
-            for (let i = 0; i < item.length; i++) putch(item[i]);
-            putch('\n'); /* puts() / tty_raw_print_bold both append one */
-            paint();
-            game._nomux_raw = { row, col };
-            if (disp?.setCursor) disp.setCursor(col, row);
+        if (typeof item === 'string' || item.raw_printf !== undefined) {
+            const text = typeof item === 'string' ? item : item.raw_printf;
+            capture_raw_print(disp, text, 0, false);
+            // C ref: pline.c:556,579. raw_printf and vraw_printf each count it.
+            if (typeof item !== 'string')
+                game.early_raw_messages = (game.early_raw_messages || 0) + 2;
             continue;
         }
         /* getline.c xwaitforspace(): iflags.cbreak is still FALSE this early
@@ -948,7 +924,10 @@ function illegal_menu_cmd_key(c) {
 // C ref: options.c add_menu_cmd_alias() — gm.mapped_menu_cmds/op.
 const MAX_MENU_MAPPED_CMDS = 32;
 function add_menu_cmd_alias(from_ch, to_ch, result) {
-    if (result.menu_cmd_alias.length >= MAX_MENU_MAPPED_CMDS) return;
+    if (result.menu_cmd_alias.length >= MAX_MENU_MAPPED_CMDS) {
+        raw_print('out of menu map space.');
+        return;
+    }
     result.menu_cmd_alias.push([from_ch, to_ch]);
 }
 
@@ -1117,7 +1096,7 @@ function parseautocomplete(autocomplete, condition, result) {
             return;
         }
     }
-    raw_print(`Bad autocomplete: invalid extended command '${autocomplete}'.`);
+    raw_printf(`Bad autocomplete: invalid extended command '${autocomplete}'.`);
     wait_synch();
 }
 
@@ -2148,6 +2127,9 @@ function optfn_paranoid_confirmation(o, opt_negated, opts, op, result) {
                              + ` option takes no parameters (found '${op}')`);
             return OPTN_SILENTERR;
         }
+        // C ref: options.c:2877, COMPLAIN_ABOUT_PRAYCONFIRM in this build.
+        config_error_add(`${opt_negated ? '!' : ''}prayconfirm option is deprecated;`
+                         + ` switching to ${o.name}:${opt_negated ? '-' : '+'}pray`);
         op = (opt_negated ? '-' : '+') + 'pray';
         opt_negated = false;
     } else if (opt_negated) {
@@ -2903,7 +2885,7 @@ function optfn_string_required(o, negated, opts, op, result, envOpt) {
 function optfn_windowcolors(o, negated, opts, op, result) {
     op = string_for_opt(opts, false);
     if (op !== '') {
-        if (!wc_set_window_colors(op)) {
+        if (!wc_set_window_colors(op, result.iflags)) {
             config_error_add(`Could not set ${o.name} '${op}'`);
             return OPTN_ERR;
         }
@@ -2912,30 +2894,46 @@ function optfn_windowcolors(o, negated, opts, op, result) {
     return OPTN_OK;
 }
 
-// C ref: coloratt.c wc_set_window_colors() — "menu fg/bg message fg/bg ...";
-// each window name must be one of menu/message/status/text and each colour a
-// known colour name.
+// C ref: options.c:10023 wc_set_window_colors().
 const WCNAMES = ['menu', 'message', 'status', 'text'];
-function wc_set_window_colors(op) {
+const WCSHORTNAMES = ['mnu', 'msg', 'sts', 'txt'];
+const wcolors_opt = [0, 0, 0, 0];
+register_process_static(() => wcolors_opt.fill(0));
+function wc_set_window_colors(op, iflags) {
     let s = mungspaces(op);
     while (s.length) {
         const sp = s.indexOf(' ');
         if (sp < 0) return false;
         const wn = s.slice(0, sp);
-        let i = 0;
-        for (; i < WCNAMES.length; i++) if (strcmpi_eq(wn, WCNAMES[i])) break;
-        if (i === WCNAMES.length) return false;
         s = s.slice(sp + 1);
-        let end = s.indexOf(' ');
-        const pair = end < 0 ? s : s.slice(0, end);
-        s = end < 0 ? '' : s.slice(end + 1);
-        const slash = pair.indexOf('/');
+        const slash = s.indexOf('/');
         if (slash < 0) return false;
-        for (const part of [pair.slice(0, slash), pair.slice(slash + 1)]) {
-            if (!part || strcmpi_eq(part, 'default')) continue;
-            if (match_str2clr(part, true) >= CLR_MAX) return false;
+        const fg = s.slice(0, slash);
+        s = s.slice(slash + 1);
+        if (s[0] === ' ') s = s.slice(1);
+        if (!s) return false;
+        const end = s.indexOf(' ');
+        const bg = end < 0 ? s : s.slice(0, end);
+        s = end < 0 ? '' : s.slice(end + 1);
+        const i = WCNAMES.findIndex((name, j) =>
+            strcmpi_eq(wn, name) || strcmpi_eq(wn, WCSHORTNAMES[j]));
+        if (i < 0) {
+            config_error_add(`windowcolors for unrecognized window type: ${wn}`);
+            continue;
         }
+        iflags.wcolors ??= [];
+        const colors = iflags.wcolors[i] ??= {};
+        for (const [key, value] of [['fg', fg], ['bg', bg]]) {
+            if (!value.includes(' ')) {
+                const color = check_enhanced_colors(value);
+                colors[key] = color >= 0 ? wc_color_name(color) : value;
+            }
+        }
+        if (wcolors_opt[i])
+            config_error_add(`windowcolors for ${WCNAMES[i]} windows specified multiple times`);
+        wcolors_opt[i]++;
     }
+    iflags.options_set_window_colors_flag = 1;
     return true;
 }
 
@@ -6614,7 +6612,7 @@ export async function toggle_bool_option(p) {
 
 import { ECMD_OK, ECMD_FAIL } from './const.js';
 import { mungspaces, highc, letter } from './hacklib.js';
-import { alternative_palette } from './coloratt.js';
+import { alternative_palette, check_enhanced_colors, wc_color_name } from './coloratt.js';
 import { fruit_from_name } from './objnam.js';
 
 // C ref: options.c get_menu_cmd_key() -- the reverse of map_menu_cmd(): given

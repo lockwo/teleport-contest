@@ -42,7 +42,9 @@ export function raw_putstr(disp, row, text, color, attr) {
         else bytes.push(...new TextEncoder().encode(ch));
     }
     let col = 0;
-    for (const ch of new TextDecoder('utf-8').decode(Uint8Array.from(bytes))) {
+    // The recorder clips the byte shadow row before decoding it as UTF-8.
+    const visible = Uint8Array.from(bytes.slice(0, disp.cols ?? 80));
+    for (const ch of new TextDecoder('utf-8').decode(visible)) {
         if (col >= (disp.cols ?? 80)) break;
         disp.setCell(col++, row, ch, color, attr);
     }

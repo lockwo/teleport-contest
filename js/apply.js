@@ -1571,18 +1571,11 @@ function calc_pole_range() {
     return { min_range, max_range };
 }
 
-// C ref: display.h glyph_is_poleable(G) -- a displayed monster, a remembered
-// "sensed but unseen monster" mark, or a statue.  This port keeps no glyph
-// array, so the same three cases are read off the level state.  A disguised
-// mimic is a monster the hero spots but its glyph is the object/furniture it
-// poses as: glyph_is_monster() is false there, which is what loc.disp_monster
-// records (display.js display_monster()).
-function poleable_at(x, y) {
-    const loc = game.level?.at(x, y);
-    if (loc?.invisMon) return true;
-    const mtmp = _display.m_at(x, y);
-    if (mtmp && _uhitm.canspotmon(mtmp) && loc?.disp_monster) return true;
-    return statue_at(x, y);
+// C ref: display.h glyph_is_poleable(G). Use the displayed or remembered
+// glyph, not a real statue or invisible marker hidden underneath another glyph.
+function glyph_is_poleable(glyph) {
+    return glyph.kind === 'monster' || glyph.kind === 'invisible'
+        || (glyph.kind === 'object' && glyph.otyp === STATUE_OTYP);
 }
 
 function statue_at(x, y) {
@@ -1602,7 +1595,7 @@ function valid_polearm_position(x, y, min_range, max_range) {
     const d = distu_sq(x, y);
     if (d < min_range || d > max_range) return false;
     return _vision.cansee(x, y)
-        || (_vision.couldsee(x, y) && poleable_at(x, y));
+        || (_vision.couldsee(x, y) && glyph_is_poleable(_pager.pg_glyph_at(x, y)));
 }
 
 // C ref: apply.c find_poleable_mon(pos) — scan the isqrt(max_range) box for
@@ -1625,8 +1618,7 @@ function find_poleable_mon(pos, min_range, max_range) {
                 && (mtmp.mtame || (mtmp.mpeaceful && game.flags?.confirm !== false)))
                 continue;
             const isStatue = glyph.kind === 'object' && glyph.otyp === STATUE_OTYP;
-            if ((glyph.kind === 'monster' || glyph.kind === 'invisible' || isStatue)
-                && (!isStatue || impaired)) {
+            if (glyph_is_poleable(glyph) && (!isStatue || impaired)) {
                 if (mx) return false; /* more than one candidate location */
                 mx = x; my = y;
             }
@@ -1776,6 +1768,7 @@ export async function use_pole(obj, autohit) {
         if (!picked) return ECMD_CANCEL; // ESC
         cc.x = picked.x; cc.y = picked.y;
     }
+    const glyph = _pager.pg_glyph_at(cc.x, cc.y); // C ref: apply.c:3471
 
     // C ref: apply.c use_pole() returns ECMD_FAIL for each of these refusals: no turn, like ECMD_OK, but
     // rhack() runs reset_cmd_vars(TRUE) and clears CQ_REPEAT (a following ^A has nothing to repeat).
@@ -1791,7 +1784,7 @@ export async function use_pole(obj, autohit) {
             await _display.update_topl('Too close!');
         game.context._getobj_cancelled = true;
         return ECMD_OK;
-    } else if (!_vision.cansee(cc.x, cc.y) && !poleable_at(cc.x, cc.y)) {
+    } else if (!_vision.cansee(cc.x, cc.y) && !glyph_is_poleable(glyph)) {
         await _display.update_topl("You won't hit anything if you can't see that spot.");
         game.context._getobj_cancelled = true;
         return ECMD_OK;
@@ -1835,7 +1828,8 @@ export async function use_pole(obj, autohit) {
         }
 
         await _invent.thitmonst(mtmp, game.uwep);
-    } else if (statue_at(cc.x, cc.y)) {
+    } else if (glyph.kind === 'object' && glyph.otyp === STATUE_OTYP
+               && statue_at(cc.x, cc.y)) {
         const T = await import('./trap.js');
         const t = T.t_at(cc.x, cc.y);
         if (t && t.ttyp === STATUE_TRAP
@@ -1850,7 +1844,8 @@ export async function use_pole(obj, autohit) {
         /* no monster here and no statue seen or remembered here */
         unmap_invisible_at(cc.x, cc.y);
         const loc = game.level?.at(cc.x, cc.y);
-        if (_invent.sobj_at(BOULDER, cc.x, cc.y)) {
+        if (glyph.kind === 'object' && glyph.otyp === BOULDER
+            && _invent.sobj_at(BOULDER, cc.x, cc.y)) {
             await _display.pline('Thump!  Your blow bounces harmlessly off the boulder.');
             const { wake_nearto } = await import('./mon.js');
             await wake_nearto(cc.x, cc.y, 25);
@@ -2110,9 +2105,8 @@ function ap_Is_waterlevel() {
     return !!uz && !!wl && uz.dnum === wl.dnum && uz.dlevel === wl.dlevel;
 }
 
-// C ref: display.c glyph_at(x, y) / display.h glyph_is_poleable().  This port
-// keeps no glyph array; poleable_at() above reads the same three cases off the
-// level state, so the display_*_positions() loops below use it directly.
+// C ref: display.c glyph_at(x, y) / display.h glyph_is_poleable().
+// The position display uses the same glyph-based predicate as use_pole().
 const DISP_BEAM_A = -1, DISP_END_A = -7;   // include/display.h
 
 

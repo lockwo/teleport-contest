@@ -5458,13 +5458,12 @@ export async function on_msg_accessory(obj) {
         await prinv(null, obj, 0);
         return;
     }
-    // C ref: on_msg() verbose branch uses an(xname(otmp)) — no worn-status
-    // suffix (xname omits it), so use simple_obj_name not doname_invent.  Route
-    // through update_topl (C pline) so a same-turn follow-up (blindness or a
-    // monster's "It bites!") accumulates on the topline instead of replacing it.
-    // C: `how` is " around your <head>" for a towel and empty otherwise.
+    if (!verbose) return;
+    // C ref: do_wear.c:89-97. xname() can set dknown, so format the
+    // name before checking whether it is an identified artifact's proper name.
+    const name = on_xname(obj);
     const how = (obj.otyp === TOWEL) ? ` around your ${body_part(8 /*HEAD*/)}` : '';
-    await update_topl(`You are now wearing ${an(on_xname(obj))}${how}.`);
+    await update_topl(`You are now wearing ${obj_is_pname(obj) ? on_the(name) : an(name)}${how}.`);
 }
 
 // C ref: do_wear.c equip_ok(obj, removing, accessory).  getobj() callback shared
@@ -5711,10 +5710,7 @@ async function accessory_or_armor_on(obj) {
     // "fits very tightly", elven-cloak stealth, displacement, invisibility).
     const on_fn = armor_on_fn(mask);
     if (on_fn) await on_fn();
-    // C do_wear.c on_msg() prints instant armor feedback only when verbose;
-    // the shield still takes a turn and changes AC when that option is off.
-    if (game.flags?.verbose !== false)
-        await update_topl(`You are now wearing ${an(on_xname(obj))}.`);
+    await on_msg_accessory(obj);
     if (game._allow_inventory_update !== undefined) update_inventory();
     return ECMD_TIME;
 }

@@ -515,6 +515,8 @@ export class NethackGame {
         optsel.align = g.initalign;
 
         if (have_saved_game()) {
+            // tty_init_nhwindows() has drawn the BASE banner before raw restore output.
+            if (g.early_raw_messages) this._renderStartupScreen();
             await dorestore();
             return;
         }

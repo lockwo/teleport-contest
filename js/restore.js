@@ -22,6 +22,8 @@
 import { ledger_no } from './dungeon.js';
 import { game } from './gstate.js';
 import { GameMap } from './game.js';
+import { raw_print } from './rawprint.js';
+import { nhgetch } from './input.js';
 import { monster_by_pmidx, name_to_pmidx, propagate, set_malign, adj_erinys,
          peace_minded_bigrm } from './makemon.js';
 import { docrt, bot, cls, flush_screen, pline, topl_more, y_n, see_monsters,
@@ -303,7 +305,7 @@ const UNSAVED_GLOBALS = [
     'msgtypes', 'msgtype_type', 'menucolors', 'status_hilites', 'cond_hilites',
     'conds', 'rfilter',
     '_winStop', '_winNoStop', '_yn_need_more', '_startup_selected_character',
-    '_nomux_raw',
+    '_nomux_raw', 'early_raw_messages',
     /* gc./gd./ge./gf. */
     'cmd_bind', '_cmdq_repeat', '_cmdq_canned', 'last_command_count', 'domove_attempting',
     'did_dig_msg', 'current_wand', 'clicklook_cc', 'item_action_in_progress',
@@ -409,7 +411,9 @@ export async function dorestore() {
        else pline("Restoring save file...")`.  The line is gone from the
        screen by the first docrt(), but it stays in gt.toplines and so lands in
        the ^P history behind the restored messages (tty_putmsghistory). */
-    if (!game.early_raw_messages)
+    if (game.early_raw_messages)
+        raw_print(game.nhDisplay, 'Restoring save file...');
+    else
         note_topl('Restoring save file...');
 
     const saved = deserializeGameState(blob);
@@ -649,6 +653,16 @@ export async function dorestore() {
     // for a floor corpse whose rot timer came due on a turn the port's own
     // nh_timeout did not reap.
     await run_object_timers();
+
+    // C ref: restore.c:933-942. Preserve early raw output before docrt erases it.
+    if (game.early_raw_messages && !game.program_state?.beyond_savefile_load) {
+        game.early_raw_messages = 0;
+        for (;;) {
+            const c = await nhgetch();
+            if (c === 10 || c === 13 || c === 32) break;
+        }
+    }
+    if (game.program_state) game.program_state.beyond_savefile_load = 1;
 
     // clear_nhwindow(WIN_MESSAGE) + docrt() (dorecover tail).
     game._pending_message = '';
