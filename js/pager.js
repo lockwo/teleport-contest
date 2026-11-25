@@ -32,9 +32,8 @@ import { menuHeadStyle } from './menuattr.js';
 import { HELP, SHELP, HISTORY, OPTIONFILE, OPTMENUHELP, USAGEHELP, LICENSE, KEYHELP, DEBUGHELP }
     from './pager_data.js';
 import { EXTCMD_TABLE } from './cmd_data.js';
-// cmd.js <-> pager.js is a static cycle (cmd.js imports dohelp); both names
-// crossing it are hoisted `export function` declarations, so it resolves.
-import { Cmd_num_pad, Cmd_pcHack_compat,
+// cmd.js imports dohelp. The key enum is read only inside functions.
+import { Cmd_num_pad, Cmd_pcHack_compat, Cmd_spkey, NHKF, spkey_name,
          cmdbind_get as live_cmdbind_get, direction_key_rows } from './cmd.js';
 
 const COLS = 80;
@@ -171,7 +170,7 @@ const HELP_MENU_ITEMS = [
     { text: 'Info on what a given key does.', fn: dowhatdoes },
     { text: 'List of game options.', fn: option_help },
     { text: 'Longer explanation of game options.', fn: dispfile_optionfile },
-    { text: "Using the '#optionsfull' or 'm O' command to set options.", fn: dispfile_optmenu },
+    { text: 'Using the %s command to set options.', fn: dispfile_optmenu },
     { text: 'Full list of keyboard commands.', fn: dokeylist },
     { text: 'List of extended commands.', fn: hmenu_doextlist },
     { text: 'List menu control keys.', fn: domenucontrols },
@@ -264,9 +263,9 @@ function key2extcmddesc(key) {
         if (key === 0x30 || (Cmd_pcHack_compat() && key === M_0))
             return "synonym for 'i'";
     }
-    if (key === 0o33) return 'cancel current prompt or pending prefix';
+    if (key === Cmd_spkey(NHKF.ESC)) return 'cancel current prompt or pending prefix';
     // misc_keys[]: NHKF_COUNT is only listed when number_pad is on.
-    if (Cmd_num_pad() && key === NHKF_COUNT_KEY)
+    if (Cmd_num_pad() && key === Cmd_spkey(NHKF.COUNT))
         return 'Prefix: for digits when preceding a command with a count';
     const e = cmdbind_get(key);
     if (e && e.txt) {
@@ -387,10 +386,6 @@ function padLeft(s, n) { return s.length >= n ? s : ' '.repeat(n - s.length) + s
 // flag test is a substring match on that expression.
 function cmdHasFlag(e, f) { return !!e.flags && e.flags.includes(f); }
 
-// cmd.c reset_commands() movement layout: sdir[] = "hykulnjb><"; the first 8
-// chars are the direction keys W,NW,N,NE,E,SE,S,SW.
-const NHKF_COUNT_KEY = 0x6e;   // cmd.c spkeys_binds[] NHKF_COUNT == 'n'
-
 // C ref: cmd.c cmdbind_get() — the live Cmd_bind list lives in js/cmd.js (one
 // table for rhack(), BIND= lines, number_pad and these listings).  Re-point its
 // entries at the cmd_data.js rows this file formats (txt/desc/flags strings).
@@ -483,6 +478,22 @@ async function dokeylist() {
     const keymap = buildKeymap();
     const lines = [];
     const num_pad = Cmd_num_pad();
+    const misc = [[NHKF.ESC, 'cancel current prompt or pending prefix']];
+    if (num_pad)
+        misc.push([NHKF.COUNT, 'Prefix: for digits when preceding a command with a count']);
+    const keysUsed = new Array(256).fill(false);
+    keysUsed[ctrlKey('c')] = true;
+    const pfxSeen = new Array(256).fill(0);
+    let spkeyGap = false;
+    for (const [nhkf] of misc) {
+        const key = Cmd_spkey(nhkf);
+        if (key && key !== ctrlKey('c') && !pfxSeen[key]) {
+            keysUsed[key] = true;
+            pfxSeen[key] = nhkf;
+        } else {
+            spkeyGap = true;
+        }
+    }
 
     lines.push('');
     lines.push(padLeft('', 7) + ' ' + '    Full Current Key Bindings List');
@@ -507,25 +518,25 @@ async function dokeylist() {
     // when number_pad is on (cmd.c misc_keys[].numpad) + the SIGINT line for ^C.
     lines.push('');
     lines.push('Miscellaneous keys:');
-    lines.push(padRight(key2txt(0o33), 7) + ' ' + 'cancel current prompt or pending prefix');
-    if (num_pad)
-        lines.push(padRight(key2txt(NHKF_COUNT_KEY), 7)
-                   + ' ' + 'Prefix: for digits when preceding a command with a count');
+    for (const [nhkf, desc] of misc) {
+        const key = Cmd_spkey(nhkf);
+        if (key && key !== ctrlKey('c') && pfxSeen[key] === nhkf)
+            lines.push(padRight(key2txt(key), 7) + ' ' + desc);
+    }
     lines.push(padRight(key2txt(ctrlKey('c')), 7) + ' interrupt: break out of NetHack (SIGINT)');
+    if (spkeyGap) {
+        for (const [nhkf, desc] of misc) {
+            const key = Cmd_spkey(nhkf);
+            if (!key || pfxSeen[key] !== nhkf)
+                lines.push(padRight(`[${spkey_name(nhkf)}]`, 21) + ' ' + desc);
+        }
+    }
 
     // Menu control keys — show_menu_controls(win, TRUE).
     lines.push('');
-    lines.push('Menu control keys:');
-    for (const [k, d] of MENU_CMD_INFO)
-        lines.push(padRight(visctrl(k.charCodeAt(0)), 7) + ' ' + d);
-    for (const [k, d] of MENU_CTRL_HARDCODED)
-        lines.push('' + padRight(k, 7) + ' ' + d);
+    const { show_menu_controls } = await import('./options.js');
+    show_menu_controls({ lines }, true);
 
-    // keys_used: ^C reserved (NO_SIGNAL) + <esc> (the one active misc_key).
-    const keysUsed = new Array(256).fill(false);
-    keysUsed[ctrlKey('c')] = true;
-    keysUsed[0o33] = true;
-    if (num_pad) keysUsed[NHKF_COUNT_KEY] = true;   // misc_keys[] NHKF_COUNT
 
     const IGNORE = ['WIZMODECMD', 'INTERNALCMD', 'MOVEMENTCMD'];
     if (keylistPutcmds(lines, keymap, keysUsed, true, ['GENERALCMD'], IGNORE)) {
@@ -592,7 +603,9 @@ function buildHelpItems() {
     let ch = 'a';
     for (const it of HELP_MENU_ITEMS) {
         if (it.wizonly && !wizard) continue;
-        items.push({ accel: ch, text: it.text, fn: it.fn });
+        const text = it.fn === dispfile_optmenu
+            ? it.text.replace('%s', setopt_cmd()) : it.text;
+        items.push({ accel: ch, text, fn: it.fn });
         ch = ch === 'z' ? 'A' : String.fromCharCode(ch.charCodeAt(0) + 1);
     }
     return items;
@@ -959,7 +972,7 @@ import { m_at, vobj_at, covers_objects, object_glyph, trap_glyph,
     from './display.js';
 import { cansee, couldsee, Blind, Infravision } from './vision.js';
 import { engr_at } from './engrave.js';
-import { altarmask_at, In_hell } from './dungeon.js';
+import { altarmask_at, In_hell, surface } from './dungeon.js';
 import { is_drawbridge_wall } from './dbridge.js';
 import { t_at, trapname } from './trap.js';
 import { trapped_chest_at, trapped_door_at } from './detect.js';
@@ -1532,7 +1545,7 @@ export function mhidden_description(mon, mhid_flags) {
             if (pg_glyph_is_object(glyph)) objfrommap();
             else out += 'something';
         } else if (pg_is_hider(data)) {
-            out += ` on the ${pg_ceiling_hider(data) ? 'ceiling' : pg_surface(x, y)}`;
+            out += ` on the ${pg_ceiling_hider(data) ? 'ceiling' : surface(x, y)}`;
         } else if (data.mlet === ';' && pg_is_pool(x, y)) {
             out += ' in murky water';               /* S_EEL */
         }
@@ -1612,13 +1625,6 @@ function pg_is_hider(data) { return is_hider_flag(data); }
 function pg_ceiling_hider(data) {
     return is_hider_flag(data) && (((mflags1_of(data) & M1_CLING) !== 0 && data.mcls !== 13 /* S_MIMIC */)
                                    || is_flyer_flag(data));
-}
-function pg_surface(x, y) {
-    const t = game.level?.at(x, y)?.typ;
-    if (t === POOL || t === MOAT || t === WATER) return 'water';
-    if (t === LAVAPOOL || t === LAVAWALL) return 'lava';
-    if (t === ICE) return 'ice';
-    return 'floor';
 }
 
 // C ref: pager.c:284 object_from_map(glyph, x, y, &obj_p) — "extracted from

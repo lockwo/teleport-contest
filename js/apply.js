@@ -99,6 +99,7 @@ let _cmd = null;
 let _uhitm = null;
 let _vision = null;
 let _enhance = null;
+let _pager = null;
 async function loadDeps() {
     if (!_invent) _invent = await import('./invent.js');
     if (!_display) _display = await import('./display.js');
@@ -106,6 +107,7 @@ async function loadDeps() {
     if (!_uhitm) _uhitm = await import('./uhitm.js');
     if (!_vision) _vision = await import('./vision.js');
     if (!_enhance) _enhance = await import('./enhance.js');
+    if (!_pager) _pager = await import('./pager.js');
 }
 
 // C ref: do_name.c x_monnam — the article+name string for a monster.  Routed
@@ -1617,12 +1619,14 @@ function find_poleable_mon(pos, min_range, max_range) {
     for (let x = lo_x; x <= hi_x; ++x) {
         for (let y = lo_y; y <= hi_y; ++y) {
             if (!valid_polearm_position(x, y, min_range, max_range)) continue;
+            const glyph = _pager.pg_glyph_at(x, y);
             const mtmp = _display.m_at(x, y);
-            if (!impaired && mtmp && _uhitm.canspotmon(mtmp) && game.level?.at(x, y)?.disp_monster
+            if (!impaired && glyph.kind === 'monster' && mtmp
                 && (mtmp.mtame || (mtmp.mpeaceful && game.flags?.confirm !== false)))
                 continue;
-            const isStatue = statue_at(x, y);
-            if (poleable_at(x, y) && (!isStatue || impaired)) {
+            const isStatue = glyph.kind === 'object' && glyph.otyp === STATUE_OTYP;
+            if ((glyph.kind === 'monster' || glyph.kind === 'invisible' || isStatue)
+                && (!isStatue || impaired)) {
                 if (mx) return false; /* more than one candidate location */
                 mx = x; my = y;
             }
@@ -3448,10 +3452,15 @@ export async function use_candle(optr) {
         return;
     }
 
-    // C ref: apply.c:1408 — C builds the query with two safe_qbuf() passes and
-    // an ESC-delimited placeholder so a long candle name is elided; the prompt
-    // text here is the un-elided equivalent.
-    const qbuf = `Attach ${A.invent.yname(obj)} to ${A.invent.yname(otmp)}?`;
+    // C ref: apply.c:1408-1415, reserve the minimal candelabrum suffix while
+    // shortening the candle name, then format the candelabrum in the space left.
+    const { safe_qbuf } = await import('./pickup.js');
+    const { thesimpleoname } = await import('./objnam.js');
+    const suffix = ` to\x1b${thesimpleoname(otmp)}?`;
+    const prefix = safe_qbuf('Attach ', suffix, obj,
+        A.invent.yname, thesimpleoname, s).replace(/ to\x1b.*$/, ' to ');
+    const qbuf = safe_qbuf(prefix, '?', otmp,
+        A.invent.yname, thesimpleoname, 'it');
     if (await A.display.y_n(qbuf) === 'n') {
         await use_lamp(obj);
         return;

@@ -2548,23 +2548,17 @@ export function has_magic_key(mon) {
     return null;
 }
 
-// C ref: artifact.c count_surround_traps().  This port has no numeric glyph
-// layer, so C's `glyph_is_trap(glyph_at(dx,dy))` ("a trap is SHOWN here, so
-// the hero expects it") is evaluated as "a seen trap with nothing drawn over
-// it"; a trap covered by an object or monster still counts, which is the case
-// C's comment singles out.
-export function count_surround_traps(x, y) {
+// C ref: artifact.c:2708 count_surround_traps(), count traps the displayed
+// glyph does not already reveal, including traps covered by visible monsters.
+export async function count_surround_traps(x, y) {
+    const { pg_glyph_at } = await import('./pager.js');
     let ret = 0;
     for (let dx = x - 1; dx < x + 2; ++dx)
         for (let dy = y - 1; dy < y + 2; ++dy) {
             if (!isok(dx, dy)) continue;
+            if (pg_glyph_at(dx, dy).kind === 'trap') continue;
             const t = trap_at(dx, dy);
             if (t) {
-                /* the hero's own square shows the hero, not the trap */
-                const covered = floor_objects_at(dx, dy).length > 0
-                    || mon_at(dx, dy) != null
-                    || (dx === game.u?.ux && dy === game.u?.uy);
-                if (t.tseen && !covered) continue;
                 ++ret;
                 continue;
             }
@@ -2585,12 +2579,6 @@ function trap_at(x, y) {
     for (const t of game.level?.traps || []) if (t.tx === x && t.ty === y) return t;
     return null;
 }
-// C ref: rm.h m_at(x,y) — the level.monsters[x][y] grid (display.js m_at); a
-// dead/detached monster still listed in fmon is never returned.
-import { m_at as grid_m_at } from './display.js';
-function mon_at(x, y) {
-    return grid_m_at(x, y) || null;
-}
 // C ref: obj.h Is_container(o) — otyp between LARGE_BOX and BAG_OF_TRICKS.
 function is_container(o) { return o.otyp >= LARGE_BOX && o.otyp <= BAG_OF_TRICKS; }
 
@@ -2600,7 +2588,7 @@ const MKOT_HEAT = ["cool", "slightly warm", "warm", "very warm",
     "hot", "very hot", "like fire"];
 export async function mkot_trap_warn() {
     if (!game.uarmg && is_art(game.uwep, ART_MASTER_KEY_OF_THIEVERY)) {
-        const ntraps = count_surround_traps(game.u.ux, game.u.uy);
+        const ntraps = await count_surround_traps(game.u.ux, game.u.uy);
         if (ntraps !== (game.mkot_trap_warn_count | 0)) {
             const idx = Math.min(ntraps, MKOT_HEAT.length - 1);
             await update_topl(`The Key feels ${MKOT_HEAT[idx]}${(ntraps > 3) ? '!' : '.'}`);

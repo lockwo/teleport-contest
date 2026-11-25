@@ -5249,21 +5249,22 @@ export async function nohandglow(mon) {
 export async function flash_hits_mon(mtmp, otmp) {
     const mx = mtmp.mx, my = mtmp.my;
     let tmp, amt, res = 0;
-    const { update_topl } = await import('./display.js');
+    const { update_topl, displayed_glyph_sig } = await import('./display.js');
 
     if (game.notonhead) return 0;
     const lev = game.level?.at(mx, my);
     const useeit = canseemon(mtmp);
 
     if (M_AP_TYPE(mtmp) !== M_AP_NOTHING) {
+        const oldglyph = displayed_glyph_sig(mx, my);
         /* hack.c mhidden_description(mtmp, MHID_ALTMON, buf) has no port; the
            mimic's disguise name comes from the same helper that_is_a_mimic()
            uses.  wakeup() -> seemimic() -> newsym() is what changes the glyph. */
         const whatbuf = mhidden_description_uh(mtmp);
-        const was_disguised = M_AP_TYPE(mtmp) !== M_AP_NOTHING;
+        /* C ref: uhitm.c:6367 compares the displayed glyph, not disguise state. */
         await wakeupAttack(mtmp, false);
         /* if the glyph changed then the hero saw something happen */
-        if (was_disguised && M_AP_TYPE(mtmp) === M_AP_NOTHING && cansee(mx, my)) {
+        if (displayed_glyph_sig(mx, my) !== oldglyph) {
             await update_topl(`That ${whatbuf} is really `
                 + `${x_monnam(mtmp, mtmp.mtame ? ARTICLE_YOUR : ARTICLE_A,
                               null, 0, false)}`

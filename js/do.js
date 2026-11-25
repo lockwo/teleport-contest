@@ -694,7 +694,7 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     // never "make it" (mklev) — this also covers the game-start level, which was
     // built by chargen (not marked in _visited_levels) but is stored the first
     // time the hero leaves it.
-    const firstVisit = !g._visited_levels[ledger] && !g._level_store[ledger];
+    const firstVisit = !g._level_store[ledger];
 
     // C ref: do.c goto_level() — savelev() writes out (and frees) the level we
     // are leaving before the destination is made or reloaded.  The JS port keeps
@@ -781,8 +781,6 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     if (leaving_tutorial) {
         for (const k of Object.keys(g._level_store))
             if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._level_store[k];
-        for (const k of Object.keys(g._visited_levels))
-            if (k.startsWith(`${g.tutorial_dnum}:`)) delete g._visited_levels[k];
     }
     // C ref: do.c goto_level():1661-1664 — "mark #overview data for all dungeon
     // branches as uninteresting" when the levels are discarded.
@@ -854,6 +852,11 @@ export async function goto_level(newlevel, at_stairs, falling, portal) {
     g.dndest = null;
 
     if (firstVisit) {
+        // C ref: do.c:1695-1697. Deleting a level file leaves VISITED set.
+        if (g._visited_levels[ledger]) {
+            await (await import('./display.js')).impossible('goto_level: returning to discarded level?');
+            delete g._visited_levels[ledger];
+        }
         g._visited_levels[ledger] = true;
         // C: mklev() — getbones() rn2(3) + makelevel() structural generation.
         // When getbones() reloads a bones file it grafts the level and returns
@@ -2198,6 +2201,18 @@ export async function dodown() {
     // is a no-op branch, "weren't actually floating after all"); no turn passes.
     // C ref: do.c:1176 `if (HLevitation || ELevitation) {...}`.
     if ((u.uprops?.Levitation | 0) || worn_extrinsic(LEVITATION)) {
+        // C ref: do.c:1178-1190, glyph_to_cmap(lev->glyph): blindness
+        // must not reveal a staircase hidden by the remembered object glyph.
+        if (Blind() && !worn_blocked(LEVITATION)) {
+            const loc = game.level.at(u.ux, u.uy);
+            const rg = loc.remembered_glyph;
+            const { terrain_glyph } = await import('./display.js');
+            const known = !!rg && !rg.objotyp && !rg.hallucotyp
+                && !loc.mapped_trap_ttyp && !loc.invisMon
+                && rg.ch === terrain_glyph(loc, u.ux, u.uy).ch;
+            if (stairs_down) stairs_down = known;
+            else if (ladder_down) ladder_down = known;
+        }
         // C ref: do.c:1190-1197 — the two special-level wordings, then hack.c
         // floating_above(what) — "You are floating high above %s."
         if (Is_airlevel(u.uz)) {

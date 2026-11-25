@@ -10,7 +10,7 @@ import { count_level_features } from './mklev.js';
 import { resists_ston, monstseesu, monstunseesu } from './mondata.js';
 import { level_difficulty } from './dungeon.js';
 import { game, hooks, register_process_static } from './gstate.js';
-import { cant_squeeze_thru_hero } from './hack.js';
+import { cant_squeeze_thru_hero, set_msg_xy } from './hack.js';
 import { s_suffix, upstart } from './hacklib.js';
 import { rn2, rnl, rn1, rnd, d } from './rng.js';
 import { newsym, pline, m_at, update_topl, urgent_topl, topl_more, impossible, canseemon_shared, Hallucination_u,
@@ -962,7 +962,7 @@ export async function water_damage(obj, ostr, force) {
             const in_invent = carried(obj);
             let described = false;
             if (in_invent) {
-                await update_topl(`The grease on your ${xname(obj)} washes off.`);
+                await update_topl(`The grease on ${yname(obj)} washes off.`);
                 described = true;
                 update_inventory();
             }
@@ -1136,12 +1136,7 @@ export async function grease_protect(otmp, ostr, victim) {
             await update_topl(`${Monnam(victim)}'s ${ostr} ${vtense(ostr, 'are')} ${txt}`);
         }
     } else if (isYou || vismon) {
-        let subj = `Your ${xname(otmp)}`;
-        if (!isYou) {
-            const { Monnam } = await import('./do_name.js');
-            subj = `${Monnam(victim)}'s ${xname(otmp)}`;
-        }
-        await update_topl(`${subj} ${otense(otmp, 'are')} ${txt}`);
+        await update_topl(`${Yobjnam2(otmp, 'are')} ${txt}`);
     }
     if (!rn2(2)) {
         otmp.greased = 0;
@@ -5921,9 +5916,10 @@ export async function launch_obj(otyp, x1, y1, x2, y2, style) {
                         if (newlev === depth(game.u?.uz)) go = false;
                     }
                     if (go) {
-                        if (cansee(x, y))
+                        if (cansee(x, y)) {
+                            set_msg_xy(x, y);
                             await pline('Suddenly the rolling boulder disappears!');
-                        else if (!Deaf_hero())
+                        } else if (!Deaf_hero())
                             await You_hear('a rumbling stop abruptly.');
                         singleobj.otrapped = 0;
                         if (t.ttyp === TELEP_TRAP) {

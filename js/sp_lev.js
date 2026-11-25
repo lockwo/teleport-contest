@@ -211,7 +211,7 @@ export { makemaz_wiz_goal } from './levels/wiz_goal.js';
 // first and assign into `_mktrap_victim`'s TDZ.
 import { sobj_at, stackobj, obj_extract_self, obfree } from './invent.js';
 import { flip_worm_segs_vertical, flip_worm_segs_horizontal } from './worm.js';
-import { does_block, block_point } from './vision.js';
+import { does_block, block_point, vision_reset } from './vision.js';
 import { walkfrom, create_maze } from './mkmaze.js';
 import { resists_ston,
          Protection_from_shape_changers } from './mon.js';
@@ -3238,11 +3238,9 @@ export function level_flip_extents() {
         ? flip_extents_cache.ext : bigrm_get_level_extends();
 }
 
-// C ref: sp_lev.c flip_level(flp, FALSE) — level-creation flip.  Transposes the
-// map cells, monsters, objects, traps, stairs, rooms and doors within the level
-// extents.  Restricted to the entity kinds the Big Room generates (extras=FALSE,
-// so the #wizfliplevel-only branches and vault/shk/worm fixups are inapplicable).
-export function flip_level(flp) {
+// C ref: sp_lev.c flip_level(): transpose the level's map and entities.
+// Active-level flips also move the hero and invalidate the vision grid.
+export function flip_level(flp, extras = false) {
     if ((flp & 3) === 0) return;
     const g = game;
     const map = g.level;
@@ -3383,11 +3381,25 @@ export function flip_level(flp) {
     // the map (arg is the packed (x << 16 | y) location).
     hooks.flip_melt_ice_timers?.(flp, FlipX, FlipY);
 
+    // C ref: sp_lev.c:898-912, active-level flips move the hero too.
+    if (extras) {
+        if (inArea(g.u.ux, g.u.uy)) {
+            if (flp & 1) g.u.uy = FlipY(g.u.uy);
+            if (flp & 2) g.u.ux = FlipX(g.u.ux);
+            g.u.ux0 = g.u.ux;
+            g.u.uy0 = g.u.uy;
+        }
+        for (const cc of [g.iflags?.travelcc, g.context?.digging?.pos]) {
+            if (cc?.x && inArea(cc.x, cc.y)) flipPt(cc, 'x', 'y');
+        }
+    }
+
     // C ref: sp_lev.c:915 — flip_level() ends with fix_wall_spines() over the
     // whole grid.  Mirroring moves the cells but leaves every corner/T glyph
     // pointing the pre-flip way (seed0360 step 211: 43 differing cells, all of
     // them wall corners).  RNG-free.
     fix_wall_spines(1, 0, COLNO - 1, ROWNO - 1);
+    vision_reset();
 }
 
 // C ref: sp_lev.c:4323 trap_types[] — des.trap() name -> ttyp.  This used to

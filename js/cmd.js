@@ -272,14 +272,6 @@ const EXTCMD_DISPATCH_KEY = { ...CMD_DEFAULT_KEY, '#': '#' };
 const MOVE_DIR_NAMES = ['west', 'northwest', 'north', 'northeast',
                         'east', 'southeast', 'south', 'southwest'];
 
-// C ref: cmd.c spkeys_binds[] — only the entries the command loop reads.
-const NHKF_COUNT_KEY = 0x6e;        // 'n'
-const NHKF_GETDIR_SELF = 0x2e;      // '.'
-const NHKF_GETDIR_SELF2 = 0x73;     // 's'
-const NHKF_GETDIR_MOUSE = 0x5f;     // '_'
-const NHKF_GETPOS_PICK_Q = 0x2c;    // ','
-const NHKF_GETPOS_PICK = 0x2e;      // '.'
-
 // C ref: options.c optfn_number_pad() — decode the OPTIONS value into
 // iflags.num_pad / iflags.num_pad_mode.  `raw` is what the rc parser stored:
 // a string for "number_pad:N", true for a bare "number_pad", false for
@@ -326,6 +318,7 @@ const MOVE_FAMILY_RE = /^(move|run|rush)(west|northwest|north|northeast|east|sou
 export function Cmd_dirchars() { return numpad_cmd().dirchars; }
 export function Cmd_num_pad() { return numpad_cmd().num_pad; }
 export function Cmd_pcHack_compat() { return numpad_cmd().pcHack_compat; }
+export function Cmd_spkey(nhkf) { return numpad_cmd().spkeys[nhkf]; }
 
 // True once the command table differs from the plain alphabetic default, i.e.
 // once a key can mean something other than what the dispatch chain assumes
@@ -1069,7 +1062,7 @@ export async function rhack(key) {
         // ESC (no digits) cancels with no count.
         const npCmd = numpad_cmd();
         const fc = String.fromCharCode(key);
-        const startsCount = npCmd.num_pad ? (key === NHKF_COUNT_KEY)
+        const startsCount = npCmd.num_pad ? (key === Cmd_spkey(NHKF.COUNT))
                                           : (fc >= '0' && fc <= '9');
         // C ref: cmd.c rhack() — a key popped from a command queue (CQ_REPEAT during ^A,
         // CQ_CANNED otherwise) never goes through parse(): gc.command_count, gm.multi and
@@ -2650,7 +2643,7 @@ async function cmd_safety_prevention(ucverb, cmddesc, act, counterKey) {
         const warned = game[counterKey] | 0;
         game[counterKey] = warned + 1;
         const buf = (game.iflags?.cmdassist || !warned)
-            ? `  Use 'm' prefix to force ${cmddesc}.`
+            ? `  Use '${cmd_visctrl(cmd_from_func('do_reqmenu'))}' prefix to force ${cmddesc}.`
             : '';
         if (monster_nearby()) {
             // C: Norep("%s%s", act, buf) — suppressed when identical to the
@@ -2834,7 +2827,7 @@ async function getdir_answer(key, s) {
     const ch = String.fromCharCode(key);
     // C ref: cmd.c getdir() — spkeys[NHKF_GETDIR_SELF] ('.') and
     // NHKF_GETDIR_SELF2 ('s') both mean "at yourself", for either number_pad.
-    if (key === NHKF_GETDIR_SELF || key === NHKF_GETDIR_SELF2)
+    if (key === Cmd_spkey(NHKF.GETDIR_SELF) || key === Cmd_spkey(NHKF.GETDIR_SELF2))
         return getdir_confdir({ dx: 0, dy: 0, dz: 0 });
     // C ref: cmd.c getdir() — the 'simulated mouse' key runs getpos() and
     // reports the picked spot as a click.  The direction IS written from the
@@ -2842,11 +2835,11 @@ async function getdir_answer(key, s) {
     // iflags.getdir_click allows a far click), u.dz = 0; a rejected pick zeroes
     // all three.  iflags.getdir_click (CLICK_1 for ',' / ';', CLICK_2 for '.'
     // / ':') carries the click kind to #therecmdmenu when its caller set it.
-    if (key === NHKF_GETDIR_MOUSE) {
+    if (key === Cmd_spkey(NHKF.GETDIR_MOUSE)) {
         const u = game.u;
         const iflags = game.iflags || (game.iflags = {});
-        const qbuf = `desired location, then type '${String.fromCharCode(NHKF_GETPOS_PICK_Q)}'`
-            + ` for left click, '${String.fromCharCode(NHKF_GETPOS_PICK)}' for right`;
+        const qbuf = `desired location, then type '${String.fromCharCode(Cmd_spkey(NHKF.GETPOS_PICK_Q))}'`
+            + ` for left click, '${String.fromCharCode(Cmd_spkey(NHKF.GETPOS_PICK))}' for right`;
         const verbose = game.flags?.verbose !== false;
         // C ref: getpos.c:853-854 — getpos() places the cursor at its starting
         // square and flushes before reading. getpos_inner() leaves that initial
@@ -2896,7 +2889,7 @@ async function getdir_answer(key, s) {
         return null;                        // decl.c quitchars[] " \r\n\033"
     // C ref: cmd.c getdir() — disabled assistance reports the error without
     // opening a window (and therefore without consuming another input).
-    const help_requested = key === (Cmd.spkeys?.[NHKF.GETDIR_HELP] ?? 0x3f);
+    const help_requested = key === (Cmd_spkey(NHKF.GETDIR_HELP));
     if (help_requested || game.iflags?.cmdassist !== false) {
         await help_dir_window(help_requested ? null : 'Invalid direction key!',
                               (s && s[0] === '^') ? key : 0);
@@ -2954,7 +2947,7 @@ async function help_dir_window(msg, sym = 0) {
         '',
         '          <  up',
         '          >  down',
-        `       ${cmd_visctrl(Cmd.spkeys[selfi]).padStart(4)}  direct at yourself`,
+        `       ${cmd_visctrl(Cmd_spkey(selfi)).padStart(4)}  direct at yourself`,
     );
     if (msg) lines.push('', '(Suppress this message with !cmdassist in config file.)');
     renderWindowScreen(lines, { footer: '--More--', footerRow: 23, footerCol: 0, modal: 'textwin' });
@@ -6346,10 +6339,8 @@ const CLICK_1 = 1, CLICK_2 = 2;
 // C ref: decl.c:313 — gd.domove_attempting bits.
 const DOMOVE_WALK = 0x00000001, DOMOVE_RUSH = 0x00000002;
 
-// C ref: hack.h:203 enum nh_keyfunc — the spkeys[] INDICES.  (The bare
-// NHKF_GETDIR_SELF &c near the top of this file are that key's default VALUE,
-// which is a different thing, so the enum lives in its own namespace here.)
-const NHKF = {
+// C ref: hack.h enum nh_keyfunc, the indices in Cmd.spkeys[].
+export const NHKF = {
     ESC: 0, GETDIR_SELF: 1, GETDIR_SELF2: 2, GETDIR_HELP: 3, GETDIR_MOUSE: 4,
     COUNT: 5, GETPOS_SELF: 6, GETPOS_PICK: 7, GETPOS_PICK_Q: 8,
     GETPOS_PICK_O: 9, GETPOS_PICK_V: 10, GETPOS_SHOWVALID: 11,
@@ -6548,6 +6539,8 @@ function cmd_binds_signature() {
     if (kb)
         for (const k in kb)
             sig += `|${k}=${kb[k]}`;
+    for (const [name, key] of Object.entries(game.spkeys || {}))
+        sig += `|spkey:${name}=${key}`;
     return sig;
 }
 
@@ -6577,6 +6570,11 @@ function cmd_binds_init_once() {
         for (const k in game.keybind)
             cmd_bind_key(k.charCodeAt(0) & 0xff, game.keybind[k], true);
         update_rest_on_space();
+    }
+    for (const binding of spkeys_binds) {
+        const key = game.spkeys?.[binding.name];
+        if (key !== undefined)
+            gc_Cmd.spkeys[binding.nhkf] = key.charCodeAt(0) & 0xff;
     }
 }
 
@@ -8968,7 +8966,7 @@ export function help_dir(sym, spkey, msg) {
     const wizard = !!game.flags?.debug;
 
     /* NHKF_ESC indicates that the player asked for help at a getdir prompt */
-    prefixhandling = (spkey !== gc_Cmd.spkeys[NHKF.ESC]);
+    prefixhandling = (spkey !== Cmd_spkey(NHKF.ESC));
     dothat = 'do that';
 
     /* C's #if 0 block (feedback for an invalid prefix moved into rhack())
@@ -9029,7 +9027,7 @@ export function help_dir(sym, spkey, msg) {
                                          : NHKF.GETDIR_SELF;
 
             buf = '       '
-                + cmd_visctrl(gc_Cmd.spkeys[selfi]).padStart(4)
+                + cmd_visctrl(Cmd_spkey(selfi)).padStart(4)
                 + '  direct at yourself';
             cmd_putstr(win, 0, buf);
         }
@@ -9712,7 +9710,7 @@ export async function parse() {
     cmd_set_input_state('commandInp');
 
     if (!gc_Cmd.num_pad
-        || (foo = await cmd_readchar()) === gc_Cmd.spkeys[NHKF.COUNT]) {
+        || (foo = await cmd_readchar()) === Cmd_spkey(NHKF.COUNT)) {
         /* if 'num_pad' is On then readchar() has just reset input_state; set
            it back to commandInp so get_count() supports 'altmeta' */
         cmd_set_input_state('commandInp');
@@ -9725,7 +9723,7 @@ export async function parse() {
     }
     game.last_command_count = game.command_count;
 
-    if (foo === gc_Cmd.spkeys[NHKF.ESC]) { /* esc cancels count (TH) */
+    if (foo === Cmd_spkey(NHKF.ESC)) { /* esc cancels count (TH) */
         cmd_clear_nhwindow(/*WIN_MESSAGE*/ 1);
         game.command_count = 0;
         game.last_command_count = 0;

@@ -2732,8 +2732,9 @@ export async function rot_corpse(arg, timeout) {
         /* a hiding monster may be exposed */
         if (mtmp && !OBJ_AT(x, y) && mtmp.mundetected && hides_under_(mtmp.data)) {
             mtmp.mundetected = 0;
-        } else if (x === game.u?.ux && y === game.u?.uy && game.u?.uundetected) {
-            /* C: hideunder(&gy.youmonst) if hides_under(youmonst.data) */
+        } else if (x === game.u?.ux && y === game.u?.uy && game.u?.uundetected
+                   && hides_under_((await import('./invent.js')).youmonst_data_pub())) {
+            await (await import('./monmove.js')).hideunder(game.u);
         }
         newsym(x, y);
     } else if (in_invent) {

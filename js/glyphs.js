@@ -1,11 +1,8 @@
 // glyphs.js — port of src/glyphs.c (NetHack 5.0): the symbol/colour
 // customization layer behind SYMBOLS= and OPTIONS=symset:.
 //
-// STATUS: INERT.  Nothing in the tree imports this module.  Symset handling
-// currently lives scattered across js/const.js, js/display.js, js/doset.js and
-// js/symbols.js (itself inert); wiring any of this in would change the
-// character and colour of every map cell on every scored screen, so it has to
-// be measured one call site at a time.
+// options.js uses the glyph-name and SYMBOLS customization parsers here.
+// Map rendering still uses display.js's symbol tables.
 //
 // Two clusters glyphs.c reads live in OTHER C files and have no JS owner yet,
 // so they are declared here rather than imported:
@@ -36,7 +33,7 @@ import { NUMMONS } from './disprng.js';
 import { monster_by_pmidx } from './makemon.js';
 import { rgbstr_to_int32, set_map_customcolor } from './coloratt.js';
 import { config_error_add } from './options.js';
-import { game } from './gstate.js';
+import { game, register_process_static } from './gstate.js';
 import { panic } from './panic.js';
 
 /* onames.h values the recorder build produced; the siblings mkobj.js already
@@ -86,11 +83,70 @@ function unported(what) {
     throw new Error(`glyphs.js: ${what} has no JS port yet`);
 }
 const nyi = {};
-nyi.unicode_val = (s) => unported(`utf8map.c unicode_val("${s}")`);
-nyi.unicodeval_to_utf8str = (uval, buf, n) =>
-    unported(`utf8map.c unicodeval_to_utf8str(${uval})`);
-nyi.add_custom_urep_entry = (nm, gi, u32, u8, ws) =>
-    unported('utf8map.c add_custom_urep_entry()');
+// C ref: utf8map.c:18 unicode_val(), used while parsing SYMBOLS entries.
+nyi.unicode_val = (s) => {
+    const digits = /^[Uu]\+([0-9a-fA-F]{1,7})/.exec(String(s ?? ''));
+    return digits ? parseInt(digits[1], 16) : 0;
+};
+// C ref: hacklib.c:882 unicodeval_to_utf8str().
+nyi.unicodeval_to_utf8str = (uval, buf, n) => {
+    if (n < 5) return 0;
+    let i = 0;
+    buf[0] = 0;
+    if (uval < 0x80) {
+        buf[i++] = uval;
+    } else if (uval < 0x800) {
+        buf[i++] = 192 + Math.trunc(uval / 64);
+        buf[i++] = 128 + uval % 64;
+    } else if (uval >= 0xd800 && uval < 0xe000) {
+        return 0;
+    } else if (uval < 0x10000) {
+        buf[i++] = 224 + Math.trunc(uval / 4096);
+        buf[i++] = 128 + Math.trunc(uval / 64) % 64;
+        buf[i++] = 128 + uval % 64;
+    } else if (uval < 0x110000) {
+        buf[i++] = 240 + Math.trunc(uval / 262144);
+        buf[i++] = 128 + Math.trunc(uval / 4096) % 64;
+        buf[i++] = 128 + Math.trunc(uval / 64) % 64;
+        buf[i++] = 128 + uval % 64;
+    } else {
+        return 0;
+    }
+    buf[i] = 0;
+    return 1;
+};
+// C ref: utf8map.c:148 add_custom_urep_entry().
+nyi.add_custom_urep_entry = (name, glyphidx, utf32ch, utf8str, which_set) => {
+    const gdc = sym_customizations[which_set][custom_ureps];
+    if (!gdc.details) {
+        gdc.customization_name = name;
+        gdc.custtype = custom_ureps;
+        gdc.details_end = null;
+    }
+    let details = find_matching_customization(name, custom_ureps, which_set);
+    const copy = () => utf8str?.[0] ? utf8str.slice(0, utf8str.indexOf(0)) : null;
+    while (details) {
+        if (details.content.urep.glyphidx === glyphidx) {
+            details.content.urep.u.utf8str = utf32ch ? copy() : null;
+            details.content.urep.u.utf32ch = utf32ch;
+            return 1;
+        }
+        details = details.next;
+    }
+    const entry = {
+        content: {
+            sym: { symparse: null, val: 0 },
+            urep: { glyphidx, u: { utf32ch, utf8str: copy() } },
+            ccolor: { glyphidx, nhcolor: 0 },
+        },
+        next: null,
+    };
+    if (!gdc.details) gdc.details = entry;
+    else gdc.details_end.next = entry;
+    gdc.details_end = entry;
+    gdc.count++;
+    return 1;
+};
 nyi.set_map_u = (gm, u32, u8) => unported('utf8map.c set_map_u()');
 
 /* hacklib.c dupstr(); alloc()+strcpy in C, a value copy here. */
@@ -450,6 +506,7 @@ let to_custom_symbol_find = zero_find();
 
 /* function-static nag counters inside to_custom_symset_entry_callback() */
 let glyphnag = 0, colornag = 0;
+register_process_static(() => { glyphnag = 0; colornag = 0; });
 
 /* C ref: glyphs.c:53 */
 export function to_custom_symset_entry_callback(glyph, findwhat) {

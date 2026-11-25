@@ -27,6 +27,7 @@ import { find_ac, race_attrmax, race_attrmin, race_attrmax_of } from './u_init.j
 import { encumber_msg, freeinv, dropx, xname, near_capacity,
     youmonst_data_pub, makeknown, simple_typename, worn_extrinsic, WA_ARMF, poly_gender } from './invent.js';
 import { Breathless_hero } from './invent.js';
+import { ansimpleoname } from './invent.js';
 import { makeplural } from './plural.js';
 import { title_to_mon } from './botl.js';
 import { base_mmove } from './mon.js';
@@ -65,7 +66,9 @@ import { monsterList, DEADMONSTER, set_ustuck, were_beastie, counter_were, Prote
 import { monster_nearby, waterbody_name } from './cmd.js';
 import { races, roles, genders } from './role.js';
 import { Blind } from './vision.js';
-import { surface, In_hell, hliquid, has_ceiling } from './dungeon.js';
+import { surface, ceiling, In_hell, hliquid, has_ceiling } from './dungeon.js';
+import { t_at } from './trap.js';
+import { SPIKED_PIT } from './const.js';
 import { emits_light, new_light_source, del_light_source, LS_MONSTER,
     HERO, arti_light_radius, artifact_light } from './light.js';
 
@@ -2487,11 +2490,12 @@ export function youhiding_buf() {
         } else if (hides_under_flag(mdat)) {
             // C: ansimpleoname(o) — article + simple object name.
             const o = obj_at_hero();
-            if (o) buf += ` underneath ${an(xname(o))}`;
+            if (o) buf += ` underneath ${ansimpleoname(o)}`;
         } else if (is_clinger(mdat) || Flying_hero()) {
-            buf += ' on the ceiling';
+            buf += ` on the ${ceiling(u.ux, u.uy)}`;
         } else if (u.utrap && u.utraptype === TT_PIT) {
-            buf += ' in a pit';
+            const trap = t_at(u.ux, u.uy);
+            buf += ` in a ${trap?.ttyp === SPIKED_PIT ? 'spiked ' : ''}pit`;
         } else {
             buf += ` on the ${surface(u.ux, u.uy)}`;
         }

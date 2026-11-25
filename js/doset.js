@@ -78,7 +78,9 @@ async function runSymbolSetHandler(rogue = false) {
     const { select_command_menu, dismiss_invent_screen } = await import('./invent.js');
     const { PICK_ONE } = await import('./const.js');
     const sets = SYMBOL_SETS.filter(set => rogue ? !set.primary : !set.rogue);
-    const name = (rogue ? game.roguesymset : game.symset) || '';
+    const key = rogue ? 'roguesymset' : 'symset';
+    const name = game.flags?.[`${key}_name`] ?? game[key] ?? '';
+    const oldDrawingSet = game[key] || '';
     const width = Math.max('Default Symbols'.length, ...sets.map(set => set.name.length)) + 2;
     const entries = [
         { text: `Select ${rogue ? 'rogue level ' : ''}symbol set:`, ...menuHeadStyle() },
@@ -98,11 +100,11 @@ async function runSymbolSetHandler(rogue = false) {
     // PICK_ONE may return both the preselection and a newly selected entry.
     const pick = picks.find(entry => entry.item.value.toLowerCase() !== name.toLowerCase())
         || picks[0];
-    if (rogue) game.roguesymset = pick?.item.value ?? name;
-    else game.symset = pick?.item.value ?? name;
+    game[key] = pick?.item.value ?? name;
+    (game.flags ||= {})[`${key}_name`] = game[key];
     // C ref: symbols.c load_symset()/assign_graphics() -> reset_glyphmap(gm_symchange)
     delete game._glyphmapUseColor;
-    reglyph_remembered_terrain(rogue, name);
+    reglyph_remembered_terrain(rogue, oldDrawingSet);
     await docrt();
 }
 
@@ -292,7 +294,8 @@ function boolStr(name, dflt) {
 
 // C ref: options.c optfn_symset()/optfn_roguesymset() get_val.
 function symsetStr(rogue = false) {
-    const name = (rogue ? game.roguesymset : game.symset) || '';
+    const key = rogue ? 'roguesymset' : 'symset';
+    const name = game.flags?.[`${key}_name`] ?? game[key] ?? '';
     let s = name || 'default';
     if (name) {
         if (rogue === rogue_symset()) s += ', active';

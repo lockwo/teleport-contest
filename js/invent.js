@@ -3302,9 +3302,13 @@ export function merged(potmp, pobj) {
     /* handle puddings a bit differently; absorption will free the other
        object automatically (C ref: invent.c merged()) */
     if (obj.globby) {
-        (game._pudding_merge_msgs ||= []).push(pudding_merge_message_plan(otmp, obj));
+        const plan = pudding_merge_message_plan(otmp, obj);
+        (game._pudding_merge_msgs ||= []).push(plan);
         game._merge_discovery_pending = true;
         obj_extract_self(obj);
+        // C ref: mkobj.c:3713 obj_absorb() bills before changing either glob.
+        // Preserve that state until the synchronous merge's messages can run.
+        plan.billing = [{ ...otmp }, { ...obj }];
         obj_absorb({ obj: otmp }, { obj });
         if (pobj && typeof pobj === 'object' && 'obj' in pobj) pobj.obj = null;
         return 1;
@@ -3329,7 +3333,10 @@ export async function report_merge_discovery() {
     game._merge_discovery_pending = false;
     const puddings = game._pudding_merge_msgs;
     game._pudding_merge_msgs = null;
-    for (const m of puddings || []) await pudding_merge_message_emit(m);
+    for (const m of puddings || []) {
+        await pudding_merge_message_emit(m);
+        await (await import('./shk.js')).globby_bill_fixup(...m.billing);
+    }
     if (game._merge_learn_pending) {
         game._merge_learn_pending = false;
         await update_topl('You learn more about your items by comparing them.');
@@ -4911,10 +4918,8 @@ function extremeattr(attrindx) {
 function adjust_attrib(obj, which, val) {
     const u = game.u;
     if (!u || !(which >= 0 && which < A_MAX)) return;
-    if (!u.abon) u.abon = { a: Array(A_MAX).fill(0) };
-    if (!Array.isArray(u.abon.a)) u.abon.a = Array(A_MAX).fill(0);
     const old_attrib = acurr_eff(which);
-    u.abon.a[which] = (u.abon.a[which] | 0) + val;
+    adj_abon_attrib(which, val);
     const observable = (old_attrib !== acurr_eff(which));
     if (observable || !extremeattr(which)) learnring(obj, observable);
     game.botl = true;
@@ -4928,7 +4933,8 @@ export function adj_abon_attrib(which, delta) {
     if (!u || !(which >= 0 && which < A_MAX)) return;
     if (!u.abon) u.abon = { a: Array(A_MAX).fill(0) };
     if (!Array.isArray(u.abon.a)) u.abon.a = Array(A_MAX).fill(0);
-    u.abon.a[which] = (u.abon.a[which] | 0) + delta;
+    // C ref: attrib.h:40 stores every ABON entry as a signed char.
+    u.abon.a[which] = ((u.abon.a[which] | 0) + delta) << 24 >> 24;
 }
 
 // Amulet otyps (C ref: include/objects.h AMULET() block, mirrored by
@@ -11050,11 +11056,11 @@ export async function wiz_identify() {
             const sorted = sortloot(inventoryArray(), sortflags).map((e) => e.obj)
                 .filter((o) => o && not_fully_identified(o));
             const addItem = (obj) => {
-                obj_to_glyph(obj);
+                const og = flash_obj_glyph(obj);
                 const it = { selector: obj.invlet || obj_to_let(obj),
                              desc: doname_invent(obj), obj, selected: false,
                              count: -1, gselector: def_oc_syms[obj.oclass]?.sym,
-                             skipinvert: false };
+                             sym: menu_glyph_sym(og), skipinvert: false };
                 items.push(it);
                 plan.push({ item: it });
             };
@@ -12433,20 +12439,25 @@ export async function display_used_invlets(avoidlet) {
     if (!inv.length) return '\0';
     const rows = [['Inventory letters used:', '']];
     const byLet = new Map();
-    const entry = (obj) => {
-        obj_to_glyph(obj);
+    const entry = (obj, group) => {
+        group.syms.push(menu_glyph_sym(flash_obj_glyph(obj)));
         byLet.set(obj.invlet, obj);
         return `${obj.invlet} - ${doname_invent(obj)}`;
     };
     if (flags().sortpack === false) {
         const group = [null];
-        for (const obj of inv) if (obj.invlet !== avoidlet) group.push(entry(obj));
+        group.syms = [null];
+        for (const obj of inv) if (obj.invlet !== avoidlet) group.push(entry(obj, group));
         if (group.length > 1) rows.push(group);
     } else {
         for (const oclass of classOrder()) {
             const items = inv.filter((obj) => obj.invlet !== avoidlet && obj.oclass === oclass);
-            if (items.length)
-                rows.push([let_to_name(oclass, false, false), ...items.map(entry)]);
+            if (items.length) {
+                const group = [let_to_name(oclass, false, false)];
+                group.syms = [null];
+                for (const obj of items) group.push(entry(obj, group));
+                rows.push(group);
+            }
         }
     }
     game._invmenu_esc = false;

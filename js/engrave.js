@@ -12,7 +12,7 @@ import { BUFSZ, BURN, DUST, ENGR_BLOOD, ENGRAVE, HEADSTONE, ICE, MARK, N_ENGRAVE
          IS_ALTAR, IS_WALL, IS_DOOR, SDOOR, STONE, IS_FOUNTAIN, IS_AIR,
          ACCESSIBLE, CLOUD, DRAWBRIDGE_DOWN, DRAWBRIDGE_UP, isok,
          Is_airlevel, Is_waterlevel, ECMD_OK, ECMD_FAIL, ECMD_CANCEL,
-    is_pool, is_lava, is_pool_or_lava } from './const.js';
+    is_pool, is_lava, is_pool_or_lava, db_under_typ } from './const.js';
 import { RUMORS_B64, ENGRAVE_B64 } from './rumors_data.js';
 import { EPITAPH_B64 } from './epitaph_data.js';
 import { WEAPON_CLASS, WAND_CLASS, GEM_CLASS, RING_CLASS,
@@ -938,7 +938,9 @@ async function u_can_engrave() {
     const { surface } = await import('./dungeon.js');
     const u = game.u;
     // SURFACE_AT(x, y): a raised drawbridge reports what lies under it.
-    const levtyp = game.level?.at(u.ux, u.uy)?.typ ?? STONE;
+    const loc = game.level?.at(u.ux, u.uy);
+    const levtyp = loc?.typ === DRAWBRIDGE_UP
+        ? db_under_typ(loc.drawbridgemask) : (loc?.typ ?? STONE);
 
     if (u.uswallow) {
         const ptr = u.ustuck?.data;
@@ -1039,7 +1041,7 @@ export async function doengrave() {
         if (ydata && (is_demon_flag(ydata) || ydata.mcls === S_VAMPIRE_CLS))
             de.type = ENGR_BLOOD;
     }
-    const frosted = (game.level?.at(u.ux, u.uy)?.typ === ICE);
+    const frosted = is_ice_c(u.ux, u.uy);
 
     // C ref: engrave.c doengrave():`gm.multi = 0; /* moves consumed */
     // gn.nomovemsg = (char *) 0;` — a count prefix ("3E") never repeats engraving.
@@ -1493,7 +1495,7 @@ export async function engrave_step() {
 
 // C ref: engrave.c engrave():1411 finishverb switch.
 function engrave_finishverb(type) {
-    const icy = (game.level?.at(game.u?.ux, game.u?.uy)?.typ === ICE);
+    const icy = is_ice_c(game.u?.ux, game.u?.uy);
     switch (type) {
     case DUST: return icy ? 'writing in the frost' : 'writing in the dust';
     case HEADSTONE:
@@ -1889,7 +1891,7 @@ export async function doengrave_ctx_init(de) {
 
     de.jello = !!(u.uswallow && !(is_animal(u.ustuck?.data)
                                   || is_whirly(u.ustuck?.data)));
-    de.frosted = (game.level?.at(u.ux, u.uy)?.typ === ICE);
+    de.frosted = is_ice_c(u.ux, u.uy);
 }
 // C ref: monsym.h S_VAMPIRE.
 const S_VAMPIRE_CLS = 48;

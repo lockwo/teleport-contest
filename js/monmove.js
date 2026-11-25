@@ -2646,7 +2646,7 @@ async function mon_trapeffect(mtmp, trap, trflags = 0) {
         const msize = (mptr?.msize != null) ? mptr.msize : (mon_msize(mptr?.pmidx) ?? 2 /* MZ_MEDIUM */);
         const in_sight = canseemon_mm(mtmp) || mtmp === game.u?.usteed;
         if (msize > 1 /* MZ_SMALL */ && !amorphous(mptr)
-            && !mon_check_in_air(mtmp) && !is_whirly(mptr) && !unsolid(mptr)) {
+            && !m_in_air(mtmp) && !is_whirly(mptr) && !unsolid(mptr)) {
             mtmp.mtrapped = 1;
             if (in_sight) {
                 const a_your = trap.madeby_u ? 'your' : 'a';

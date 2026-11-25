@@ -9,7 +9,7 @@
 import { Detect_monsters_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { DESCR_BY_OTYP } from './o_descr_data.js';
 import { game } from './gstate.js';
-import { hcolor } from './do_name.js';
+import { hcolor, x_monnam, ARTICLE_YOUR, SUPPRESS_SADDLE, SUPPRESS_HALLUCINATION } from './do_name.js';
 import { rnd } from './rng.js';
 import { pline, update_topl, newsym, see_monsters, You_feel } from './display.js';
 import { Hallucination_u } from './display.js';
@@ -250,8 +250,9 @@ export async function toggle_stealth(obj, oldprop, on) {
             else await pline('You walk very quietly.');
         } else {
             const riding = !!game.u?.usteed;
-            /* x_monnam(usteed, ARTICLE_YOUR, ...) is the steed branch */
-            await pline(riding ? 'You and your steed are noisy.'
+            const steed = riding ? x_monnam(game.u.usteed, ARTICLE_YOUR, null,
+                SUPPRESS_SADDLE | SUPPRESS_HALLUCINATION, false) : '';
+            await pline(riding ? `You and ${steed} are noisy.`
                                : 'You sure are noisy.');
         }
     }

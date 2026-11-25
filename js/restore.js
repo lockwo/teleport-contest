@@ -295,7 +295,7 @@ async function restore_preamble_messages() {
    process's tty has never drawn anything. */
 const UNSAVED_GLOBALS = [
     /* process / option state (rc re-read by the restoring process) */
-    'program_state', 'a11y', 'keybind', 'menu_cmd_alias', 'symset', 'roguesymset',
+    'program_state', 'a11y', 'keybind', 'spkeys', 'menu_cmd_alias', 'symset', 'roguesymset',
     'symoverride', 'apelist', 'preferred_pet', 'plnamelen', 'wsettings',
     /* options.c gp.plinemsg_types, gm.menu_colorings, status and condition
        hilites and gr.rfilter: rc-file globals that savegamestate() never

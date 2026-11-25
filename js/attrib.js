@@ -178,7 +178,8 @@ export async function adjattrib(ndx, incr, msgflg) {
     const old_acurr = acurr_eff(ndx), old_abase = abase[ndx] | 0,
         old_amax = amax[ndx] | 0;
     let attrstr, abonflg;
-    abase[ndx] = (abase[ndx] | 0) + incr;
+    // C ref: attrib.c:138 assigns to schar before testing the attribute limits.
+    abase[ndx] = ((abase[ndx] | 0) + incr) << 24 >> 24;
     if (incr > 0) {
         if (abase[ndx] > amax[ndx]) {
             amax[ndx] = abase[ndx];

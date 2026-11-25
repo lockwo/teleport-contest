@@ -18,7 +18,7 @@ import { getobj, makeknown, useupall, useup, delobj, GETOBJ_SUGGEST, GETOBJ_EXCL
          GETOBJ_NOFLAGS, xname, near_capacity, check_capacity, splitobj, delobj_core, obfree,
          obj_extract_self, sobj_at, encumber_msg, is_weptool, update_inventory,
          display_minventory, worn_extrinsic, worn_blocked, yname, Ring_gone, setnotworn, body_part, distant_name_pub, display_cinventory,
-         set_cknown_lknown, newsym_force, display_binventory, stackobj, useupf, shk_your, Tobjnam } from './invent.js';
+         set_cknown_lknown, newsym_force, display_binventory, stackobj, useupf, shk_your, Tobjnam, adj_abon_attrib } from './invent.js';
 import { makeplural } from './plural.js';
 import { simpleonames } from './objnam.js';
 import { mon_mr } from './monmr_data.js';
@@ -4123,7 +4123,8 @@ async function maybe_destroy_item(carrier, obj, dmgtyp) {
         if (obj.otyp === SPE_BOOK_OF_THE_DEAD) {
             if (u_carry ? !Blind() : visible) {
                 const { hcolor } = await import('./do_name.js');
-                await update_topl(`The ${xname(obj)} glows a strange ${
+                const { The } = await import('./objnam.js');
+                await update_topl(`${The(u_carry ? xname(obj) : distant_name_pub(obj, xname))} glows a strange ${
                     hcolor('dark red')}, but remains intact.`);
             }
             return 0;
@@ -5024,14 +5025,6 @@ async function corpse_xname_z(obj, adjective, cxn_flags) {
     return corpse_xname(obj, adjective, cxn_flags);
 }
 
-// C ref: attrib.h ABON(x) = u.abon.a[x]; cancel_item()/drain_item() are the
-// only reason this file needs a writer for it.
-function ABON_add_z(i, delta) {
-    const u = game.u;
-    if (!u) return;
-    u.abon = u.abon || { a: [0, 0, 0, 0, 0, 0] };
-    u.abon.a[i] = (u.abon.a[i] | 0) + delta;
-}
 // C ref: disp.botl = TRUE — request a status-line refresh.
 function disp_botl_z() {
     if (game.disp) game.disp.botl = true;
@@ -5918,19 +5911,19 @@ export async function cancel_item(obj) {
         switch (otyp) {
         case RIN_GAIN_STRENGTH:
             if ((obj.owornmask & W_RING) !== 0) {
-                ABON_add_z(A_STR, -obj.spe);
+                adj_abon_attrib(A_STR, -obj.spe);
                 disp_botl_z();
             }
             break;
         case RIN_GAIN_CONSTITUTION:
             if ((obj.owornmask & W_RING) !== 0) {
-                ABON_add_z(A_CON, -obj.spe);
+                adj_abon_attrib(A_CON, -obj.spe);
                 disp_botl_z();
             }
             break;
         case RIN_ADORNMENT:
             if ((obj.owornmask & W_RING) !== 0) {
-                ABON_add_z(A_CHA, -obj.spe);
+                adj_abon_attrib(A_CHA, -obj.spe);
                 disp_botl_z();
             }
             break;
@@ -5948,14 +5941,14 @@ export async function cancel_item(obj) {
             break;
         case GAUNTLETS_OF_DEXTERITY:
             if ((obj.owornmask & W_ARMG) !== 0) {
-                ABON_add_z(A_DEX, -obj.spe);
+                adj_abon_attrib(A_DEX, -obj.spe);
                 disp_botl_z();
             }
             break;
         case HELM_OF_BRILLIANCE:
             if ((obj.owornmask & W_ARMH) !== 0) {
-                ABON_add_z(A_INT, -obj.spe);
-                ABON_add_z(A_WIS, -obj.spe);
+                adj_abon_attrib(A_INT, -obj.spe);
+                adj_abon_attrib(A_WIS, -obj.spe);
                 disp_botl_z();
             }
             break;
@@ -6076,19 +6069,19 @@ export async function drain_item(obj, by_you) {
     switch (obj.otyp) {
     case RIN_GAIN_STRENGTH:
         if ((obj.owornmask & W_RING) && u_ring) {
-            ABON_add_z(A_STR, -1);
+            adj_abon_attrib(A_STR, -1);
             disp_botl_z();
         }
         break;
     case RIN_GAIN_CONSTITUTION:
         if ((obj.owornmask & W_RING) && u_ring) {
-            ABON_add_z(A_CON, -1);
+            adj_abon_attrib(A_CON, -1);
             disp_botl_z();
         }
         break;
     case RIN_ADORNMENT:
         if ((obj.owornmask & W_RING) && u_ring) {
-            ABON_add_z(A_CHA, -1);
+            adj_abon_attrib(A_CHA, -1);
             disp_botl_z();
         }
         break;
@@ -6106,14 +6099,14 @@ export async function drain_item(obj, by_you) {
         break;
     case HELM_OF_BRILLIANCE:
         if ((obj.owornmask & W_ARMH) && (obj === game.uarmh)) {
-            ABON_add_z(A_INT, -1);
-            ABON_add_z(A_WIS, -1);
+            adj_abon_attrib(A_INT, -1);
+            adj_abon_attrib(A_WIS, -1);
             disp_botl_z();
         }
         break;
     case GAUNTLETS_OF_DEXTERITY:
         if ((obj.owornmask & W_ARMG) && (obj === game.uarmg)) {
-            ABON_add_z(A_DEX, -1);
+            adj_abon_attrib(A_DEX, -1);
             disp_botl_z();
         }
         break;

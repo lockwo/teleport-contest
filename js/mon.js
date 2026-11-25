@@ -2678,11 +2678,16 @@ export async function vamprises(mtmp) {
             const { recalc_block_point } = await import('./vision.js');
             recalc_block_point(x, y);
             if (trapped) {
-                /* C ref: mon.c:2974 mb_trapped(mtmp, seeit) with flags.verbose
-                   forced off.  js/monmove.js:3126 has it, module-private; it
-                   rolls the door-trap damage, so the call is NAMED here rather
-                   than reproduced, and trap_killed stays false. */
-                const trap_killed = false;
+                // C ref: mon.c:2972-2975, suppress feedback, not trap damage.
+                const save_verbose = game.flags.verbose;
+                let trap_killed;
+                game.flags.verbose = false;
+                try {
+                    const { mb_trapped } = await import('./monmove.js');
+                    trap_killed = await mb_trapped(mtmp, seeit);
+                } finally {
+                    game.flags.verbose = save_verbose;
+                }
                 /* mtmp was a vampire, so use the unconditional "destroyed" */
                 if (trap_killed && canspotmon(mtmp) && !Unaware)
                     await pline(`${Monnam(mtmp)} is destroyed!`);

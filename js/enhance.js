@@ -597,8 +597,8 @@ async function skill_advance(skill, S) {
     const newlvl = S.P_SKILL[skill] + 1;
     await update_topl(`You are now ${newlvl >= S.P_MAX[skill] ? 'most' : 'more'} `
         + `skilled in ${P_NAME(skill, S.rolemnum)}.`);
-    // C also calls skill_based_spellbook_id() for a spell skill; that only
-    // marks spellbooks known (no RNG, no topline) so it is left out.
+    if (skill >= P_FIRST_SPELL && skill <= P_LAST_SPELL)
+        (await import('./spell.js')).skill_based_spellbook_id();
 }
 
 // C ref: cmd.c doextcmd -> weapon.c enhance_weapon_skill().  In wizard mode

@@ -22,6 +22,7 @@ import { ok_to_quest } from './questok.js';
 import { trap_predicament } from './insight.js';
 import { t_at as t_at_hk, trapname as trapname_hk, crawl_destination, Levitation_fu, Flying_fu, invocation_pos } from './trap.js';
 import { domove, blocksMove, test_move_quiet, getpos_walkdir, getpos_rushdir, getpos_movecmd_effects, getpos_hint_chars, readchar_core, waterbody_name, cmd_from_func, cmd_visctrl, redraw_cmd } from './cmd.js';
+import { Cmd_spkey, NHKF } from './cmd.js';
 import { moveloop_turn, moveloop_input_redraw, end_turn_callbacks } from './allmain.js';
 import { exercise } from './attrib.js';
 import { A_CON, PICK_ONE, is_pool_or_lava, is_pool, CQ_CANNED, CQ_REPEAT, CMDQ_KEY, CMDQ_DIR, JUMPING, INTRINSIC, DOMOVE_WALK } from './const.js';
@@ -29,6 +30,8 @@ import { objects } from './mkobj.js';
 import { Known_wwalking, Known_lwalking } from './zap.js';
 import { pending_glyph_cursor, cls_flush_messages, m_at, vobj_at, covers_objects, object_glyph, trap_glyph, flush_screen, newsym, pline, update_topl, topl_more, display_nhwindow_message, wrap_topl, topl_rows, y_n, docrt, show_glyph_cell, terrain_background_glyph, getpos_is_feature_sym, getpos_find_feature, is_cmap_engraving_at, engraving_glyph, bg_attr, feel_location, canspotself, mimic_object_glyph, furniture_mimic_glyph, obj_is_generic, remember_topl, note_topl, Hallucination_u, remembered_glyph_otyp, terrain_glyph, displayed_doormask, You_feel, note_dec_prefix_msg, nh_delay_output } from './display.js';
 import { do_screen_description, look_at_object, look_at_monster, decode_mixed, set_pager_deps, lookat, self_seen_suffix, trap_description, glyph_prefix_is_symset_meta } from './pager.js';
+import { mhidden_description } from './pager.js';
+import { MHID_PREFIX, MHID_ARTICLE, MHID_REGION } from './const.js';
 import { is_drawbridge_wall } from './dbridge.js';
 import { fruit_from_name, the, The } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_GHOST, S_air, S_cloud, S_water } from './symbols.js';
@@ -1452,6 +1455,7 @@ function getpos_help_lines(force, goal, doingWhatIs, hasValid, hasHilite) {
     const menu = !!ifl.getloc_usemenu;
     // getpos.c:129 gloc_filtertxt[] / gloc_descr[gloc][2 + getloc_usemenu].
     const filt = ['', ' in view', ' in this area'][ifl.getloc_filter || 0];
+    const sk = (nhkf) => cmd_visctrl(Cmd_spkey(nhkf));
     const kx = (k1, k2, descr, menuDescr, explore) => {
         const to = explore ? 'move the cursor next to an ' : 'move the cursor to ';
         const ftxt = (explore && menu) ? filt.replace('this area', 'area') : filt;
@@ -1469,45 +1473,45 @@ function getpos_help_lines(force, goal, doingWhatIs, hasValid, hasHilite) {
              + `'${vk('do_run_east')}' to fast-move the cursor, ${fastmove[skip]}.`);
     lines.push(`(or prefix normal move with '${vk('do_run')}' or '${vk('do_rush')}' to fast-move)`);
     lines.push(`Or enter a background symbol (ex. '<').`);
-    lines.push(`Use '@' to move the cursor on yourself.`);
+    lines.push(`Use '${sk(NHKF.GETPOS_SELF)}' to move the cursor on yourself.`);
     // getpos.c:167 getpos_help() — #terrain's getpos (iflags.terrainmode != 0)
     // lists only the key groups that browse that subset and never reaches the
     // `if (!iflags.terrainmode)` block holding the valid/hilite/autodescribe
     // lines and the "Type a '.'" footer (TER_MAP 0x01, TER_OBJ 0x04, TER_MON
     // 0x08, TER_DETECT 0x20, as in detect.js).
     const tm = ifl.terrainmode | 0;
-    if (!tm || (tm & 0x08)) lines.push(kx('m', 'M', 'next/previous monster', 'monsters'));
+    if (!tm || (tm & 0x08)) lines.push(kx(sk(NHKF.GETPOS_MON_NEXT), sk(NHKF.GETPOS_MON_PREV), 'next/previous monster', 'monsters'));
     // getpos.c:203 `goto skip_non_mons` jumps past everything below down to the
     // "Type a '.'" line, so a "a monster" goal loses the '*'/'!'/'"'/'#' lines.
     if (goal !== 'a monster') {
-        if (!tm || (tm & 0x04)) lines.push(kx('o', 'O', 'next/previous object', 'objects'));
+        if (!tm || (tm & 0x04)) lines.push(kx(sk(NHKF.GETPOS_OBJ_NEXT), sk(NHKF.GETPOS_OBJ_PREV), 'next/previous object', 'objects'));
         if (!tm || (tm & 0x01)) {
-            lines.push(kx('d', 'D', 'next/previous door or doorway', 'doors or doorways'));
-            lines.push(kx('x', 'X', 'unexplored location',
+            lines.push(kx(sk(NHKF.GETPOS_DOOR_NEXT), sk(NHKF.GETPOS_DOOR_PREV), 'next/previous door or doorway', 'doors or doorways'));
+            lines.push(kx(sk(NHKF.GETPOS_UNEX_NEXT), sk(NHKF.GETPOS_UNEX_PREV), 'unexplored location',
                           'locations next to unexplored locations', true));
-            lines.push(kx('a', 'A', 'anything interesting', 'anything interesting'));
+            lines.push(kx(sk(NHKF.GETPOS_INTERESTING_NEXT), sk(NHKF.GETPOS_INTERESTING_PREV), 'anything interesting', 'anything interesting'));
         }
-        lines.push(`Use '*' to change fast-move mode to ${fastmove[1 - skip]}.`);
+        lines.push(`Use '${sk(NHKF.GETPOS_MOVESKIP)}' to change fast-move mode to ${fastmove[1 - skip]}.`);
         if (!tm || !(tm & 0x20)) {
-            lines.push(`Use '!' to toggle menu listing for possible targets.`);
-            lines.push(`Use '"' to change the mode of limiting possible targets.`);
+            lines.push(`Use '${sk(NHKF.GETPOS_MENU)}' to toggle menu listing for possible targets.`);
+            lines.push(`Use '${sk(NHKF.GETPOS_LIMITVIEW)}' to change the mode of limiting possible targets.`);
         }
         if (!tm) {
-            if (hasValid) lines.push(`Use 'z' or 'Z' to move to valid locations.`);
-            if (hasHilite) lines.push(`Use '$' to toggle marking of valid locations.`);
-            lines.push(`Use '#' to toggle automatic description.`);
+            if (hasValid) lines.push(`Use '${sk(NHKF.GETPOS_VALID_NEXT)}' or '${sk(NHKF.GETPOS_VALID_PREV)}' to move to valid locations.`);
+            if (hasHilite) lines.push(`Use '${sk(NHKF.GETPOS_SHOWVALID)}' to toggle marking of valid locations.`);
+            lines.push(`Use '${sk(NHKF.GETPOS_AUTODESC)}' to toggle automatic description.`);
         }
     }
     if (!tm) {
         lines.push(doingWhatIs
-            ? `Type a '.' or ',' or ';' or ':' when you are at the right place.`
-            : `Type a '.' when you are at the right place.`);
+            ? `Type a '${sk(NHKF.GETPOS_PICK)}' or '${sk(NHKF.GETPOS_PICK_Q)}' or '${sk(NHKF.GETPOS_PICK_O)}' or '${sk(NHKF.GETPOS_PICK_V)}' when you are at the right place.`
+            : `Type a '${sk(NHKF.GETPOS_PICK)}' when you are at the right place.`);
     }
     if (doingWhatIs) {
-        lines.push(`  ':' describe current spot, show 'more info', move to another spot.`);
-        lines.push(`  '.' describe current spot,${game.flags?.help !== false && !force ? " prompt if 'more info'," : ''} move to another spot;`);
-        lines.push(`  ',' describe current spot, move to another spot;`);
-        lines.push(`  ';' describe current spot, stop looking at things;`);
+        lines.push(`  '${sk(NHKF.GETPOS_PICK_V)}' describe current spot, show 'more info', move to another spot.`);
+        lines.push(`  '${sk(NHKF.GETPOS_PICK)}' describe current spot,${game.flags?.help !== false && !force ? " prompt if 'more info'," : ''} move to another spot;`);
+        lines.push(`  '${sk(NHKF.GETPOS_PICK_Q)}' describe current spot, move to another spot;`);
+        lines.push(`  '${sk(NHKF.GETPOS_PICK_O)}' describe current spot, stop looking at things;`);
     }
     if (!force) lines.push(`Type Space or Escape when you're done.`);
     lines.push('');
@@ -1662,14 +1666,15 @@ function gp_glyph_at(x, y, detectMode = false) {
     return `${loc.disp_ch ?? ' '}|${loc.disp_color ?? -1}|${loc.disp_decgfx ? 1 : 0}|${loc.disp_dark ? 1 : 0}|${ndoor}|${wall}`;
 }
 
-// C ref: pager.c:123 self_lookat() -> mhidden_description(&youmonst,
-// MHID_REGION): ", in a cloud of poison gas/vapor" when the hero stands in a
-// visible region (the hidden/mimic arms need uundetected or a hero m_ap_type,
-// which the port's hero never has).
+// C ref: pager.c:123 self_lookat() describes the hero's hiding or mimic
+// appearance as well as any visible region at the hero's position.
 function self_region_suffix(u) {
-    const reg = visible_region_at(u.ux, u.uy);
-    if (!reg) return '';
-    return `, in a cloud of ${region_is_poisoncloud(reg) ? 'poison gas' : 'vapor'}`;
+    if (!u.uundetected && !(u.Upolyd && u.m_ap_type)
+        && !visible_region_at(u.ux, u.uy)) return '';
+    return mhidden_description({
+        isyou: true, data: youmonst_data(),
+        m_ap_type: u.m_ap_type, mappearance: u.mappearance,
+    }, MHID_PREFIX | MHID_ARTICLE | MHID_REGION);
 }
 
 // C ref: pager.c self_lookat() — "<race-adj> <pmname> called <plname>" for the
@@ -2468,9 +2473,6 @@ function gloc_remembers_stone(loc) {
     const rg = loc.remembered_glyph;
     return !!rg && rg.ch === ' ' && !rg.darkroom && !rg.objotyp && !rg.hallucotyp;
 }
-// C ref: cmd.c spkeys[] defaults for mMoOdDxX_def[] — next/prev pairs, so the
-// index >> 1 is the GLOC_* class.
-const GLOC_KEYS = 'mMoOdDxXaAzZ';
 export function gather_locs_interesting(x, y, gloc, validfn, detectMode = false) {
     // C ref: getpos.c:444 — the '"'/travel filters restrict the scan before any
     // gloc-specific test runs.  #lookaround sets GFILTER_VIEW for its per-cell
@@ -3000,6 +3002,14 @@ export async function getpos_menu(ccp, gloc, validfn = null, detectMode = false,
 
 async function getpos_inner(goalText, startx, starty, validfn, force = false, verbose = false, detectMode = false, terrainMode = false, hilitefn = null) {
     const u = game.u;
+    const pickChars = [NHKF.GETPOS_PICK, NHKF.GETPOS_PICK_Q,
+                       NHKF.GETPOS_PICK_O, NHKF.GETPOS_PICK_V].map(Cmd_spkey);
+    const glocKeys = [NHKF.GETPOS_MON_NEXT, NHKF.GETPOS_MON_PREV,
+                      NHKF.GETPOS_OBJ_NEXT, NHKF.GETPOS_OBJ_PREV,
+                      NHKF.GETPOS_DOOR_NEXT, NHKF.GETPOS_DOOR_PREV,
+                      NHKF.GETPOS_UNEX_NEXT, NHKF.GETPOS_UNEX_PREV,
+                      NHKF.GETPOS_INTERESTING_NEXT, NHKF.GETPOS_INTERESTING_PREV,
+                      NHKF.GETPOS_VALID_NEXT, NHKF.GETPOS_VALID_PREV].map(Cmd_spkey);
     let cx = startx, cy = starty;
     // C ref: getpos.c:815 -- "temporary? if we have a queued direction, return the
     // adjacent spot in that direction": a CMDQ_DIR entry (herecmdmenu's name-a-monster)
@@ -3062,7 +3072,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
     // the loop's "Move cursor to ...:" pline (also routed through update_topl)
     // is what acknowledges this "(For instructions...)" line.
     if (verbose && game.flags?.verbose !== false) {
-        await update_topl(`(For instructions type a '?')`);
+        await update_topl(`(For instructions type a '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_HELP))}')`);
         msgGiven = true;
         if (!showGoal) {
             // No goal message will be drawn; render the verbose line now so the
@@ -3173,7 +3183,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // '#' turned off the last message stays up across keystrokes.
         if (gp_iflags().autodescribe) msgGiven = false;
 
-        if (k === 27) { // ESC: cancel
+        if (k === Cmd_spkey(NHKF.ESC)) { // ESC: cancel
             // C getpos.c:894 sets msg_given=TRUE on ESC, so exitgetpos clears
             // WIN_MESSAGE (clear_nhwindow).  Blank the top line accordingly.
             game._pending_message = '';
@@ -3202,9 +3212,10 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // accepting the default hjklyubn keymap.
         const kk = getpos_key(k);
         // C getpos.c: pick_chars are tested before movecmd() ever runs.
-        if (!'.,;:'.includes(ch)) getpos_movecmd_effects(kk);
-        const walkDir = getpos_walkdir(kk);
-        const dir = (walkDir && !rushrun) ? null : (walkDir || getpos_rushdir(kk));
+        const pick = pickChars.indexOf(k);
+        if (pick < 0) getpos_movecmd_effects(kk);
+        const walkDir = pick < 0 ? getpos_walkdir(kk) : null;
+        const dir = pick < 0 && ((walkDir && !rushrun) ? null : (walkDir || getpos_rushdir(kk)));
         if (walkDir && !rushrun) {
             [cx, cy] = truncate_to_map(cx, cy, walkDir.dx, walkDir.dy);
             continue; // C: goto nxtc; auto_describe runs at top of next loop
@@ -3228,13 +3239,13 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             [cx, cy] = truncate_to_map(cx, cy, dx, dy);
             continue; // C: goto nxtc; auto_describe runs at top of next loop
         }
-        if (ch === '.' || ch === ',' || ch === ';' || ch === ':') {
+        if (pick >= 0) {
             // C getpos.c:1155 exitgetpos — a pending message is wiped
             // (clear_nhwindow(WIN_MESSAGE)) on the way out.
             if (msgGiven) game._pending_message = '';
-            return { x: cx, y: cy, pick: '.,;:'.indexOf(ch) }; // pick_chars index == LOOK_* ans
+            return { x: cx, y: cy, pick }; // pick_chars index == LOOK_* ans
         }
-        if (ch === '@') { // NHKF_GETPOS_SELF: snap cursor to hero
+        if (k === Cmd_spkey(NHKF.GETPOS_SELF)) {
             // C getpos.c:999 resets every gidx[] so 'm'/'o'/'d'/'x' restart
             // their cycle; the gathered garr[] arrays are deliberately kept.
             for (const key of Object.keys(gidx)) gidx[key] = 0;
@@ -3253,7 +3264,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             showGoal = true;
             continue;
         }
-        if (ch === '?') {
+        if (k === Cmd_spkey(NHKF.GETPOS_HELP)) {
             // C's two help-line gates: getpos_getvalid -> "Use 'z' or 'Z'...",
             // getpos_hilitefunc -> "Use '$' to toggle marking...".  The
             // second is true only when the caller registered a painter.
@@ -3271,7 +3282,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // valid target spots, only when the caller registered a painter
         // (getpos_hilitefunc); otherwise the key is swallowed and the goal
         // message re-shown instead of reaching the terrain-symbol fallback.
-        if (ch === '$') {
+        if (k === Cmd_spkey(NHKF.GETPOS_SHOWVALID)) {
             if (getpos_has_hilitefunc()) await getpos_toggle_hilite_state();
             showGoal = true;
             continue;
@@ -3280,7 +3291,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // (leaving a NEED_MORE topline that the *next* pline has to --More--
         // past) and sets msg_given, which with autodescribe off is what keeps
         // the message on screen while later keys are swallowed by that --More--.
-        if (ch === '#') { // NHKF_GETPOS_AUTODESC
+        if (k === Cmd_spkey(NHKF.GETPOS_AUTODESC)) {
             const ifl = gp_iflags();
             ifl.autodescribe = !ifl.autodescribe;
             // C ref: getpos.c:964 `pline("Automatic description %sis %s.",
@@ -3292,7 +3303,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             msgGiven = true;
             continue;
         }
-        if (ch === '"') { // NHKF_GETPOS_LIMITVIEW
+        if (k === Cmd_spkey(NHKF.GETPOS_LIMITVIEW)) {
             const ifl = gp_iflags();
             ifl.getloc_filter = ((ifl.getloc_filter || 0) + 1) % 3;
             // C getpos.c:977 frees every gathered garr[] and zeroes gidx[]
@@ -3303,17 +3314,17 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
             msgGiven = true;
             continue;
         }
-        if (ch === '!') { // NHKF_GETPOS_MENU
+        if (k === Cmd_spkey(NHKF.GETPOS_MENU)) {
             const ifl = gp_iflags();
             ifl.getloc_usemenu = !ifl.getloc_usemenu;
             await gp_pline(`${ifl.getloc_usemenu ? 'Using' : 'Not using'} a menu `
                            + `to show possible targets`
-                           + `${ifl.getloc_usemenu ? " for 'm|M', 'o|O', 'd|D', and 'x|X'" : ''}.`,
+                           + `${ifl.getloc_usemenu ? ` for '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_MON_NEXT))}|${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_MON_PREV))}', '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_OBJ_NEXT))}|${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_OBJ_PREV))}', '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_DOOR_NEXT))}|${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_DOOR_PREV))}', and '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_UNEX_NEXT))}|${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_UNEX_PREV))}'` : ''}.`,
                            cx, cy);
             msgGiven = true;
             continue;
         }
-        if (ch === '*') { // NHKF_GETPOS_MOVESKIP
+        if (k === Cmd_spkey(NHKF.GETPOS_MOVESKIP)) {
             const ifl = gp_iflags();
             ifl.getloc_moveskip = !ifl.getloc_moveskip;
             await gp_pline(`${ifl.getloc_moveskip ? 'S' : 'Not s'}kipping over `
@@ -3326,7 +3337,7 @@ async function getpos_inner(goalText, startx, starty, validfn, force = false, ve
         // valid spot.  These are checked BEFORE the terrain-symbol fallback, so
         // without them 'd' (a door jump) fell through to "Unknown direction".
         {
-            const gtmp = GLOC_KEYS.indexOf(ch);
+            const gtmp = glocKeys.indexOf(k);
             if (gtmp >= 0 && gp_iflags().getloc_usemenu) {
                 // C getpos.c:1016 `if (iflags.getloc_usemenu)` -> getpos_menu()
                 const mc = { x: cx, y: cy };
@@ -3403,7 +3414,7 @@ function visctrl_key(k) {
 function getpos_direction_hint() {
     const [w, s, n, e] = getpos_hint_chars();
     return `use '${visctrl_key(w.charCodeAt(0))}', '${visctrl_key(s.charCodeAt(0))}', `
-         + `'${visctrl_key(n.charCodeAt(0))}', '${visctrl_key(e.charCodeAt(0))}' or '.'`;
+         + `'${visctrl_key(n.charCodeAt(0))}', '${visctrl_key(e.charCodeAt(0))}' or '${cmd_visctrl(Cmd_spkey(NHKF.GETPOS_PICK))}'`;
 }
 
 // C ref: pager.c do_look(mode=1) reached by the ';' "glance" command.  A quick
@@ -5521,9 +5532,7 @@ export async function handle_tip(tip) {
             await pline('(Tip: use the #enhance command to advance them.)');
             break;
         case TIP_SWIM:
-            /* C: visctrl(cmd_from_func(do_reqmenu)).  'm' is do_reqmenu's
-               binding and the port has no key rebinding (cf. js/cmd.js:633). */
-            await pline("(Tip: use 'm' prefix to step in if you really want to.)");
+            await pline(`(Tip: use '${cmd_visctrl(cmd_from_func('do_reqmenu'))}' prefix to step in if you really want to.)`);
             break;
         case TIP_UNTRAP_MON:
             await pline('(Tip: perhaps #untrap would help?)');

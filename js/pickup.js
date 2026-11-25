@@ -1373,7 +1373,8 @@ export async function able_to_loot(x, y, looting) {
         await pline(`Without limbs, you cannot ${verb} anything.`);
         return false;
     } else if (looting && !freehand()) {
-        await pline('Without a free hand, you cannot loot anything.');
+        const { body_part } = await import('./invent.js');
+        await pline(`Without a free ${body_part(HAND)}, you cannot loot anything.`);
         return false;
     }
     return true;
@@ -2034,8 +2035,10 @@ export async function tipcontainer_checks(box, targetbox, allowempty) {
     } else if (SchroedingersBox(box)) {
         await observe_quantum_cat(box, true, true);
         let empty_it = false;
-        if (!Has_contents(box)) await pline('Your box is now empty.');
-        else empty_it = true;
+        if (!Has_contents(box)) {
+            const { shk_your } = await import('./invent.js');
+            await pline(`${upstart(shk_your(box))} box is now empty.`);
+        } else empty_it = true;
         box.cknown = 1;
         return (empty_it || allowempty) ? TIPCHECK_OK : TIPCHECK_EMPTY;
     } else if (!allowempty && !Has_contents(box)) {

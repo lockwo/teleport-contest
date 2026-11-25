@@ -20,7 +20,7 @@ import { ROLE_NONE, ROLE_RANDOM } from './const.js';
 // these edges add no module and change no evaluation order.
 import { makesingular } from './plural.js';
 import { objects } from './mkobj.js';
-import { name_to_pmidx } from './makemon.js';
+import { name_to_mon } from './polyself.js';
 // pline()/impossible() for the same section: C's interactive option handlers
 // report through them.  display.js is likewise already evaluated (pickup.js).
 import { pline, impossible } from './display.js';
@@ -29,6 +29,8 @@ import { makeplural } from './plural.js';
 import { rnd } from './rng.js';
 import { sanitize_name } from './engrave.js';
 import { c_atoi } from './hacklib.js';
+import { match_glyph, glyphrep_to_custom_map_entries } from './glyphs.js';
+import { gs as symbol_state } from './symbols.js';
 // condition names and aliases for HILITE_STATUS=condition/...; botl.js imports
 // modules that import this one, so parseNethackrc() loads them dynamically.
 let conditions = [], condition_aliases = [];
@@ -591,16 +593,28 @@ function parsesymbols(opts, which_set, result, ref) {
     const strval = mungspaces(opts.slice(sep + 1));
 
     const symp = match_sym(symname);
-    /* a G_ name is handled by match_glyph(); our renderer has no custom glyph
-       map, so treat it as accepted-and-ignored rather than an error */
-    const is_glyph = !symp && (symname[0] === 'G' || symname[0] === 'g')
-                     && symname[1] === '_';
+    const is_glyph = !symp && symname[0] === 'G' && symname[1] === '_'
+        && match_glyph(symname);
     if (!symp && !is_glyph) return false;
     if (symp && symp.range && symp.range !== SYM_CONTROL) {
-        const val = sym_val(strval);
-        /* ROGUESET targets the rogue-level symbol table, which the renderer
-           does not model; PRIMARYSET is the one display.js reads. */
-        if (val && which_set !== ROGUESET) result.symoverride[symp.name] = val;
+        const symset = result[which_set === ROGUESET ? 'roguesymset' : 'symset'];
+        if (/^[Uu]\+/.test(strval) || /^Enhanced[12]$/i.test(symset || '')) {
+            const savedName = symbol_state.symset[which_set].name;
+            const savedSet = symbol_state.symset_which_set;
+            symbol_state.symset[which_set].name = symset || null;
+            symbol_state.symset_which_set = which_set;
+            try {
+                glyphrep_to_custom_map_entries(`${symname}:${strval}`, { val: 0 });
+            } finally {
+                symbol_state.symset[which_set].name = savedName;
+                symbol_state.symset_which_set = savedSet;
+            }
+        } else {
+            const val = sym_val(strval);
+            const overrides = which_set === ROGUESET
+                ? (result.roguesymoverride ||= {}) : result.symoverride;
+            if (val) overrides[symp.name] = val;
+        }
     }
     return true;
 }
@@ -1785,10 +1799,14 @@ function read_sym_file(name) {
 function optfn_symset(o, negated, opts, op, result) {
     if (op === '') return OPTN_ERR;
     if (!read_sym_file(op)) {
+        // clear_symsetentry(..., TRUE) forgets the name, but does not switch
+        // the already-loaded drawing table back to the default symbols.
+        result.flags[`${o.name}_name`] = '';
         config_error_add(`Unable to load symbol set "${op}" from "symbols"`);
         return OPTN_ERR;
     }
     result[o.name] = /^(default|Default symbols)$/i.test(op) ? '' : op;
+    result.flags[`${o.name}_name`] = result[o.name];
     // C retains these flags even when the symbol set came from the rc.
     opt_need_redraw = opt_need_glyph_reset = true;
     return OPTN_OK;
@@ -1799,9 +1817,9 @@ function optfn_symset(o, negated, opts, op, result) {
 function optfn_graphics_compat(o, negated, opts, result) {
     if (!negated) {
         let badflag = false;
-        if (result.symset) badflag = true;
+        if (result.flags.symset_name ?? result.symset) badflag = true;
         else if (!read_sym_file(o.name)) badflag = true;
-        else result.symset = o.name;
+        else result.flags.symset_name = result.symset = o.name;
         if (badflag) {
             config_error_add(`Failure to load symbol set ${o.name}.`);
             return OPTN_ERR;
@@ -2830,15 +2848,21 @@ function optfn_hilite_status(o, negated, opts, op, result) {
     return OPTN_OK;
 }
 
-// C ref: options.c optfn_glyph() -> utf8map.c glyphrep_to_custom_map_entries().
-// Our renderer has no custom glyph map; the parse still has to reject a value
-// that C rejects, and C requires at least "G_name:U+NNNN".
+// C ref: options.c:1836, including the parser's unaffiliated-customization errors.
 function optfn_glyph(o, negated, opts, op, result) {
     if (negated) {
         if (op !== '') { bad_negation('glyph', true); return OPTN_ERR; }
     }
     if (op === '') return OPTN_ERR;
-    return OPTN_OK;
+    const set = symbol_state.symset[symbol_state.symset_which_set];
+    const oldName = set.name;
+    set.name = result.flags.symset_name ?? result.symset ?? null;
+    try {
+        return glyphrep_to_custom_map_entries(mungspaces(op), { val: 0 })
+            ? OPTN_OK : OPTN_ERR;
+    } finally {
+        set.name = oldName;
+    }
 }
 
 // The remaining compound options whose do_set does nothing at all but which
@@ -5563,10 +5587,7 @@ export async function handler_number_pad() {
     return OPTN_OK;
 }
 
-// C ref: options.c handler_paranoid_confirmation().  The 'm'-prefix substitution
-// in the 'swim' explanation needs cmd_from_func(do_reqmenu), which js/cmd.js
-// keeps private; 'm' is its default binding and nothing in the port rebinds it,
-// so the text is used as-is.
+// C ref: options.c:5973-5983. Describe the live movement-prefix binding.
 export async function handler_paranoid_confirmation() {
     let tmpwin, i;
     let explain;
@@ -5581,6 +5602,17 @@ export async function handler_paranoid_confirmation() {
         if (PARANOIA[i][0] === PARANOID_BONES
             && !((game.flags && game.flags.debug) || game.wizard)) continue;
         explain = PARANOIA_EXPLAIN[i];
+        if (explain.includes("'m'")) {
+            const { cmd_from_func, cmdname_from_func, do_reqmenu } = await import('./cmd.js');
+            const mkey = cmd_from_func(do_reqmenu);
+            if (mkey !== 'm') {
+                const cmdnm = mkey !== '\0' ? null
+                    : (cmdname_from_func(do_reqmenu, null, true) || 'reqmenu');
+                const mbuf = mkey !== '\0' ? `'${visctrl(mkey).slice(0, 9)}'`
+                    : `'${cmdnm.startsWith('#') ? '' : '#'}${cmdnm.slice(0, 31)}'`;
+                explain = explain.replace("'m'", mbuf);
+            }
+        }
         add_menu(tmpwin, null, { a_int: PARANOIA[i][0] }, PARANOIA[i][1][0],
                  0, ATR_NONE, clr, explain,
                  ((game.flags.paranoia_bits ?? 0x0c20) & PARANOIA[i][0])
@@ -7234,12 +7266,12 @@ export function fruitadd(str, replace_fruit) {
             || pf().startsWith('partly eaten ')
             || (pf().startsWith('tin of ')
                 && (pf().slice(7) === 'spinach'
-                    || name_to_pmidx(pf().slice(7)) >= 0))
+                    || name_to_mon(pf().slice(7)).mntmp >= 0))
             || pf() === 'empty tin'
             || (pf() === 'glob'
                 || (globpfx > 0 && 'glob' === pf().slice(globpfx)))
             || ((pf().endsWith(' corpse') || pf().endsWith(' egg'))
-                && name_to_pmidx(pf()) >= 0)) {
+                && name_to_mon(pf()).mntmp >= 0)) {
             buf = pf();
             game.svp.pl_fruit = 'candied ' + nmcpy(buf, PL_FSIZ - 8);
         }

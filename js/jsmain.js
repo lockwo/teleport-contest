@@ -361,6 +361,7 @@ export class NethackGame {
         // from nethackrc BIND= lines (key char -> command name).  cmd.js rhack()
         // remaps a bound key to the command's default key before dispatch.
         g.keybind = opts.keybind || {};
+        g.spkeys = opts.spkeys || {};
         // C ref: options.c add_menu_cmd_alias() — gm.mapped_menu_cmds/op.
         g.menu_cmd_alias = opts.menu_cmd_alias || [];
         // Preserve explicit unbindings unless a later BIND reassigned the key.
@@ -376,6 +377,7 @@ export class NethackGame {
         // SYMBOLS= rc line overrides one cmap glyph's display character,
         // independent of (and layered on top of) the base symset.
         g.symoverride = opts.symoverride || {};
+        g.roguesymoverride = opts.roguesymoverride || {};
         // C ref: options.c ga.apelist — the AUTOPICKUP_EXCEPTION list, read by
         // pickup.c check_autopickup_exceptions().
         g.apelist = opts.apelist || [];
