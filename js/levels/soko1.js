@@ -7,6 +7,7 @@ import { premap_detect } from '../detect.js';
 import { Is_special } from '../dungeon.js';
 import { des_engraving_at } from '../engrave.js';
 import { game } from '../gstate.js';
+import { Protection_from_shape_changers } from '../mon.js';
 import {
     BAG_OF_HOLDING, BOULDER, FOOD_CLASS, RING_CLASS, SCR_SCARE_MONSTER, WAND_CLASS, curse,
     mksobj_at, uncurse,
@@ -76,7 +77,8 @@ const SOKO1_2_MAP =
 // lookup, applied to the mimic after placement.
 function soko_create_mimic_boulder() {
     const mtmp = quest_create_monster_randpos('giant mimic', null);
-    if (mtmp) {
+    // sp_lev.c:2006 applies appear_as only without Protection_from_shape_changers
+    if (mtmp && !Protection_from_shape_changers()) {
         mtmp.m_ap_type = M_AP_OBJECT;
         mtmp.mappearance = BOULDER;
     }

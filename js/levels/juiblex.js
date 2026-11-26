@@ -12,6 +12,7 @@ import {
     SWAMP,
 } from '../const.js';
 import { game } from '../gstate.js';
+import { Protection_from_shape_changers } from '../mon.js';
 import { BOULDER, FOOD_CLASS, GEM_CLASS, POTION_CLASS } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import { selection_new, selection_rndcoord, selection_setpoint } from '../selvar.js';
@@ -180,7 +181,8 @@ export async function makemaz_juiblex() {
                 name: 'giant mimic',
                 mx: c.x - gx.xstart, my: c.y - gy.ystart,
             });
-            if (mtmp) {                 // appear_as = "ter:fountain"
+            // sp_lev.c:2006 applies appear_as only without Protection_from_shape_changers
+            if (mtmp && !Protection_from_shape_changers()) { // appear_as = "ter:fountain"
                 mtmp.m_ap_type = M_AP_FURNITURE;
                 mtmp.mappearance = SMS_S_FOUNTAIN;
             }

@@ -2840,7 +2840,7 @@ export async function seffect_genocide(sobj) {
 // heard of such monsters." at the ^G and genocide prompts.
 async function name_to_mon_read(str) {
     const { name_to_mon } = await import('./polyself.js');
-    const s = String(str || '').replace(/\s+/g, ' ').trim();
+    const s = mungspaces(String(str || ''));
     const { mntmp, gvariant } = await name_to_mon(s);
     return { mndx: mntmp, gender: mntmp === NON_PM ? NEUTRAL : gvariant };
 }
@@ -3127,7 +3127,7 @@ export async function do_genocide(how) {
                     ? "the name of a type of monster, or '?'"
                     : "'?' to see previous genocides"}]`;
             buf = String(await hooked_tty_getlin(promptbuf, null) ?? '');
-            buf = buf.replace(/\s+/g, ' ').replace(/^ | $/g, '');
+            buf = mungspaces(buf);
             /* avoid 'such creatures do not exist' for empty input */
             if (!buf) {
                 await pline_append(`${(i + 1 < 5)

@@ -1201,6 +1201,30 @@ export function put_topl_line(display, row, text) {
     for (let x = text.length; x < display.cols; x++)
         display.setCell(x, row, ' ', NO_COLOR, 0);
 }
+// C ref: topl.c redotoplin() `home(); putsyms(str); cl_end();` and addtopl()
+// write a message over the terminal's row 0 from column `from`; nomux_putch()
+// drops each signed high byte, so its cell keeps what row 0 showed just
+// before: the current top line (gt.toplines as drawn, blank once cleared),
+// itself possibly holding kept cells.  Remember those cells for
+// _buildScreenOutput() while `text` is the message line.
+function note_topl_cells(text, from) {
+    const cur = game._pending_message || '';
+    const prev = game._toplCells?.text === cur ? game._toplCells.cells : [];
+    const curLine = topl_screen_lines(cur)[0] || '';
+    const under = (c) => {
+        const kept = prev.find(([k]) => k === c);
+        if (kept) return kept[1];
+        const code = c < curLine.length ? curLine.charCodeAt(c) : 32;
+        return { ch: (code >= 0x80 && code <= 0xff) ? ' ' : String.fromCharCode(code),
+                 color: NO_COLOR, attr: 0 };
+    };
+    const cells = prev.filter(([c]) => c < from);
+    for (let c = from; c < text.length && c < CO; c++) {
+        const code = text.charCodeAt(c);
+        if (code >= 0x80 && code <= 0xff) cells.push([c, under(c)]);
+    }
+    game._toplCells = cells.length ? { text, cells } : null;
+}
 // C ref: wintty.c process_text_window() — under H_UTF8 the first byte of each
 // line goes out through g_putch(), whose capture lands one column right (curx
 // was already advanced) with its meta bit stripped; the next byte's capture
@@ -4774,6 +4798,11 @@ function _buildScreenOutput() {
         for (let li = 0; li < mlines.length; li++) {
             const ln = mlines[li];
             display.putstr(0, li, ln, NO_COLOR, 0);
+            // C ref: topl.c redotoplin(): cells under a dropped high byte keep
+            // what the terminal showed when this line was written (note_topl_cells).
+            if (li === 0 && game._toplCells?.text === msg)
+                for (const [c, v] of game._toplCells.cells)
+                    if (c < ln.length) display.setCell(c, 0, v.ch, v.color, v.attr);
             // putmixed emits its leading glyph through the unsigned path.
             if (li === 0 && ln && is_dec_prefix_msg(msg))
                 display.setCell(0, li, ln[0], NO_COLOR, 0);
@@ -5483,6 +5512,7 @@ async function pline_core(msg, opts, ctx) {
     game._prevmsg = msg;
     game.last_msg = 0; // C vpline(): PLNMSG_UNKNOWN after a new message.
     if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
+        note_topl_cells(cur + '  ' + msg, cur.length + 2);
         game._pending_message = cur + '  ' + msg;
         game._toplinSoft = game._pending_message;
         game._yn_need_more = true;
@@ -5491,6 +5521,7 @@ async function pline_core(msg, opts, ctx) {
     }
     if (softPending) await topl_more();
     game._toplinStale = null; // a new line replaces any stale one (toplin EMPTY -> NEED_MORE)
+    note_topl_cells(msg, 0);
     game._pending_message = msg;
     // C ref: pline -> vpline -> update_topl sets gt.toplines.
     // C ref: topl.c update_topl() calls remember_topl() before overwriting
@@ -5698,6 +5729,9 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
         else {
             for (let x = 0; x < disp.cols; x++) disp.setCell(x, y, ' ', NO_COLOR, 0);
             disp.putstr(0, y, mlines[y], NO_COLOR, 0);
+            if (y === 0 && game._toplCells?.text === msg)
+                for (const [c, v] of game._toplCells.cells)
+                    if (c < mlines[0].length) disp.setCell(c, 0, v.ch, v.color, v.attr);
         }
         // putmixed's leading glyph is unsigned output, not a plain string byte.
         if (y === 0 && mlines[y] && is_dec_prefix_msg(msg))
@@ -6032,6 +6066,7 @@ async function update_topl_core(bp, ctx) {
     if ((game._toplin === TOPLIN_NEED_MORE || softPending)
         && n0 + cur.length + 3 < CO - 8
         && !bp.startsWith('You die')) {
+        note_topl_cells(cur + '  ' + bp, cur.length + 2);
         game._pending_message = cur + '  ' + bp;
         // Whatever got us into this branch, the merged text is now the fresh,
         // unacknowledged line — same as pline()'s equivalent append (which sets
@@ -6076,6 +6111,7 @@ async function update_topl_core(bp, ctx) {
     // the rest of the session.
     if (!notdied) game._winStop = false;
     game._toplinStale = null; // a new line replaces any stale one (toplin EMPTY -> NEED_MORE)
+    note_topl_cells(bp, 0);
     game._pending_message = bp;
     game._toplin = TOPLIN_NEED_MORE;
     remember_topl();

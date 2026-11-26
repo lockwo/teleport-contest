@@ -1279,6 +1279,10 @@ export async function do_run_prefixed(dx, dy, runval) {
     u.dx = dx;
     u.dy = dy;
     u.dz = 0;
+    // C ref: cmd.c do_run()/do_rush() assign svc.context.run as the prefix is
+    // read, so an earlier F's DOMOVE_WALK step runs at that level and
+    // hack.c:2768 refuses to attack a monster the hero can see.
+    if (game.domove_attempting & DOMOVE_WALK) game.context.run = runval;
     await run_movement(runval);
 }
 

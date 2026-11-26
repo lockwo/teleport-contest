@@ -5007,6 +5007,8 @@ export async function Amulet_on(amul) {
             await pline("You don't feel like yourself.");
             call_it = !!amul.dknown;
         }
+        /* C ref: do_wear.c:1029 — #chronicle's "transformed into ..." entry */
+        (await import('./polyself.js')).livelog_newform(false, orig_sex, new_sex);
         await pline('The amulet disintegrates!');
         if (call_it) await trycall(amul);
         useup(amul);
@@ -11583,8 +11585,7 @@ function renderItemActionsMenu(otmp, entries) {
     let row = 0;
     // Row 0: the query title, drawn with the menu prompt style (= menu_headings,
     // ATR_INVERSE).
-    for (let c = 0; c < title.length && textx + c < 80; c++)
-        display.setCell(textx + c, row, title[c], menuHeadColor(), menuHeadAttr());
+    display.putstr(textx, row, title.slice(0, Math.max(0, 80 - textx)), menuHeadColor(), menuHeadAttr());
     row++;
     display.putstr(textx, row++, '', NO_COLOR, 0); // blank separator row
     for (const ln of itemLines) display.putstr(textx, row++, ln, NO_COLOR, 0);

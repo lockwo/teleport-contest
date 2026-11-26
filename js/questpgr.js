@@ -135,6 +135,7 @@ export async function com_pager_legacy() {
         for (let c = offx; c < cols; c++) disp.setCell(c, row, ' ', NO_COLOR, 0);
     };
     for (let c = 0; c < cols; c++) disp.setCell(c, 0, ' ', NO_COLOR, 0); // WIN_MESSAGE
+    g._pending_message = '';    // tty_clear_nhwindow(WIN_MESSAGE): row 0 is now blank
 
     const moreRow = lines.length; // row immediately after the last line
     for (let i = 0; i < lines.length; i++) {

@@ -1,0 +1,296 @@
+{
+ "cases": [
+  {
+   "name": "a refused wait after cmdassist is turned off gives the hint once, as the short-circuited C counter does",
+   "segments": [
+    {
+     "seed": 4500,
+     "datetime": "20000601120000",
+     "nethackrc": "OPTIONS=name:Coverage,role:Knight,race:human,gender:male,align:lawful\nOPTIONS=!autopickup,!verbose,!legacy,!tutorial,!splash_screen\nOPTIONS=pettype:none,mention_walls\nOPTIONS=horsename:Shadowfax\nOPTIONS=pushweapon,showexp,time,color\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n",
+     "moves": "j #jump\n j.jjl. jjh.hhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjhhhhhhhhyyyyyykkkkhhhhkh\u0004kkkkkkhhhhhhhhhhhhllllllllllllllllllllkkkkkkkkkkhhhhhhhjh\u001440 10\n\u001b#levelchange\n10\n         #levelchang\u00e7e\n15\n    \u00165\n#jump\n llj.#jump\n hkk.#jump\n kkl.#jump\n jjh.Odfamango\n>efjq\u001blllkkkhhjjjkkkkkljjjjjjjjjjjjj#pray\ny ....y  \u001610\n#goto\n\u001620\n\u001625\n\u001630\n  \u001635\n\u001640\n\n \u00161\ni\u001b#wish\n#wizwish\n3 scrolls of punishment\n#wizwish\nspellbook of detect food\n#wizwi\u00aash\nspellbook of detect monsters\n#wizwish\nscroll of identify\nrjrk ZaZbZaZaZbZbri rl   ri  ZaZaZaZaZallllhhhh\\   eg eh#wizidentify\n\u001b#wizintrinsic\nar.\u001b#wizintrinsic\nar\n kkkkhhhhjjhklkklljjjkkykyy#overview\n\u001b#dip\n\u001b#enhance\nyj r \n\u001b#turn\n#chat\n.:#ride\n\u001b#wipe\n#sit\n#monster\n#name\nastarting level\n#name\niaSword of Justice\n#adjust\naztik#twoweapon\nTe\u001bi\u001b#twoweapon\nx x \u00163\n #wizmap\n_>..\u0014 <. \u0014 >. >   #wizmap\n\u0014 >. >  #wizmap\n\u0014 >. >    #pray\ny  y#pray\ny y #wizmap\n\u00168\n \u001610\n #wizmap\n\u001613\n #overview\n\u001b#wizmap\n\u00165\n \u00161\n  \u00167\n #wizmap\n\u0014 <. <  #overview\n\u001b\u001624\n #wizmap\n#wizgenesis\nred dragon\nhhhhhhj   jj jkkkkk   kkj j  jllln #wizgenesis\nminotaur\nF#wi zwh er e\n  wz    n \u00161\n   20.20.50.99.Fh#wizintrinsic\ni\nhhhh hhe, eye\u001be, y # p r a y \nyy\u001b#pray\ny y #wizintrinsic\ni\n#wizintrinsic\ni\n#wizwish\npotion of extra healing\nqokkkkhhhhhhkkkllllkksssss\u001625\n #wizmap\n#overview\n\u001b\u001645\n    \u001635\n  #wizmap\n\u001633\n #wizmap\n\u001650\n \u001640\n #wizmap\nlllllll\u00163\n3  \n\u0014 {. qy qy#offer\n#untrap\n\u001b\u0014$. \u0014 jjjjjjjjjjjjjjjjhhhhhhhhhh.  #wizwish\nwand of digging\nzpj#wizwish\nwand of polymorph\nzq. r\nzq.zq. #monster\nzq. zq..\u001b#wizwish\nring of polymorph control\nPrr#wizwish\nwand of polymorph\nzs.red dn\n #monster\nj hhhhkkks\n \u001b#conduct\n dg#version\n  \u001b#wizwish\namulet of unchanging\nWtzsc\np\n40.e e\n20.\u001b\u001b\u001b\u001b#wizwhere\ns h  \n scro l l of tel eportation\n;j.;\u0012jjl.\u001b?e/D\\\u001b\\    #quit\nn#wizwhere\n   \u001648\n    p\n\u0014 >. > \u001699\n p\nr\n\u0014 _.  k k k\u001b\u001b\u001b\u001b\u001b .. ........ .lljk\u001b:\n?\ne   \u0016?\n B  i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+     "frames": {
+      "289": {
+       "screen": "Are you waiting to get hit?  Use 'm' prefix to force a no-op (to rest).\n\n\n\n\n\n\n\u001b[33C\u000elqqqqqqqqqqqk\u000f\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~~~~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex\u000fu\u000e~~~~\u001b[97m\u000fC\u001b[39m\u000e~\u000f\n\u001b[33C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~l\u000f\n\u001b[33C\u000ex~~\u001b[32m\u000fN\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000e~~~~x\u000f\n\u001b[33C\u000ex~~~m\u000f\n\u001b[33C\u000ex~~~~\u001b[90m~\u001b[97m\u000fC\u001b[90m\u000e~\u000f\u001b[39m\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~\u001b[90m~~~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000emqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Sergeant\u001b[12CSt:18/01 Dx:9 Co:12 In:7 Wi:14 Ch:17 Lawful\nDlvl:5 $:0 HP:23(65) Pw:92(92) AC:3 Xp:10/5120 T:54",
+       "cursor": [
+        34,
+        10,
+        1
+       ]
+      },
+      "290": {
+       "screen": "Are you waiting to get hit?\n\n\n\n\n\n\n\u001b[33C\u000elqqqqqqqqqqqk\u000f\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~~~~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex\u000fu\u000e~~~~\u001b[97m\u000fC\u001b[39m\u000e~\u000f\n\u001b[33C\u000ex\u001b[97m\u000f@\u001b[39m\u000e~~l\u000f\n\u001b[33C\u000ex~~\u001b[32m\u000fN\u001b[39m\u000ex\u000f\n\u001b[33C\u000ex~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000e~~~~x\u000f\n\u001b[33C\u000ex~~~m\u000f\n\u001b[33C\u000ex~~~~\u001b[90m~\u001b[97m\u000fC\u001b[90m\u000e~\u000f\u001b[39m\n\u001b[33C\u000ex\u001b[97m\u000fC\u001b[39m\u000e~~~\u001b[90m~~~~~~\u001b[97m\u000fC\u001b[39m\u000ex\u000f\n\u001b[33C\u000emqqqqqqqqqqqj\u000f\n\n\n\n\nWizard the Sergeant\u001b[12CSt:18/01 Dx:9 Co:12 In:7 Wi:14 Ch:17 Lawful\nDlvl:5 $:0 HP:23(65) Pw:92(92) AC:3 Xp:10/5120 T:54",
+       "cursor": [
+        34,
+        10,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a high byte typed into a name leaves the previous top-line cell on the captured screen",
+   "segments": [
+    {
+     "seed": 4500,
+     "datetime": "20000601120000",
+     "nethackrc": "OPTIONS=name:Coverage,role:Knight,race:human,gender:male,align:lawful\nOPTIONS=!autopickup,!verbose,!legacy,!tutorial,!splash_screen\nOPTIONS=pettype:none,mention_walls\nOPTIONS=horsename:Shadowfax\nOPTIONS=pushweapon,showexp,time,color\nOPTIONS=symset:DECgraphics\nOPTIONS=playmode:debug\n",
+     "moves": "j #jump\n j.jjl. jjh.hhhhhhhhhhhhhhhhhhhhjjjjjjjjjjjhhhhhhhhyyyyyykkkkhhhhkh\u0004kkkkkkhhhhhhhhhhhhllllllllllllllllllllkkkkkkkk\u0093kkhhhhhhhjh\u001440 10\n\u001b#levelchange\n10\n         #levelchange\n15\n    \u00165\n#jump\n llj.#jump\n hkk.#jump\n kkl.#jump\n jjh.Odfamango\n>efjq\u001blllkkkhhjjjkkkkkljjjjjjjjjjjjj#pray\ny ....y  \u001610\n#goto\n\u001620\n\u001625\n\u001630\n  \u001635\n\u001640\n\n \u00161\ni\u001b#wish\n#wizwish\n3 scrolls of punishment\n#wizwish\nspellbook of detect food\n#wizwish\nspellbook of detect monsters\n#wizwish\nscroll of identify\nrjrk ZaZbZaZaZbZbri rl   ri  ZaZaZaZaZallllhhhh\\   eg eh#wizidentify\n\u001b#wizintrinsic\nar.\u001b#wizintrinsic\nar\n kkkkhhhhjjhklkklljjjkkykyy#overview\n\u001b#dip\n\u001b#enhance\nyj r \n\u001b#turn\n#chat\n.:#ride\n\u001b#wipe\n#sit\n#monster\n#name\nastarting level\n#name\niaSword of Jus\u00cetice\n#adjust\naztik#twoweapon\nTe\u001bi\u001b#twoweapon\nx x \u00163\n #wizmap\n_>..\u0014 <. \u0014 >. >   #wizmap\n\u0014 >. >  #wizmap\n\u0014 >. >    #pray\ny  y#pray\ny y #wizmap\n\u00168\n \u001610\n #wizmap\n\u001613\n #overv\u00d4iew\n\u001b#wizmap\n\u00165\n \u00161\n  \u00167\n #wizmap\n\u0014 <. <  #overview\n\u001b\u001624\n #wizmap\n#wizgenesis\nred dragon\nhhhhhhj   jj jkkkkk   kkj j  jllln #wizgenesis\nminotaur\nF#wi zwh er e\n  wz    n \u00161\n   20.20.50.99.Fh#wizintrinsic\ni\nhhhh hhe, eye\u001be, y # p r a y \nyy\u001b#pray\ny y #wizintrinsic\ni\n#wizintrinsic\ni\n#wizwish\npotion of extra healing\nqokkkkhhhhhhkkkllllkksssss\u001625\n #wizmap\n#overview\n\u001b\u001645\n    \u001635\n  #wizmap\n\u001633\n #wizmap\n\u001650\n \u001640\n #wizmap\nlllllll\u00163\n3  \n\u0014 {. qy qy#offer\n#untrap\n\u001b\u0014$. \u0014 jjjjjjjjjjjjjjjjhhhhhhhhhh.  #wizwish\nwand of digging\nzpj#wizwish\nwand of polymorph\nzq. r\nzq.zq. #monster\nzq. zq..\u001b#wizwish\nring of polymorph control\nPrr#wizwish\nwand of polymorph\nzs.red dn\n #monster\nj hhhhkkks\n \u001b#conduct\n dg#version\n  \u001b#wizwish\namulet of unchanging\nWtzsc\np\n40.e e\n20.\u001b\u001b\u001b\u001b#wizwhere\ns h  \n scro l l of tel eportation\n;j.;\u0012jjl.\u001b?e/D\\\u001b\\    #quit\nn#wizwhere\n   \u001648\n    p\n\u0014 >. > \u001699\n p\nr\n\u0014 _.  k k k\u001b\u001b\u001b\u001b\u001b .. ........ .lljk\u001b:\n?\ne   \u0016?\n B  i\u001b+\u001b\\\u001b\u0018 \u001bss:",
+     "frames": {
+      "737": {
+       "screen": "Moving: z - a +1 long sword named Sword of Jusetice (weapon in right hand).\n\n\n\n\u001b[53C\u000elqqqqqqqqqqk\u000f\n\u001b[53C\u000ex\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[53C\u000ex\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[53C\u001b[33m\u000ea\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[53C\u000ex\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[53C\u000ex\u001b[90m~~~~~~~~~~\u001b[39mx\u000f\n\u001b[35C\u000elqqqqqqqqqk\u000f\u001b[7C\u000emq~qqqq~qqqj\u000f\n\u001b[35C\u000ex~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~x\u000f\u001b[8C###\n\u001b[35C\u000ex~\u001b[36m\u000f0_\u001b[39m\u000e~~\u001b[93m\u000f$\u001b[39m\u000e~\u000f*\u000e~x\u000f\u001b[9C#\n\u001b[34C#\u000e~~~~~~~~~~x\u000f\u001b[9C#\u001b[17C\u000el~qqk\u000f\n\u001b[35C\u000ex~~~~~~~~~~\u000f\u001b[8C##\u001b[17C\u000e~\u001b[90m~~~\u001b[39mx\u000f\n\u001b[35C\u000emqqqqqqqqqj\u000f\u001b[8C#\u001b[18C\u000ex\u001b[90m~~~\u001b[39mx\u000f\n\u001b[54C#\u001b[10C########\u000e~\u001b[90m~\u001b[93m\u000f<\u001b[90m\u000e~\u001b[39mx\u000f\n\u001b[53C\u000el~q\u001b[33m\u000f+\u001b[39m\u000eqqk\u000f\u001b[5C#\u001b[7C\u000ex\u001b[90m~~~\u001b[39mx\u000f\n\u001b[53C\u000ex\u001b[90m~~~\u001b[33m\u000f(\u001b[90m\u000e~\u001b[39m~\u001b[36m\u000f)\u001b[39m#####\u001b[7C\u000emqqqj\u000f\n\u001b[53C\u000ex\u001b[90m~~~~~\u001b[39mx\u000f\n\u001b[53C\u000emqqqqqj\u000f\n\nWizard the Knight\u001b[14CSt:18/01 Dx:9 Co:12 In:7 Wi:14 Ch:17 Lawful\nDlvl:1 $:0 HP:37(80) Pw:86(128) AC:3 Xp:15/160079 T:116",
+       "cursor": [
+        37,
+        11,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a fight prefix followed by a run prefix steps at run level and does not attack a seen monster",
+   "segments": [
+    {
+     "seed": 2142,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Meta,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,pettype:none,!autopickup\nOPTIONS=playmode:debug\n",
+     "moves": "\u0007brown mold\nFGhFGjFGkFGlFGyFGuFGbFGnGFhGFjGFkGFlGFyGFuGFbGFn",
+     "frames": {
+      "18": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[11C-------- -\n\u001b[11C|\u001b[93m$\u001b[39m...\u001b[97m@\u001b[39m...|\n\u001b[11C|....\u001b[33mF\u001b[39m.\u001b[92mF\u001b[39m.|\n\u001b[11C|.........\n\u001b[11C----------\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:16 Co:18 In:7 Wi:7 Ch:7 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        16,
+        17,
+        1
+       ]
+      },
+      "19": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[11C-------- -\n\u001b[11C|\u001b[93m$\u001b[39m...\u001b[97m@\u001b[39m...|\n\u001b[11C|....\u001b[33mF\u001b[39m.\u001b[92mF\u001b[39m.|\n\u001b[11C|.........\n\u001b[11C----------\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:16 Co:18 In:7 Wi:7 Ch:7 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        16,
+        17,
+        1
+       ]
+      },
+      "20": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[11C-------- -\n\u001b[11C|\u001b[93m$\u001b[39m...\u001b[97m@\u001b[39m...|\n\u001b[11C|....\u001b[33mF\u001b[39m.\u001b[92mF\u001b[39m.|\n\u001b[11C|.........\n\u001b[11C----------\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:16 Co:18 In:7 Wi:7 Ch:7 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        16,
+        17,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a monster name with a leading 0xa0 byte is not trimmed as whitespace",
+   "segments": [
+    {
+     "seed": 41024,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Cov,role:Valkyrie,race:human,gender:female,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup,!tutorial,!legacy\n",
+     "moves": "\u0017potion of polymorph\ndehh\u00afh\u0007\u00a0kobold shaman\n\u0007kobold shaman\nssss\u008css\u00c5ssssssssssssssssssssssss",
+     "frames": {
+      "43": {
+       "screen": "I've never heard of such monsters.--More--\n\n\n\u001b[44C\u000elqqqqqk\u000f\n\u001b[44C\u000ex~~~~~\u001b[33ma\u000f\u001b[39m\n\u001b[44C\u000ex~~~~~x\u000f\n\u001b[44C\u001b[33m+\u001b[39m\u000e~~~~\u001b[94m\u000f{\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[36m\u000f[\u001b[39m\u000e~~~x\u000f\n\u001b[44C\u000ex~~~~~x\u000f\n\u001b[44C\u000ex\u001b[97m\u000f@d\u001b[93m(\u001b[39m\u000e~~x\u000f\n\u001b[44C\u000emqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:14 Co:18 In:8 Wi:7 Ch:8 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        0,
+        1
+       ]
+      },
+      "44": {
+       "screen": "I've never heard of such monsters.--More--\n\n\n\u001b[44C\u000elqqqqqk\u000f\n\u001b[44C\u000ex~~~~~\u001b[33ma\u000f\u001b[39m\n\u001b[44C\u000ex~~~~~x\u000f\n\u001b[44C\u001b[33m+\u001b[39m\u000e~~~~\u001b[94m\u000f{\u001b[39m\u000ex\u000f\n\u001b[44C\u000ex~\u001b[36m\u000f[\u001b[39m\u000e~~~x\u000f\n\u001b[44C\u000ex~~~~~x\u000f\n\u001b[44C\u000ex\u001b[97m\u000f@d\u001b[93m(\u001b[39m\u000e~~x\u000f\n\u001b[44C\u000emqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\n\nWizard the Stripling\u001b[11CSt:18/02 Dx:14 Co:18 In:8 Wi:7 Ch:8 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        42,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "the amulet of change logs the gender change in the chronicle",
+   "segments": [
+    {
+     "seed": 5318327,
+     "datetime": "20270101093000",
+     "nethackrc": "OPTIONS=name:Magellan,role:Tourist,race:human,gender:male,align:neutral,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+     "moves": "  n\u0017blessed amulet of life savi\u00fdng\nPn\u0017blessed +2 gray dragon scale mail\nWo\u0017blessed +3 elven broadsword\nwp\u0017blessed +2 pick-axe\nFlt\u001bjuFlFj llLu20suuul>ll20su#quiver\n$\u00163\nH5sjbh\u001bbhjjWblbhjjZjbyykkkylhhykk\u0007coyote\n\u001bFkFkFkaq \u001bk\nE- x\nk\u0007freezing sphere\nu u       \u0007leprechaun\n\u00165\nyyyhpbphzphpppp\u001bhhbhFhFhh\u0007fog cloud\nFlFlFlFlFl FhFhlFlpFlE- x\nE-n \nHello\n#pray\ny y     \u001bZFlFl\u001b\u0004lhFlFhFhtalFlFl\u00165\nFlFlFlFlFlhey hlltplFlt$lFlFll\u0004l \u001bFkFj l  #eat\nb#fire\nlaq\u001blz\u0007Olog-hai\nFkFk   nFk   nFk\u001bFk  n Fk  n Z#chat\n\u001bhy    n Fk\u001b n Fk \n n Fk  n Fk  n Fk  n kqi   n\u001bF\u00d4k   nFk   nFk   nFk \n n Fk   n Fk\nqi   n Fu qE- \nE- Hello\n  n u  n u\n  nFu Fu  n Fu   nu ZFu  n tau  n Fu   nFu\u001b n#chat\nElbereth\nFu \n nu \u001bFu  n u   nFu qFu  n Fu\n n tp $u  \nn Fu  \u001bnFu Fu  n Fu hE- Vlad was here\nqqhE- ad aerarium\nE-y \nE-n  zzz\n  n Fl   n Fl   n Fl   n Fl   n Fl   n Fl   n\n\u001bFl   n Fl \u001b\nn Fl   n Fl   n l   n l   n zFl  \u001bn Fl   n Fl   n Fl   n ZFl   n Fl   n Fl   n\nFl   n Fl  \nn Fl  \nn Fl   n Fl   n qEa zzz\n  n Fl   n Fl   n Fl   n \u001bFl   n Fl   n Fl   n hFl   n Fl\u001b n qE- Elbereth\n10.20s 20shFbhhdfn    n Fu qqqqyFl   n Fl   n\u001bFl Ea \nFl   n Fl   n \u0004l \n nFl Fl   n l   n l   n Fl \n n Fl   nFl Fl   n Fl\nFl\n  n yhbb,uuln   \u001bn Fn yFn   n n   n Fn qs   n \u001bt$n  \nn \u00b0Fn   nFn qj  n Fl   n Fl   n l   n#chat\nThis is a longer annotation line fo\u00f1r testing\n$l   n\nFl   n Fl   n Fl\u001b n Fl   nFl ybbjqqy20s   n Fl   n ZFl\u001b n l   n Fl   n\u001bFl   nFl Fl   n Fl   nFl \u0007Demogorgon\nyFl\u001b n Z#chat\n\u001bFu   n     n    Fl  \n n   n E- zzz\n  \u001b n Fn    n   n  n \nn  n n     n   n  n  nFk   \nn  n    n  n",
+     "frames": {
+      "89": {
+       "screen": "Logged events:\n Turn\n    1: wizard the neutral male human Tourist entered the dungeon\n1: made his first wish - \"blessed amulet of life savi ng\", got \"a concave\namulet\"\n    1: transformed into a female Rambler\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n--More--",
+       "cursor": [
+        8,
+        23,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "the extended command list keeps a search string up to QBUFSZ",
+   "segments": [
+    {
+     "seed": 20014779,
+     "datetime": "20260414173108",
+     "nethackrc": "OPTIONS=symset:DECgraphics\n",
+     "moves": "Tetra\ryy  nkkklLuujjl\u00d9lnnJj  bbbbbbbbbbbbbbbb kkkkkykkkkkyhhhhjjJhhhbhhhhHhhhyhhykKhhhh,hhHjjjbBHjjJbBhbbb,hhhhHKyh,bjjlllljj\u00bfjjjjjjjjjlluulluulukukhhhyhhhhhyykkkkkkyhyullL9s9s9shhhhyHjbnNluuulluulllukuuulllllllllnJyyuuluululkkkklukjkky #l\ro,cd\r,ab\rnnlLkkkkkkkkkkkllljnuulu,jj,uu ,@aa\rPqrr?o ln_>  >.\rllley_>\u00f0.;yyh.lnlnjlull#hat\rl  i  aht*hl #chat\rl t?* *hj thj nthn yhbhyyyy ey ,nubyyhh.hju>   y  yi\u001b+\u001b\\\u001b\u0018 \u001bss:",
+     "frames": {
+      "240": {
+       "screen": " Extended Commands List\n\n a - Switch to excluding commands that don't autocomplete\n s - Switch back from search (\"9s9shhhhyHjbnNluuulluulllukuuulllllllllnJyyuuluu\n\n no matches\n (end)",
+       "cursor": [
+        7,
+        6,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a dropped high byte in a named object keeps the previous top-line cell",
+   "segments": [
+    {
+     "seed": 393,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hb,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,!autopickup\n",
+     "moves": "#name\niaSw\u00f7\u00d6\u00bbe\b\b\u00fe\u00c2\u007f\n\u0018\u001bhjklda,w\u001bd\u001bw\u001bd\u001bChl.Long name here \u00f7rd\ni\u001b\u0018\u001b#name\niaZo\u00d9ny\b\b\u0090\u00ed\u007f\n\u0018\u001b#terrain\n\u001bda,#terrain\n\u001b:",
+     "frames": {
+      "28": {
+       "screen": "You drop a +1 spear named Swbcd.\n\n\u001b[9C-------\n\u001b[9C|...\u001b[97m@d\u001b[39m|\n\u001b[9C|......\n\u001b[9C-------\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nHb the Stripling\u001b[15CSt:15 Dx:16 Co:18 In:9 Wi:8 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        13,
+        3,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a high byte in a menu title is dropped from the captured screen",
+   "segments": [
+    {
+     "seed": 3950,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hb,role:Samurai,race:human,gender:male,align:lawful\nOPTIONS=!legacy,!tutorial,!splash_screen,!autopickup\nOPTIONS=msg_window:f\n",
+     "moves": "#name\niaKa\u00bb\u008e!\n#overview\n\u001b\u0010\u0010#name\niaKa\u0089\u00c2rd\n:d\u001b\u001bd\u001b#name\nocx\u00fcrd\n\u0010E-Long name here \u00d1\u00c4!\nhjklhjkl#name\nmm;Zo\u0082\u00b2\u00bard\nd\u001b\u0018\u001b\u0018\u001b",
+     "frames": {
+      "35": {
+       "screen": "\u001b[28C\u001b[7mDo what with the katana named Ka\u001b[27m  \u001b[7m!?\u001b[0m\n\n\u001b[28C- - Wield '-' to un-wield this weapon\n\u001b[8C--------------\u001b[6Cc - Rename or un-name this specific katana\n\u001b[8C|.\u001b[97md@\u001b[39m.........|\u001b[6Cd - Drop this item\n\u001b[8C|.........\u001b[93m$\u001b[39m..|\u001b[6CE - Engrave on the stairs with this item\n\u001b[8C|...........\u001b[33md\u001b[39m|\u001b[6Ci - Adjust inventory by assigning new letter\n\u001b[8C---.-------- -\u001b[6CQ - Quiver this item for easy throwing with 'f'ire\n\u001b[28Ct - Throw this item\n\u001b[28Cx - Swap this with your alternate weapon\n\u001b[28CX - Toggle two-weapon combat on\n\u001b[28C/ - Look up information about this\n\u001b[28C(end)\n\n\n\n\n\n\n\n\n\nHb the Hatamoto\u001b[16CSt:16 Dx:16 Co:18 In:9 Wi:10 Ch:6 Lawful\nDlvl:1 $:0 HP:15(15) Pw:2(2) AC:4 Xp:1",
+       "cursor": [
+        34,
+        12,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a dropped high byte keeps its top-line cell under --More--",
+   "segments": [
+    {
+     "seed": 8128,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Hb,role:Caveman,race:dwarf,gender:male,align:lawful\nOPTIONS=!legacy,!tutorial,!splash_screen,!autopickup\nOPTIONS=perm_invent\n",
+     "moves": "#name\niaFl\u00ba!\n\u0010\u001bhjkl#overview\n\u001bda,#overview\n\u001bI*\u001b#name\naA\u00ca\u0088\u00fd!\n\u000f\u001b\u000f\u001bE-Zo\u008drd\nhjklI*\u001b",
+     "frames": {
+      "32": {
+       "screen": "You drop a +1 club named Fla!.  Slasher bites the fox.--More--\n\n\n\n\u001b[23C------------\n\u001b[23C|..........|\n\u001b[23C|...\u001b[33m[\u001b[31md\u001b[97m@\u001b[39m..\u001b[36m(\u001b[39m.|\n\u001b[23C......\u001b[97md\u001b[39m....|\n\u001b[23C|..........|\n\u001b[23C|..........|\n\u001b[23C--.---------\n\n\n\n\n\n\n\n\n\n\n\nHb the Troglodyte\u001b[14CSt:17 Dx:11 Co:17 In:13 Wi:10 Ch:7 Lawful\nDlvl:1 $:0 HP:15(18) Pw:1(1) AC:8 Xp:1",
+       "cursor": [
+        62,
+        0,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "level-script mimics keep no disguise when the hero has protection from shape changers",
+   "segments": [
+    {
+     "seed": 1579006,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Polly,role:Monk,race:human,gender:female,align:lawful,playmode:debug,suppress_alert:3.4.3,symset:DECgraphics\nOPTIONS=!autopickup\n",
+     "moves": "  n#levelchange\n24\n          \n\u001b\u0017blessed +1 shimmering dragon scale mail\n 5 cursed potion of see invisible\nW\u0017blessed +1 silver dragon scale mail\nWl\u0017blessed ring of confl\u00fcict\nPmlFb Fhyyy\u0007forest centaur\nZalFl Fll Fl  Fl\u00166\n  , Z\u001bh    n k 10s nqd20s10s20s10s20s20s\u001b20spy\nk10sjEm Vlad was here\n#pray\ny n  10s20sj20s20s10s10sl20s  10s20sy\n, 20sp20s  10s20s\u001b\u0016?\n>><<l   20syy pyyykppyyp10.pyykpf \u001bpynf \u001b\u001bkyf \u001bpyf \u001bypdnyk15spt\u001bypf \u001byykykZajkt\u001b\u001bt\u001bpkkput\u001buuult\u001blplpplnppnpnp\u001bnbyyyy3sy\u0007peaceful werejackal\nZanFndek#engrave\n- Vlad was here\nyolyybdlyykqk abc\ny#vanquished\n \u001byyyyyykkkqkk3suuuaouhyFbFbFbyyy\u001byyy5s   Zaj yjZaj qkqkE-\nX\n  n FjFjFjkjFjFj FjFjFj#chat\n\nt\u001bjk\u001bk15sFnkFnFnu\u00e8sy+a\nyycjyGnnHnunjjjjFju\u0018\u001b@uRuulll\u001blb yyyegy   y  hhh\u00075 dwarf\nFl  Fl \u001bFbFl  jFjFjFjFj FllFlFb\u001bb\u0004bep    n\n   \u0004b ZabFbFbhh\u0007shark\nFhFhhFhFhFhFhFhFhE- Vlad was here\n qd\u0007tame newt\nFjnFj\u001bqkb  n   FbFhurchb     yhhhhhh\u0010byh\u0007elf zombie\nFnFnzhh\u001bhbyh10sFl #chat\nRex\nFl\u0004u FhFyh Fk  Fh\u001b\n  n hhFkh      20s Fy  10s Fu10s Fu20s \u001b5s h#chat\nb n 20s \u001bn Fub bbjjrj rFyjnnnnllll\u001bj>n k #up\nnl k  FjFjFjFjFjFjFjFjZFjFj FjFj Fy\u0004j \u0004j Fj\u001b#chat\nFjFjtFjFjFjWFjFjFj utFjFjFjFjFjFjFjFj Fj#chat\nFjFj\u001btFjFjjjFjFjFjFjFj\u0004j jFjFjFjjFjFjFj bFjFj FyFjFj\u001bZFj\nFuFj    \u001bFjFjFk\n   \u0012Fl \u0004jFl  trh\nFh   Fh Fh  FyFl     n    h   Fu \u0004k j  \nnFy  nFh \u0007ettin zombie\n\u001bFhFh     Fj   \u001b  n   >rq x iron golem\npaper golem\nflaming sphere\n\u001b  n \u001bFj qh   #chat\nMjollnir\nj       20s   j \nn\u001bbone\n\u001bb  10s\n  nb    j 20s   qb  n  b   n b  jj   j \u001b20s  n\n\u001bnn   n \u000f\u001bn n  n  k   nk 10s \nn #seeamulet\n:    n \u001bn   k\u001bqE- Elbereth\n  n  k 20s qqk  n  \u001b20s E-\nX\n  n  ao10s k  n   n   f r\u001by \u001b20s   n y hu  n u u qq#chronicle\n  qqE- Hello\n  n  nn   n 20s  nnFy h  n dwFy 10s \u001bn#chat\nabc\n#inventtype\nP\nsh 20s 10s  n Fu 10s \u001bI\u001b20s   nFy hh20s  n Fu  10s E- zzz\n  n Fk #chat\na\n10s\u001bqh  n h15s\u0007dwarf mummy\n10sFu   nFk h15s hbh  n sJyyNb\u001b20s\u001bh  n jh       yyj\u001b njj\n njjj       n >#quaff\n15s  20s \n\u001b n   20s \u001b n j\u001b20s\n   n\n\n  \u001bFj            \u001b n\u001bu                Fk   Fk \n        n                 \u001bb   yFj   \u001b n         b    \u001bzork\n  n       j   \n       \n  j   n     j    \n             n         Fh      FjFj          n\u001b Fj \n             n               \u001bFj    n\n     \u001bj \u001bn   \n       \n          k  \nn   \n      \u001bn                 Fy   n    \n       n           \n n    \u0004b tGb\n  ",
+     "frames": {
+      "365": {
+       "screen": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[74C\u001b[34m\u000e```\u000f\u001b[39m\n\u001b[74C\u001b[34m\u000e`\u001b[97m\u000f@\u001b[34m\u000e`\u001b[90m~\u000f\u001b[39m\n\u001b[74C\u000e~\u001b[34m`\u001b[33m\u000fZ\u001b[34m\u000e`\u000f\u001b[39m\n\u001b[75C\u001b[34m\u000e```\u000f\u001b[39m\nWizard the Student of Winds    St:17 Dx:13 Co:10 In:12 Wi:15 Ch:8 Lawful\nDlvl:29 $:0 HP:66(98) Pw:163(163) AC:4 Xp:24",
+       "cursor": [
+        75,
+        19,
+        1
+       ]
+      },
+      "380": {
+       "screen": "You stop waiting.  The kobold zombie hits!\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\u001b[74C\u001b[34m\u000e```\u000f\u001b[39m\n\u001b[74C\u001b[34m\u000e`\u001b[97m\u000f@\u001b[34m\u000e`\u001b[90m~\u000f\u001b[39m\n\u001b[74C\u000e~\u001b[34m`\u001b[33m\u000fZ\u001b[34m\u000e`\u000f\u001b[39m\n\u001b[75C\u001b[34m\u000e```\u000f\u001b[39m\nWizard the Student of Winds    St:17 Dx:13 Co:10 In:12 Wi:15 Ch:8 Lawful\nDlvl:29 $:0 HP:65(98) Pw:163(163) AC:4 Xp:24",
+       "cursor": [
+        75,
+        19,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "an overflowing skill-menu count resets so ESC closes the menu",
+   "segments": [
+    {
+     "seed": 4211775,
+     "datetime": "20260305000100",
+     "nethackrc": "OPTIONS=symset:DECgraphics\nOPTIONS=!autopickup\nOPTIONS=hilite_pet\n",
+     "moves": "Magellan\nnrhmy   nuulli@\u001bllll^kjlll \u001bl nl ql qh10sl15shyhh20sl10sl10shhh15sllln20sl15shyhh10sr\u001b\u001bl10s#seeweapon\nl15shhh20sl\u00e5lln10sl15s10shy15sh20sh10sh15slln10syH15shhbb20s\u001b10s\u001buuL15szidg\nllln10s20slll nl nl yFl\u001bFlFlFlltblslFltbuFussFlE- Elbereth\nlFlFllFl20s40suuuu\u001bl l:wannnnUsslFb30sljlllbhhhbn^>l\u001bjjbhhh",
+     "frames": {
+      "172": {
+       "screen": "\n\n\n\n\n\n\n\n\u001b[5C\u000elqqqqk\u000f\n\u001b[5C\u000ex\u001b[93m\u000f$\u001b[39m\u000e~~~~\u000f#\u001b[97m@\u001b[7mf\u001b[27m\u001b[39m#\n\u001b[5C\u000ex~~\u001b[90m~~\u001b[39mx\u000f   ###\u001b[33m+\u001b[39m\n\u001b[5C\u000ex\u001b[93m\u000f<\u001b[90m\u000e~~\u001b[33m\u000f(\u001b[39m\u000ex\u000f\n\u001b[5C\u000emqqqqj\u000f\n\n\n\n\n\n\n\n\n\nMagellan the Footpad\u001b[11CSt:14 Dx:18 Co:10 In:10 Wi:13 Ch:10 Chaotic\nDlvl:1 $:0 HP:12(12) Pw:2(2) AC:7 Xp:1",
+       "cursor": [
+        12,
+        9,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  },
+  {
+   "name": "a name with high bytes in the greeting shows blanks after the legacy pager cleared the top line",
+   "segments": [
+    {
+     "seed": 95603,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Zo\u00eb,role:Valkyrie\nOPTIONS=!tutorial,suppress_alert:3.4.3\nOPTIONS=symset:DECgraphics\nOPTIONS=terrainstatus\nOPTIONS=reroll\nOPTIONS=!dropped_nopick\nOPTIONS=!sparkle\nOPTIONS=!use_darkgray\nOPTIONS=menu_headings:underline\n",
+     "moves": "  #glance\n.Ix\u001bp?lllo#version\nujk#pray\nyvfmO\u001b#optionsfull\n\u001bv?a\u001bhhhhhbbb#ride\npjjnkkkjjjq_kmy*lllbzEuup#untrap\n#chronicle\nLyyj#whatis\njH#overview\nw*w",
+     "frames": {
+      "29": {
+       "screen": "Velkommen Zo  , welcome to NetHack!  You are a lawful dwarven Valkyrie.\n\n\n\n\n\n\n\u001b[35C\u000elqqqqqqqqqqqk\u000f\n\u001b[35C\u000e~~~~\u001b[97m\u000fd\u001b[39m\u000e~~~~~~~~\u000f\n\u001b[35C\u000ex~~\u001b[97m\u000f@\u001b[39m\u000e~~~~~~~~x\u000f\n\u001b[35C\u000ex~~~~~~~~\u001b[93m\u000f$\u001b[39m\u000e~~x\u000f\n\u001b[35C\u000emqqqqqqqqqqqj\u000f\n\n\n\n\n\n\n\n\n\n\nZo   the Stripling\u001b[13CSt:16 Dx:16 Co:19 In:9 Wi:8 Ch:7 Lawful\nDlvl:1 $:0 HP:18(18) Pw:1(1) AC:6 Xp:1 Stairs",
+       "cursor": [
+        38,
+        9,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

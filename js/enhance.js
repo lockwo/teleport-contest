@@ -669,7 +669,7 @@ export async function doenhance() {
         }
         return ECMD_OK;
     }
-    game._skill_counting = false;
+    game._skill_counting = '';
     const state = build_skill_state();
     const { lines, title } = build_skill_menu_lines(state);
 
@@ -716,15 +716,19 @@ export async function skill_window_advance(key) {
     // C ref: wintty.c:1564-1615 — menu counts never echo on the topline;
     // ESC cancels a nonzero count before it can cancel the menu.
     if (key >= '0' && key <= '9') {
-        if (key !== '0') game._skill_counting = true;
+        // C ref: wintty.c:1584 AppendLongDigit() — the count is a long (kept
+        // here as its decimal digits); one that overflows is dropped with
+        // reset_count still TRUE, so a later ESC closes the menu.
+        const n = BigInt(game._skill_counting || 0) * 10n + BigInt(key.charCodeAt(0) - 48);
+        game._skill_counting = (n > 0x7fffffffffffffffn || !n) ? '' : String(n);
         return true;
     }
     if (key === '\x1b' && game._skill_counting) {
-        game._skill_counting = false;
+        game._skill_counting = '';
         return true;
     }
     key = map_menu_cmd(key);
-    if (' \r\n\x1b'.includes(key) || default_menu_cmds.includes(key)) game._skill_counting = false;
+    if (' \r\n\x1b'.includes(key) || default_menu_cmds.includes(key)) game._skill_counting = '';
     const pages = game._skill_pages || [];
     const cur = game._skill_page || 0;
     const onLast = cur >= pages.length - 1;

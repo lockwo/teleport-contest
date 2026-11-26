@@ -4,6 +4,7 @@
 
 import { M_AP_OBJECT, COLNO, OROOM, ROWNO } from '../const.js';
 import { game } from '../gstate.js';
+import { Protection_from_shape_changers } from '../mon.js';
 import { GEM_CLASS, TOOL_CLASS, uncurse } from '../mkobj.js';
 import { rn2 } from '../rng.js';
 import {
@@ -56,7 +57,8 @@ const MINEND1_PLACE = [[8, 16], [13, 7], [21, 8], [41, 14],
 // explicit `appear_as="obj:NAME"` overrides whatever set_mimic_sym() picked
 // inside makemon().  No RNG; the retry loop is BOULDER-only.
 function mimic_appear_as(mtmp, otyp) {
-    if (!mtmp) return;
+    // sp_lev.c:2006 applies appear_as only without Protection_from_shape_changers
+    if (!mtmp || Protection_from_shape_changers()) return;
     mtmp.m_ap_type = M_AP_OBJECT;
     mtmp.mappearance = otyp;
 }

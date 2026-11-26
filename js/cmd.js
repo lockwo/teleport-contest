@@ -2637,12 +2637,15 @@ async function cmd_safety_prevention(ucverb, cmddesc, act, counterKey) {
     const menuRequested = !!game.iflags?.menu_requested;
     if (menuRequested) game.iflags.menu_requested = false;
     if (game.flags?.safe_wait !== false && !menuRequested && !game.multi) {
-        // C's per-command flagcounter gives the cmdassist hint on the first
-        // blocked command even when cmdassist is off, then leaves subsequent
-        // warnings short until a command is allowed and resets the counter.
-        const warned = game[counterKey] | 0;
-        game[counterKey] = warned + 1;
-        const buf = (game.iflags?.cmdassist || !warned)
+        // C ref: do.c:2332 `iflags.cmdassist || !(*flagcounter)++` — the
+        // counter only advances when cmdassist is off (short-circuit), so a
+        // later !cmdassist still gives the hint on its first refusal.
+        let hint = !!game.iflags?.cmdassist;
+        if (!hint) {
+            hint = !(game[counterKey] | 0);
+            game[counterKey] = (game[counterKey] | 0) + 1;
+        }
+        const buf = hint
             ? `  Use '${cmd_visctrl(cmd_from_func('do_reqmenu'))}' prefix to force ${cmddesc}.`
             : '';
         if (monster_nearby()) {
@@ -7490,7 +7493,7 @@ export async function doextlist() {
             push('Search extended commands', 0, ':');
         } else {
             buf = 'Switch back from search';
-            if (buf.length + searchbuf.length + ' (\"\")'.length < 80)
+            if (buf.length + searchbuf.length + ' (\"\")'.length < 128) /* QBUFSZ */
                 buf += ` ("${searchbuf}")`;
             push(buf, 0, 's');
         }
