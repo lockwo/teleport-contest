@@ -1,0 +1,57 @@
+{
+ "cases": [
+  {
+   "name": "targeting tip applies menu color rules without styling its end marker",
+   "segments": [
+    {
+     "seed": 2142,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Boundary,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,pettype:none,!autopickup\nMENUCOLOR=\".*\"=red&bold\n",
+     "moves": "; \u001b",
+     "frames": {
+      "2": {
+       "screen": "\u001b[10C\u001b[1m\u001b[31mTip: Farlooking or selecting a map location\u001b[0m\n\n\u001b[10C\u001b[1m\u001b[31mYou are now in a \"farlook\" mode - the movement keys move the cursor,\u001b[0m\n\u001b[10C\u001b[1m\u001b[31mnot your character.  Game time does not advance.  This mode is used\u001b[0m\n\u001b[10C\u001b[1m\u001b[31mto look around the map, or to select a location on it.\u001b[0m\n\n\u001b[10C\u001b[1m\u001b[31mWhen in this mode, you can press ESC to return to normal game mode,\u001b[0m\n\u001b[10C\u001b[1m\u001b[31mand pressing ? will show the key help.\u001b[0m\n\u001b[10C(end)\n\n\n\n\n\n\n\n\n\n\n\n\n\nBoundary the Stripling\u001b[9CSt:16 Dx:15 Co:16 In:9 Wi:9 Ch:10 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "3": {
+       "screen": "Move cursor to a monster, object or location:\n\n\u001b[65C---------\n\u001b[65C|.......|\n\u001b[65C....\u001b[97m@\u001b[39m...|\n\u001b[65C-----.---\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nBoundary the Stripling\u001b[9CSt:16 Dx:15 Co:16 In:9 Wi:9 Ch:10 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        69,
+        4,
+        1
+       ]
+      }
+     }
+    },
+    {
+     "seed": 2142,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=name:Boundary,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=!legacy,!tutorial,!splash_screen,pettype:none,!autopickup\nMENUCOLOR=\"^Tip:\"=green&underline\n",
+     "moves": "; \u001b",
+     "frames": {
+      "2": {
+       "screen": "\u001b[10C\u001b[4m\u001b[32mTip: Farlooking or selecting a map location\u001b[0m\n\n\u001b[10CYou are now in a \"farlook\" mode - the movement keys move the cursor,\n\u001b[10Cnot your character.  Game time does not advance.  This mode is used\n\u001b[10Cto look around the map, or to select a location on it.\n\n\u001b[10CWhen in this mode, you can press ESC to return to normal game mode,\n\u001b[10Cand pressing ? will show the key help.\n\u001b[10C(end)\n\n\n\n\n\n\n\n\n\n\n\n\n\nBoundary the Stripling\u001b[9CSt:16 Dx:15 Co:16 In:9 Wi:9 Ch:10 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        16,
+        8,
+        1
+       ]
+      },
+      "3": {
+       "screen": "Move cursor to a monster, object or location:\n\n\u001b[65C---------\n\u001b[65C|.......|\n\u001b[65C....\u001b[97m@\u001b[39m...|\n\u001b[65C-----.---\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nBoundary the Stripling\u001b[9CSt:16 Dx:15 Co:16 In:9 Wi:9 Ch:10 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        69,
+        4,
+        1
+       ]
+      }
+     }
+    }
+   ]
+  }
+ ]
+}

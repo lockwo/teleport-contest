@@ -37,7 +37,7 @@ import { fruit_from_name, the, The } from './objnam.js';
 import { def_monsyms, defsyms, S_WORM_TAIL, S_GHOST, S_air, S_cloud, S_water } from './symbols.js';
 import { obj_doname, whatis_pick_inventory, carried_weight, inv_weight,
          inventoryArray, is_pick, ansimpleoname, worn_extrinsic,
-         floor_object_name, doname_vague_quan, distant_name_pub } from './invent.js';
+         floor_object_name, doname_vague_quan, distant_name_pub, paintMenuLine } from './invent.js';
 import { rnd } from './rng.js';
 import { vision_recalc, Blind, couldsee, cansee, Infravision } from './vision.js';
 import { Invis, m_everyturn_effect, can_ooze_hero, passes_bars, bad_rock as bad_rock_mon } from './monmove.js';
@@ -1288,7 +1288,7 @@ export { RUN_DX, RUN_DY };
 // getpos() — the cursor-positioning loop shared by ';' farlook, travel ('_')
 // and any command that selects a map location (e.g. #jump).
 // C ref: getpos.c getpos(); the first-use farlook tip is hack.c handle_tip()
-// -> dat/nhcore.lua show_getpos_tip() -> a tty NHW_TEXT window.
+// -> dat/nhcore.lua show_getpos_tip() -> an NHW_MENU window.
 // ─────────────────────────────────────────────────────────────────────────
 
 // dat/nhcore.lua show_getpos_tip() text, verbatim (the leading/trailing blank
@@ -1340,7 +1340,7 @@ function render_getpos_tip() {
 
     for (let i = 0; i < lines.length; i++) {
         blankCols(i);
-        if (lines[i]) disp.putstr(textCol, i, lines[i], NO_COLOR, 0);
+        if (lines[i]) paintMenuLine(disp, textCol, i, { text: lines[i] }, true);
     }
     const endRow = lines.length;
     blankCols(endRow);
