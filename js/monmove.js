@@ -2450,12 +2450,9 @@ export async function mon_kill_leaving(mon, nocorpse) {
     /* worm.js's local remove_monster() zeroes mx,my (C leaves them alone) */
     const mx0 = mon.mx, my0 = mon.my;
     const { mondead } = await import('./mon.js');
-    game.disintegested = !!nocorpse;
-    try {
-        await mondead(mon);
-    } finally {
-        game.disintegested = false;
-    }
+    // C ref: mon.c:1037-1047, explode.c:1053: plain mondead() suppresses
+    // corpses without setting gd.disintegested (unlike monkilled/xkilled).
+    await mondead(mon);
     if (!DEADMONSTER(mon)) return;                 /* lifesaved or revived */
     if (nocorpse) return;
     const mx = mon.isgd ? mon.mx : mx0, my = mon.isgd ? mon.my : my0;

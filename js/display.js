@@ -2726,7 +2726,9 @@ export function newsym(x, y) {
                                      before: snapBefore, after: snapDisp(loc) });
     if (_suppress_map_output() || !(pending || sigOf(loc) !== before)) return;
     const text = hooks.mentionMap(x, y, oldUnexplored, oldMonster);
-    if (text) (game._noticeQueue ||= []).push({ text, x, y, a11y: true });
+    if (text) (game._noticeQueue ||= []).push({
+        text, x, y, a11y: true, origin: { ux: game.u.ux, uy: game.u.uy },
+    });
 }
 
 function newsym_core(x, y) {
@@ -4469,9 +4471,9 @@ function _syncClipping() {
 // arrival message (the Plane of Fire's fumaroles "You hear a whoosh!") still
 // shows the level being LEFT, status line included.  Our renderer rebuilds
 // every frame from live state, so goto_level() freezes the departing screen
-// capture_screen_for_level_change() records the departing screen (after the
-// vision_recalc(2) flush), freeze_screen_for_level_change() holds it from the
-// point C postpones flushes, and docrt()'s thaw lifts it.
+// capture_screen_for_level_change() records the last published map cells,
+// freeze_screen_for_level_change() holds them while C postpones flushes, and
+// docrt()'s thaw lifts the hold.
 // Signature of what a map cell displays, for renderStatusLines' record of which
 // cells the status text owns.  A frozen departing-level cell carries the
 // signature its live cell had when it was captured.
@@ -4514,7 +4516,16 @@ export function capture_screen_for_level_change() {
     const cells = new Array(COLNO * ROWNO);
     for (let y = 0; y < ROWNO; y++)
         for (let x = 1; x < COLNO; x++) {
-            const c = _frame_cell(game.level?.at(x, y));
+            const loc = game.level?.at(x, y);
+            // C ref: dog.c:755 -> worm.c:321,146-160. Removing a follower's
+            // worm segments changes gbuf, not the physical screen. The stairs
+            // message precedes docrt()'s clear and still shows the last flush.
+            const t = loc?._term;
+            const c = _frame_cell(loc?._termDirty ? t && {
+                disp_ch: t.ch, disp_color: t.color, disp_decgfx: t.decgfx,
+                disp_attr: t.attr, disp_dark: t.dark, disp_monster: t.monster,
+                remembered_glyph: loc.remembered_glyph,
+            } : loc);
             if (c) cells[y * COLNO + x] = c;
         }
     game._staleCapture = { cells, status: botl_lines() };
@@ -5460,7 +5471,7 @@ async function a11y_location_prefix(msg) {
         const gpc = game.iflags?.getpos_coords;
         const cmode = (gpc === undefined || gpc === GPCOORDS_NONE)
             ? GPCOORDS_COMFULL : gpc;
-        return `${coord_desc(savedMsgLoc.x, savedMsgLoc.y, '', cmode)}: ${msg}`;
+        return `${coord_desc(savedMsgLoc.x, savedMsgLoc.y, '', cmode, savedMsgLoc.origin)}: ${msg}`;
     }
     return msg;
 }
@@ -5492,12 +5503,13 @@ async function pline_core(msg, opts, ctx) {
     _buildScreenOutput();
     const cur = game._pending_message || '';
     const softPending = !!cur && game._toplinSoft === cur;
+    const needsMore = game._toplin === TOPLIN_NEED_MORE || softPending;
     // C ref: win/tty/topl.c update_topl():273-299 — a second message in the
     // same still-unacknowledged turn merges onto the pending line with two
     // spaces IF it fits in CO-8 columns (e.g. flip_through_book's two plines);
     // otherwise the pending line must page via --More-- first, exactly like
-    // update_topl()'s own softPending branch below.  Kept on _toplinSoft (text
-    // keyed), not _toplin, for the reason explained further down.
+    // update_topl()'s branch below. redotoplin() can leave NEED_MORE even for
+    // an empty recalled message (topl.c:138), without any _toplinSoft text.
     // C ref: pline.c vpline():280 `strncpy(gp.prevmsg, line, BUFSZ)` — runs
     // UNCONDITIONALLY in vpline()'s tail, regardless of pflags (so even a
     // SUPPRESS_HISTORY message like "Unknown command" still updates it).
@@ -5507,7 +5519,7 @@ async function pline_core(msg, opts, ctx) {
     // suppressHistory guards above/below would otherwise have broken).
     game._prevmsg = msg;
     game.last_msg = 0; // C vpline(): PLNMSG_UNKNOWN after a new message.
-    if (softPending && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
+    if (needsMore && !msg.startsWith('You die') && msg.length + cur.length + 3 < CO - 8) {
         note_topl_cells(cur + '  ' + msg, cur.length + 2);
         game._pending_message = cur + '  ' + msg;
         game._toplinSoft = game._pending_message;
@@ -5515,7 +5527,7 @@ async function pline_core(msg, opts, ctx) {
         if (!suppressHistory) game._toplines = wrap_topl(game._pending_message).join('\n');
         return;
     }
-    if (softPending) await topl_more();
+    if (needsMore) await topl_more();
     game._toplinStale = null; // a new line replaces any stale one (toplin EMPTY -> NEED_MORE)
     note_topl_cells(msg, 0);
     game._pending_message = msg;
@@ -5562,7 +5574,9 @@ export async function impossible(msg) {
     // 'sanity_check' option's per-turn audit): only the offending line itself
     // is shown.
     if (game.program_state?.in_sanity_check) return;
-    await update_topl('Program in disorder!  (Saving and reloading may fix this problem.)');
+    // C ref: pline.c:613 and end.c:1146: the save hint is absent after death.
+    await update_topl('Program in disorder!' + (game.program_state?.gameover
+        ? '' : '  (Saving and reloading may fix this problem.)'));
     await update_topl('Please report these messages to devteam@nethack.org.');
 }
 

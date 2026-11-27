@@ -1286,9 +1286,13 @@ export async function print_dungeon(bymenu, _rlev, _rdgn) {
         // of the CURRENT page, so a letter on another page is ignored (bell).
         const pstart = (pageNo - 1) * perPage;
         const sel = lines.slice(pstart, pstart + perPage).find(
-            (e) => !e.heading && !e.title && !e.blank && e.reachable && e.menuletter === ch);
+            (e) => !e.heading && !e.title && !e.blank && e.menuletter === ch);
         if (sel) {
-            result = { playerlev: sel.playerlev, destlev: sel.lev, destdnum: sel.dgn };
+            // C ref: dungeon.c:2227 and wintty.c:2614,1753-1759 retain
+            // even an unreachable entry's hidden selector and finish PICK_ONE.
+            // Its zero identifier supplies no teleport destination.
+            if (sel.reachable)
+                result = { playerlev: sel.playerlev, destlev: sel.lev, destdnum: sel.dgn };
             break pick;
         }
 

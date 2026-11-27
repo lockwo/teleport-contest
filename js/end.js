@@ -622,10 +622,12 @@ async function done(how) {
             await d.update_topl('Unfortunately you are still genocided...');
         } else {
             // C ref: end.c:1098-1101 — formatkiller(killbuf, BUFSZ, how, FALSE)
-            // (',' '=' and tab are rewritten as in topten.c formatkiller()).
+            // A nested death in savelife() can clear the killer. Format its
+            // current value, including an()'s diagnostic, before returning.
+            const { formatkiller } = await import('./topten.js');
             const { livelog_printf, LL_LIFESAVE } = await import('./livelog.js');
-            const killbuf = (game._killer_name || DEATHS[how] || 'died')
-                .replace(/,/g, ';').replace(/=/g, '_').replace(/\t/g, ' ');
+            const killbuf = formatkiller(256, how, false);
+            await d.flush_impossibles();
             livelog_printf(LL_LIFESAVE, `averted death (${killbuf})`);
             survive = true;
         }
@@ -1110,8 +1112,8 @@ async function disclose(how, taken = false) {
     const inv = Array.isArray(game.invent) ? game.invent
         : (Array.isArray(game.gi?.invent) ? game.gi.invent : []);
     const final = (how >= PANICKED) ? 1 : 2; // ENL_GAMEOVERALIVE : ENL_GAMEOVERDEAD
-    // C ref: decl.c ynqchars = "ynq"; tty_yn_function also always accepts ESC.
-    const ynqchars = 'ynq\x1b';
+    // C ref: decl.c ynqchars = "ynq"; queued ESC is validated by cmd.c:5559.
+    const ynqchars = 'ynq';
     let stopprint = false;
 
     async function query(category, qbuf) {

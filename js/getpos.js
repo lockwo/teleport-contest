@@ -423,7 +423,8 @@ export function dxdy_to_dist_descr(dx, dy, fulldir) {
 //   GPCOORDS_COMPASS / COMFULL  "(east)", "(3s)", "(2n,4w)"
 //   GPCOORDS_MAP                "<x,y>"   (upper-left of map is <1,0>)
 //   GPCOORDS_SCREEN             "[row,col]" as y+2,x, zero-padded to width 2
-export function coord_desc(x, y, _outbuf, cmode) {
+// Deferred notices retain C's immediate formatting origin without moving the hero.
+export function coord_desc(x, y, _outbuf, cmode, origin = game.u) {
     let outbuf = '';
     let dx, dy;
 
@@ -433,8 +434,8 @@ export function coord_desc(x, y, _outbuf, cmode) {
     case GPCOORDS_COMFULL:
     case GPCOORDS_COMPASS:
         /* "east", "3s", "2n,4w" */
-        dx = x - (game.u?.ux | 0);
-        dy = y - (game.u?.uy | 0);
+        dx = x - (origin?.ux | 0);
+        dy = y - (origin?.uy | 0);
         outbuf = `(${dxdy_to_dist_descr(dx, dy, cmode === GPCOORDS_COMFULL)})`;
         break;
     case GPCOORDS_MAP: /* x,y */

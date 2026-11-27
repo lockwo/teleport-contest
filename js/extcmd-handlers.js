@@ -78,7 +78,7 @@ import { dopray as pray_dopray, dosacrifice } from './pray.js';
 import { dosit } from './sit.js';
 import { do_mgivenname, bogusmon, roguename, rndmonnam } from './do_name.js';
 import { rn2_on_display_rng } from './disprng.js';
-import { glyph_at, Hallucination_u, canspotself, obj_to_glyph, textwin_line, utf8_symhandling } from './display.js';
+import { glyph_at, Hallucination_u, obj_to_glyph, textwin_line, utf8_symhandling } from './display.js';
 import { lock_action } from './lock.js';
 import { object_from_map, pg_glyph_at } from './pager.js';
 import { dodip, dodrink } from './potion.js';
@@ -4459,10 +4459,10 @@ async function doherecmdmenu() {
     const ttmp = herecmd_t_at(x, y);
     if (ttmp && ttmp.tseen && ttmp.ttyp !== VIBRATING_SQUARE)
         push(nextCh(), 'Attempt to disarm trap', 'untrap');
-    // C ref: cmd.c:4646 there_cmd_menu_common() — for self, "Look at map symbol"
-    // only when the square does not show the ordinary hero glyph.
-    // (the hero glyph is not drawn when !canspotself(): invisible w/o see invisible)
-    if (u?.Upolyd || u?.usteed || !canspotself()) push(nextCh(), 'Look at map symbol', 'lookatmap');
+    // C ref: cmd.c:4650 compares glyph_at(x,y) with hero_glyph, not whether
+    // the hero can be seen. A displayed cloud can cover a visible hero.
+    if (u?.Upolyd || u?.usteed || !pg_glyph_at(x, y).isyou)
+        push(nextCh(), 'Look at map symbol', 'lookatmap');
 
     // C ref: cmd.c:4880 — K==0 falls through to a move/travel, never a menu.
     if (!items.length) return 0;

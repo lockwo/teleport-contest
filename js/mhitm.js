@@ -359,8 +359,8 @@ export async function thrwmmDeps() {
     const { polymon } = await import('./polyself.js');
     const { KILLED_BY } = await import('./const.js');
 
-    const { flash_obj_glyph, show_glyph_cell, flush_screen } = await import('./display.js');
-    const flash = { glyph: null, x: -1, y: -1 };
+    const { tmp_at_flash, flush_screen } = await import('./display.js');
+    let flash;
 
     return {
         // weapon selection / wielding — mon_wield_item() handles the
@@ -474,33 +474,14 @@ export async function thrwmmDeps() {
         delobj,
         flooreffects,
         passive_obj,
-        // C ref: display.c tmp_at() DISP_FLASH (display.c:1278-1292): each step
-        // restores (newsym) the previously flashed cell, then draws the
-        // missile glyph on the new square only when cansee() it; DISP_END
-        // restores the last one.  So thitu()'s "You are hit by ..." --More--
-        // shows the missile on the square just before the hero.  (A tethered
-        // aklys uses DISP_TETHER's trail, not drawn here.)
+        // C ref: mthrowu.c:649-653, display.c:1264-1292. A wielded aklys
+        // uses DISP_TETHER, including the missile and its trailing tether.
         tmp_at_flash: async (obj, tethered) => {
-            flash.glyph = tethered ? null : flash_obj_glyph(obj);
-            flash.x = flash.y = -1;
+            flash = tmp_at_flash(obj, tethered);
             await flush_screen(0); /* C ref: display.c:1194 tmp_at() start flush */
         },
-        tmp_at_step: async (x, y) => {
-            if (!flash.glyph) return;
-            if (flash.x >= 0) { newsym(flash.x, flash.y); flash.x = flash.y = -1; }
-            if (!cansee(x, y)) return;
-            show_glyph_cell(x, y, flash.glyph.ch, flash.glyph.color, flash.glyph.dec);
-            flash.x = x; flash.y = y;
-            // C ref: display.c:1292 tmp_at() `flush_screen(0)`: with an unseen
-            // topline message pending (thitu's "You are hit by ..."), the
-            // flush's display_nhwindow(WIN_MAP) forces the --More-- here, with
-            // the flash still drawn on the hero's square.
-            await flush_screen(0);
-        },
-        tmp_at_end: () => {
-            if (flash.x >= 0) newsym(flash.x, flash.y);
-            flash.glyph = null; flash.x = flash.y = -1;
-        },
+        tmp_at_step: (x, y) => flash?.step(x, y),
+        tmp_at_end: () => flash?.end(),
     };
 }
 

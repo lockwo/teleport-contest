@@ -5806,8 +5806,11 @@ function castle_place_stair_lregion(r, flp = 0, bounds) {
         placed = { ...r, lx, ly, hx, hy, nlx, nly, nhx, nhy };
     }
     const up = (placed.rtype === LR_UPSTAIR);
-    const lx = Math.max(placed.lx, 1), hx = Math.min(placed.hx, COLNO - 1);
-    const ly = Math.max(placed.ly, 0), hy = Math.min(placed.hy, ROWNO - 1);
+    // C ref: mkmaze.c:366-379, a flipped lx of zero means the whole level.
+    let { lx, ly, hx, hy } = placed;
+    if (!lx) { lx = 1; hx = COLNO - 1; ly = 0; hy = ROWNO - 1; }
+    lx = Math.max(lx, 1); hx = Math.min(hx, COLNO - 1);
+    ly = Math.max(ly, 0); hy = Math.min(hy, ROWNO - 1);
     for (let trycnt = 0; trycnt < 200; trycnt++) {
         const x = rn1((hx - lx) + 1, lx);
         const y = rn1((hy - ly) + 1, ly);

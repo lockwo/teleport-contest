@@ -5353,8 +5353,8 @@ export function notice_mons_cmp(m1, m2) {
 // is about.  js/display.js's live pline() reads game.a11y.msg_loc (and always
 // resets it) to prefix a message with a direction string when a11y.accessiblemsg
 // is set; #lookaround (js/cmd.js) is the other writer.
-export function set_msg_xy(x, y) {
-    (game.a11y || (game.a11y = {})).msg_loc = { x, y };
+export function set_msg_xy(x, y, origin) {
+    (game.a11y || (game.a11y = {})).msg_loc = { x, y, origin };
 }
 
 // C ref: hack.c:1708 notice_mon(mtmp) — announce a newly spotted monster once,
@@ -5453,7 +5453,9 @@ export function notice_all_mons_queue(reset) {
     for (const mtmp of arr) {
         const text = notice_mon_text(mtmp);
         if (text !== null)
-            (game._noticeQueue || (game._noticeQueue = [])).push({ text, x: mtmp.mx, y: mtmp.my });
+            (game._noticeQueue || (game._noticeQueue = [])).push({
+                text, x: mtmp.mx, y: mtmp.my, origin: { ux: game.u.ux, uy: game.u.uy },
+            });
     }
 }
 
@@ -5467,9 +5469,11 @@ export async function flush_notice_queue(render = false) {
         const lag = game._lagLog || [];
         game._lagLog = [];
         let qi = -1;
-        for (const { text, x, y, a11y: force } of q) {
+        for (const { text, x, y, a11y: force, origin } of q) {
             qi++;
-            set_msg_xy(x, y);
+            // C ref: display.c:2066-2069 -> pline.c:180: coord_desc() runs
+            // inside show_glyph(), before any subsequent hero movement.
+            set_msg_xy(x, y, origin);
             /* cells newsym()ed after this announcement was queued are not on
                screen yet when C's pline() pages it */
             const undo = lag.filter((e) => e.qlen > qi);

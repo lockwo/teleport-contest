@@ -10,7 +10,7 @@ import { worm_cross } from './worm.js';
 import { game, hooks, svc_context_run, register_process_static } from './gstate.js';
 import { nhgetch, xwaitforspace_note } from './input.js';
 import { maybe_adjust_hero_bubble, water_friction } from './mkmaze.js';
-import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, docrt_flags, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, canspotself, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
+import { newsym, flush_screen, pline, m_at, update_topl, y_n, topl_more, wrap_topl, see_nearby_objects, map_invisible, unmap_object, map_object, canseemon_shared, wall_shows_as_stone, feel_location, stairway_at, stairs_go_down, known_branch_stairs, docrt, docrt_flags, trap_glyph, feel_newsym, covers_objects, show_glyph_cell, hero_glyph, display_nhwindow_message, remember_topl, yn_prompt_history, key2txt, is_cmap_engraving_at, remembered_glyph_sig, displayed_glyph_sig, You_feel, You_hear } from './display.js';
 import { vision_recalc, cansee, recalc_block_point, block_point, Blind, vision_reset } from './vision.js';
 import { hliquid, Some_Monnam, m_monnam, YMonnam, y_monnam } from './do_name.js';
 import { do_attack, is_safemon, x_monnam, canspotmon, mon_nam, Monnam,
@@ -1420,10 +1420,22 @@ export async function rhack(key) {
         const bound = npExt || bindExt;
         const bent = extcmdlist.find((e) => e.ef_txt === bound);
         if (bent && !(await can_do_extcmd(bent))) {
-            game.context.move = 0;
+            reset_cmd_vars(true);
+            game.context._getobj_cancelled = true;
+            cmdVarsReset = true;
         } else {
             const res = ecmd_note(await run_extcmd_by_name(bound));
             game.context.move = res === 1 ? 1 : 0;
+            // C ref: cmd.c:3810-3815. Direct bindings have the same no-time
+            // reset as #commands. In particular, a failed mount can survive
+            // fatal slip damage (steed.c:354-356) and leave savelife's multi=-1.
+            // ECMD_OK cancels that delay instead of advancing another turn.
+            if (res !== 1) {
+                const resetCmdq = !!(res & (ECMD_CANCEL | ECMD_FAIL)) || game.multi < 0;
+                reset_cmd_vars(resetCmdq);
+                if (resetCmdq) game.context._getobj_cancelled = true;
+                cmdVarsReset = true;
+            }
         }
     } else if (npBad) {
         // C ref: cmd.c rhack() bad_command — cmdbind_get() found no binding
@@ -7053,6 +7065,8 @@ export async function doprev_message() {
                 lines.push(line.slice(i, i + COLNO - 1));
         }
         game._pending_message = lines.join('\n');
+        // C ref: topl.c:138, even recalling an empty string needs acknowledgement.
+        game._toplin = 1;
         game._toplinSoft = game._pending_message || null;
         if (lines.length > 1) {
             game._toplResidue = null; /* more() clears the message window rows */
@@ -9344,7 +9358,7 @@ export function there_cmd_menu_common(win, x, y, mod, act) {
     if (mod === CLICK_1 || mod === CLICK_2) { /* ignore iflags.clicklook here */
         /* for self, only include "look at map symbol" if it isn't the
            ordinary hero symbol (steed, invisible w/o see invisible, ?) */
-        if (!cmd_u_at(x, y) || u.Upolyd || u.usteed || !canspotself())
+        if (!cmd_u_at(x, y) || u.Upolyd || u.usteed || !pg_glyph_at(x, y).isyou)
             mcmd_addmenu(win, MCMD_LOOK_AT, 'Look at map symbol'), ++K;
     }
     return K;

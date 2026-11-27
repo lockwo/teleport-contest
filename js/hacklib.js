@@ -75,8 +75,10 @@ export function just_an(str) {
 // C ref: objnam.c an()
 export function an(str) {
     if (!str) {
-        if (game.debugImpossible)
-            console.warn(`impossible: Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);
+        // C ref: objnam.c:2149-2151. Sync naming callers defer the
+        // impossible() paging to their next async publication boundary.
+        (game._pending_impossibles ||= []).push(
+            `Alphabet soup: 'an(${str == null ? '<null>' : '""'})'.`);
         return 'an []';
     }
     return just_an(String(str)) + str;
