@@ -241,6 +241,7 @@ export async function castmu(mtmp, mattk, thinks_it_foundyou, foundyou) {
         if (canseemon_shared(mtmp) && !Deaf()) {
             const { update_topl } = await import('./display.js');
             const { mon_nam } = await import('./uhitm.js');
+            set_msg_mon(mtmp); /* C mcastu.c:211 set_msg_xy */
             await update_topl(`The air crackles around ${mon_nam(mtmp)}.`);
         }
         return M_ATTK_MISS;

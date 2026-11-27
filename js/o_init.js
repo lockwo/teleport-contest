@@ -25,7 +25,7 @@ import { game, hooks } from './gstate.js';
 import { exercise } from './attrib.js';
 import { menuHeadAttr } from './menuattr.js';
 import { A_WIS } from './const.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, page_topline_before_window } from './display.js';
 import { create_nhwindow, putstr, start_menu, add_menu, add_menu_str, add_menu_heading, end_menu, select_menu } from './windows.js';
 
 // ── Color constants (C ref: include/color.h) ──
@@ -1636,6 +1636,8 @@ async function destroy_nhwindow(win) {
 // C ref: wintty.c process_text_window() paging — (rows-1) content lines per
 // page, "--More--" while more remains, "(end)" on the last page.
 async function display_nhwindow(win, _blocking) {
+    // C ref: wintty.c:1921-1922 pages notices from the class-selection menu.
+    await page_topline_before_window();
     const inv = await import('./invent.js');
     const { nhgetch, xwaitforspace_quit, xwaitforspace_note } = await import('./input.js');
     const rows = game.nhDisplay?.rows ?? 24;

@@ -1366,8 +1366,14 @@ function create_storeroom(croom) {
                     // makemon() gender roll is overwritten (all storeroom mimics are
                     // male; their corpses stack).
                     mtmp.female = 0;
-                    mtmp.m_ap_type = M_AP_OBJECT;
-                    mtmp.mappearance = CHEST;
+                    // C ref: sp_lev.c:2002-2006: appearance is applied only to
+                    // a mimic, and never through protection from shapechangers.
+                    // A genocided mimic class can have produced a random species.
+                    if (mtmp.data?.mcls === S_MIMIC_CLASS
+                        && !Protection_from_shape_changers()) {
+                        mtmp.m_ap_type = M_AP_OBJECT;
+                        mtmp.mappearance = CHEST;
+                    }
                 }
             }
         }
@@ -1920,7 +1926,7 @@ export function filler_region(x, y) {
 //   shuffle(chest_spots)            -- 4 elements: rn2(4), rn2(3), rn2(2)
 //   math.random(#escape_items)      -- rn2(4)
 //   obj.new(escape_items[i])        -- the item is created BEFORE the chest
-//   des.object({id="chest", coord=chest_spots[1]})   (+ olocked="no" if glass)
+//   des.object({id="chest", coord=chest_spots[1]})   (olocked is ignored)
 //   box:addcontent(itm)
 //   des.object({id="chest"}) for chest_spots[2..4]
 //   shuffle(nasty_undead)           -- 3 elements: rn2(3), rn2(2)
@@ -1945,26 +1951,19 @@ function themeroom_water_vault() {
     const made = readobjnam(escape_items[pickIdx], false);
     const itm = made && made.obj ? made.obj : (made && made.otyp != null ? made : null);
 
-    // "If the escape item is made of glass or crystal, make sure that the chest
-    // isn't locked" — objclass.h material GLASS is 19 (see js/zap.js's
-    // wrong-constant note; 6 is CLOTH).
-    const MAT_GLASS = 19;
-    const isGlass = !!itm && OBJDATA[itm.otyp]?.material === MAT_GLASS;
-
-    const boxes = [];
     for (let i = 0; i < chest_spots.length; i++) {
         const [mx, my] = chest_spots[i];
         const bx = mx + gx.xstart, by = my + gy.ystart;
+        // C ref: sp_lev.c:3642 reads "locked", not themerms.lua:799's
+        // "olocked", so even a glass escape item keeps the random lock state.
         const box = mksobj_at(CHEST, bx, by, true, true);  // init + mkbox_cnts
-        if (i === 0 && box && isGlass) box.olocked = false; // olocked = "no"
-        boxes.push(box);
-    }
-    // box:addcontent(itm) — no RNG; the item leaves the floor for the chest.
-    if (boxes[0] && itm) {
-        if (!Array.isArray(boxes[0].cobj)) boxes[0].cobj = [];
-        itm.where = OBJ_CONTAINED;
-        itm.ocontainer = boxes[0];
-        boxes[0].cobj.push(itm);
+        if (i === 0 && itm) {
+            // C ref: nhlobj.c:127-134, box:addcontent(itm). Use the normal
+            // insertion path (including merging), then refresh the box weight.
+            obj_extract_self(itm);
+            add_to_container(box, itm);
+            box.owt = weight(box);
+        }
     }
 
     const nasty_undead = ['giant zombie', 'ettin zombie', 'vampire lord'];
@@ -2675,13 +2674,13 @@ export async function quest_create_trap_random() {
 export function quest_create_monster_class(classNum, mx, my) {
     rn2(3);                                            // induced_align (dungeon.c:2012)
     const ptr = mkclass(classNum, ARC_G_NOGEN);
-    if (!ptr) return null;
+    // C ref: sp_lev.c:1955-1957: an unavailable class becomes a random monster.
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) { const cc = enexto_gpflags(x, y, ptr, 0); if (cc) { x = cc.x; y = cc.y; } }
     const mtmp = makemon(ptr, x, y, 0);
     // C ref: sp_lev.c:2125 — an id-less des.monster keeps tmpmons.female = 0.
     if (mtmp) mtmp.female = 0;
-    if (mtmp && ptr.mcls === 57 /* S_EEL */) {
+    if (mtmp && ptr?.mcls === 57 /* S_EEL */) {
         const t = game.level?.at(x, y)?.typ;
         if (t === POOL || t === MOAT || t === WATER) mtmp.mundetected = true;
     }
@@ -3861,16 +3860,16 @@ export async function vly_trap(ttyp, mx = null, my = null) {
 export function vly_monster_class(classNum) {
     rn2(3);                                           // induced_align
     const ptr = mkclass(classNum, 0x0200 /* G_NOGEN */);
-    if (!ptr) return null;
     return vly_place_monster(ptr);
 }
 
 // `female` is create_monster()'s final `mtmp->female = m->female` (sp_lev.c:2125):
 // 0 for an id-less/class des.monster, find_montype()'s pick for a named one.
 export function vly_place_monster(ptr, female = 0) {
-    const hum = pm_to_humidity(ptr);
-    let { x, y } = splev_get_location_rnd(hum, true);
-    if (x === -1 && y === -1) {
+    // C ref: sp_lev.c:1963-1974: a failed class lookup uses DRY directly.
+    const hum = ptr ? pm_to_humidity(ptr) : LOC_DRY;
+    let { x, y } = splev_get_location_rnd(hum, !!ptr);
+    if (ptr && x === -1 && y === -1) {
         const c = splev_get_location_rnd(hum | LOC_DRY);
         x = c.x; y = c.y;
     }

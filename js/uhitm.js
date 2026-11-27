@@ -1349,7 +1349,7 @@ async function hmon_hitmon(mon, obj, thrown, dieroll) {
         if (!mon.mconf && !(await resist(mon, SPBOOK_CLASS_UH, 0, 0))) {
             mon.mconf = 1;
             if (!mon.mstun && !helpless(mon) && canseemon(mon)) {
-                set_msg_mon(mon);
+                // C uhitm.c:1916 uses pline(), not pline_mon(): no location.
                 await update_topl(`${Monnam(mon)} appears confused.`);
             }
         }

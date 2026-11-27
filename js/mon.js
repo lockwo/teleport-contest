@@ -17,7 +17,7 @@ import { NORMAL_SPEED, A_NEUTRAL, ROOM, is_pit, MAX_CARR_CAP, WT_HUMAN,
     IS_DOOR, IS_POOL, IS_LAVA, WATER, Is_waterlevel,
     D_CLOSED, D_LOCKED, MM_APPARXY_BYYOU, Is_rogue_level,
     is_pool, is_lava } from './const.js';
-import { Conflict, resist_conflict, m_canseeu, m_in_air } from './monmove.js';
+import { Conflict, resist_conflict, m_canseeu, m_in_air, pline_mon } from './monmove.js';
 import { mattackm } from './mhitm.js';
 import { M_ATTK_HIT, M_ATTK_DEF_DIED, M_ATTK_AGR_DIED, MON_MIGRATING, Unaware as Unaware_hero } from './const.js';
 import { dochugw, initMonMoveState, m_next2u, hideunder, hides_under_pm, mon_regen,
@@ -1164,44 +1164,44 @@ export async function mon_break_armor(mon, polyspot) {
         if ((otmp = which_armor_mon(mon, W_ARM)) != null) {
             if (dragon_armor_matches_form(otmp, mdat)) {
                 /* no message: the dragon merges with its scaly armor */
-            } else if (vis) await update_topl(`${Monnam(mon)} breaks out of ${ppronoun} armor!`);
+            } else if (vis) await pline_mon(mon, `${Monnam(mon)} breaks out of ${ppronoun} armor!`);
             else await hear('a cracking sound.');
             await m_useup(mon, otmp);
         }
         if ((otmp = which_armor_mon(mon, W_ARMC)) != null
             && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(mdat))) {
             if (otmp.oartifact) {
-                if (vis) await update_topl(`${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls off!`);
+                if (vis) await pline_mon(mon, `${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls off!`);
                 await m_lose_armor(mon, otmp, polyspot);
             } else {
-                if (vis) await update_topl(`${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} tears apart!`);
+                if (vis) await pline_mon(mon, `${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} tears apart!`);
                 else await hear('a ripping sound.');
                 await m_useup(mon, otmp);
             }
         }
         if ((otmp = which_armor_mon(mon, W_ARMU)) != null) {
-            if (vis) await update_topl(`${s_suffix(Monnam(mon))} shirt rips to shreds!`);
+            if (vis) await pline_mon(mon, `${s_suffix(Monnam(mon))} shirt rips to shreds!`);
             else await hear('a ripping sound.');
             await m_useup(mon, otmp);
         }
     } else if (sliparm_mon(mdat)) {
         const passes_thru_clothes = !((mdat.msize ?? 0) <= MZ_SMALL_M);
         if ((otmp = which_armor_mon(mon, W_ARM)) != null) {
-            if (vis) await update_topl(`${s_suffix(Monnam(mon))} armor falls around ${pronoun}!`);
+            if (vis) await pline_mon(mon, `${s_suffix(Monnam(mon))} armor falls around ${pronoun}!`);
             else await hear('a thud.');
             await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMC)) != null
             && (otmp.otyp !== MUMMY_WRAPPING_OTYP || !WrappingAllowed(mdat))) {
             if (vis)
-                await update_topl(is_whirly_mon(mdat)
+                await pline_mon(mon, is_whirly_mon(mdat)
                     ? `${s_suffix(Monnam(mon))} ${cloak_simple_name_mon(otmp)} falls, unsupported!`
                     : `${Monnam(mon)} shrinks out of ${ppronoun} ${cloak_simple_name_mon(otmp)}!`);
             await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMU)) != null) {
             if (vis)
-                await update_topl(passes_thru_clothes
+                await pline_mon(mon, passes_thru_clothes
                     ? `${Monnam(mon)} seeps right through ${ppronoun} shirt!`
                     : `${Monnam(mon)} becomes much too small for ${ppronoun} shirt!`);
             await m_lose_armor(mon, otmp, polyspot);
@@ -1209,11 +1209,11 @@ export async function mon_break_armor(mon, polyspot) {
     }
     if (handless_or_tiny) {
         if ((otmp = which_armor_mon(mon, W_ARMG)) != null) {
-            if (vis) await update_topl(`${Monnam(mon)} drops ${ppronoun} gloves${mon.mw ? ' and weapon' : ''}!`);
+            if (vis) await pline_mon(mon, `${Monnam(mon)} drops ${ppronoun} gloves${mon.mw ? ' and weapon' : ''}!`);
             await m_lose_armor(mon, otmp, polyspot);
         }
         if ((otmp = which_armor_mon(mon, W_ARMS)) != null) {
-            if (vis) await update_topl(`${Monnam(mon)} can no longer hold ${ppronoun} shield!`);
+            if (vis) await pline_mon(mon, `${Monnam(mon)} can no longer hold ${ppronoun} shield!`);
             else await hear('a clank.');
             await m_lose_armor(mon, otmp, polyspot);
         }
@@ -1223,7 +1223,7 @@ export async function mon_break_armor(mon, polyspot) {
             && (handless_or_tiny || !is_flimsy(otmp))) {
             if (vis) {
                 const { surface } = await import('./dungeon.js');
-                await update_topl(`${s_suffix(Monnam(mon))} helmet falls to the ${surface(mon.mx, mon.my)}!`);
+                await pline_mon(mon, `${s_suffix(Monnam(mon))} helmet falls to the ${surface(mon.mx, mon.my)}!`);
             }
             else await hear('a clank.');
             await m_lose_armor(mon, otmp, polyspot);
@@ -1232,7 +1232,7 @@ export async function mon_break_armor(mon, polyspot) {
     if (handless_or_tiny || slithy_mon(mdat) || mdat.mcls === S_CENTAUR_M) {
         if ((otmp = which_armor_mon(mon, W_ARMF)) != null) {
             if (vis)
-                await update_topl(is_whirly_mon(mdat)
+                await pline_mon(mon, is_whirly_mon(mdat)
                     ? `${s_suffix(Monnam(mon))} boots fall away!`
                     : `${s_suffix(Monnam(mon))} boots ${(mdat.msize ?? 0) < MZ_SMALL_M
                         ? 'slide' : 'are pushed'} off ${ppronoun} feet!`);
@@ -1247,7 +1247,7 @@ export async function mon_break_armor(mon, polyspot) {
     if (!can_saddle(mon)) {
         if ((otmp = which_armor_mon(mon, W_SADDLE)) != null) {
             await m_lose_armor(mon, otmp, polyspot);
-            if (vis) await update_topl(`${s_suffix(Monnam(mon))} saddle falls off.`);
+            if (vis) await pline_mon(mon, `${s_suffix(Monnam(mon))} saddle falls off.`);
         }
         if (mon === game.u?.usteed) noride = true;
     }

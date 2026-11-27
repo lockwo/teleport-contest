@@ -15,7 +15,7 @@ import { has_mgivenname } from './const.js';
 import { has_oname } from './const.js';
 import { Fumbling_hero, Half_physical_damage_hero } from './youprop.js';
 import { game } from './gstate.js';
-import { Hallucination_u, nh_delay_output } from './display.js';
+import { Hallucination_u, nh_delay_output, set_msg_mon } from './display.js';
 
 import { s_suffix } from './hacklib.js';
 import { rn2, rnd, rnl } from './rng.js';
@@ -665,6 +665,7 @@ export async function tamedog(mtmp, obj, givemsg) {
         return false;
 
     if (givemsg && !mtmp.mpeaceful && U.canspotmon(mtmp)) {
+        set_msg_mon(mtmp);              /* C dog.c:1170 pline_mon */
         await update_topl(`${U.Monnam(mtmp)} seems ${
             Hallucination() ? 'really chill' : 'more amiable'}.`);
         givemsg = false;                /* don't give another message below */
@@ -711,6 +712,7 @@ export async function tamedog(mtmp, obj, givemsg) {
                 const csz = monster_by_pmidx(obj.corpsenm)?.msize;
                 const big_corpse = obj.otyp === CORPSE && csz != null
                     && csz > (monster_by_pmidx(mtmp.data?.pmidx)?.msize ?? 0);
+                set_msg_mon(mtmp);      /* C dog.c:1205 pline_mon */
                 await update_topl(`${U.Monnam(mtmp)} catches ${the(I.xname(obj))}${
                     !big_corpse ? '.' : ', or vice versa!'}`);
             } else if (cansee(mtmp.mx, mtmp.my)) {
@@ -771,9 +773,11 @@ export async function tamedog(mtmp, obj, givemsg) {
             return true;                /* oops, it died... */
     }
 
-    if (givemsg && U.canspotmon(mtmp))
+    if (givemsg && U.canspotmon(mtmp)) {
+        set_msg_mon(mtmp);              /* C dog.c:1271 pline_mon */
         await update_topl(`${U.Monnam(mtmp)} seems quite ${
             Hallucination() ? 'approachable' : 'friendly'}.`);
+    }
 
     newsym(mtmp.mx, mtmp.my);
     // C ref: dog.c tamedog() — redraw_worm() recolours a tamed long worm's tail

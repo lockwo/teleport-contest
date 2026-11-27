@@ -18,7 +18,7 @@ import { nhgetch } from './input.js';
 import { menuHeadStyle } from './menuattr.js';
 import { objects, WEAPON_CLASS, GEM_CLASS, TOOL_CLASS } from './mkobj.js';
 import { renderWindowScreen, renderMenuLines, dismiss_invent_screen } from './invent.js';
-import { y_n, update_topl, topl_more, docrt, You_feel, page_topline_before_window } from './display.js';
+import { y_n, update_topl, topl_more, You_feel, page_topline_before_window } from './display.js';
 import {
     P_NONE, P_ISRESTRICTED, P_UNSKILLED, P_BASIC, P_SKILLED, P_EXPERT,
     P_MASTER, P_GRAND_MASTER, P_NUM_SKILLS,
@@ -385,8 +385,11 @@ function build_skill_menu_lines(state) {
             if (restricted(i)) continue;
             const lvl = SKILL_LEVEL_NAME[P_SKILL[i]] || 'Unknown';
             // C: " %s %-*s [%s]" with prefix == "" (selectable false) ->
-            // "  " + name.padEnd(longest) + " [" + level + "]".
-            const text = '  ' + P_NAME(i, rolemnum).padEnd(longest) + ' [' + lvl + ']';
+            // "  " + name.padEnd(longest) + " [" + level + "]";
+            // menu_tab_sep: " %s%s\t[%s]" (weapon.c:1294).
+            const text = game.iflags?.menu_tab_sep
+                ? ' ' + P_NAME(i, rolemnum) + '\t[' + lvl + ']'
+                : '  ' + P_NAME(i, rolemnum).padEnd(longest) + ' [' + lvl + ']';
             lines.push({ text });
         }
     }
@@ -462,11 +465,16 @@ function build_skill_menu_items(S, speedy) {
                 : advanceable ? ''
                 : could_advance(i, S) ? '  * '
                 : peaked_skill(i, S) ? '  # ' : '    ';
-            // C: wizard  " %s%-*s %-12s %5d(%4d)"; else  " %s %-*s [%s]".
-            const text = wiz
+            // C: wizard  " %s%-*s %-12s %5d(%4d)"; else  " %s %-*s [%s]";
+            // menu_tab_sep: " %s%s\t%s\t%5d(%4d)" / " %s%s\t[%s]" (weapon.c:1284,1294).
+            const adv = String(P_ADV[i]).padStart(5)
+                + '(' + String(practice_needed_to_advance(P_SKILL[i])).padStart(4) + ')';
+            const text = game.iflags?.menu_tab_sep
+                ? (wiz ? ' ' + prefix + P_NAME(i, rolemnum) + '\t' + lvl + '\t' + adv
+                       : ' ' + prefix + P_NAME(i, rolemnum) + '\t[' + lvl + ']')
+                : wiz
                 ? ' ' + prefix + P_NAME(i, rolemnum).padEnd(longest) + ' '
-                    + lvl.padEnd(12) + ' ' + String(P_ADV[i]).padStart(5)
-                    + '(' + String(practice_needed_to_advance(P_SKILL[i])).padStart(4) + ')'
+                    + lvl.padEnd(12) + ' ' + adv
                 : ' ' + prefix + ' ' + P_NAME(i, rolemnum).padEnd(longest) + ' [' + lvl + ']';
             items.push({ text, skill: advanceable ? i : undefined });
         }
@@ -626,21 +634,27 @@ export async function doenhance() {
         let speedy = false;
         if (is_wizard() && await y_n('Advance skills without practice?') === 'y')
             speedy = true;
-        let more_to_do = 0, dismissMenu = false;
+        let more_to_do = 0;
         do {
             const S = build_skill_state();
             const { items, to_advance } = build_skill_menu_items(S, speedy);
             const pages = paginate_skill_menu(items);
-            const pick = await select_skill_menu(pages, to_advance > 0);
+            let pick;
+            const wasDisabled = game.bot_disabled;
+            game.bot_disabled = true;
+            try {
+                pick = await select_skill_menu(pages, to_advance > 0);
+                // C ref: weapon.c:1389-1390 and wintty.c:982: a corner
+                // skill menu is erased by docorner(), not a full docrt().
+                game._modal_screen = 'skillwin';
+                await dismiss_invent_screen();
+            } finally {
+                game.bot_disabled = wasDisabled;
+            }
             more_to_do = 0;
-            dismissMenu = pick == null;
             if (pick != null) {
-                // destroy_nhwindow() on a full-screen menu redraws the map
-                // before skill_advance()'s message lands on a fresh top line.
                 delete game._skill_pages;
                 delete game._skill_page;
-                game._pending_message = '';
-                await docrt();
                 await skill_advance(pick, S);
                 const S2 = build_skill_state();
                 for (let i = 0; i < P_NUM_SKILLS; i++) {
@@ -663,10 +677,6 @@ export async function doenhance() {
         } while (speedy && more_to_do > 0);
         delete game._skill_pages;
         delete game._skill_page;
-        if (dismissMenu) {
-            game._modal_screen = 'skillwin';
-            await dismiss_invent_screen();
-        }
         return ECMD_OK;
     }
     game._skill_counting = '';

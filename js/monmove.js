@@ -2338,7 +2338,7 @@ export async function steedintrap(trap, otmp) {
         if (!resists_sleep(steed) && !breathless(steed.data) && !mon_helpless(steed)) {
             if (await sleep_monst(steed, rnd(25), -1))
                 /* no in_sight check here; you can feel it even if blind */
-                await pline_mon(steed, `${Monnam(steed)} suddenly falls asleep!`);
+                await update_topl(`${Monnam(steed)} suddenly falls asleep!`); /* C trap.c:3137 pline */
         }
         steedhit = true;
         break;
@@ -2542,7 +2542,7 @@ async function mon_trapeffect_fire_trap(mtmp, trap) {
         if (in_sight) {
             const { shieldeff } = await import('./display.js');
             await shieldeff(mtmp.mx, mtmp.my);          // trap.c:1757
-            await pline_mon(mtmp, `${Monnam(mtmp)} is uninjured.`);
+            await update_topl(`${Monnam(mtmp)} is uninjured.`); /* C trap.c:1758 pline */
         }
     } else {
         let damage = orig_dmg;
@@ -4285,7 +4285,7 @@ export function aggravate() {
 // C ref: mon.c:4090 m_respond_shrieker(mtmp).
 async function m_respond_shrieker(mtmp) {
     if (!Deaf_hero()) {
-        await pline_mon(mtmp, `${Monnam(mtmp)} shrieks.`);
+        await update_topl(`${Monnam(mtmp)} shrieks.`); /* C mon.c:4092 pline */
         await stop_occupation();
     }
     if (!rn2(10)) {
@@ -6131,9 +6131,9 @@ export async function mattacku(mtmp, mdat) {
             await pline_mon(mtmp, `${Monnam(mtmp)} loosens its grip slightly.`);
         } else if (!range2) {
             if (canseemon_mm(mtmp) || sensemon(mtmp))
-                await pline_mon(mtmp, `${Monnam(mtmp)} starts to attack you, but pulls back.`);
+                await update_topl(`${Monnam(mtmp)} starts to attack you, but pulls back.`); /* C mhitu.c:749 pline */
             else
-                await pline_mon(mtmp, 'You feel something move nearby.');
+                await update_topl('You feel something move nearby.'); /* C mhitu.c:752 You_feel */
         }
         return 0;
     }
@@ -6527,7 +6527,7 @@ async function breamm(mtmp, mattk) {
     // C ref: mthrowu.c:1101 — a cancelled breather just coughs (no RNG).
     if (mtmp.mcan) {
         if (!Deaf_hero()) {
-            if (canseemon_mm(mtmp)) await pline_mon(mtmp, `${Monnam(mtmp)} coughs.`);
+            if (canseemon_mm(mtmp)) await update_topl(`${Monnam(mtmp)} coughs.`); /* C mthrowu.c:1102 pline */
             else await You_hear('a cough.');
         }
         return M_ATTK_MISS;
@@ -6540,8 +6540,8 @@ async function breamm(mtmp, mattk) {
     if (!mtmp.mspec_used && rn2(3)) {
         if (BZ_VALID_ADTYP(typ)) {
             if (canseemon_mm(mtmp))
-                await pline_mon(mtmp,
-                    `${Monnam(mtmp)} breathes ${breathwep_name(typ)}!`);
+                // C mthrowu.c:1120 uses pline(), without a monster location.
+                await update_topl(`${Monnam(mtmp)} breathes ${breathwep_name(typ)}!`);
             const tx = mtmp.mux ?? u.ux, ty = mtmp.muy ?? u.uy;
             game.buzzer = mtmp;
             const { dobuzz } = await import('./zap.js');

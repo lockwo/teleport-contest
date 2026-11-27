@@ -31,7 +31,6 @@ function quest_create_object_random(mx, my) {
 function quest_create_monster_class_randpos(classNum, peacefulOverride) {
     rn2(3);                                             // induced_align (dungeon.c:2012)
     const ptr = mkclass(classNum, 0x0200 /* G_NOGEN */);
-    if (!ptr) return null;
     const c = bigrm_get_location_dry();
     let x = c.x, y = c.y;
     if (mm_mon_at(x, y)) {

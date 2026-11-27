@@ -1210,14 +1210,10 @@ export function put_topl_line(display, row, text) {
 function note_topl_cells(text, from) {
     const cur = game._pending_message || '';
     const prev = game._toplCells?.text === cur ? game._toplCells.cells : [];
-    const curLine = topl_screen_lines(cur)[0] || '';
-    const under = (c) => {
-        const kept = prev.find(([k]) => k === c);
-        if (kept) return kept[1];
-        const code = c < curLine.length ? curLine.charCodeAt(c) : 32;
-        return { ch: (code >= 0x80 && code <= 0xff) ? ' ' : String.fromCharCode(code),
-                 color: NO_COLOR, attr: 0 };
-    };
+    // C ref: topl.c:237-240 docorner() can erase a wrapped --More-- before
+    // redotoplin() writes the next message. Use the terminal, not gt.toplines.
+    const under = (c) => ({ ...(game.nhDisplay?.grid?.[0]?.[c]
+        ?? { ch: ' ', color: NO_COLOR, attr: 0 }) });
     const cells = prev.filter(([c]) => c < from);
     for (let c = from; c < text.length && c < CO; c++) {
         const code = text.charCodeAt(c);
@@ -5807,7 +5803,11 @@ export async function topl_more_ext(extraChars, prewrapped = null) {
             // one-row topline dismissed with ESC takes the cl_end() arm and the
             // message line is WIPED (space/return leave it standing).
             if (cury > 0) clear_wrapped_rows();
-            else if (c === 27) { game._pending_message = ''; game._toplin = 0; }
+            else if (c === 27) {
+                // C ref: topl.c:241-244 `home(); cl_end();` blanks the terminal's row 0.
+                for (let x = 0; x < disp.cols; x++) disp.setCell(x, 0, ' ', NO_COLOR, 0);
+                game._pending_message = ''; game._toplin = 0;
+            }
             return done(c);
         }
         if (extraChars && extraChars.includes(String.fromCharCode(c))) {

@@ -27,7 +27,7 @@ import { nomul, stop_occupation } from './hack.js';
 import { run_object_timers, attach_egg_hatch_timeout, stop_object_timer, start_object_timer, clear_object_timer,
          obj_timer, obj_timer_list, set_obj_timer_list } from './mkobj.js';
 import { update_topl, urgent_topl, see_monsters, status_hold, You_feel } from './display.js';
-import { Hallucination_u } from './display.js';
+import { Hallucination_u, page_topline_before_window } from './display.js';
 import { phase_of_the_moon, friday_13th, FULL_MOON } from './calendar.js';
 import { Unaware, OBJ_FLOOR, OBJ_CONTAINED, OBJ_INVENT, OBJ_MINVENT, OBJ_MIGRATING, OBJ_BURIED } from './const.js';
 import { youHaveFast, youHaveVeryFast } from './allmain.js';
@@ -2148,8 +2148,10 @@ register_process_static(() => { timer_base = null; timer_id = 1; });
 // lines over the map, followed by the non-blocking "--More--" prompt.
 function _create_nhwindow(type) { return { type, lines: [] }; }
 function _putstr(win, _attr, str) { if (win) win.lines.push(String(str ?? '')); }
-function _display_nhwindow(win, _blocking) {
+async function _display_nhwindow(win, _blocking) {
     if (!win || !game.nhDisplay) return false;
+    // C ref: wintty.c:1921-1922 pages pending messages before the report.
+    await page_topline_before_window();
     const lines = win.lines.map((text) => ({ text }));
     // C prints a 14-character address here; its stable JS `#id` stand-in is
     // shorter, so retain the same corner-window width without faking an address.
@@ -2392,7 +2394,7 @@ export async function wiz_timeout_queue() {
            pages it, a "--More--" on the last row of each full page.  Several
            regions or timed properties push this report past 24 lines. */
         await (await import('./invent.js')).tty_text_window(win.lines);
-    } else if (_display_nhwindow(win, false)) {
+    } else if (await _display_nhwindow(win, false)) {
         /* tty display_nhwindow() of a text window runs process_text_window()'s
            dmore(): xwaitforspace() inside this command, and destroy_nhwindow()
            then erases the corner (docorner(), no RNG).  Leaving the key for the

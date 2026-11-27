@@ -2,13 +2,14 @@
 // sp_lev.js re-exports makemaz_tower1 so existing importers are unaffected; the
 // shared special-level machinery still lives there and is imported below.
 
-import { COLNO, ROWNO } from '../const.js';
+import { COLNO, G_GONE, ROWNO } from '../const.js';
 import { christen_monst } from '../do_name.js';
 import { game } from '../gstate.js';
 import { makemon, mkclass, mm_mon_at, monster_by_pmidx, newcham_vamp
 } from '../makemon.js';
 import { enexto_gpflags } from '../teleport.js';
 import { CHEST, TALLOW_CANDLE, WAX_CANDLE, mksobj, mksobj_at, add_to_container, container_weight, weight } from '../mkobj.js';
+import { nhl_is_genocided } from '../nhlua.js';
 import { rn2 } from '../rng.js';
 import {
     S_VAMPIRE_CLASS, bigrm_get_location_dry, flip_level, q_absx, q_absy, quest_create_monster,
@@ -52,7 +53,6 @@ const G_NOGEN_TOWER = 0x0200;
 function tower_create_V(mx, my) {
     rn2(3);                                          // induced_align
     const ptr = mkclass(S_VAMPIRE_CLASS, G_NOGEN_TOWER);
-    if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
         const cc = enexto_gpflags(x, y, ptr, 0);
@@ -72,8 +72,11 @@ const PM_VAMPIRE_LEADER_IDX = 227;
 
 function tower_create_vampire_lady(name, mx, my) {
     rn2(3);                                          // induced_align
-    const ptr = monster_by_pmidx(PM_VAMPIRE_LEADER_IDX);
+    let ptr = monster_by_pmidx(PM_VAMPIRE_LEADER_IDX);
     if (!ptr) return null;
+    // sp_lev.c:1952-1953: a genocided vampire leader becomes a random
+    // monster, which still receives the table's female/waiting overrides.
+    if ((game.mvitals?.[PM_VAMPIRE_LEADER_IDX]?.mvflags ?? 0) & G_GONE) ptr = null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
         const cc = enexto_gpflags(x, y, ptr, 0);
@@ -147,7 +150,9 @@ export async function makemaz_tower1() {
         tower_create_V(niches[1][0], niches[1][1]);
         tower_create_V(niches[2][0], niches[2][1]);
         // The brides (waiting vampires); names only when vampire isn't genocided.
-        const Vgenod = false;
+        // tower1.lua:40, nhlua.c:970-981: only genocide, not extinction,
+        // suppresses the brides' titles.
+        const Vgenod = nhl_is_genocided('vampire');
         const Vnames = Vgenod ? [null, null, null] : ['Madame', 'Marquise', 'Countess'];
         tower_create_vampire_lady(Vnames[0], niches[3][0], niches[3][1]);
         tower_create_vampire_lady(Vnames[1], niches[4][0], niches[4][1]);

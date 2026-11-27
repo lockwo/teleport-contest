@@ -42,7 +42,7 @@
 //     positional entries, so it changes nothing.  Treated as a no-op.
 
 import {
-    COLNO, LA_UP, ROWNO, STAIRS,
+    COLNO, G_EXTINCT, G_GONE, G_UNIQ, LA_UP, ROWNO, STAIRS,
 } from '../const.js';
 import { christen_monst } from '../do_name.js';
 import { dunlevs_in_dungeon } from '../dungeon.js';
@@ -128,9 +128,14 @@ function wiz_goal_induced_align() {
 // create_monster()'s post-make tail.
 function wiz_goal_captive({ id, mx, my, peaceful = null, asleep = null, name = null }) {
     const { pmidx, female } = splev_find_montype(id);     // find_montype sp_lev.c:3156
-    const pm = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let pm = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!pm) return null;
     wiz_goal_induced_align();                             // induced_align rn2(3), always drawn
+    // sp_lev.c:1949-1953. Keep pmidx for the later mplayer dispatch even
+    // when a gone species replaces its permonst pointer with NULL.
+    const gone = game.mvitals?.[pmidx]?.mvflags ?? 0;
+    if ((pm.geno & G_UNIQ) && (gone & G_EXTINCT)) return null;
+    if (gone & G_GONE) pm = null;
     const { x: ax, y: ay } = vly_abs(mx, my);
     let x = ax, y = ay;
     if (mm_mon_at(x, y)) {

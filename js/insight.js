@@ -694,6 +694,8 @@ async function page_text_window(lines) {
 // full-screen text window; the map is restored afterwards (docorner() for the
 // corner form, docrt() for the full-screen one).
 async function display_putstr_window(lines) {
+    // C ref: wintty.c:1921-1922 pages notices from the monster-sort menu.
+    await page_topline_before_window();
     if (text_window_offx(lines) === 0) {
         const { dismiss_invent_screen } = await import('./invent.js');
         await page_text_window(lines);
@@ -3420,11 +3422,7 @@ export async function set_vanq_order(for_vanq) {
 
     const selected = await select_pick_one_menu(items, plan);
     const n = selected.cancelled ? -1 : selected.length;
-    /* destroy_nhwindow() -> erase_menu_or_text(): docorner() for the corner
-       menu (docrt() only when it is full-screen) puts the map back under it */
-    const { dismiss_invent_screen } = await import('./invent.js');
-    game._modal_screen = 'invent';
-    await dismiss_invent_screen();
+    // C ref: wintty.c:2794 already dismissed this window inside select_menu().
     if (n > 0) {
         let choice = selected[0].a_int - 1;
         /* skip preselected entry if we have more than one item chosen */

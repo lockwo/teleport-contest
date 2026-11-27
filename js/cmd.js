@@ -1275,7 +1275,10 @@ export async function rhack(key) {
         && !isMovementKey(ch) && !isRunKey(ch)
         && !(cmdbind_get(origKey & 0xff)?.cmd?.flags & PREFIXCMD);
     const pendingRun = prefixedNonmove ? game.context.run_prefix || 0 : 0;
-    const staleRun = game.context.stale_run || pendingRun;
+    // C ref: cmd.c:3769-3773 re-enters got_prefix_input in the same rhack(),
+    // so a prefix keeps the run value already hoisted for this command.
+    const staleRun = game.context.stale_run || pendingRun
+        || (game.context._prefix_seen ? game.context.cmd_stale_run || 0 : 0);
     game.context.stale_run = 0;
     // gd.domove_attempting's DOMOVE_RUSH bit, left behind by the same g/G +
     // unbound-key sequence.  Unlike svc.context.run it is NOT touched by
@@ -1400,7 +1403,9 @@ export async function rhack(key) {
             // svc.context.nopick = 1`, so an m-prefixed <return> rush skips pickup.
             game.context.nopick = game.iflags?.menu_requested ? 1 : 0;
             game.iflags && (game.iflags.menu_requested = false);
-            await do_run_prefixed(0, 1, 3);
+            // C ref: cmd.c:1396-1399 set_move_cmd() preserves an armed rush,
+            // including run == 0 after nomul(), rather than replacing it with 3.
+            await do_run_prefixed(0, 1, (staleRun || staleRush) ? staleRun : 3);
         } else {
             game.context.move = 0;
         }
@@ -2027,7 +2032,9 @@ export async function rhack(key) {
             reset_cmd_vars(true);
             return;
         }
-        await do_run_prefixed(DIR_DX[rdir], DIR_DY[rdir], 3);
+        // C ref: cmd.c:1396-1399, as for Ctrl-J above: a stale rush wins.
+        await do_run_prefixed(DIR_DX[rdir], DIR_DY[rdir],
+                              (staleRun || staleRush) ? staleRun : 3);
     } else if (ch === 'F' || ch === '-') {
         // C ref: cmd.c commands_init() `bind_key('-', "fight")` — '-' is a
         // second default key for the fight prefix (hidden from the help listing
@@ -2195,7 +2202,7 @@ export async function rhack(key) {
                 if (!game.context._prefix_seen && !mPrefixSeen) cmdq_of(CQ_REPEAT).length = 0;
                 cmdq_add_key(CQ_REPEAT, origKey);
             }
-            await do_run_prefixed(DIR_DX[ch], DIR_DY[ch], rp);
+            await do_run_prefixed(DIR_DX[ch], DIR_DY[ch], rp, !!game.context._pfx_func);
             return;
         }
         // C ref: cmd.c set_move_cmd() — the 'm' (reqmenu) prefix disables
@@ -2366,9 +2373,11 @@ export async function rhack(key) {
     // stepped 1.
     if (!badCommand && !cmdVarsReset && game.context.move && staleRun && game.context.cmd_stale_run)
         game.context.stale_run = staleRun;
-    // gd.domove_attempting survives the same commands, and ALSO survives the
-    // end_running() that may have zeroed stale_run above (hack.c:4129).
-    if (!badCommand && !cmdVarsReset && game.context.move && staleRush)
+    // gd.domove_attempting survives timed non-movement commands even when
+    // end_running() cleared stale_run. Movement consumes it in hack.c:2706,
+    // then rhack() returns before this epilogue (cmd.c:3785-3801).
+    if (!badCommand && !cmdVarsReset && game.context.move && staleRush
+        && !(repeatBind?.flags & MOVEMENTCMD))
         game.context.stale_rush = true;
     game.context.cmd_stale_run = 0;
     // C ref: cmd.c rhack(): the run == 8 a finished travel leaves behind (see
@@ -2390,11 +2399,14 @@ export async function rhack(key) {
     // marking squares as already "visited" for the next travel.
     if (!badCommand && !npBad && repeatName && !game.context.move)
         game.travelmap = null;
-    // C ref: cmd.c:3814-3816 — a completed no-time command also ends any
-    // forcefight residue left by an earlier rush or unbound prefix follower.
+    // C ref: cmd.c:3810-3815 reset_cmd_vars() clears both forcefight and
+    // domove_attempting after a completed no-time command. Leaving WALK set
+    // after a failed command makes the next rush take just one step.
     if (hadForcefight && !badCommand && !npBad && repeatName && !game.context.move && !travelTimed
-        && !(repeatBind?.flags & (PREFIXCMD | MOVEMENTCMD)))
+        && !(repeatBind?.flags & (PREFIXCMD | MOVEMENTCMD))) {
         game.context.forcefight = 0;
+        game.domove_attempting = 0;
+    }
     if (!badCommand && !npBad && repeatName && !game.context.move
         && (game.multi ?? 0) > 0 && !game._wait_occupation
         && !isMovementKey(ch) && !isRunKey(ch)
@@ -7395,16 +7407,23 @@ async function extlist_select_menu(m) {
     let curr_page = 0;
     // C ref: cmd.c:600 — 's' selects the ':' search item on any menu page.
     const searchAlias = m.pages.some((page) => page.some((it) => it.sel === ':'));
-    // tty_getlin("Search for:") clears the message window, which is row 0 of a
-    // full-screen menu; only a page change repaints it.
-    let blankTop = false;
+    // C ref: cmd.c:613 — while searching, "Switch back" is 's' with group
+    // accelerator ':', and a PICK_ONE menu's group accelerators are explicit
+    // choices (wintty.c resp_len), so ':' picks it instead of searching.
+    const backAlias = m.pages.some((page) => page.some((it) => it.sel === 's'));
+    // C ref: wintty.c:1401,1548-1551 only paints a new page; a search can
+    // erase wrapped message rows, which stay erased until the page changes.
+    let paintedPage = -1, menuCursor;
     let counting = false, count = 0, resetCount = true;
     for (;;) {
         if (resetCount) { counting = false; count = 0; } else resetCount = true;
-        extlist_render_page(m, curr_page);
-        if (blankTop) {
-            const d = game.nhDisplay;
-            for (let x = 0; x < d.cols; x++) d.setCell(x, 0, ' ', NO_COLOR, 0);
+        const d = game.nhDisplay;
+        if (paintedPage !== curr_page) {
+            extlist_render_page(m, curr_page);
+            paintedPage = curr_page;
+            menuCursor = d.getCursor();
+        } else {
+            d.setCursor(menuCursor[0], menuCursor[1]);
         }
         const page = m.pages[curr_page];
         const sels = page.filter((it) => it.sel).map((it) => it.sel).join('');
@@ -7414,6 +7433,7 @@ async function extlist_select_menu(m) {
         // MENU_EXPLICIT_CHOICE: a page-local selector keeps its own meaning
         // even when it also happens to be a menu command (':' vs a ':' item).
         if (sels.indexOf(morc) >= 0) return morc;
+        if (morc === ':' && backAlias) return 's';
         // C ref: process_menu_window() digits build a count; invalid keys (above) leave it alone.
         if (morc >= '0' && morc <= '9') {
             count = count * 10 + (morc.charCodeAt(0) - 48);
@@ -7430,17 +7450,17 @@ async function extlist_select_menu(m) {
             return null;
         case ' ':
         case MENU_NEXT_PAGE:
-            if (curr_page !== m.npages - 1) { curr_page++; blankTop = false; }
+            if (curr_page !== m.npages - 1) curr_page++;
             else if (morc === ' ') return null;   // ' ' finishes, '>' does not
             break;
         case MENU_PREVIOUS_PAGE:
-            if (curr_page !== 0) { curr_page--; blankTop = false; }
+            if (curr_page !== 0) curr_page--;
             break;
         case MENU_FIRST_PAGE:
-            if (curr_page !== 0) { curr_page = 0; blankTop = false; }
+            if (curr_page !== 0) curr_page = 0;
             break;
         case MENU_LAST_PAGE:
-            if (curr_page !== m.npages - 1) { curr_page = m.npages - 1; blankTop = false; }
+            if (curr_page !== m.npages - 1) curr_page = m.npages - 1;
             break;
         case ':': {
             // MENU_SEARCH on a page without doextlist()'s own ':' entry: getlin,
@@ -7448,7 +7468,6 @@ async function extlist_select_menu(m) {
             // matches "*reply*" is selected, and PICK_ONE finishes.
             const { hooked_tty_getlin, pmatchi } = await import('./extcmd-handlers.js');
             const reply = await hooked_tty_getlin('Search for:', null);
-            blankTop = true;
             if (!reply || reply[0] === '\x1b') break;
             for (const pg of m.pages)
                 for (const it of pg)

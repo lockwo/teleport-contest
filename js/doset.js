@@ -1525,6 +1525,8 @@ export async function doset() {
 }
 
 async function dosetPass(skiphelp) {
+    // C ref: wintty.c:1921-1922 pages notices from a dismissed help window.
+    await (await import('./display.js')).page_topline_before_window();
     const entries = buildFullEntries(skiphelp);
     OPTS.clear_option_visual_flags(false);      // doset(): after end_menu()
     const npages = Math.ceil(entries.length / PER_PAGE);

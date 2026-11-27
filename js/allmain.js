@@ -2051,7 +2051,7 @@ async function moveloop_core_body() {
     // curs_on_u() is flush_screen(1), so a dirty status line also paints every
     // pending map glyph (the pet's moves this turn) before a counted repeat's
     // next prompt raises its --More--.
-    const status_dirty = !!(g.botl || g.botlx || g.time_botl);
+    const status_dirty = !!(g.botl || g.disp?.botl || g.botlx || g.time_botl);
     await bot();
     if (status_dirty) {
         await flush_screen(1);

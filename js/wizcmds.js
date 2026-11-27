@@ -18,7 +18,7 @@
 
 import { game } from './gstate.js';
 import {
-    pline, impossible, docrt, m_at, map_invisible, unmap_object, newsym, y_n, flush_screen,
+    pline, impossible, docrt, m_at, map_invisible, unmap_object, newsym, y_n, flush_screen, page_topline_before_window,
 } from './display.js';
 import {
     COLNO, ROWNO, MAX_TYPE, STONE, SDOOR, CORR, IS_WALL, IS_ROOM, IS_DOOR,
@@ -51,7 +51,7 @@ import {
 } from './glyphs.js';
 import { SYMSET_META, GLYPH_WALL_COLORS } from './symset-data.js';
 import { within_bounded_area } from './rect.js';
-import { depth, plur, upstart } from './hacklib.js';
+import { atoi, depth, plur, upstart } from './hacklib.js';
 import { size_wseg } from './worm.js';
 import { light_stats, light_sources_sanity_check } from './light.js';
 import { check_invent_gold, inventoryArray, ynq, youmonst_data, body_part } from './invent.js';
@@ -1347,7 +1347,7 @@ export async function wiz_migrate_mons() {
     }
     if (inbuf[0] === '\x1b' || inbuf === '') return ECMD_OK;
 
-    let mcount = parseInt(inbuf, 10) || 0;
+    let mcount = atoi(inbuf);
     let use_random_mon = true;
     if (mcount < 0) {
         use_random_mon = false;
@@ -1645,6 +1645,8 @@ const known_handling = ['UNKNOWN', 'IBM', 'DEC', 'CURS', 'MAC', 'UTF8'];
 // tty_dismiss_nhwindow().  PICK_NONE: selectors only ring the bell, the paging
 // keys move between pages, return/ESC (or space on the last page) finish.
 async function wizcustom_select_menu(wt, win) {
+    // C ref: wintty.c:1921-1922 pages pending messages before the glyph menu.
+    await page_topline_before_window();
     const cw = wt.wins[win];
     const disp = game.nhDisplay;
     const cols = (disp && disp.cols) || 80;

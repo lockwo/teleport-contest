@@ -42,7 +42,7 @@ import { mklev, makelevel_fill_and_mineralize } from './mklev.js';
 import { fumaroles, movebubbles } from './mkmaze.js';
 const PM_ROGUE_DO = 8;     // roles[].mnum is the role index in this port (Rogue = 8), not a mons[] index
 import { clear_regions, remove_region } from './region.js';
-import { depth as depth_of_level, s_suffix, upstart } from './hacklib.js';
+import { atoi, depth as depth_of_level, s_suffix, upstart } from './hacklib.js';
 import { COLNO, ROWNO, ROOM, CORR, AIR, LR_DOWNTELE, LR_UPTELE, STRAT_WAITFORU,
          STRAT_WAITMASK, STRAT_ARRIVE, IS_STWALL, W_NONPASSWALL,
          ACCESSIBLE, IS_DOOR, D_CLOSED, D_LOCKED, In_quest, In_mines, In_endgame,
@@ -1679,7 +1679,7 @@ export async function level_tele(readLevel, immediate = false) {
             // (optionally negative) number AND trycnt < 10.  atoi() skips leading
             // blanks, so "  12" ends the loop in C where a bare digit(buf[0])
             // test would keep prompting.
-            newlev = lev_by_name(s) || (parseInt(s, 10) || 0);
+            newlev = lev_by_name(s) || atoi(s);
             const dig = (c) => c >= '0' && c <= '9';
             if (newlev || dig(s[0]) || (s[0] === '-' && dig(s[1])) || trycnt >= 10)
                 break;

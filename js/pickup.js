@@ -256,14 +256,17 @@ const LEASH = 236, CANDELABRUM_OF_INVOCATION = 262, SPE_BOOK_OF_THE_DEAD = 409;
    pickup.c:76 simple_look()
    ═══════════════════════════════════════════════════════════════════════ */
 export async function simple_look(otmp, here) {
-    if (!otmp) return;
-    if (!(here ? otmp.nexthere : otmp.nobj)) {
-        await pline(doname(otmp));
+    // C ref: pickup.c:85-96 tests the object chain, not its JS array wrapper.
+    const chain = chain_to_array(otmp, here);
+    if (!chain.length) return;
+    if (chain.length === 1) {
+        await pline(doname(chain[0]));
         return;
     }
     const lines = [''];
-    for (let o = otmp; o; o = here ? o.nexthere : o.nobj) lines.push(doname(o));
-    renderWindowScreen(lines);
+    for (const obj of chain) lines.push(doname(obj));
+    const { tty_text_window } = await import('./invent.js');
+    await tty_text_window(lines);
 }
 
 /* pickup.c:101 collect_obj_classes() — ilets[] gets each distinct class

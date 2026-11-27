@@ -60,7 +60,6 @@ function loca_object_at(oclass, mx, my) {
 function loca_monster_class_at(classNum, mx, my) {
     rn2(3);                                    // induced_align (dungeon.c:2012)
     const ptr = mkclass(classNum, 0x0200 /* G_NOGEN */);
-    if (!ptr) return null;
     let x = q_absx(mx), y = q_absy(my);
     if (mm_mon_at(x, y)) {
         const cc = enexto_gpflags(x, y, ptr, 0);

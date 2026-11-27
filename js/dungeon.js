@@ -2681,6 +2681,10 @@ export function rm_mapseen(ledger_num) {
 
     if (mptr.custom)
         mptr.custom = null;
+    // C ref: dungeon.c:2677-2678 frees mapseen->custom on level recreation.
+    // The annotation prompt stores that text separately in this port.
+    if (game._level_annotations)
+        delete game._level_annotations[`${mptr.lev.dnum}:${mptr.lev.dlevel}`];
 
     let bpnext = mptr.final_resting_place;
     let bp;

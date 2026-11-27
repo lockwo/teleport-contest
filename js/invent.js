@@ -2207,6 +2207,8 @@ export function renderMenuLines(flat, cursor = [36, 8], maxcolPad = 2) {
 export async function tty_text_window(lines, maxcol = null) {
     const display = game.nhDisplay;
     if (!display?.clearScreen) return;
+    // C ref: wintty.c:1921-1922 pages a recalled top line before its history window.
+    await page_topline_before_window();
     const cols = display.cols ?? 80;
     const rows = display.rows ?? 24;
     // cw->maxcol: the longest line's strlen()+1 as putstr()'d, before tty_putstr
@@ -2606,6 +2608,8 @@ export async function dodiscovered() {
         game._pending_message = note_topl('You haven\'t discovered anything yet...');
         return ECMD_OK;
     }
+    // C ref: wintty.c:1921-1922 pages notices from the discovery-sort menu.
+    await page_topline_before_window();
     // C ref: wintty.c tty_putstr() NHW_TEXT — every putstr() line is
     // compress_str()'d and a line of CO or more is broken at a space, each
     // piece occupying its own row of the paged window.
@@ -11628,6 +11632,8 @@ async function itemactions(otmp, getDir) {
     // in use]" is shown but not selectable — pressing its key rings the bell).
     const sel = new Map();
     for (const e of entries) if (e.act !== IA_NONE) sel.set(e.accel, e);
+    // C ref: wintty.c:1921-1922 pages notices from the preceding menu's dismissal.
+    await page_topline_before_window();
     // C ref: wintty.c process_menu_window — a digit starts a count (a leading 0
     // does not), ESC while counting only stops the count, and any acceptable
     // key resets it.  Keys outside the response set (resp[]: selectors, digits,
@@ -11978,6 +11984,8 @@ async function select_inventory_menu(rows, byLet, pickNone = false) {
     }
 }
 async function select_inventory_menu_inner(rows, byLet, pickNone) {
+    // C ref: wintty.c:1921-1922 pages notices from a preceding selection menu.
+    await page_topline_before_window();
     let page = 0;
     let repaint = true;
     let info = null;

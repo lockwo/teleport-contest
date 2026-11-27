@@ -1310,8 +1310,9 @@ export async function dowipe() {
 // a single tick fully clears it (returns 0).
 export async function wipeoff() {
     await loadDeps();
-    const { update_topl } = await import('./display.js');
-    const { vision_recalc } = await import('./vision.js');
+    const { update_topl, status_hold } = await import('./display.js');
+    // C ref: do.c:2371, reducing HBlinded does not publish a new status line.
+    status_hold('blind', Blind_vision());
     const u = game.u;
     const udelta = Math.min(u?.ucreamed || 0, 4);
     const ldelta = Math.min(u?.blinded || 0, 4);

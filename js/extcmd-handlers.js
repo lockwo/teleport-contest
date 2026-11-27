@@ -3608,19 +3608,22 @@ export async function show_overview_disclosure(final, how) {
     // the keys in `resp` (xwaitforspace) reach the switch, a digit starts a
     // count, ESC while counting just stops the count, any other accepted key
     // ends it, and ESC/Enter/space leave.
-    let counting = false, count = 0;
+    let counting = false, count = 0n;
     for (;;) {
         let morc = await xwaitforspace(' 0123456789\x1b\n\r' + mapped_menu_cmds() + default_menu_cmds);
         morc = map_menu_cmd(morc);
         if (morc >= '0' && morc <= '9') {
-            count = count * 10 + (morc.charCodeAt(0) - 48);
-            counting = count !== 0;
+            // C ref: wintty.c:1584-1586 AppendLongDigit() overflows a signed
+            // long at LONG_MAX, then the next loop resets the pending count.
+            count = count * 10n + BigInt(morc.charCodeAt(0) - 48);
+            if (count > 0x7fffffffffffffffn) count = 0n;
+            counting = count !== 0n;
             continue;
         }
-        if (morc === '\x1b' && counting) { counting = false; count = 0; continue; }
+        if (morc === '\x1b' && counting) { counting = false; count = 0n; continue; }
         if (morc === '\x1b' || morc === '\0' || morc === ' ') break;
         counting = false;
-        count = 0;
+        count = 0n;
     }
     // C ref: wintty.c erase_menu_or_text(): a window with offx == 0 (it blanked
     // the whole screen) is torn down with docrt() + flush_screen(1), which
@@ -3652,6 +3655,8 @@ export async function wiz_where() {
 async function display_text_fullscreen(lines) {
     const disp = game.nhDisplay;
     if (!disp?.setCell) return;
+    // C ref: wintty.c:1921-1922 pages pending messages before the dungeon dump.
+    await (await import('./display.js')).page_topline_before_window();
     const rows = disp.rows || 24, cols = disp.cols || 80;
     const clearRow = (r) => { for (let c = 0; c < cols; c++) disp.setCell(c, r, ' ', NO_COLOR, 0); };
     const clearAll = () => { for (let r = 0; r < rows; r++) clearRow(r); };
@@ -5088,7 +5093,9 @@ async function run_pickone_corner_menu(title, entries) {
         const lines = [{ text: blankTop ? '' : title, ...menuHeadStyle() }, { text: '' }];
         for (const e of entries)
             lines.push({ text: e.sel ? `${e.sel} ${e.selected ? '*' : '-'} ${e.text}` : e.text });
-        let maxcol = '(end) '.length;
+        // C ref: tty_end_menu() sized cw->maxcol (and so offx) with the title;
+        // a search's erased title row does not resize the window.
+        let maxcol = Math.max('(end) '.length, title.length + 2);
         for (const ln of lines) maxcol = Math.max(maxcol, ln.text.length + 2);
         draw_corner_window(lines, maxcol, '(end)', 1);
         let redraw = false;

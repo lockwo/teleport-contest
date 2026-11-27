@@ -1274,15 +1274,16 @@ export async function do_run(dx, dy) {
 
 // C ref: cmd.c do_rush_*()/set_move_cmd(dir, 3) — the 'G' run prefix uses
 // run==3; the 'g' rush prefix uses run==2.
-export async function do_run_prefixed(dx, dy, runval) {
+export async function do_run_prefixed(dx, dy, runval, fromRunPrefix = false) {
     const u = game.u;
     u.dx = dx;
     u.dy = dy;
     u.dz = 0;
-    // C ref: cmd.c do_run()/do_rush() assign svc.context.run as the prefix is
-    // read, so an earlier F's DOMOVE_WALK step runs at that level and
-    // hack.c:2768 refuses to attack a monster the hero can see.
-    if (game.domove_attempting & DOMOVE_WALK) game.context.run = runval;
+    // C ref: cmd.c do_run()/do_rush() (1599,1615) assign svc.context.run as the
+    // g/G prefix is read, so an earlier F's DOMOVE_WALK step runs at that level
+    // and hack.c:2768 refuses to attack a seen monster.  A Ctrl-direction's
+    // set_move_cmd() (1396) leaves an armed walk's run level alone.
+    if (fromRunPrefix && (game.domove_attempting & DOMOVE_WALK)) game.context.run = runval;
     await run_movement(runval);
 }
 
@@ -1643,6 +1644,14 @@ function truncate_to_map(cx, cy, dx, dy) {
 function gp_glyph_at(x, y, detectMode = false) {
     const loc = game.level?.at(x, y);
     if (!loc) return ' ';
+    // C ref: display.c swallowed(): cls() reset gbuf to unexplored, then the
+    // stomach's eight distinct swallow glyphs were drawn around the hero.
+    const us = game.u;
+    if (us?.uswallow) {
+        const ddx = x - us.ux, ddy = y - us.uy;
+        if (Math.abs(ddx) > 1 || Math.abs(ddy) > 1) return 'unexplored';
+        return `swallow|${ddx}|${ddy}`;
+    }
     // A detection browse paints only the sensed monsters/objects (and the hero)
     // on a freshly cls()'d map: every other displayed glyph is unexplored.
     if (detectMode) {

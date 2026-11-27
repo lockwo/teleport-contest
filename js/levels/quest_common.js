@@ -7,7 +7,7 @@
 // RNG each one consumes is annotated with its C callsite.
 
 import {
-    A_NEUTRAL, ENGRAVE, LADDER, NO_TRAP, ROCKTRAP,
+    A_NEUTRAL, ENGRAVE, G_EXTINCT, G_GONE, G_UNIQ, LADDER, NO_TRAP, ROCKTRAP,
     STAIRS, WEB,
 } from '../const.js';
 import { des_engraving_at } from '../engrave.js';
@@ -61,9 +61,10 @@ export function quest_getloc_coord_rnd(humidity, nowarn) {
 
 // C ref: sp_lev.c create_monster() placement — the humidity two-step, then the
 // MON_AT/enexto relocate, then makemon().
-export function quest_place_monster(ptr) {
-    if (!ptr) return null;
-    const loc = pm_to_humidity(ptr);
+export function quest_place_monster(ptr, id = -1) {
+    // sp_lev.c:1952-1973: a genocided species or exhausted class uses
+    // makemon(NULL), with a DRY location rather than the species' humidity.
+    const loc = ptr ? pm_to_humidity(ptr) : LOC_DRY;
     // get_location_coord(&x, &y, loc | NO_LOC_WARN, croom, m->coord)
     let c = quest_getloc_coord_rnd(loc, true);
     if (c.x === -1 && c.y === -1) {
@@ -77,7 +78,7 @@ export function quest_place_monster(ptr) {
     }
     // C ref: sp_lev.c:1985 `PM_ARCHEOLOGIST <= m->id && m->id <= PM_WIZARD` ->
     // mk_mplayer(pm, x, y, FALSE) (the Samurai goal's "samurai" fighters).
-    if (ptr.pmidx >= name_to_pmidx('archeologist') && ptr.pmidx <= name_to_pmidx('wizard'))
+    if (id >= name_to_pmidx('archeologist') && id <= name_to_pmidx('wizard'))
         return mk_mplayer(ptr, x, y, false, { mongets: mongets_pub });
     return makemon(ptr, x, y, 0 /* NO_MM_FLAGS */);
 }
@@ -88,7 +89,6 @@ export function quest_place_monster(ptr) {
 export function quest_monster_class_rnd(classNum, peacefulOverride) {
     rn2(3);                                            // induced_align (dungeon.c:2012)
     const ptr = mkclass(classNum, G_NOGEN);
-    if (!ptr) return null;
     const mtmp = quest_place_monster(ptr);
     if (mtmp) mtmp.female = 0;       // sp_lev.c:2125 m->female stays 0 for a class char
     if (mtmp && peacefulOverride != null) {            // sp_lev.c:2126-2129
@@ -103,10 +103,15 @@ export function quest_monster_class_rnd(classNum, peacefulOverride) {
 // species or a gendered NAMS() name), then induced_align, then the placement.
 export function quest_monster_named_rnd(name, peacefulOverride) {
     const { pmidx, female } = splev_find_montype(name);   // sp_lev.c:3156
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     rn2(3);                                            // induced_align (dungeon.c:2012)
-    const mtmp = quest_place_monster(ptr);
+    // sp_lev.c:1949-1953: extinct uniques disappear, other gone species
+    // fall back to a random monster without losing their parsed gender.
+    const gone = game.mvitals?.[pmidx]?.mvflags ?? 0;
+    if ((ptr.geno & G_UNIQ) && (gone & G_EXTINCT)) return null;
+    if (gone & G_GONE) ptr = null;
+    const mtmp = quest_place_monster(ptr, pmidx);
     if (mtmp) mtmp.female = female;                    // sp_lev.c:2125
     if (mtmp && peacefulOverride != null) {            // sp_lev.c:2126-2129
         mtmp.mpeaceful = !!peacefulOverride;

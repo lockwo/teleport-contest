@@ -2,7 +2,7 @@
 // sp_lev.js re-exports makemaz_valley so existing importers are unaffected; the
 // shared special-level machinery still lives there and is imported below.
 
-import { AM_NONE, COLNO, CROSSWALL, FILL_NORMAL, HWALL, MORGUE, ROWNO, VWALL } from '../const.js';
+import { AM_NONE, COLNO, CROSSWALL, FILL_NORMAL, G_EXTINCT, G_GONE, G_UNIQ, HWALL, MORGUE, ROWNO, VWALL } from '../const.js';
 import { game } from '../gstate.js';
 import { monster_by_pmidx } from '../makemon.js';
 import {
@@ -65,9 +65,13 @@ const VALLEY_MAP = [
 // NO_LOC_WARN pass finds nothing), the MON_AT/enexto relocate, and makemon.
 function vly_monster_named(name) {
     const { pmidx, female } = splev_find_montype(name);   // find_montype gender
-    const ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
+    let ptr = pmidx >= 0 ? monster_by_pmidx(pmidx) : null;
     if (!ptr) return null;
     rn2(3);                                           // induced_align
+    // sp_lev.c:1949-1953: gone non-unique species become random monsters.
+    const gone = game.mvitals?.[pmidx]?.mvflags ?? 0;
+    if ((ptr.geno & G_UNIQ) && (gone & G_EXTINCT)) return null;
+    if (gone & G_GONE) ptr = null;
     return vly_place_monster(ptr, female);
 }
 

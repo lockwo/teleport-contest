@@ -112,6 +112,18 @@ export function depth(uz) {
 
 // C ref: rn2(x) already in rng.js — re-export not needed
 
+// C's atoi() in the C locale: skip isspace() (' ' and \t\n\v\f\r only), an
+// optional sign, then digits.  parseInt() also skips Unicode spaces such as
+// U+00A0, a byte that a typed meta key can leave in a getlin() buffer.
+export function atoi(s) {
+    s = String(s ?? '');
+    let i = 0, n = 0, neg = false;
+    while (i < s.length && ' \t\n\v\f\r'.includes(s[i])) i++;
+    if (s[i] === '+' || s[i] === '-') neg = s[i++] === '-';
+    while (i < s.length && s[i] >= '0' && s[i] <= '9') n = n * 10 + (s.charCodeAt(i++) - 48);
+    return neg ? -n : n;
+}
+
 // C ref: hacklib.c mungspaces() — remove excess whitespace: tabs become
 // spaces, runs of spaces collapse to one, leading and trailing space are
 // dropped, and a newline ends the string.

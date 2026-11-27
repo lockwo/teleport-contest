@@ -3328,17 +3328,22 @@ export async function newcham_wizard_aware(mtmp, mdat, ncflags = NO_NC_FLAGS) {
         newsym(mtmp.mx, mtmp.my);
     }
     if (changed && msg) {
-        const { update_topl } = await import('./display.js');
+        const { update_topl, set_msg_mon } = await import('./display.js');
         if (!canspotmon(mtmp)) {
-            if (seenorsensed) await update_topl(`${oldname} disappears!`);
+            if (seenorsensed) {
+                set_msg_mon(mtmp); /* C mon.c:5464 pline_mon */
+                await update_topl(`${oldname} disappears!`);
+            }
             const { usmellmon } = await import('./mon.js');
             await usmellmon(mdat);
         } else if (!seenorsensed) {
             const name = x_monnam(mtmp,
                 mtmp.mtame ? names.ARTICLE_YOUR : names.ARTICLE_A,
                 null, 0, false);
+            set_msg_mon(mtmp); /* C mon.c:5470 pline_mon */
             await update_topl(`${name.charAt(0).toUpperCase() + name.slice(1)} appears!`);
         } else {
+            set_msg_mon(mtmp); /* C mon.c:5472 pline_mon */
             await update_topl(`${oldname} turns into ${names.noname_monnam(mtmp, names.ARTICLE_A)}!`);
         }
     }

@@ -14,7 +14,7 @@ import { OBJ_ARMCAT } from './objarmor_data.js';
 import { monster_by_pmidx } from './makemon.js';
 import { get_atkdam_type } from './mondata.js';
 import { acurr_eff } from './attrib.js';
-import { Hallucination_u, Deaf_hero, You_hear, nh_delay_output } from './display.js';
+import { Hallucination_u, Deaf_hero, You_hear, nh_delay_output, update_topl } from './display.js';
 
 // C ref: mthrowu.c:24 breathwep[] — indexed by BZ_OFS_AD(typ), i.e. adtyp - 1.
 const BREATHWEP = [
@@ -830,8 +830,8 @@ export async function spitmm(mtmp, mattk, mtarg, deps = {}) {
             const { mon_nam } = await import('./do_name.js');
             const { canspotmon } = await import('./uhitm.js');
             if (canspotmon(mtmp))
-                await MM.pline_mon(mtmp,
-                    `A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
+                // C mthrowu.c:1023 uses pline(), without a monster location.
+                await update_topl(`A dry rattle comes from ${s_suffix(mon_nam(mtmp))} throat.`);
             else
                 await You_hear('a dry rattle nearby.');
         }

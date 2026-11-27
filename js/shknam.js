@@ -10,7 +10,7 @@ import { rn2, rnd } from './rng.js';
 import { depth } from './hacklib.js';
 import { distmin } from './hacklib.js';
 import { IS_ROOM, ROOMOFFSET, D_NODOOR, D_ISOPEN, D_LOCKED, D_TRAPPED,
-         SDOOR, DOOR, CORR, ROOM, MM_ESHK, ALL_TRAPS, In_mines } from './const.js';
+         SDOOR, DOOR, CORR, ROOM, MM_ESHK, MON_DETACH, ALL_TRAPS, In_mines } from './const.js';
 import { mksobj, mksobj_at, mkobj_at, objects, weight, CORPSE } from './mkobj.js';
 import { set_tin_variety, HEALTHY_TIN } from './eat.js';
 import { mon_learns_traps } from './montraps.js';
@@ -508,11 +508,13 @@ function shk_mongone(shk, sroom) {
     shk.mhp = 0;
     for (const obj of [...(shk.minvent || [])]) obj_resists(obj, 0, 0);
     shk.minvent = [];                    // discard_minvent(shk, FALSE)
-    const list = game.level?.monsters;
-    if (list) {
-        const i = list.indexOf(shk);
-        if (i >= 0) list.splice(i, 1);
-    }
+    // C ref: shknam.c:795-797 -> mon.c m_detach(): stocking runs after
+    // makemaz's purge, so these dead entries remain until the next dmonsfree().
+    shk.mstate = (shk.mstate | 0) | MON_DETACH;
+    shk.mtrapped = 0;
+    shk.mundetected = 0;
+    game.iflags = game.iflags || {};
+    game.iflags.purge_monsters = (game.iflags.purge_monsters | 0) + 1;
     if (sroom) sroom.resident = null;
     shk.isshk = 0;
 }

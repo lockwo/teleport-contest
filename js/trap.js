@@ -2059,10 +2059,12 @@ async function domagictrap() {
         if (!Deaf_hero()) {
             await You_hear('a deafening roar!');
             u.uprops.HDeaf = (u.uprops.HDeaf || 0) + rn1(20, 30); // incr_itimeout
+            game.botl = true;   // trap.c:4342 disp.botl = TRUE
         } else {
             /* magic vibrations still hit you */
             await You_feel('rankled.');
             u.uprops.HDeaf = (u.uprops.HDeaf || 0) + rn1(5, 15);
+            game.botl = true;   // trap.c:4347
         }
         const { makemon, makemon_appears_msg } = await import('./makemon.js');
         for (let c = cnt; c-- > 0;) {

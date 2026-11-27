@@ -480,6 +480,7 @@ function* m_dowear_type(mon, flag, creation, racialexception) {
                 if (newarm.toLowerCase() === oldarm.toLowerCase())
                     newarm = newarm.replace(/^an? /i, 'another ');
             }
+            set_msg_mon(mon); /* C worn.c:950 pline_mon */
             yield update_topl(`${Monnam_u(mon)}${buf} puts on ${newarm}.`);
             // C ref: worn.c:944 "%s %s %s %s for a moment."
             if (autocurse)

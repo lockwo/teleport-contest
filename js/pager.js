@@ -1301,7 +1301,8 @@ function pg_glyph_to_obj(g) { return g?.otyp ?? STRANGE_OBJECT; }
 function pg_glyph_to_trap(g) { return g?.ttyp ?? NO_TRAP; }
 function pg_glyph_to_cmap(g) { return pg_glyph_is_cmap(g) ? g.cmap : SYM_NOTHING; }
 function pg_glyph_is_statue(g) {
-    return pg_glyph_is_object(g) && g.otyp === STATUE;
+    // C ref: display.h:933-936, a random STATUE object glyph has no species.
+    return pg_glyph_is_object(g) && g.otyp === STATUE && g.corpsenm != null;
 }
 function pg_glyph_is_body(g) {
     return pg_glyph_is_object(g) && g.otyp === CORPSE;
