@@ -2,7 +2,7 @@
 // C ref: display.c — newsym, show_glyph, docrt, cls, flush_screen.
 
 import { has_innate } from './exper.js';
-import { mimic_obj_corpsenm } from './const.js';
+import { mimic_obj_corpsenm, H_UNK, H_IBM, H_DEC, H_UTF8 } from './const.js';
 import { Blind_telepat, Detect_monsters_hero, Deaf_hero, Invis_hero, See_invisible_hero, Levitation_hero, Flying_hero } from './youprop.js';
 import { game, hooks, register_process_static } from './gstate.js';
 
@@ -1112,13 +1112,45 @@ export function known_branch_stairs(sway) {
         && sway.u_traversed);
 }
 
+// C ref: wintty.c g_putch() as the NOMUX_CAPTURE recorder sees it, for one
+// symbol byte under symset handling `handling`.  A control byte writes no
+// capture cell (NUL_CELL when the caller models C's untouched cell); a meta
+// byte under H_IBM, or with eight_bit_tty outside DEC lower-case, goes out raw
+// and the recorder strips its meta bit; any other meta byte switches the
+// terminal to DEC graphics (graph_on()) before the stripped char.
+function g_putch_cell(byte, handling, keepCtl) {
+    const ch = byte & 0x7f;
+    if (ch < 32) return keepCtl ? NUL_CELL : ' ';
+    if (byte < 0x80) return String.fromCharCode(ch);
+    const eight_bit_tty = !!(game.flags?.eight_bit_tty || game.iflags?.wc_eight_bit_input);
+    if (handling === H_IBM || (eight_bit_tty && (handling !== H_DEC || ch < 0x60)))
+        return String.fromCharCode(ch);
+    return decgfxMapChar(String.fromCharCode(ch), true);
+}
+
 // C ref: symbols.c update_ov_primary_symset() — a SYMBOLS= rc line replaces
 // just the display character for one cmap symbol; the symbol's base color is
-// untouched.  Overrides parsed from the rc are always plain literal
-// characters (no high bit), so they never need DEC-font translation.
+// untouched.  The override byte reaches the terminal through g_putch() like
+// any symset byte, so \m. or \xNN meta bytes and ^X control bytes get the
+// same capture treatment.  A control byte leaves the terminal cell as it was,
+// so an override always yields NUL_CELL for it.
+function override_cell(val) {
+    const set = String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase();
+    const handling = SYMSET_META[set]?.handling ?? H_UNK;
+    if (handling === H_UTF8) return val;
+    return g_putch_cell(val.charCodeAt(0) & 0xff, handling, true);
+}
+
+// The status line prints the gold symbol through putstr(), not g_putch(), so
+// it gets the override byte unchanged.
+export function symOverrideRaw(name) {
+    const ov = rogue_symset() ? game.roguesymoverride : game.symoverride;
+    return (ov && ov[name]) ? ov[name] : symOverrideChar(name);
+}
+
 export function symOverrideChar(name, keepCtl = false) {
     const ov = rogue_symset() ? game.roguesymoverride : game.symoverride;
-    if (ov && ov[name]) return ov[name];
+    if (ov && ov[name]) return override_cell(ov[name]);
     const set = String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase();
     if (set === 'blank') return ' ';
     // C ref: wintty.c tty_print_glyph() — a UTF8-handling set's U+ symbols go
@@ -1259,7 +1291,7 @@ function mlet_sym(d, dflt) {
     const nm = d?.mcls >= 1 ? MCLS_SYMNAME[d.mcls - 1] : null;
     if (!nm) return ch;
     const ov = (rogue_symset() ? game.roguesymoverride : game.symoverride)?.[nm];
-    if (ov) return ov;
+    if (ov) return override_cell(ov);
     return d.mcls === S_HUMAN_CLASS ? (symOverrideChar('S_human', true) ?? ch) : ch;
 }
 
@@ -1589,22 +1621,11 @@ export function show_glyph_cell(x, y, ch, color = NO_COLOR, decgfx = false, attr
             : { ch: loc.disp_ch, color: loc.disp_color, decgfx: loc.disp_decgfx,
                 attr: loc.disp_attr, dark: loc.disp_dark, monster: loc.disp_monster, warning: loc.disp_warning };
     }
-    if (ch === NUL_CELL) {
-        const t = loc._term;
-        loc.disp_ch = t ? t.ch : ' ';
-        loc.disp_color = t ? t.color : NO_COLOR;
-        loc.disp_decgfx = t ? t.decgfx : false;
-        loc.disp_attr = t ? t.attr : 0;
-        loc.disp_dark = t ? !!t.dark : false;
-        loc.disp_monster = t ? !!t.monster : false;
-        loc.disp_warning = t ? !!t.warning : false;
-        loc.disp_utf8 = false;
-        loc.gnew = 1;
-        return;
-    }
-    // A UTF8 set's U+ symbol: the glyph buffer holds it (disp_ch is its marker),
-    // while the captured cell keeps what it showed at the last build.
-    loc.disp_utf8 = is_utf8_marker(ch);
+    // A UTF8 set's U+ symbol, or a control byte (NUL_CELL), writes no capture
+    // cell: the glyph buffer holds it (disp_ch is its marker) while the
+    // captured cell keeps what it showed at the last build, until a clear
+    // blanks it.
+    loc.disp_utf8 = is_utf8_marker(ch) || ch === NUL_CELL;
     loc.disp_utf8term = loc.disp_utf8 ? loc._term : null;
     if (String((rogue_symset() ? game.roguesymset : game.symset) || '').toLowerCase() === 'blank') {
         ch = ' ';
@@ -3622,7 +3643,7 @@ function _botFields(order, transient = null) {
     // C ref: botl.c do_statusline2:131 — the gold field's label is the ENCODED
     // GOLD_PIECE glyph, i.e. the live showsyms[COIN_CLASS], so the Rogue level's
     // ROGUESET (drawing.c def_r_oc_syms: coin shares GEM_SYM) prints "*:0".
-    const goldSym = symOverrideChar('S_coin') ?? (rogue_symset() ? '*' : '$'); /* NUL cell: stays blank */
+    const goldSym = symOverrideRaw('S_coin') ?? (rogue_symset() ? '*' : '$'); /* NUL cell: stays blank */
     // C ref: botl.c bot_via_windowport() `money_cnt(gi.invent)`: read live.
     let money = 0;
     for (const o of (game.invent || []))
@@ -4657,7 +4678,6 @@ function put_utf8term(display, col, row, loc) {
 // columns >= minCol on rows 0..lastRow, and a symbol the capture never sees
 // leaves them blank when the map is reprinted.
 export function forget_nul_cells(minCol, lastRow) {
-    if (!utf8_symhandling()) return;
     _syncClipping();
     for (let y = 0; y < ROWNO; y++) {
         const sy = _mapRowOnScreen(y);

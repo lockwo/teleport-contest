@@ -55,7 +55,7 @@ import { endgamelevelname } from './dungeon.js';
 import { depth, highc, upstart } from './hacklib.js';
 import { fuzzymatch, strstri } from './objnam.js';
 import { clr2colorname, query_color, query_attr } from './coloratt.js';
-import { pline, impossible, status_hold, rogue_symset, symOverrideChar } from './display.js';
+import { pline, impossible, status_hold, rogue_symset, symOverrideRaw } from './display.js';
 import { Hallucination_u } from './display.js';
 import { pmname_of_pmidx, name_to_pmidx } from './makemon.js';
 import { create_nhwindow, destroy_nhwindow, start_menu, add_menu, add_menu_str, add_menu_heading,
@@ -1555,7 +1555,7 @@ export function eval_notify_windowport_field(fld, valsetlist, idx) {
         /* C: gs.showsyms[COIN_CLASS + SYM_OFF_O]; the port keeps the live symbol
            in display.js (same expression as the status line's gold label), so
            entering or leaving the Rogue level changes it */
-        const goldsym = symOverrideChar('S_coin') ?? (rogue_symset() ? '*' : '$');
+        const goldsym = symOverrideRaw('S_coin') ?? (rogue_symset() ? '*' : '$');
         if ((game.context?.rndencode | 0) !== _oldrndencode || goldsym !== _oldgoldsym) {
             gu.update_all = true; /* chg = 2; */
             _oldrndencode = game.context?.rndencode | 0;

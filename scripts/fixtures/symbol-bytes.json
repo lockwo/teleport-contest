@@ -1,0 +1,164 @@
+{
+ "cases": [
+  {
+   "name": "a SYMBOLS= meta byte draws its stripped char in DEC graphics, wintty.c:3758 g_putch",
+   "segments": [
+    {
+     "seed": 3131,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=!legacy,!tutorial,!splash_screen,name:Sym,role:Valkyrie,race:human,gender:female,align:neutral\nSYMBOLS=S_room:\\m.\n",
+     "moves": "llllkkkkhhhhjjjjsssi\u001bLLLLHHHHJJKKyubn\u0010\u001b;l.jjjjjj\u0018     \u001b#terrain\na\u001b\u001b",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Sym, welcome to NetHack!  You are a neutral human Valkyrie.\n\n\n\n\n\n ----------\n |\u000e...\u001b[97m\u000ff\u001b[39m\u000e....\u000f|\n |\u000e....\u001b[97m\u000f@\u001b[39m\u000e...\u000f|\n |\u000e........\u000f|\n |\u000e........\u000f|\n |\u000e......\u000f*\u000e.\u000f|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        6,
+        8,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\n\n\n\n\n\n ----------\n |\u000e...\u001b[97m\u000ff\u001b[39m\u000e....\u000f|\n |\u000e....\u001b[93m\u000f<\u001b[97m@\u001b[39m\u000e..\u000f|\n |\u000e........\u000f|\n |\u000e........\u000f|\n |\u000e......\u000f*\u000e.\u000f|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        7,
+        8,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\n\n\n\n\n\n ----------\n |\u000e........\u000f|\n |\u000e....\u001b[93m\u000f<\u001b[39m\u000e.\u001b[97m\u000f@\u001b[39m\u000e.\u000f|\n |\u000e.....\u001b[97m\u000ff\u001b[39m\u000e..\u000f|\n |\u000e........\u000f|\n |\u000e......\u000f*\u000e.\u000f|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        8,
+        1
+       ]
+      }
+     },
+     "screens": 68
+    }
+   ]
+  },
+  {
+   "name": "a SYMBOLS= control byte writes no cell, kept until a clear blanks it, wintty.c:3740 g_putch",
+   "segments": [
+    {
+     "seed": 3131,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=!legacy,!tutorial,!splash_screen,name:Sym,role:Valkyrie,race:human,gender:female,align:neutral\nSYMBOLS=S_room:^A\n",
+     "moves": "llllkkkkhhhhjjjjsssi\u001bLLLLHHHHJJKKyubn\u0010\u001b;l.jjjjjj\u0018     \u001b#terrain\na\u001b\u001b",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Sym, welcome to NetHack!  You are a neutral human Valkyrie.\n\n\n\n\n\n ----------\n |   \u001b[97mf\u001b[39m    |\n |    \u001b[97m@\u001b[39m   |\n |\u001b[8C|\n |\u001b[8C|\n |\u001b[6C* |\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        6,
+        8,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\n\n\n\n\n\n ----------\n |   \u001b[97mf\u001b[39m    |\n |    \u001b[93m<\u001b[97m@@\u001b[39m |\n |\u001b[5C\u001b[97mf\u001b[39m  |\n |\u001b[8C|\n |\u001b[6C* |\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        8,
+        8,
+        1
+       ]
+      },
+      "3": {
+       "screen": "\n\n\n\n\n\n ----------\n |   \u001b[97mf\u001b[39m  \u001b[97mf\u001b[39m |\n |    \u001b[93m<\u001b[97m@@@\u001b[39m|\n |\u001b[5C\u001b[97mf\u001b[39m  |\n |\u001b[8C|\n |\u001b[6C* |\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        9,
+        8,
+        1
+       ]
+      },
+      "51": {
+       "screen": "Move cursor to a monster, object or location:\n\n\n\n\n\n ----------\n |\u001b[97m@\u001b[39m  \u001b[97mf@@\u001b[39m  |\n | \u001b[91m*\u001b[39m \u001b[97m@\u001b[93m<\u001b[97m@\u001b[39m  |\n |\u001b[97m@\u001b[39m  \u001b[97m@ff\u001b[39m  |\n |\u001b[97m@\u001b[39m \u001b[97mff\u001b[39m \u001b[97mf\u001b[39m  |\n |\u001b[97m@@\u001b[39m \u001b[97mff@f@\u001b[39m|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        2,
+        7,
+        1
+       ]
+      },
+      "52": {
+       "screen": "human valkyrie called Sym\n\n\n\n\n\n ----------\n |\u001b[97m@\u001b[39m  \u001b[97mf@@\u001b[39m  |\n | \u001b[91m*\u001b[39m \u001b[97m@\u001b[93m<\u001b[97m@\u001b[39m  |\n |\u001b[97m@\u001b[39m  \u001b[97m@ff\u001b[39m  |\n |\u001b[97m@\u001b[39m \u001b[97mff\u001b[39m \u001b[97mf\u001b[39m  |\n |\u001b[97m@@\u001b[39m \u001b[97mff@f@\u001b[39m|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1 $:0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        2,
+        7,
+        1
+       ]
+      }
+     },
+     "screens": 68
+    }
+   ]
+  },
+  {
+   "name": "the status gold label prints the S_coin override byte unchanged, botl.c do_statusline2",
+   "segments": [
+    {
+     "seed": 3131,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=!legacy,!tutorial,!splash_screen,name:Sym,role:Valkyrie,race:human,gender:female,align:neutral\nSYMBOLS=S_food:\\xa5,S_coin:\\xa3\n",
+     "moves": "llllkkkkhhhhjjjjsssi\u001bLLLLHHHHJJKKyubn\u0010\u001b;l.jjjjjj\u0018     \u001b#terrain\na\u001b\u001b",
+     "frames": {
+      "0": {
+       "screen": "Velkommen Sym, welcome to NetHack!  You are a neutral human Valkyrie.\n\n\n\n\n\n ----------\n |...\u001b[97mf\u001b[39m....|\n |....\u001b[97m@\u001b[39m...|\n |........|\n |........|\n |......*.|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1  :0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        6,
+        8,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\n\n\n\n\n\n ----------\n |...\u001b[97mf\u001b[39m....|\n |....\u001b[93m<\u001b[97m@\u001b[39m..|\n |........|\n |........|\n |......*.|\n --.-------\n\n\n\n\n\n\n\n\n\nSym the Stripling\u001b[14CSt:18/02 Dx:13 Co:17 In:9 Wi:7 Ch:9 Neutral\nDlvl:1  :0 HP:16(16) Pw:2(2) AC:6 Xp:1",
+       "cursor": [
+        7,
+        8,
+        1
+       ]
+      }
+     },
+     "screens": 68
+    }
+   ]
+  },
+  {
+   "name": "boulder option meta byte is rejected as a control character, options.c:1199 signed char",
+   "segments": [
+    {
+     "seed": 3131,
+     "datetime": "20000110090000",
+     "nethackrc": "OPTIONS=!legacy,!tutorial,!splash_screen,name:Sym,role:Valkyrie,race:human,gender:female,align:neutral\nOPTIONS=boulder:\\m0\n",
+     "moves": "llllkkkkhhhhjjjjsssi\u001bLLLLHHHHJJKKyubn\u0010\u001b;l.jjjjjj\u0018     \u001b#terrain\na\u001b\u001b",
+     "frames": {
+      "0": {
+       "screen": "\nOPTIONS=boulder:\\m0\n * Line 2: boulder symbol cannot be a control character.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "1": {
+       "screen": "\nOPTIONS=boulder:\\m0\n * Line 2: boulder symbol cannot be a control character.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      },
+      "2": {
+       "screen": "\nOPTIONS=boulder:\\m0\n * Line 2: boulder symbol cannot be a control character.\n\n1 error in /Users/davidbau/git/mazesofmenace/teleport/maud/test/comparison/c-har",
+       "cursor": [
+        0,
+        6,
+        1
+       ]
+      }
+     },
+     "screens": 68
+    }
+   ]
+  }
+ ]
+}

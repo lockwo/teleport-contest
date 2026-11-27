@@ -1716,7 +1716,8 @@ function optfn_boulder(o, negated, opts, op, result) {
     let clash = 0;
     if (def_char_to_monclass(op[0]) !== MAXMCLASSES) clash = op[0] ? 1 : 0;
     else if (op[0] >= '1' && op[0] < String.fromCharCode(WARNCOUNT + 48)) clash = 2;
-    if (op.charCodeAt(0) < 32) {
+    // `opts[0] < ' '` on a signed char: any meta byte is negative there too.
+    if (op.charCodeAt(0) < 32 || op.charCodeAt(0) >= 0x80) {
         config_error_add('boulder symbol cannot be a control character');
         return OPTN_OK;
     } else if (clash) {
